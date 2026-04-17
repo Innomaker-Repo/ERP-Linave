@@ -14,7 +14,7 @@ import { HorasView } from "./modules/Horas/HorasView";
 import { ComprasView } from "./modules/Compras/ComprasView";
 import { FornecedoresView } from "./modules/Fornecedores/FornecedoresView";
 import { FinanceiroView } from "./modules/Financeiro/FinanceiroView";
-import { CrmView } from "./modules/CRM/CrmView";
+import { CrmViewNew } from "./modules/CRM/CrmViewNew";
 import { RelatoriosView } from "./modules/Relatorios/RelatoriosView";
 import { UsuariosView } from "./modules/Usuarios/UsuariosView";
 import { ListasAuxiliaresView } from "./modules/Configuracoes/ListasAuxiliaresView";
@@ -54,7 +54,7 @@ export function ModuleView({ section, searchQuery }: ModuleViewProps) {
   // Roteamento das Views
   switch (section) {
     case "dashboard": return <DashboardView />;
-    case "crm": return <CrmView />;
+    case "crm": return <CrmViewNew searchQuery={searchQuery} />;
     case "relatorios": return <RelatoriosView />;
     
     case "obras": return <ObrasView searchQuery={searchQuery} />;

@@ -641,7 +641,7 @@ export function CrmView({ searchQuery }: CrmViewProps) {
               onClick={handleSave} 
               className="flex-1 bg-emerald-500 text-[#0b1220] py-3 rounded-lg font-black uppercase text-sm tracking-widest hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-900/20"
             >
-              ✓ Criar Negócio
+              Criar Negócio
             </button>
             <button 
               onClick={() => setShowForm(false)} 
@@ -1210,7 +1210,7 @@ export function CrmView({ searchQuery }: CrmViewProps) {
                     />
                   </div>
                   <div className="md:col-span-4 bg-gradient-to-r from-yellow-900 to-yellow-800 p-5 rounded-xl border-2 border-yellow-500">
-                    <label className="text-[9px] font-black text-yellow-200 uppercase tracking-widest block mb-2">💰 PV Final R$</label>
+                    <label className="text-[9px] font-black text-yellow-200 uppercase tracking-widest block mb-2">PV Final R$</label>
                     <input 
                       type="text"
                       className="w-full bg-yellow-950 border-2 border-yellow-500 p-3 rounded-lg text-yellow-300 font-black text-lg outline-none"
@@ -1237,13 +1237,13 @@ export function CrmView({ searchQuery }: CrmViewProps) {
                   onClick={handleSaveOrcamento}
                   className="flex-1 bg-gradient-to-r from-amber-500 to-orange-500 text-[#0b1220] py-4 rounded-xl font-black uppercase text-sm tracking-widest hover:from-amber-400 hover:to-orange-400 transition-all shadow-2xl shadow-amber-900/30"
                 >
-                  ✓ Salvar Orçamento
+                  Salvar Orçamento
                 </button>
                 <button 
                   onClick={() => setShowOrcamentoModal(false)}
                   className="px-8 bg-white/5 hover:bg-white/10 text-white py-4 rounded-xl font-black uppercase text-sm transition"
                 >
-                  ✕ Fechar
+                  Fechar
                 </button>
               </div>
             </div>

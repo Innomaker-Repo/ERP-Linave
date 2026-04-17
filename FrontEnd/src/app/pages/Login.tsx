@@ -160,7 +160,7 @@ export function LoginPage({ onLoginSuccess }: { onLoginSuccess: (user: any) => v
                 
                 {/* Dica de credenciais de teste */}
                 <div className="p-3 rounded-xl bg-yellow-500/10 border border-yellow-500/30 text-center">
-                  <p className="text-yellow-400 text-xs font-bold uppercase tracking-wide">🔓 Credenciais de Teste</p>
+                  <p className="text-yellow-400 text-xs font-bold uppercase tracking-wide">Credenciais de Teste</p>
                   <p className="text-yellow-400/70 text-xs mt-1">Usuário: <span className="font-mono font-bold">admin</span> | Senha: <span className="font-mono font-bold">admin</span></p>
                 </div>
                 

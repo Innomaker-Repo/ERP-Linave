@@ -444,13 +444,13 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
 
                           {negocio.orcamentos && negocio.orcamentos.length > 0 && (
                             <div className="bg-white/5 rounded p-2 text-xs border border-white/10">
-                              <p className="text-emerald-400 font-black">💎 Orçamentos: {negocio.orcamentos.length} (Última versão: v{negocio.orcamentos[negocio.orcamentos.length - 1].versao})</p>
+                              <p className="text-emerald-400 font-black">Orçamentos: {negocio.orcamentos.length} (Última versão: v{negocio.orcamentos[negocio.orcamentos.length - 1].versao})</p>
                             </div>
                           )}
 
                           {negocio.propostas && negocio.propostas.length > 0 && (
                             <div className="bg-white/5 rounded p-2 text-xs border border-white/10">
-                              <p className="text-blue-400 font-black">📄 Propostas: {negocio.propostas.length} (Última versão: v{negocio.propostas[negocio.propostas.length - 1].versao})</p>
+                              <p className="text-blue-400 font-black">Propostas: {negocio.propostas.length} (Última versão: v{negocio.propostas[negocio.propostas.length - 1].versao})</p>
                             </div>
                           )}
                         </div>

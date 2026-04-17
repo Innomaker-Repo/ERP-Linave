@@ -23,7 +23,7 @@ function getAbaForSection(section: string): { aba: string; item: string } {
     
     // Produção
     'obras': { aba: 'producao', item: 'obras' },
-    'servicos': { aba: 'producao', item: 'servicos' },
+    'servicos': { aba: 'producao', item: 'obras' },
     
     // Comercial
     'crm': { aba: 'comercial', item: 'crm' },
@@ -57,19 +57,6 @@ export default function App() {
   const { userSession, setUserSession, logout, config, loading } = useErp();
   const [activeSection, setActiveSection] = useState('dashboard');
   const [searchQuery, setSearchQuery] = useState('');
-
-  // 0. Modo de Teste: Injetar um utilizador ADMIN se não houver login
-  // COMENTADO: Usuário ADMIN agora já é injetado no ErpContext
-  // useEffect(() => {
-  //   if (!loading && !userSession) {
-  //     setUserSession({
-  //       email: 'admin@modo-teste.com',
-  //       role: 'ADMIN',
-  //       nome: 'Administrador (Teste)',
-  //       permissoes: {} // O Admin tem acesso a tudo por padrão na lógica da Sidebar
-  //     });
-  //   }
-  // }, [userSession, loading, setUserSession]);
 
   // 1. Tela de Carregamento
   if (loading) {

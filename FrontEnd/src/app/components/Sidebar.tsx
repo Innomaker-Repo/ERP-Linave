@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, HardHat, Anchor, ClipboardList, 
   ShoppingCart, DollarSign, BarChart3, Settings, Factory, 
   HeartHandshake, List, Clock, ChevronDown, ChevronRight, 
-  Briefcase, Wrench, Activity, Kanban, FileText, Zap
+  Briefcase, Wrench, Activity, FileText, Zap
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -46,10 +46,7 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
       icon: Anchor,
       items: [
         // Visão Macro do Projeto (USV Traveller)
-        { id: 'obras', label: 'Serviços (Produção)', icon: Anchor }, 
-        
-        // Visão estilo "ClickUp" para a equipe de campo (Lista de Tarefas)
-        { id: 'servicos', label: 'Serviços (Tarefas)', icon: Kanban }, 
+        { id: 'obras', label: 'Serviços (Produção)', icon: Anchor },
       ]
     },
     {
@@ -128,10 +125,10 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
   };
 
   return (
-    <div className="w-72 bg-[#101f3d] border-r border-white/5 flex flex-col h-full z-30 transition-all duration-300">
+    <div className="w-64 bg-[#101f3d] border-r border-white/5 flex flex-col h-full z-30 transition-all duration-300">
       
       {/* CABEÇALHO */}
-      <div className="p-8 border-b border-white/5 mb-4">
+      <div className="p-6 border-b border-white/5 mb-4">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-amber-500 rounded-xl flex items-center justify-center font-black text-[#0b1220] shadow-lg shadow-amber-500/20">
             IN

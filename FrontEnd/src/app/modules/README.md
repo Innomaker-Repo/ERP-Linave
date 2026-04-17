@@ -1,6 +1,6 @@
 # Estrutura do Módulo Consolidado
 
-## 📁 Arquitetura
+## Arquitetura
 
 ```
 src/app/modules/
@@ -31,15 +31,15 @@ src/app/modules/
 └── README.md                  # Este arquivo
 ```
 
-## ✨ Vantagens da Nova Estrutura
+## Vantagens da Nova Estrutura
 
-- ✅ **Menos arquivos para alterar** - Uma mudança em uma aba afeta apenas um arquivo
-- ✅ **Melhor organização** - Componentes compartilhados em `shared/`
-- ✅ **Imports simplificados** - Pode usar `from '@app/modules'` para tudo
-- ✅ **Escalável** - Fácil adicionar novos itens a uma aba
-- ✅ **Mantém visual idêntico** - Nenhuma mudança na aparência
+- **Menos arquivos para alterar** - Uma mudança em uma aba afeta apenas um arquivo
+- **Melhor organização** - Componentes compartilhados em `shared/`
+- **Imports simplificados** - Pode usar `from '@app/modules'` para tudo
+- **Escalável** - Fácil adicionar novos itens a uma aba
+- **Mantém visual idêntico** - Nenhuma mudança na aparência
 
-## 🔄 Como Adicionar Novo Item a uma Aba
+## Como Adicionar Novo Item a uma Aba
 
 Exemplo: Adicionar "Orçamento" à aba Financeiro
 
@@ -51,7 +51,7 @@ Exemplo: Adicionar "Orçamento" à aba Financeiro
    ```
 3. **Atualize Sidebar.tsx** para adicionar o item ao menu
 
-## 🎨 Como Usar Componentes Compartilhados
+## Como Usar Componentes Compartilhados
 
 ```tsx
 // Em qualquer arquivo de aba
@@ -60,7 +60,7 @@ import { Button, Input, Card, Badge } from '../../shared/ui';
 import { Button } from '../../shared/ui/button';
 ```
 
-## 📋 Mapeamento de Abas
+## Mapeamento de Abas
 
 | Aba | ID | Items |
 |-----|----|----|
