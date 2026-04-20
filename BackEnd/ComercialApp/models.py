@@ -93,3 +93,6 @@ class Resumo_orcamento(models.Model):
     impostos = models.DecimalField(max_digits=10, decimal_places = 2)
     custo_final = models.DecimalField(max_digits=10, decimal_places = 2)
 
+    def __str__(self):
+        return f'Custo Final{self.custo_final}'
+

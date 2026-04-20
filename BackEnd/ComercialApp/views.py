@@ -5,6 +5,7 @@ from rest_framework import viewsets
 from .models import Cliente, Negocio, Servico, User
 from .serializers import ClienteSerializer, NegocioSerializer, ServicoSerializer, UserSerializer
 
+
 from rest_framework.decorators import api_view
 from rest_framework import status
 from django.db import transaction
@@ -41,3 +42,12 @@ def cadastrar_negocio_completo(request):
                 return Response(servico_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
         return Response(negocio_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+# Levantamento deve conter as outras classes? comportamento? e o resto?
+#class OrcamentoViewSet(viewsets.ModelViewSet):
+#    queryset = Levantamento.objects.all()  #ja capacita esta classe a todas as requests de API 
+#    serializerclass = Resumo_orcamentoSerializer #qual serializador utilizar
+#    
+#    @api_view(['POST']) # define comportamento especifico para POST(criação de entrada) desta classe
+#    def
