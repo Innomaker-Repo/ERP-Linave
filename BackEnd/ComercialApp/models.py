@@ -56,15 +56,15 @@ class User(models.Model):
     def __str__(self):
         return f"E-mail: {self.user_email} - Nome: {self.user_name} - Função: {self.user_funcao} - Setor: {self.user_setor}"
 
-#--------------------- orcamento ------------------
+#--------------------- Orçamento ------------------
 
-class Levantamento(models.Model):
+class Levantamento(models.Model): #NAB
 
-class Mao_de_obra(models.Model):
+class MDO(models.Model): #Mão de obra; NAB
 
-class Ativ_previstas(models.Model):
+class Ativ_previstas(models.Model): #NAB
 
-class Materiais(models.Model):
+class Materiais(models.Model): #NAB
 
 class Servicos_terceirizados(models.Model):
     descricao = models.CharField(max_length=100) # nome; identificacao do servico recebido
@@ -74,10 +74,13 @@ class Servicos_terceirizados(models.Model):
     valor_tot = models DecimalField(max_digits = 10, decimal_places = 2)
     observacoes = models.CharField(max_length=250)
 
-class observacoes_setor_orcamento(models.Model):
+    def __str__(self):
+        return f'Descrição:{self.descricao} - Custo total: {self.valor_tot}'
+
+class Observacoes_setor_orcamento(models.Model):
     texto = models.CharField(max_length = 300)
 
-class resumo_orcamento(models.Model):
+class Resumo_orcamento(models.Model):
     #links: make the following classes acessible from this one
     mao_de_obra = models.ForeignKey(Mao_de_obra, on_delete=models.PROTECT, related_name="resumo_MDO")
     materiais = models.ForeignKey(Materiais, on_delete=models.PROTECT, related_name="resumo_Mat")
@@ -85,4 +88,8 @@ class resumo_orcamento(models.Model):
 
     #fields:
     margem = models.DecimalField(max_digits = 5, decimal_places = 2) #validators=[MinValueValidator(0),MaxValueValidator(100)]
-    impostos = models.DecimalField(max_digits=5, decimal_places = 2)
+    impostos_perc = models.DecimalField(max_digits=5, decimal_places = 2)
+    subtotal = models.DecimalField(max_digits=10, decimal_places = 2)
+    impostos = models.DecimalField(max_digits=10, decimal_places = 2)
+    custo_final = models.DecimalField(max_digits=10, decimal_places = 2)
+
