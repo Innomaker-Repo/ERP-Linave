@@ -55,3 +55,34 @@ class User(models.Model):
     
     def __str__(self):
         return f"E-mail: {self.user_email} - Nome: {self.user_name} - Função: {self.user_funcao} - Setor: {self.user_setor}"
+
+#--------------------- orcamento ------------------
+
+class Levantamento(models.Model):
+
+class Mao_de_obra(models.Model):
+
+class Ativ_previstas(models.Model):
+
+class Materiais(models.Model):
+
+class Servicos_terceirizados(models.Model):
+    descricao = models.CharField(max_length=100) # nome; identificacao do servico recebido
+    unidade = models.CharField(max_length=10)  #Pra que isso? o campo existe nas imagens do slide
+    quantidade = models.DecimalField(max_digits = 10, decimal_places = 2) #validador de valores maximos e minimos?
+    custo_unit = models.DecimalField(max_digits = 10, decimal_places = 2)
+    valor_tot = models DecimalField(max_digits = 10, decimal_places = 2)
+    observacoes = models.CharField(max_length=250)
+
+class observacoes_setor_orcamento(models.Model):
+    texto = models.CharField(max_length = 300)
+
+class resumo_orcamento(models.Model):
+    #links: make the following classes acessible from this one
+    mao_de_obra = models.ForeignKey(Mao_de_obra, on_delete=models.PROTECT, related_name="resumo_MDO")
+    materiais = models.ForeignKey(Materiais, on_delete=models.PROTECT, related_name="resumo_Mat")
+    terceirizados = models.ForeignKey(Servicos_terceirizados, on_delete=models.PROTECT, related_name="resumo_Terc")
+
+    #fields:
+    margem = models.DecimalField(max_digits = 5, decimal_places = 2) #validators=[MinValueValidator(0),MaxValueValidator(100)]
+    impostos = models.DecimalField(max_digits=5, decimal_places = 2)
