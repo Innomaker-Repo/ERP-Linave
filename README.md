@@ -7,9 +7,9 @@
 
   ## Run `npm run dev` to start the development server. 
   
-  Run `python -m pip install -r requirements.txt` to install the dependencies
+  Run `python -m pip install -r requirements.txt` from within \Backend to install Backend the dependencies
   
-  Run `npm i` to install the dependencies.
+  Run `npm i` from \FrontEnd to install Frontend the dependencies.
 
   Run `python manage.py runserver` to start the development server. 
 
