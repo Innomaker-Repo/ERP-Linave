@@ -62,9 +62,9 @@ class Observacoes_setor_orcamentoSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class Resumo_orcamentoSerializer(serializers.ModelSerializer):
-    MDOs = MDOSerializer
-    Mats = MateriaisSerializer
-    SRVs = Servicos_terceirizadosSerializer
+    MDOs = MDOSerializer(many=True, read_only=True)
+    Mats = MateriaisSerializer(many=True, read_only=True)
+    SRVs = Servicos_terceirizadosSerializer(many=True, read_only=True)
     
     class Meta:
         model = Resumo_orcamento
