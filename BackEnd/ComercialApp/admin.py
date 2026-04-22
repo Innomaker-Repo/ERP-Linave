@@ -1,6 +1,7 @@
 from django.contrib import admin
 
 from .models import Cliente, Negocio, Servico, User
+from .models import Levantamento, MDO, Ativ_previstas, Materiais, Servicos_terceirizados, Observacoes_setor_orcamento, Resumo_orcamento
 
 # Register your models here.
 
