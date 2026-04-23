@@ -21,6 +21,21 @@ export interface Obra {
   status: 'Planejamento' | 'Execução' | 'Finalizada';
   categoria: 'Planejamento' | 'Negociação' | 'Em Andamento' | 'Finalização';
 }
+
+export interface Cliente {
+  id: string;
+  tipoPessoa: 'PF' | 'PJ';
+  razaoSocial: string;
+  nomeFantasia: string;
+  cpfCnpj: string;
+  inscricaoEstadual: string;
+  status: string;
+  contato: string;
+  endereco: string;
+  dataCadastro: string;
+  usuarioResponsavel: string;
+}
+
 export interface Servico {
   id: string;
   tipo: string;           // Tipo de Serviço

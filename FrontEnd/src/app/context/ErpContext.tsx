@@ -1,22 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-
-// DADOS MOCK DOS CLIENTES - Inicialização padrão
-const CLIENTES_MOCK = [
-  {
-    id: 'CLI-SEVEN-OCEAN',
-    razaoSocial: 'Subsea 7',
-    nomeFantasia: 'Seven Ocean',
-    cnpj: '',
-    cpfCnpj: '',
-    tipoPessoa: 'PJ',
-    inscricaoEstadual: '',
-    status: 'Ativo',
-    contato: '',
-    endereco: 'Base UBU - ES / Ilha da Conceicao - Niteroi - RJ',
-    dataCadastro: '2026-01-29',
-    usuarioResponsavel: 'Sistema'
-  }
-];
+import { CLIENTES_MOCK } from '../mocks/clientesMock';
 
 const FORNECEDORES_MOCK = [
   {
@@ -805,32 +788,85 @@ const mergeRecordsById = (base: any[] = [], demo: any[] = []) => {
 const createInitialData = (savedData: any) => {
   const baseData = {
     clientes: CLIENTES_MOCK,
-    funcionarios: FUNCIONARIOS_MOCK,
-    obras: MOCK_OBRAS,
-    financeiro: MOCK_FINANCEIRO,
+    funcionarios: [],
+    obras: [],
+    financeiro: [],
     compras: [],
-    os: MOCK_OS,
+    os: [],
     usuarios: [],
     equipes: [],
-    fornecedores: FORNECEDORES_MOCK,
+    fornecedores: [],
     horas: [],
-    config: { empresaNome: 'Linave ERP' },
-    listas: { departamentos: ['Engenharia', 'Comercial', 'Operacao', 'Orcamentos'], categorias: ['Material', 'Servico', 'Manutencao'], prioridades: ['Normal', 'Alta', 'Critica'] }
+    config: { empresaNome: 'Linave ERP Demo' },
+    listas: { departamentos: [], categorias: [], prioridades: [] }
+  };
+
+  const isDemoRecord = (collection: string, item: any) => {
+    const id = item?.id || '';
+    const clienteId = item?.clienteId || '';
+    const obraId = item?.obraId || '';
+
+    switch (collection) {
+      case 'clientes':
+        return ['CLI-1', 'CLI-2', 'CLI-3', 'CLI-4', 'CLI-5', 'CLI-SEVEN-OCEAN'].includes(id);
+      case 'fornecedores':
+        return /^FOR-DEMO-/.test(id);
+      case 'funcionarios':
+        return /^FUN-DEMO-/.test(id);
+      case 'financeiro':
+        return /^FIN-SEVEN-/.test(id) || clienteId === 'CLI-SEVEN-OCEAN' || /SEVEN-OCEAN/.test(obraId);
+      case 'obras':
+        return /SEVEN-OCEAN/.test(id) || clienteId === 'CLI-SEVEN-OCEAN';
+      case 'os':
+        return /SEVEN-OCEAN/.test(id) || clienteId === 'CLI-SEVEN-OCEAN' || /SEVEN-OCEAN/.test(obraId);
+      default:
+        return false;
+    }
+  };
+
+  const sanitizeCollection = (collection: string, items: any[] = []) => {
+    if (!Array.isArray(items)) return [];
+    return items.filter((item) => !isDemoRecord(collection, item));
   };
 
   if (!savedData) {
     return baseData;
   }
 
-  return {
+  const sanitizedData = {
     ...baseData,
+    clientes: mergeRecordsById(baseData.clientes, sanitizeCollection('clientes', savedData.clientes)),
+    funcionarios: sanitizeCollection('funcionarios', savedData.funcionarios),
+    obras: sanitizeCollection('obras', savedData.obras),
+    financeiro: sanitizeCollection('financeiro', savedData.financeiro),
     compras: Array.isArray(savedData.compras) ? savedData.compras : [],
+    os: sanitizeCollection('os', savedData.os),
     usuarios: Array.isArray(savedData.usuarios) ? savedData.usuarios : [],
     equipes: Array.isArray(savedData.equipes) ? savedData.equipes : [],
+    fornecedores: sanitizeCollection('fornecedores', savedData.fornecedores),
     horas: Array.isArray(savedData.horas) ? savedData.horas : [],
-    config: savedData.config || baseData.config,
-    listas: savedData.listas || baseData.listas
+    config: savedData.config ? { ...baseData.config, ...savedData.config } : baseData.config,
+    listas: savedData.listas ? { ...baseData.listas, ...savedData.listas } : baseData.listas
   };
+
+  const hasUserData = [
+    sanitizedData.clientes,
+    sanitizedData.funcionarios,
+    sanitizedData.obras,
+    sanitizedData.financeiro,
+    sanitizedData.compras,
+    sanitizedData.os,
+    sanitizedData.usuarios,
+    sanitizedData.equipes,
+    sanitizedData.fornecedores,
+    sanitizedData.horas
+  ].some((collection) => collection.length > 0);
+
+  if (!hasUserData && (!sanitizedData.config?.empresaNome || sanitizedData.config.empresaNome === 'Linave ERP' || sanitizedData.config.empresaNome === 'Nova Empresa')) {
+    return baseData;
+  }
+
+  return sanitizedData;
 };
 
 interface ErpContextData {

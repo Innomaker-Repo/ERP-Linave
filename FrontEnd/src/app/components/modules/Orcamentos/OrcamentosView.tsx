@@ -2,35 +2,6 @@ import React, { useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { Plus, X, DollarSign, FileText, Trash2, Lock, Eye, Download } from 'lucide-react';
 
-// Clientes mockados
-const CLIENTES_MOCK = [
-  {
-    id: 'CLI-1',
-    razaoSocial: 'Linave Construções LTDA',
-    nomeFantasia: 'Linave'
-  },
-  {
-    id: 'CLI-2',
-    razaoSocial: 'Construtora Alpha S.A.',
-    nomeFantasia: 'Alpha Construtora'
-  },
-  {
-    id: 'CLI-3',
-    razaoSocial: 'TC Engenharia e Consultoria',
-    nomeFantasia: 'TC Engenharia'
-  },
-  {
-    id: 'CLI-4',
-    razaoSocial: 'Projetos Marítimos LTDA',
-    nomeFantasia: 'ProMar'
-  },
-  {
-    id: 'CLI-5',
-    razaoSocial: 'Estaleiro Industrial do Sudeste',
-    nomeFantasia: 'EISE'
-  }
-];
-
 interface MaoDeObra {
   id: string;
   funcao: string;
@@ -89,7 +60,8 @@ interface OrcamentosViewProps {
 }
 
 export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
-  const { obras, saveEntity } = useErp();
+  const { obras, clientes, saveEntity } = useErp();
+  const listaClientes = Array.isArray(clientes) ? clientes : [];
   const [showForm, setShowForm] = useState(false);
   const [selectedObra, setSelectedObra] = useState<any>(null);
 
@@ -155,7 +127,8 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     observacoes: '',
     margem: '15',
     oh: '5',
-    impostos: '18'
+    impostos: '18',
+    quantidadeItensProduzidos: ''
   });
 
   const [orcamentoData, setOrcamentoData] = useState(getInitialOrcamentoData);
@@ -305,6 +278,8 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     const totalSemImposto = totalBruto + margemValor + ohValor;
     const impostoValor = (totalSemImposto * impostosPercentual) / 100;
     const precoFinal = totalSemImposto + impostoValor;
+    const quantidadeItensProduzidos = Number(orcamentoData.quantidadeItensProduzidos) || 0;
+    const valorPorUnidade = quantidadeItensProduzidos > 0 ? precoFinal / quantidadeItensProduzidos : 0;
 
     // Criar novo orçamento com versão
     const novoOrcamento = {
@@ -326,7 +301,9 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
         valorMargem: margemValor,
         valorOH: ohValor,
         valorImpostos: impostoValor,
-        precoFinal
+        precoFinal,
+        quantidadeItensProduzidos,
+        valorPorUnidade
       }
     };
 
@@ -531,7 +508,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
             {projetosAOrcar.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {projetosAOrcar.map((obra: any) => {
-                  const cliente = CLIENTES_MOCK.find((c: any) => c.id === obra.clienteId);
+                  const cliente = listaClientes.find((c: any) => c.id === obra.clienteId);
                   const ultimoOrcamento = obterUltimoOrcamento(obra);
                   const reorcamentoArquivos = obra.requerReorcamento || ultimoOrcamento?.status === 'pendente_reorcamento';
                   
@@ -606,7 +583,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
               
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {obrasComOrcamentos.map((obra: any) => {
-                  const cliente = CLIENTES_MOCK.find((c: any) => c.id === obra.clienteId);
+                  const cliente = listaClientes.find((c: any) => c.id === obra.clienteId);
                   const orcamentos = normalizarOrcamentos(obra);
                   const ultimoOrcamento = orcamentos[orcamentos.length - 1];
                   const podeNovoOrcamento = isOrcamentoEditavel(obra);
@@ -679,7 +656,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
             <div className="grid grid-cols-5 gap-4 mb-6">
               <div className="space-y-1.5">
                 <label className={labelClass}>Cliente</label>
-                <input type="text" className={inputClass} disabled value={CLIENTES_MOCK.find(c => c.id === selectedObra?.clienteId)?.razaoSocial || ''} />
+                <input type="text" className={inputClass} disabled value={listaClientes.find(c => c.id === selectedObra?.clienteId)?.razaoSocial || ''} />
               </div>
               <div className="space-y-1.5">
                 <label className={labelClass}>Negócio</label>
@@ -1140,6 +1117,27 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
               <div className="bg-[#101f3d] rounded-lg p-4 border border-amber-500/30 shadow-lg shadow-amber-500/10">
                 <p className="text-amber-400 text-xs font-black mb-2 uppercase">TOTAL C/ IMPOSTO</p>
                 <p className="text-amber-400 font-black text-2xl">R$ {precoFinal.toFixed(2)}</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
+              <div className="bg-[#101f3d] rounded-lg p-4 border border-white/5 space-y-2.5">
+                <label className={labelClass}>Quantidade de itens produzidos</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  className={inputClass}
+                  value={orcamentoData.quantidadeItensProduzidos}
+                  onChange={e => setOrcamentoData({ ...orcamentoData, quantidadeItensProduzidos: e.target.value })}
+                  placeholder="0"
+                />
+              </div>
+              <div className="bg-[#101f3d] rounded-lg p-4 border border-white/5 space-y-2.5">
+                <p className={labelClass}>Valor por unidade</p>
+                <div className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-4 py-3 text-white font-black text-lg">
+                  R$ {(Number(orcamentoData.quantidadeItensProduzidos) > 0 ? precoFinal / Number(orcamentoData.quantidadeItensProduzidos) : 0).toFixed(2)}
+                </div>
               </div>
             </div>
           </div>

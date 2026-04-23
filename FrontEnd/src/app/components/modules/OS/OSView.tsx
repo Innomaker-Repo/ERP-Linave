@@ -433,7 +433,7 @@ export function OsView({ searchQuery }: OSViewProps) {
     return [
       'OS Consolidada gerada automaticamente a partir dos dados do negócio, orçamento e proposta.',
       servicosNegocio ? `\nServiços do negócio:\n${servicosNegocio}` : '',
-      servicosOrcamento ? `\nItens do orçamento (sem valores):\n${servicosOrcamento}` : '',
+      servicosOrcamento ? `\nItens do orçamento:\n${servicosOrcamento}` : '',
       resumoEscopo ? `\nEscopo básico da proposta:\n${resumoEscopo}` : ''
     ].join('\n').trim();
   };
@@ -587,7 +587,7 @@ Serviços:
 ${(resumo?.negocio?.servicos || []).map((servico: any) => `- ${servico.ordem}. ${servico.tipo || 'Serviço'} | ${servico.localExecucao || '-'} | ${servico.descricao || '-'}`).join('\n') || '-'}
 
 --------------------------------------------------------------------------------
-ORÇAMENTO (SEM VALORES)
+ORÇAMENTO
 --------------------------------------------------------------------------------
 Número: ${resumo?.orcamento?.numeroOrcamento || '-'}
 Versão: ${resumo?.orcamento?.versao || '-'}
@@ -660,7 +660,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-black text-white">ORDEM DE SERVIÇO CONSOLIDADA</h1>
-          <p className="text-white/50 text-xs mt-1">OS com dados unificados do negócio, orçamento (sem valores) e proposta</p>
+          <p className="text-white/50 text-xs mt-1">OS com dados unificados do negócio, orçamento e proposta</p>
         </div>
         <button
           onClick={() => {
@@ -871,7 +871,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
 
                   <div className="bg-[#0b1220] rounded-3xl border border-amber-500/25 p-7 space-y-5 shadow-lg shadow-amber-900/20">
                     <div className="flex items-center justify-between border-b border-white/10 pb-4">
-                      <p className="text-sm text-amber-300 font-black uppercase tracking-wider">Orçamento sem valores</p>
+                      <p className="text-sm text-amber-300 font-black uppercase tracking-wider">Orçamento</p>
                       <span className="px-3 py-1.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-200 text-xs font-black uppercase">
                         {formData.resumoConsolidado?.orcamento.numeroOrcamento || 'Sem orçamento'}
                       </span>
@@ -1004,7 +1004,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
               </div>
 
               <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-4">
-                <h3 className="text-white font-black text-lg">ORÇAMENTO (ITENS SEM VALORES)</h3>
+                <h3 className="text-white font-black text-lg">ORÇAMENTO</h3>
                 <div className="bg-[#0b1220] p-4 rounded-lg border border-white/10 text-sm text-white/85 space-y-1">
                   <p><span className="text-white/50">Número:</span> {selectedOS.resumoConsolidado?.orcamento.numeroOrcamento || '-'}</p>
                   <p><span className="text-white/50">Versão:</span> {selectedOS.resumoConsolidado?.orcamento.versao || '-'}</p>

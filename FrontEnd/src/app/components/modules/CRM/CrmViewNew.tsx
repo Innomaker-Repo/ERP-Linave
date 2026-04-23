@@ -3,39 +3,6 @@ import { useErp } from '../../../context/ErpContext';
 import { Plus, X, FileText, DollarSign, CheckCircle, Clock, ArrowRight, Edit2, ChevronDown, Zap, AlertCircle, Download, Eye } from 'lucide-react';
 import { toast } from 'sonner';
 
-const CLIENTES_MOCK = [
-  {
-    id: 'CLI-1',
-    razaoSocial: 'Linave Construções LTDA',
-    nomeFantasia: 'Linave',
-    cnpj: '12.345.678/0001-90'
-  },
-  {
-    id: 'CLI-2',
-    razaoSocial: 'Construtora Alpha S.A.',
-    nomeFantasia: 'Alpha Construtora',
-    cnpj: '23.456.789/0001-01'
-  },
-  {
-    id: 'CLI-3',
-    razaoSocial: 'TC Engenharia e Consultoria',
-    nomeFantasia: 'TC Engenharia',
-    cnpj: '34.567.890/0001-12'
-  },
-  {
-    id: 'CLI-4',
-    razaoSocial: 'Projetos Marítimos LTDA',
-    nomeFantasia: 'ProMar',
-    cnpj: '45.678.901/0001-23'
-  },
-  {
-    id: 'CLI-5',
-    razaoSocial: 'Estaleiro Industrial do Sudeste',
-    nomeFantasia: 'EISE',
-    cnpj: '56.789.012/0001-34'
-  }
-];
-
 interface Servico {
   id: string;
   tipo: string;
@@ -62,8 +29,9 @@ interface LinhaTabelaMediacao {
   item: string;
   descricao: string;
   unidade: string;
-  previsto: string;
-  realizado: string;
+  quantidadeProduzida: string;
+  valorUnitario: string;
+  total: string;
   observacoes: string;
 }
 
@@ -171,6 +139,65 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     return 'A';
   };
 
+  const formatarEscopoBasicoParaTexto = (escopo: any) => {
+    if (!escopo) {
+      return '−';
+    }
+
+    if (typeof escopo === 'string') {
+      return escopo;
+    }
+
+    const formatarItemEscopo = (item: any, index: number) => {
+      if (!item) return '';
+      if (typeof item === 'string') return item;
+
+      const partes = [item.titulo, item.descricaoServico, item.texto].filter(
+        (valor) => typeof valor === 'string' && valor.trim(),
+      );
+
+      if (Array.isArray(item.linhas) && item.linhas.length > 0) {
+        const linhas = item.linhas
+          .map((linha: any) => {
+            if (!linha?.valores || typeof linha.valores !== 'object') {
+              return '';
+            }
+
+            const valores = Object.values(linha.valores)
+              .filter((valor) => typeof valor === 'string' ? valor.trim() : Boolean(valor))
+              .map((valor) => String(valor).trim())
+              .filter(Boolean);
+
+            return valores.length > 0 ? `- ${valores.join(' | ')}` : '';
+          })
+          .filter(Boolean);
+
+        if (linhas.length > 0) {
+          partes.push(linhas.join('\n'));
+        }
+      }
+
+      if (partes.length === 0) {
+        return `Item ${index + 1}`;
+      }
+
+      return partes.join('\n');
+    };
+
+    if (Array.isArray(escopo)) {
+      return escopo
+        .map((item, index) => formatarItemEscopo(item, index))
+        .filter(Boolean)
+        .join('\n\n');
+    }
+
+    if (typeof escopo === 'object') {
+      return formatarItemEscopo(escopo, 0);
+    }
+
+    return String(escopo);
+  };
+
   const initialServico: Servico = {
     id: '',
     tipo: '',
@@ -246,6 +273,16 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
+  const parseDecimal = (value: string) => {
+    const normalized = String(value || '').trim();
+    const parsed = normalized.includes(',')
+      ? Number(normalized.replace(/\./g, '').replace(',', '.'))
+      : Number(normalized);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const formatDecimal = (value: number) => (Number.isFinite(value) ? value.toFixed(2) : '0.00');
+
   const gerarIdLinha = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
   const novaLinhaTabelaMediacao = (): LinhaTabelaMediacao => ({
@@ -253,8 +290,9 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     item: '',
     descricao: '',
     unidade: '',
-    previsto: '',
-    realizado: '',
+    quantidadeProduzida: '',
+    valorUnitario: '',
+    total: '0.00',
     observacoes: ''
   });
 
@@ -319,11 +357,23 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   const atualizarLinhaTabelaItens = (linhaId: string, campo: keyof LinhaTabelaMediacao, valor: string) => {
     setDocumentoMediacaoForm((prev) => {
       if (!prev) return prev;
+      const tabelaItens = prev.tabelaItens.map((linha) => {
+        if (linha.id !== linhaId) return linha;
+
+        const proximaLinha = { ...linha, [campo]: valor };
+        const quantidade = parseDecimal(proximaLinha.quantidadeProduzida);
+        const valorUnitario = parseDecimal(proximaLinha.valorUnitario);
+        const total = quantidade * valorUnitario;
+
+        return {
+          ...proximaLinha,
+          total: formatDecimal(total)
+        };
+      });
+
       return {
         ...prev,
-        tabelaItens: prev.tabelaItens.map((linha) => (
-          linha.id === linhaId ? { ...linha, [campo]: valor } : linha
-        ))
+        tabelaItens
       };
     });
   };
@@ -386,64 +436,56 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     if (!documentoMediacaoForm) return;
 
     if (!documentoMediacaoForm.embarcacao.trim()) {
-      toast.error('Preencha a embarcacao para gerar o documento de medicao.');
+      toast.error('Preencha a embarcação para gerar o documento de medição.');
       return;
     }
 
     const obraReferencia = (obras || []).find((item: any) => item.id === documentoMediacaoForm.obraId) || selectedObraDetalhes;
     const nomeNegocio = obraReferencia?.nome || 'Negocio';
     const dataGeracao = new Date().toLocaleString('pt-BR');
+    const totalGeralMediacao = documentoMediacaoForm.tabelaItens.reduce((soma, linha) => soma + parseDecimal(linha.total), 0);
 
     const blocoItens = documentoMediacaoForm.tabelaItens
       .map((linha, index) => (
         `${index + 1}. Item: ${linha.item || '-'}\n` +
         `   Descricao: ${linha.descricao || '-'}\n` +
         `   Unidade: ${linha.unidade || '-'}\n` +
-        `   Previsto: ${linha.previsto || '-'}\n` +
-        `   Realizado: ${linha.realizado || '-'}\n` +
-        `   Observacoes: ${linha.observacoes || '-'}\n`
-      ))
-      .join('\n');
-
-    const blocoRecursos = documentoMediacaoForm.tabelaRecursos
-      .map((linha, index) => (
-        `${index + 1}. Recurso: ${linha.recurso || '-'}\n` +
-        `   Funcao: ${linha.funcao || '-'}\n` +
-        `   Periodo: ${linha.periodo || '-'}\n` +
-        `   Horas: ${linha.horas || '-'}\n` +
+        `   Quantidade produzida: ${linha.quantidadeProduzida || '-'}\n` +
+        `   Valor por unidade: ${linha.valorUnitario || '-'}\n` +
+        `   Total: ${linha.total || '0.00'}\n` +
         `   Observacoes: ${linha.observacoes || '-'}\n`
       ))
       .join('\n');
 
     const conteudo = `
 ================================================================================
-                    DOCUMENTO DE MEDICAO
+                    DOCUMENTO DE MEDIÇÃO
 ================================================================================
 
 Empresa: ${documentoMediacaoForm.empresa}
 Cliente: ${documentoMediacaoForm.cliente}
 CNPJ: ${documentoMediacaoForm.cnpj || '-'}
 Negocio: ${nomeNegocio}
-Data emissao: ${formatarDataInputParaBr(documentoMediacaoForm.dataEmissao)}
-Embarcacao: ${documentoMediacaoForm.embarcacao}
+Data de emissão: ${formatarDataInputParaBr(documentoMediacaoForm.dataEmissao)}
+Embarcação: ${documentoMediacaoForm.embarcacao}
 Nr. BM: ${documentoMediacaoForm.numeroBM || '-'}
-Periodo: ${documentoMediacaoForm.periodo || '-'}
+Período: ${documentoMediacaoForm.periodo || '-'}
 
 ================================================================================
-TABELA DE MEDICAO DE SERVICOS
+TABELA DE MEDIÇÃO DE SERVIÇOS
 ================================================================================
 
 ${blocoItens || 'Sem registros.'}
 
 ================================================================================
-TABELA DE RECURSOS E HORAS
+RESUMO FINAL DA MEDIÇÃO
 ================================================================================
 
-${blocoRecursos || 'Sem registros.'}
+Total da medição: R$ ${formatDecimal(totalGeralMediacao)}
 
 ================================================================================
 Documento gerado automaticamente pelo Linave ERP
-Geracao: ${dataGeracao}
+Geração: ${dataGeracao}
 ================================================================================
     `;
 
@@ -474,7 +516,7 @@ Geracao: ${dataGeracao}
     elemento.click();
     document.body.removeChild(elemento);
 
-    toast.success('Documento de medicao criado, anexado e baixado com sucesso.');
+    toast.success('Documento de medição criado, anexado e baixado com sucesso.');
     setShowDocumentoMediacaoModal(false);
   };
 
@@ -951,12 +993,9 @@ Geracao: ${dataGeracao}
         ? selectedObraDetalhes.propostas[selectedObraDetalhes.propostas.length - 1]
         : null;
       const propostaAceita = ultimaProposta?.status === 'aceita';
-      const possuiDocumentoCliente = Boolean(
-        selectedObraDetalhes.documentoClienteAssinado?.conteudo || selectedObraDetalhes.documentoClienteAssinado?.url
-      );
 
-      if (!propostaAceita || !possuiDocumentoCliente) {
-        return alert('Para iniciar o trabalho é obrigatório ter proposta aceita e documento assinado do cliente anexado.');
+      if (!propostaAceita) {
+        return alert('Para iniciar o trabalho é obrigatório ter proposta aceita.');
       }
 
       proximaCategoria = 'Em Andamento';
@@ -1075,13 +1114,7 @@ ESCOPO DE SERVIÇOS
 ================================================================================
 
 A - Escopo Básico:
-${ultimaProposta.escopoA || 'Não preenchido'}
-
-B - Responsabilidade da Contratada:
-${ultimaProposta.responsabilidadeContratada || 'Não preenchido'}
-
-C - Responsabilidade da Contratante:
-${ultimaProposta.escopoC || 'Não preenchido'}
+${formatarEscopoBasicoParaTexto(ultimaProposta.escopoBasicoServicos || ultimaProposta.escopoA || 'Não preenchido')}
 
 ================================================================================
 CONDIÇÕES COMERCIAIS
@@ -1256,21 +1289,20 @@ Geração: ${new Date().toLocaleString('pt-BR')}
     }
   };
 
-  const possuiOSAprovadaComAssinatura = (obraId: string) => {
+  const possuiOSAprovadaParaFinalizacao = (obraId: string) => {
     const osDoNegocio = (os || []).filter((item: any) => item.obraId === obraId);
     return osDoNegocio.some((item: any) => (
       item.statusEnvio === 'enviada'
       && item.statusAprovacao === 'aprovada'
-      && Boolean(item.documentoAssinaturaAprovacao?.conteudo || item.documentoAssinaturaAprovacao?.url)
     ));
   };
 
   const handleAvancarParaFinalizacao = () => {
     if (!selectedObraDetalhes) return;
 
-    const podeFinalizar = possuiOSAprovadaComAssinatura(selectedObraDetalhes.id);
+    const podeFinalizar = possuiOSAprovadaParaFinalizacao(selectedObraDetalhes.id);
     if (!podeFinalizar) {
-      return alert('Para avançar para Finalização é obrigatório ter OS enviada, aprovada e com assinatura anexada.');
+      return alert('Para avançar para Finalização é obrigatório ter OS enviada e aprovada.');
     }
 
     const obraAtualizada = {
@@ -1647,7 +1679,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                                 }}
                                 className="w-full py-2 rounded-lg bg-gradient-to-r from-emerald-500/30 to-cyan-500/30 hover:from-emerald-500/50 hover:to-cyan-500/50 border border-emerald-400/40 text-emerald-200 text-[11px] font-black uppercase tracking-wider transition-all"
                               >
-                                <FileText size={14} className="inline mr-1" /> Criar Documento de Medicao
+                                <FileText size={14} className="inline mr-1" /> Criar Documento de Medição
                               </button>
                             </div>
                           );
@@ -2362,13 +2394,9 @@ Geração: ${new Date().toLocaleString('pt-BR')}
 
                     <div className="bg-[#0b1220] rounded-lg p-4 border border-white/5 space-y-3">
                       <div className="flex items-center justify-between gap-3">
-                        <p className="text-white font-black text-sm">Documento Assinado do Cliente</p>
-                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${
-                          possuiDocumentoCliente
-                            ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-300'
-                            : 'bg-amber-500/20 border border-amber-500/40 text-amber-300'
-                        }`}>
-                          {possuiDocumentoCliente ? 'Anexado' : 'Pendente'}
+                        <p className="text-white font-black text-sm">Documento do Cliente</p>
+                        <span className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-slate-500/20 border border-slate-500/40 text-slate-300">
+                          Opcional
                         </span>
                       </div>
 
@@ -2384,7 +2412,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                         />
                       )}
 
-                      {possuiDocumentoCliente && (
+                      {documentoClienteAssinado && (
                         <div className="bg-[#101f3d] rounded-lg border border-white/10 p-3 space-y-2">
                           <p className="text-white text-xs font-bold truncate">{documentoClienteAssinado.nome}</p>
                           <p className="text-white/50 text-[11px]">{documentoClienteAssinado.tamanho ? formatFileSize(documentoClienteAssinado.tamanho) : 'Tamanho não informado'}</p>
@@ -2415,11 +2443,11 @@ Geração: ${new Date().toLocaleString('pt-BR')}
 
                       {isNegociacao ? (
                         <p className="text-[11px] text-white/40">
-                          Obrigatório para liberar o início do trabalho. O botão "Aprovar e Iniciar" só aparece com proposta aceita e documento anexado.
+                          O início do trabalho depende apenas de proposta aceita.
                         </p>
                       ) : (
                         <p className="text-[11px] text-white/40">
-                          Em andamento: visualização da proposta e do documento assinado do cliente.
+                          Em andamento: visualização da proposta e dos documentos do negócio.
                         </p>
                       )}
                     </div>
@@ -2566,7 +2594,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                     </div>
 
                     <p className="text-[11px] text-white/50">
-                      Para avançar para Finalização: a OS precisa estar enviada, aprovada e com assinatura anexada.
+                      Para avançar para Finalização: a OS precisa estar enviada e aprovada.
                     </p>
 
                     {selectedObraDetalhes.categoria === 'Finalização' && (
@@ -2574,7 +2602,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                         onClick={() => handleAbrirDocumentoMediacao(selectedObraDetalhes)}
                         className="w-full bg-gradient-to-r from-emerald-500/30 to-cyan-500/30 hover:from-emerald-500/50 hover:to-cyan-500/50 border border-emerald-400/40 text-emerald-300 hover:text-emerald-100 rounded-lg py-2.5 font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
                       >
-                        <FileText size={16} /> Criar Documento de Medicao
+                        <FileText size={16} /> Criar Documento de Medição
                       </button>
                     )}
                   </div>
@@ -2603,9 +2631,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                   const ultimaProposta = Array.isArray(selectedObraDetalhes.propostas) && selectedObraDetalhes.propostas.length > 0
                     ? selectedObraDetalhes.propostas[selectedObraDetalhes.propostas.length - 1]
                     : null;
-                  const podeIniciar = ultimaProposta?.status === 'aceita' && Boolean(
-                    selectedObraDetalhes.documentoClienteAssinado?.conteudo || selectedObraDetalhes.documentoClienteAssinado?.url
-                  );
+                  const podeIniciar = ultimaProposta?.status === 'aceita';
 
                   if (!podeIniciar) return null;
 
@@ -2619,7 +2645,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                   );
                 })()}
                 {selectedObraDetalhes.categoria === 'Em Andamento' && (() => {
-                  const podeFinalizar = possuiOSAprovadaComAssinatura(selectedObraDetalhes.id);
+                  const podeFinalizar = possuiOSAprovadaParaFinalizacao(selectedObraDetalhes.id);
                   return (
                     <button
                       onClick={handleAvancarParaFinalizacao}
@@ -2644,14 +2670,14 @@ Geração: ${new Date().toLocaleString('pt-BR')}
         </div>
       )}
 
-      {/* MODAL - DOCUMENTO DE MEDICAO */}
+      {/* MODAL - DOCUMENTO DE MEDIÇÃO */}
       {showDocumentoMediacaoModal && documentoMediacaoForm && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-[#101f3d] rounded-2xl border border-white/10 shadow-2xl max-w-6xl w-full max-h-[92vh] overflow-y-auto">
             <div className="sticky top-0 z-40 bg-gradient-to-r from-emerald-500/40 to-cyan-500/40 backdrop-blur-md p-8 border-b border-white/10 flex justify-between items-center">
               <div>
-                <h2 className="text-2xl font-black text-white">DOCUMENTO DE MEDICAO</h2>
-                <p className="text-white/60 text-sm mt-2">Preencha os dados e tabelas para gerar a medicao do periodo.</p>
+                <h2 className="text-2xl font-black text-white">DOCUMENTO DE MEDIÇÃO</h2>
+                <p className="text-white/60 text-sm mt-2">Preencha os dados para gerar a medição do período.</p>
               </div>
               <button
                 onClick={() => setShowDocumentoMediacaoModal(false)}
@@ -2691,7 +2717,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                   />
                 </div>
                 <div>
-                  <p className="text-white/50 text-xs mb-1 uppercase font-black tracking-widest">Data emissao</p>
+                  <p className="text-white/50 text-xs mb-1 uppercase font-black tracking-widest">Data de emissão</p>
                   <input
                     type="date"
                     value={documentoMediacaoForm.dataEmissao}
@@ -2700,7 +2726,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                   />
                 </div>
                 <div>
-                  <p className="text-white/50 text-xs mb-1 uppercase font-black tracking-widest">Embarcacao</p>
+                  <p className="text-white/50 text-xs mb-1 uppercase font-black tracking-widest">Embarcação</p>
                   <input
                     type="text"
                     value={documentoMediacaoForm.embarcacao}
@@ -2720,7 +2746,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                   />
                 </div>
                 <div className="col-span-2">
-                  <p className="text-white/50 text-xs mb-1 uppercase font-black tracking-widest">Periodo</p>
+                  <p className="text-white/50 text-xs mb-1 uppercase font-black tracking-widest">Período</p>
                   <input
                     type="text"
                     value={documentoMediacaoForm.periodo}
@@ -2732,7 +2758,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
 
               <div className="bg-[#0b1220] rounded-xl border border-white/10 p-6 space-y-4">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-emerald-300 text-lg font-black uppercase">Tabela de Medicao de Servicos</h3>
+                  <h3 className="text-emerald-300 text-lg font-black uppercase">Tabela de Medição de Serviços</h3>
                   <button
                     onClick={adicionarLinhaTabelaItens}
                     className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-xs font-black uppercase"
@@ -2745,12 +2771,13 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                     <thead>
                       <tr className="bg-white/5 text-white/70 uppercase tracking-wider">
                         <th className="border border-white/10 px-3 py-2 text-left">Item</th>
-                        <th className="border border-white/10 px-3 py-2 text-left">Descricao</th>
+                        <th className="border border-white/10 px-3 py-2 text-left">Descrição</th>
                         <th className="border border-white/10 px-3 py-2 text-left">Unidade</th>
-                        <th className="border border-white/10 px-3 py-2 text-left">Previsto</th>
-                        <th className="border border-white/10 px-3 py-2 text-left">Realizado</th>
-                        <th className="border border-white/10 px-3 py-2 text-left">Observacoes</th>
-                        <th className="border border-white/10 px-3 py-2 text-center">Acao</th>
+                        <th className="border border-white/10 px-3 py-2 text-left">Quantidade produzida</th>
+                        <th className="border border-white/10 px-3 py-2 text-left">Valor / unidade</th>
+                        <th className="border border-white/10 px-3 py-2 text-left">Total</th>
+                        <th className="border border-white/10 px-3 py-2 text-left">Observações</th>
+                        <th className="border border-white/10 px-3 py-2 text-center">Ação</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2759,8 +2786,9 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                           <td className="border border-white/10 p-1.5"><input value={linha.item} onChange={(e) => atualizarLinhaTabelaItens(linha.id, 'item', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
                           <td className="border border-white/10 p-1.5"><input value={linha.descricao} onChange={(e) => atualizarLinhaTabelaItens(linha.id, 'descricao', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
                           <td className="border border-white/10 p-1.5"><input value={linha.unidade} onChange={(e) => atualizarLinhaTabelaItens(linha.id, 'unidade', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
-                          <td className="border border-white/10 p-1.5"><input value={linha.previsto} onChange={(e) => atualizarLinhaTabelaItens(linha.id, 'previsto', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
-                          <td className="border border-white/10 p-1.5"><input value={linha.realizado} onChange={(e) => atualizarLinhaTabelaItens(linha.id, 'realizado', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
+                          <td className="border border-white/10 p-1.5"><input value={linha.quantidadeProduzida} onChange={(e) => atualizarLinhaTabelaItens(linha.id, 'quantidadeProduzida', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
+                          <td className="border border-white/10 p-1.5"><input value={linha.valorUnitario} onChange={(e) => atualizarLinhaTabelaItens(linha.id, 'valorUnitario', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
+                          <td className="border border-white/10 p-1.5"><input value={linha.total} readOnly className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1 text-emerald-300 font-black" /></td>
                           <td className="border border-white/10 p-1.5"><input value={linha.observacoes} onChange={(e) => atualizarLinhaTabelaItens(linha.id, 'observacoes', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
                           <td className="border border-white/10 p-1.5 text-center">
                             <button
@@ -2775,50 +2803,14 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                     </tbody>
                   </table>
                 </div>
-              </div>
 
-              <div className="bg-[#0b1220] rounded-xl border border-white/10 p-6 space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-cyan-300 text-lg font-black uppercase">Tabela de Recursos e Horas</h3>
-                  <button
-                    onClick={adicionarLinhaTabelaRecursos}
-                    className="px-3 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-200 text-xs font-black uppercase"
-                  >
-                    + Linha
-                  </button>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[900px] text-xs border-collapse">
-                    <thead>
-                      <tr className="bg-white/5 text-white/70 uppercase tracking-wider">
-                        <th className="border border-white/10 px-3 py-2 text-left">Recurso</th>
-                        <th className="border border-white/10 px-3 py-2 text-left">Funcao</th>
-                        <th className="border border-white/10 px-3 py-2 text-left">Periodo</th>
-                        <th className="border border-white/10 px-3 py-2 text-left">Horas</th>
-                        <th className="border border-white/10 px-3 py-2 text-left">Observacoes</th>
-                        <th className="border border-white/10 px-3 py-2 text-center">Acao</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {documentoMediacaoForm.tabelaRecursos.map((linha) => (
-                        <tr key={linha.id} className="text-white">
-                          <td className="border border-white/10 p-1.5"><input value={linha.recurso} onChange={(e) => atualizarLinhaTabelaRecursos(linha.id, 'recurso', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
-                          <td className="border border-white/10 p-1.5"><input value={linha.funcao} onChange={(e) => atualizarLinhaTabelaRecursos(linha.id, 'funcao', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
-                          <td className="border border-white/10 p-1.5"><input value={linha.periodo} onChange={(e) => atualizarLinhaTabelaRecursos(linha.id, 'periodo', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
-                          <td className="border border-white/10 p-1.5"><input value={linha.horas} onChange={(e) => atualizarLinhaTabelaRecursos(linha.id, 'horas', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
-                          <td className="border border-white/10 p-1.5"><input value={linha.observacoes} onChange={(e) => atualizarLinhaTabelaRecursos(linha.id, 'observacoes', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
-                          <td className="border border-white/10 p-1.5 text-center">
-                            <button
-                              onClick={() => removerLinhaTabelaRecursos(linha.id)}
-                              className="px-2 py-1 rounded bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300"
-                            >
-                              <X size={12} className="inline" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="grid grid-cols-1 gap-4">
+                  <div className="bg-[#101f3d] rounded-xl border border-white/10 p-4">
+                    <p className="text-white/50 text-xs mb-1 uppercase font-black tracking-widest">Total da medição</p>
+                    <p className="text-emerald-300 font-black text-lg">
+                      {`R$ ${formatDecimal(documentoMediacaoForm.tabelaItens.reduce((total, linha) => total + parseDecimal(linha.total), 0))}`}
+                    </p>
+                  </div>
                 </div>
               </div>
 
@@ -2827,7 +2819,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                   onClick={handleGerarDocumentoMediacao}
                   className="flex-1 py-3 rounded-lg bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-white font-black uppercase text-sm tracking-widest"
                 >
-                  <Download size={16} className="inline mr-2" /> Gerar Documento de Medicao
+                  <Download size={16} className="inline mr-2" /> Gerar Documento de Medição
                 </button>
                 <button
                   onClick={() => setShowDocumentoMediacaoModal(false)}
@@ -3012,19 +3004,9 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                 {/* Escopos */}
                 <div className="bg-white/5 border border-white/10 rounded-xl p-6 space-y-4">
                   <h3 className="text-white font-black text-lg">ESCOPOS DE SERVIÇOS</h3>
-                  <div className="space-y-4">
-                    <div>
-                      <p className="text-white/50 text-xs mb-2 font-black">A - Escopo Básico de Serviços</p>
-                      <p className="text-white whitespace-pre-wrap text-sm">{ultimaProposta.escopoA || '−'}</p>
-                    </div>
-                    <div>
-                      <p className="text-white/50 text-xs mb-2 font-black">B - Responsabilidade da Contratada</p>
-                      <p className="text-white whitespace-pre-wrap text-sm">{ultimaProposta.responsabilidadeContratada || '−'}</p>
-                    </div>
-                    <div>
-                      <p className="text-white/50 text-xs mb-2 font-black">C - Responsabilidade da Contratante</p>
-                      <p className="text-white whitespace-pre-wrap text-sm">{ultimaProposta.escopoC || '−'}</p>
-                    </div>
+                  <div>
+                    <p className="text-white/50 text-xs mb-2 font-black">A - Escopo Básico de Serviços</p>
+                    <p className="text-white whitespace-pre-wrap text-sm">{ultimaProposta.escopoA || '−'}</p>
                   </div>
                 </div>
 
@@ -3131,7 +3113,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
         const maoDeObraOS = Array.isArray(ultimoOrcamento?.data?.maoDeObra) ? ultimoOrcamento.data.maoDeObra : [];
         const materiaisOS = Array.isArray(ultimoOrcamento?.data?.materiais) ? ultimoOrcamento.data.materiais : [];
         const terceirizadosOS = Array.isArray(ultimoOrcamento?.data?.terceirizados) ? ultimoOrcamento.data.terceirizados : [];
-        const escopoBasicoProposta = ultimaProposta?.escopoBasicoServicos || ultimaProposta?.escopoA || '−';
+        const escopoBasicoProposta = formatarEscopoBasicoParaTexto(ultimaProposta?.escopoBasicoServicos || ultimaProposta?.escopoA || '−');
         return (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
             <div className="bg-[#101f3d] rounded-2xl border border-white/10 shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
@@ -3196,7 +3178,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                   </div>
                 </div>
 
-                {/* Orçamento sem valores */}
+                {/* Orçamento */}
                 <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-6 space-y-4">
                   <div className="flex items-center justify-between gap-3">
                     <h3 className="text-emerald-300 font-black text-lg uppercase">Orçamento</h3>
@@ -3297,7 +3279,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                   )}
                 </div>
 
-                {/* Proposta sem valores */}
+                {/* Proposta */}
                 <div className="bg-cyan-500/10 border border-cyan-500/20 rounded-xl p-6 space-y-4">
                   <div className="flex items-center justify-between gap-3">
                     <h3 className="text-cyan-300 font-black text-lg uppercase">Proposta</h3>
@@ -3328,73 +3310,9 @@ Geração: ${new Date().toLocaleString('pt-BR')}
 
                       <div className="bg-white/5 border border-white/10 rounded-xl p-6 space-y-4">
                         <h4 className="text-white font-black text-sm uppercase">Escopo de Serviços</h4>
-                        <div className="space-y-4">
-                          <div>
-                            <p className="text-white/50 text-xs mb-2 font-black">A - Escopo Básico de Serviços</p>
-                            <p className="text-white whitespace-pre-wrap text-sm">{escopoBasicoProposta}</p>
-                          </div>
-                          <div>
-                            <p className="text-white/50 text-xs mb-2 font-black">B - Responsabilidade da Contratada</p>
-                            <p className="text-white whitespace-pre-wrap text-sm">{ultimaProposta.responsabilidadeContratada || '−'}</p>
-                          </div>
-                          <div>
-                            <p className="text-white/50 text-xs mb-2 font-black">C - Responsabilidade da Contratante</p>
-                            <p className="text-white whitespace-pre-wrap text-sm">{ultimaProposta.escopoC || '−'}</p>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="bg-white/5 border border-white/10 rounded-xl p-6 space-y-4">
-                        <h4 className="text-white font-black text-sm uppercase">Condições Comerciais</h4>
-                        <div className="space-y-4">
-                          <div>
-                            <p className="text-white/50 text-xs mb-2 font-black">D - Preço</p>
-                            <p className="text-white whitespace-pre-wrap text-sm">Vinculado ao orçamento aprovado, sem valores exibidos na OS.</p>
-                          </div>
-                          <div>
-                            <p className="text-white/50 text-xs mb-2 font-black">Impostos / Observações Fiscais</p>
-                            <p className="text-white whitespace-pre-wrap text-sm">{ultimaProposta.impostos || '−'}</p>
-                          </div>
-                          <div>
-                            <p className="text-white/50 text-xs mb-2 font-black">E - Condições Gerais</p>
-                            <p className="text-white whitespace-pre-wrap text-sm">{ultimaProposta.condicoesGerais || '−'}</p>
-                          </div>
-                          <div>
-                            <p className="text-white/50 text-xs mb-2 font-black">F - Condições de Pagamento</p>
-                            <p className="text-white whitespace-pre-wrap text-sm">{ultimaProposta.condicoesPagamento || '−'}</p>
-                          </div>
-                          <div>
-                            <p className="text-white/50 text-xs mb-2 font-black">G - Prazo</p>
-                            <p className="text-white whitespace-pre-wrap text-sm">{ultimaProposta.prazo || '−'}</p>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="bg-white/5 border border-white/10 rounded-xl p-6 space-y-3">
-                        <h4 className="text-white font-black text-sm uppercase">Referências e Encerramento</h4>
-                        <div className="space-y-3">
-                          <div>
-                            <p className="text-white/50 text-xs mb-1 font-black">Referências</p>
-                            <p className="text-white whitespace-pre-wrap">{ultimaProposta.referencias || '−'}</p>
-                          </div>
-                          <div>
-                            <p className="text-white/50 text-xs mb-1 font-black">Encerramento</p>
-                            <p className="text-white whitespace-pre-wrap">{ultimaProposta.encerramento || '−'}</p>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="bg-white/5 border border-white/10 rounded-xl p-6 space-y-3">
-                        <h4 className="text-white font-black text-sm uppercase">Assinatura</h4>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <p className="text-white/50 text-xs mb-1">Nome</p>
-                            <p className="text-white font-bold">{ultimaProposta.assinaturaNome || '−'}</p>
-                          </div>
-                          <div>
-                            <p className="text-white/50 text-xs mb-1">Cargo</p>
-                            <p className="text-white font-bold">{ultimaProposta.assinaturaCargo || '−'}</p>
-                          </div>
+                        <div>
+                          <p className="text-white/50 text-xs mb-2 font-black">A - Escopo Básico de Serviços</p>
+                          <p className="text-white whitespace-pre-wrap text-sm">{escopoBasicoProposta}</p>
                         </div>
                       </div>
                     </div>

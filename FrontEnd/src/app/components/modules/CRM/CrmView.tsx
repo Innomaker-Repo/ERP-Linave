@@ -4,35 +4,6 @@ import {
   Plus, X, FileText, LinkIcon, Anchor, ChevronDown, Trash2, TrendingUp
 } from 'lucide-react';
 
-// Clientes mockados no código
-const CLIENTES_MOCK = [
-  {
-    id: 'CLI-1',
-    razaoSocial: 'Linave Construções LTDA',
-    nomeFantasia: 'Linave'
-  },
-  {
-    id: 'CLI-2',
-    razaoSocial: 'Construtora Alpha S.A.',
-    nomeFantasia: 'Alpha Construtora'
-  },
-  {
-    id: 'CLI-3',
-    razaoSocial: 'TC Engenharia e Consultoria',
-    nomeFantasia: 'TC Engenharia'
-  },
-  {
-    id: 'CLI-4',
-    razaoSocial: 'Projetos Marítimos LTDA',
-    nomeFantasia: 'ProMar'
-  },
-  {
-    id: 'CLI-5',
-    razaoSocial: 'Estaleiro Industrial do Sudeste',
-    nomeFantasia: 'EISE'
-  }
-];
-
 // Fases do Fluxo Linave
 type FaseOS = 
   | 'Pre-Venda' 
@@ -65,6 +36,7 @@ interface CrmViewProps {
 
 export function CrmView({ searchQuery }: CrmViewProps) {
   const { os, clientes, obras, saveEntity, userSession } = useErp();
+  const listaClientes = Array.isArray(clientes) ? clientes : [];
   const [showForm, setShowForm] = useState(false);
   const [showRequisitosModal, setShowRequisitosModal] = useState(false);
   const [showPropostaModal, setShowPropostaModal] = useState(false);
@@ -160,7 +132,7 @@ export function CrmView({ searchQuery }: CrmViewProps) {
     }
 
     const novoProjetoId = `PROJ-${Date.now()}`;
-    const nomeObra = CLIENTES_MOCK.find(c => c.id === formData.clienteId)?.razaoSocial || 'Projeto';
+    const nomeObra = listaClientes.find(c => c.id === formData.clienteId)?.razaoSocial || 'Projeto';
     const primeiroServico = formData.servicos[0];
 
     const novaObra = {
@@ -352,7 +324,7 @@ export function CrmView({ searchQuery }: CrmViewProps) {
                       value={formData.clienteId} 
                       onChange={e => setFormData({...formData, clienteId: e.target.value})}>
                       <option value="">Selecione um cliente no banco</option>
-                      {CLIENTES_MOCK.map((c:any) => <option key={c.id} value={c.id}>{c.razaoSocial}</option>)}
+                      {listaClientes.map((c:any) => <option key={c.id} value={c.id}>{c.razaoSocial}</option>)}
                     </select>
                   </div>
                   <div className="space-y-1.5">
@@ -1354,7 +1326,7 @@ export function CrmView({ searchQuery }: CrmViewProps) {
         {obras && obras.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {obras.map((obra: any) => {
-              const cliente = CLIENTES_MOCK.find((c: any) => c.id === obra.clienteId);
+              const cliente = listaClientes.find((c: any) => c.id === obra.clienteId);
               const osRelacionados = os?.filter((o: any) => o.obraId === obra.id) || [];
               
               return (
@@ -1423,7 +1395,7 @@ export function CrmView({ searchQuery }: CrmViewProps) {
             <div className="sticky top-0 bg-gradient-to-r from-amber-500/20 to-orange-500/20 p-8 border-b border-white/10 flex justify-between items-center">
               <div>
                 <h2 className="text-2xl font-black text-white uppercase">{selectedObra.nome}</h2>
-                <p className="text-white/50 text-sm mt-2">{CLIENTES_MOCK.find((c: any) => c.id === selectedObra.clienteId)?.razaoSocial || 'Cliente Desconhecido'}</p>
+                <p className="text-white/50 text-sm mt-2">{listaClientes.find((c: any) => c.id === selectedObra.clienteId)?.razaoSocial || 'Cliente Desconhecido'}</p>
               </div>
               <button 
                 onClick={() => setShowObraDetalhesModal(false)}

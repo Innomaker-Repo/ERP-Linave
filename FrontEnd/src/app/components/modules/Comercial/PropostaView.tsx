@@ -2,14 +2,6 @@ import React, { useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { Plus, X, FileText, ChevronDown, CheckCircle, XCircle, ArrowLeft } from 'lucide-react';
 
-const CLIENTES_MOCK = [
-  { id: 'CLI-1', razaoSocial: 'Linave Construções LTDA', nomeFantasia: 'Linave' },
-  { id: 'CLI-2', razaoSocial: 'Construtora Alpha S.A.', nomeFantasia: 'Alpha Construtora' },
-  { id: 'CLI-3', razaoSocial: 'TC Engenharia e Consultoria', nomeFantasia: 'TC Engenharia' },
-  { id: 'CLI-4', razaoSocial: 'Projetos Marítimos LTDA', nomeFantasia: 'ProMar' },
-  { id: 'CLI-5', razaoSocial: 'Estaleiro Industrial do Sudeste', nomeFantasia: 'EISE' }
-];
-
 interface EscopoLinha {
   id: string;
   valores: Record<string, string>;
@@ -51,7 +43,8 @@ interface PropostaFormData {
 }
 
 export function PropostaView() {
-  const { obras, saveEntity } = useErp();
+  const { obras, clientes, saveEntity } = useErp();
+  const listaClientes = Array.isArray(clientes) ? clientes : [];
   const [viewMode, setViewMode] = useState<'list' | 'form' | 'historico'>('list');
   const [selectedObra, setSelectedObra] = useState<any>(null);
   const [selectedPropostaVersion, setSelectedPropostaVersion] = useState<number | null>(null);
@@ -258,7 +251,7 @@ export function PropostaView() {
     setSelectedObra(obra);
     
     // Pré-preencher dados
-    const cliente = CLIENTES_MOCK.find(c => c.id === obra.clienteId);
+    const cliente = listaClientes.find(c => c.id === obra.clienteId);
     const proximaVersao = (obra.propostas?.length || 0) + 1;
     
     setPropostaForm(prev => ({
@@ -432,7 +425,7 @@ export function PropostaView() {
                       <div>
                         <h3 className="text-lg font-black text-white">{obra.nome}</h3>
                         <p className="text-white/70 text-sm mt-1">
-                          Cliente: {CLIENTES_MOCK.find(c => c.id === obra.clienteId)?.razaoSocial}
+                          Cliente: {listaClientes.find(c => c.id === obra.clienteId)?.razaoSocial}
                         </p>
                       </div>
                     </div>
@@ -487,7 +480,7 @@ export function PropostaView() {
                       <div>
                         <h3 className="text-lg font-black text-white">{obra.nome}</h3>
                         <p className="text-white/70 text-sm mt-1">
-                          Cliente: {CLIENTES_MOCK.find(c => c.id === obra.clienteId)?.razaoSocial}
+                          Cliente: {listaClientes.find(c => c.id === obra.clienteId)?.razaoSocial}
                         </p>
                       </div>
                       <div className="flex gap-2">
