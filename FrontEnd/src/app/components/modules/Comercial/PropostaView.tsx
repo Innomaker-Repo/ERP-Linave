@@ -1,6 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { Plus, X, FileText, ChevronDown, CheckCircle, XCircle, ArrowLeft } from 'lucide-react';
+
+const CLIENTES_MOCK = [
+  { id: 'CLI-1', razaoSocial: 'Linave Construções LTDA', nomeFantasia: 'Linave' },
+  { id: 'CLI-2', razaoSocial: 'Construtora Alpha S.A.', nomeFantasia: 'Alpha Construtora' },
+  { id: 'CLI-3', razaoSocial: 'TC Engenharia e Consultoria', nomeFantasia: 'TC Engenharia' },
+  { id: 'CLI-4', razaoSocial: 'Projetos Marítimos LTDA', nomeFantasia: 'ProMar' },
+  { id: 'CLI-5', razaoSocial: 'Estaleiro Industrial do Sudeste', nomeFantasia: 'EISE' }
+];
 
 interface EscopoLinha {
   id: string;
@@ -43,8 +51,7 @@ interface PropostaFormData {
 }
 
 export function PropostaView() {
-  const { obras, clientes, saveEntity } = useErp();
-  const listaClientes = Array.isArray(clientes) ? clientes : [];
+  const { obras, saveEntity } = useErp();
   const [viewMode, setViewMode] = useState<'list' | 'form' | 'historico'>('list');
   const [selectedObra, setSelectedObra] = useState<any>(null);
   const [selectedPropostaVersion, setSelectedPropostaVersion] = useState<number | null>(null);
