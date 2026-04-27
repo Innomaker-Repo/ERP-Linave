@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from .models import Cliente, Negocio, Servico, User
-from .models import Levantamento, MDO, Ativ_previstas, Materiais, Servicos_terceirizados, Observacoes_setor_orcamento, Resumo_orcamento 
+from .models import Levantamento, MDO, Ativ_prevista, Material, Servicos_terceirizados, Observacoes_setor_orcamento, Resumo_orcamento 
 
 
 #----------------- Core ------------------
@@ -41,14 +41,14 @@ class MDOSerializer(serializers.ModelSerializer):
         model = MDO
         fields = '__all__'
 
-class Ativ_previstasSerializer(serializers.ModelSerializer):
+class Ativ_previstaSerializer(serializers.ModelSerializer):
     class Meta:
-        model = Ativ_previstas
+        model = Ativ_prevista
         fields = '__all__'
 
-class MateriaisSerializer(serializers.ModelSerializer):
+class MaterialSerializer(serializers.ModelSerializer):
     class Meta:
-        model = Materiais
+        model = Material
         fields = '__all__'
 
 class Servicos_terceirizadosSerializer(serializers.ModelSerializer):
@@ -63,7 +63,7 @@ class Observacoes_setor_orcamentoSerializer(serializers.ModelSerializer):
 
 class Resumo_orcamentoSerializer(serializers.ModelSerializer):
     MDOs = MDOSerializer(many=True, read_only=True)
-    Mats = MateriaisSerializer(many=True, read_only=True)
+    Mats = MaterialSerializer(many=True, read_only=True)
     SRVs = Servicos_terceirizadosSerializer(many=True, read_only=True)
     
     class Meta:
