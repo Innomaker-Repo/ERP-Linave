@@ -266,13 +266,13 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       : proximaVersaoOrcamento(orcamentosExistentes);
 
     // Calcular valores
-    const totalMaoDeObra = orcamentoData.maoDeObra.reduce((sum: number, item: any) => sum + (parseFloat(item.valorTotal) || 0), 0);
-    const totalMateriais = orcamentoData.materiais.reduce((sum: number, item: any) => sum + (parseFloat(item.valorTotal) || 0), 0);
-    const totalTerceirizados = orcamentoData.terceirizados.reduce((sum: number, item: any) => sum + (parseFloat(item.valorTotal) || 0), 0);
+    const totalMaoDeObra = orcamentoData.maoDeObra.reduce((sum: number, item: any) => sum + (parseDecimal(item.valorTotal) || 0), 0);
+    const totalMateriais = orcamentoData.materiais.reduce((sum: number, item: any) => sum + (parseDecimal(item.valorTotal) || 0), 0);
+    const totalTerceirizados = orcamentoData.terceirizados.reduce((sum: number, item: any) => sum + (parseDecimal(item.valorTotal) || 0), 0);
     const totalBruto = totalMaoDeObra + totalMateriais + totalTerceirizados;
-    const margemPercentual = parseFloat(orcamentoData.margem) || 0;
-    const ohPercentual = parseFloat(orcamentoData.oh) || 0;
-    const impostosPercentual = parseFloat(orcamentoData.impostos) || 0;
+    const margemPercentual = parseDecimal(orcamentoData.margem) || 0;
+    const ohPercentual = parseDecimal(orcamentoData.oh) || 0;
+    const impostosPercentual = parseDecimal(orcamentoData.impostos) || 0;
     const margemValor = (totalBruto * margemPercentual) / 100;
     const ohValor = (totalBruto * ohPercentual) / 100;
     const totalSemImposto = totalBruto + margemValor + ohValor;
@@ -365,12 +365,24 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   };
 
   const parseDecimal = (value: string) => {
-    const normalized = String(value || '').replace(',', '.');
-    const numeric = parseFloat(normalized);
+    const s = String(value ?? '').trim();
+    if (s === '') return 0;
+    // pt-BR formatted numbers use '.' as thousands separator and ',' as decimal
+    if (s.includes(',')) {
+      const cleaned = s.replace(/\./g, '').replace(',', '.');
+      const numeric = parseFloat(cleaned);
+      return Number.isFinite(numeric) ? numeric : 0;
+    }
+    // fallback: remove non-numeric chars except dot and minus
+    const cleaned = s.replace(/[^0-9.-]/g, '');
+    const numeric = parseFloat(cleaned);
     return Number.isFinite(numeric) ? numeric : 0;
   };
 
   const toMoneyString = (value: number) => value.toFixed(2);
+
+  const formatNumber = (value: number) => Number.isFinite(value) ? value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0,00';
+  const formatMoney = (value: number) => `R$ ${formatNumber(value)}`;
 
   const recalcularMaoDeObraItem = (item: MaoDeObra): MaoDeObra => {
     const total = parseDecimal(item.quantidade) * parseDecimal(item.dias) * parseDecimal(item.custoUnitDia);
@@ -466,9 +478,9 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   };
 
   // Calcular totais
-  const totalMaoDeObra = orcamentoData.maoDeObra.reduce((sum, item) => sum + (parseFloat(item.valorTotal) || 0), 0);
-  const totalMateriais = orcamentoData.materiais.reduce((sum, item) => sum + (parseFloat(item.valorTotal) || 0), 0);
-  const totalTerceirizados = orcamentoData.terceirizados.reduce((sum, item) => sum + (parseFloat(item.valorTotal) || 0), 0);
+  const totalMaoDeObra = orcamentoData.maoDeObra.reduce((sum, item) => sum + (parseDecimal(item.valorTotal) || 0), 0);
+  const totalMateriais = orcamentoData.materiais.reduce((sum, item) => sum + (parseDecimal(item.valorTotal) || 0), 0);
+  const totalTerceirizados = orcamentoData.terceirizados.reduce((sum, item) => sum + (parseDecimal(item.valorTotal) || 0), 0);
   const totalDiasAtividades = orcamentoData.atividades.reduce((sum, item) => sum + parseDecimal(item.dias), 0);
   const totalBruto = totalMaoDeObra + totalMateriais + totalTerceirizados;
   const margemPercentual = parseFloat(orcamentoData.margem) || 0;
@@ -483,6 +495,12 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   const inputClass = "w-full bg-[#0b1220] border border-white/10 p-3 rounded-lg text-white text-sm outline-none focus:border-amber-500 transition-all placeholder:text-white/20";
   const labelClass = "text-[9px] font-black text-white/40 uppercase tracking-widest ml-1 mb-1.5 block";
   const tableInputClass = "w-full bg-[#0b1220] border border-white/10 p-2 rounded text-white text-xs outline-none focus:border-amber-500";
+
+  // Função para abrir o documento gerado
+  const visualizarDocumento = (filename: string) => {
+    const url = `${process.env.REACT_APP_API_URL}/orcamentos/${filename}`;
+    window.open(url, '_blank');
+  };
 
   return (
     <div className="p-12 space-y-8 animate-in fade-in duration-500">
@@ -860,6 +878,13 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                 </tbody>
               </table>
             </div>
+
+            <div className="mt-4 pt-4 border-t border-white/10 flex justify-end">
+              <div className="bg-[#0b1220] border border-white/10 rounded-lg px-4 py-2.5">
+                <p className="text-white/60 text-[10px] font-black uppercase tracking-widest">Subtotal Mão de Obra</p>
+                <p className="text-amber-400 font-black text-lg text-right">R$ {totalMaoDeObra.toFixed(2)}</p>
+              </div>
+            </div>
           </div>
 
           {/* SECTION 3: CONSUMÍVEIS E MATERIAIS */}
@@ -920,6 +945,13 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                 </tbody>
               </table>
             </div>
+
+            <div className="mt-4 pt-4 border-t border-white/10 flex justify-end">
+              <div className="bg-[#0b1220] border border-white/10 rounded-lg px-4 py-2.5">
+                <p className="text-white/60 text-[10px] font-black uppercase tracking-widest">Subtotal Consumíveis + Materiais</p>
+                <p className="text-amber-400 font-black text-lg text-right">R$ {totalMateriais.toFixed(2)}</p>
+              </div>
+            </div>
           </div>
 
           {/* SECTION 4: SERVIÇOS TERCEIRIZADOS */}
@@ -972,6 +1004,13 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                   ))}
                 </tbody>
               </table>
+            </div>
+
+            <div className="mt-4 pt-4 border-t border-white/10 flex justify-end">
+              <div className="bg-[#0b1220] border border-white/10 rounded-lg px-4 py-2.5">
+                <p className="text-white/60 text-[10px] font-black uppercase tracking-widest">Subtotal Serviços Terceirizados</p>
+                <p className="text-amber-400 font-black text-lg text-right">R$ {totalTerceirizados.toFixed(2)}</p>
+              </div>
             </div>
           </div>
 
@@ -1162,3 +1201,9 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     </div>
   );
 }
+
+// Função para abrir o documento gerado
+const visualizarDocumento = (filename: string) => {
+  const url = `${process.env.REACT_APP_API_URL}/orcamentos/${filename}`;
+  window.open(url, '_blank');
+};

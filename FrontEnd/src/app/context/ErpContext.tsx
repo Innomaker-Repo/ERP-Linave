@@ -113,6 +113,7 @@ const MOCK_FINANCEIRO = [
 const cloneDeep = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 
 const buildTextDataUrl = (text: string) => `data:text/plain;charset=utf-8,${encodeURIComponent(text)}`;
+const buildHtmlDataUrl = (html: string) => `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 
 const SEVEN_OCEAN_MAO_DE_OBRA = [
   { funcao: 'Encarregado', quantidade: '0,5', dias: '10', valorTotal: '1640.00' },
@@ -197,6 +198,8 @@ Condicoes comerciais
 Assinatura
 - Nome: XXXX
 - Cargo: Diretoria Comercial`;
+
+// (HTML preview constants defined later) 
 
 const SEVEN_OCEAN_OS_PREVIEW = `OS 0731A
 Data emissao: 02/02/2026
@@ -284,6 +287,23 @@ const SEVEN_OCEAN_SERVICOS = [
   }
 ];
 
+// Versão HTML da proposta que inclui a logo no topo (usa /image2.jpg e /image1.jpg servidos a partir de /public)
+const SEVEN_OCEAN_PROPOSTA_PREVIEW_HTML = `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial,Helvetica,sans-serif;white-space:pre-wrap;margin:28px;} .logo{text-align:center;margin-bottom:12px;}</style></head><body><div class="logo"><img src="/image2.jpg" alt="logo" style="max-width:260px;height:auto;"/></div><div>${SEVEN_OCEAN_PROPOSTA_PREVIEW.replace(/</g,'&lt;')}</div></body></html>`;
+const SEVEN_OCEAN_PROPOSTA_PREVIEW_HTML_SERVINAVE = `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial,Helvetica,sans-serif;white-space:pre-wrap;margin:28px;} .logo{text-align:center;margin-bottom:12px;}</style></head><body><div class="logo"><img src="/image1.jpg" alt="logo" style="max-width:260px;height:auto;"/></div><div>${SEVEN_OCEAN_PROPOSTA_PREVIEW.replace(/</g,'&lt;')}</div></body></html>`;
+
+const isLinaveName = (s: string | undefined | null) => {
+  if (!s) return false;
+  try {
+    return String(s).toLowerCase().includes('linave');
+  } catch (e) {
+    return false;
+  }
+};
+
+const getProposalHtmlForCompany = (companyName: string | undefined | null) => isLinaveName(companyName)
+  ? SEVEN_OCEAN_PROPOSTA_PREVIEW_HTML
+  : SEVEN_OCEAN_PROPOSTA_PREVIEW_HTML_SERVINAVE;
+
 const buildOrcamentoValores = (precoFinal: number) => ({
   totalMaoDeObra: 16916,
   totalMateriais: 21597.96,
@@ -369,6 +389,8 @@ const buildProposta = (
   assinaturaCargo: 'Diretoria Comercial',
   preco
 });
+
+// (restaurado para comportamento antigo: usar SEVEN_OCEAN_PROPOSTA_PREVIEW)
 
 const buildDemoObra = (
   id: string,
@@ -797,7 +819,20 @@ const createInitialData = (savedData: any) => {
     equipes: [],
     fornecedores: [],
     horas: [],
-    config: { empresaNome: 'Linave ERP Demo' },
+    config: {
+      empresaNome: 'Linave ERP Demo',
+      empresasPrestadoras: [
+        {
+          id: 'EMP-LINAVE',
+          nome: 'Linave',
+          cnpj: '',
+          endereco: '',
+          contato: '',
+          email: '',
+          ativa: true
+        }
+      ]
+    },
     listas: { departamentos: [], categorias: [], prioridades: [] }
   };
 
@@ -973,7 +1008,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
   };
 
   const saveListas = async (l: any) => saveEntity('listas', l);
-  const saveConfig = async (c: any) => saveEntity('config', c);
+  const saveConfig = async (c: any) => saveEntity('config', { ...(data.config || {}), ...c });
 
   const logout = () => {
     setUserSession(null);

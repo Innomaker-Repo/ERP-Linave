@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { Plus, X, FileText, DollarSign, CheckCircle, Clock, ArrowRight, Edit2, ChevronDown, Zap, AlertCircle, Download, Eye } from 'lucide-react';
 import { toast } from 'sonner';
@@ -89,14 +89,14 @@ const COLUNAS: { id: CategoriaObra; titulo: string; icon: any; cor: string }[] =
 ];
 
 export function CrmViewNew({ searchQuery }: CrmViewProps) {
-  const { obras, os, clientes, saveEntity, userSession } = useErp();
+  const { obras, os, clientes, saveEntity, userSession, config } = useErp();
   const [showFormNovoNegocio, setShowFormNovoNegocio] = useState(false);
   const [novoNegocioTab, setNovoNegocioTab] = useState<'dados' | 'servicos' | 'documentos'>('dados');
   const [selectedObraDetalhes, setSelectedObraDetalhes] = useState<any>(null);
-  const [showDetalhesObrraModal, setShowDetalhesObraModal] = useState(false);
+  const [showDetalhesObraModal, setShowDetalhesObraModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingObra, setEditingObra] = useState<any>(null);
-  const [expandedOrcamentosummary, setExpandedOrcamentoSummary] = useState(false);
+  const [expandedOrcamentoSummary, setExpandedOrcamentoSummary] = useState(false);
   const [expandedPropostaDetalhes, setExpandedPropostaDetalhes] = useState(false);
   const [showPropostaFullModal, setShowPropostaFullModal] = useState(false);
   const [showOSFullModal, setShowOSFullModal] = useState(false);
@@ -204,6 +204,64 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     return String(escopo);
   };
 
+  const normalizarEscopoBasicoEstruturado = (escopo: any) => {
+    if (!escopo) return [];
+
+    const normalizarLinha = (linha: any) => {
+      if (!linha?.valores || typeof linha.valores !== 'object') return [];
+      return Object.entries(linha.valores)
+        .map(([chave, valor]) => ({
+          chave: String(chave),
+          valor: String(valor ?? '').trim(),
+        }))
+        .filter((coluna) => coluna.valor);
+    };
+
+    const normalizarItem = (item: any, index: number) => {
+      if (!item) return null;
+      if (typeof item === 'string') {
+        return {
+          titulo: item.trim() || `Item ${index + 1}`,
+          textosAntes: [],
+          tabela: [],
+          textosDepois: [],
+        };
+      }
+
+      const titulo = [item.titulo, item.descricaoServico, item.descricao, item.texto]
+        .find((valor) => typeof valor === 'string' && valor.trim());
+
+      return {
+        titulo: titulo?.trim() || `Item ${index + 1}`,
+        textosAntes: [
+          ...(Array.isArray(item.textosAntesTabela) ? item.textosAntesTabela : []),
+          ...(typeof item.textoLivre === 'string' && item.textoLivre.trim() ? [item.textoLivre] : []),
+        ].filter((texto: any) => typeof texto === 'string' && texto.trim()).map((texto: string) => texto.trim()),
+        tabela: Array.isArray(item.linhas)
+          ? item.linhas.map((linha: any) => normalizarLinha(linha)).filter((linha: any[]) => linha.length > 0)
+          : [],
+        textosDepois: (Array.isArray(item.textosDepoisTabela) ? item.textosDepoisTabela : [])
+          .filter((texto: any) => typeof texto === 'string' && texto.trim())
+          .map((texto: string) => texto.trim()),
+      };
+    };
+
+    if (typeof escopo === 'string') {
+      return [{ titulo: '', textosAntes: [escopo], tabela: [], textosDepois: [] }];
+    }
+
+    if (Array.isArray(escopo)) {
+      return escopo.map((item, index) => normalizarItem(item, index)).filter(Boolean);
+    }
+
+    if (typeof escopo === 'object') {
+      const item = normalizarItem(escopo, 0);
+      return item ? [item] : [];
+    }
+
+    return [{ titulo: '', textosAntes: [String(escopo)], tabela: [], textosDepois: [] }];
+  };
+
   const initialServico: Servico = {
     id: '',
     tipo: '',
@@ -216,8 +274,50 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     observacoes: ''
   };
 
+  const empresasPrestadoras = useMemo(() => {
+    const empresasCadastradas = Array.isArray(config?.empresasPrestadoras)
+      ? config.empresasPrestadoras
+      : [];
+
+    const fallbackNome = config?.empresaNome && config.empresaNome !== 'Linave ERP Demo'
+      ? config.empresaNome
+      : 'Linave';
+
+    const origem = empresasCadastradas.length > 0
+      ? empresasCadastradas
+      : [{ id: 'EMP-LINAVE', nome: fallbackNome }];
+
+    const empresasUnicas = new Map<string, { id: string; nome: string; cnpj: string }>();
+
+    origem.forEach((empresa: any, index: number) => {
+      const nomeBase = typeof empresa === 'string'
+        ? empresa
+        : empresa?.nome || empresa?.razaoSocial || empresa?.empresaNome || '';
+      const nome = String(nomeBase).trim();
+
+      if (!nome) return;
+
+      const chave = nome.toLowerCase();
+      if (empresasUnicas.has(chave)) return;
+
+      empresasUnicas.set(chave, {
+        id: typeof empresa === 'object' && empresa?.id ? empresa.id : `empresa-${index}`,
+        nome,
+        cnpj: typeof empresa === 'object' ? empresa?.cnpj || empresa?.empresaCnpj || '' : ''
+      });
+    });
+
+    const empresasNormalizadas = Array.from(empresasUnicas.values());
+
+    return empresasNormalizadas.length > 0
+      ? empresasNormalizadas
+      : [{ id: 'EMP-LINAVE', nome: fallbackNome || 'Linave', cnpj: '' }];
+  }, [config?.empresasPrestadoras, config?.empresaNome]);
+
+  const empresaPrestadoraPadrao = empresasPrestadoras[0]?.nome || 'Linave';
+
   const initialForm = {
-    empresaPrestadora: 'Linave',
+    empresaPrestadora: empresaPrestadoraPadrao,
     nomeNegocio: '',
     clienteId: '',
     cnpj: '',
@@ -240,6 +340,17 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   };
 
   const [formData, setFormData] = useState(initialForm);
+
+  useEffect(() => {
+    const empresasDisponiveis = empresasPrestadoras.map((empresa) => empresa.nome);
+
+    if (
+      empresasDisponiveis.length > 0 &&
+      (!formData.empresaPrestadora || !empresasDisponiveis.includes(formData.empresaPrestadora))
+    ) {
+      setFormData((prev) => ({ ...prev, empresaPrestadora: empresasDisponiveis[0] }));
+    }
+  }, [empresasPrestadoras, formData.empresaPrestadora]);
 
   const handleAddServico = () => {
     setFormData({
@@ -288,6 +399,24 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   };
 
   const formatDecimal = (value: number) => (Number.isFinite(value) ? value.toFixed(2) : '0.00');
+  const safeNumber = (value: any) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  const getBase64FromUrl = async (url: string): Promise<string> => {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Falha ao carregar arquivo: ${url}`);
+    }
+
+    const blob = await response.blob();
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error(`Falha ao converter arquivo: ${url}`));
+      reader.readAsDataURL(blob);
+    });
+  };
 
   const gerarIdLinha = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
@@ -340,7 +469,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     setSelectedObraDetalhes(obraAtual);
     setDocumentoMediacaoForm({
       obraId: obraAtual.id,
-      empresa: 'Linave',
+      empresa: obraAtual.empresaPrestadora || empresaPrestadoraPadrao,
       cliente: cliente?.razaoSocial || '',
       cnpj: obterCnpjCliente(cliente),
       dataEmissao: new Date().toISOString().split('T')[0],
@@ -456,92 +585,245 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
 
       console.log("Iniciando geração de PDF de medição...", { documentoMediacaoForm });
 
-      // 2. Gerar PDF
-      const resultadoPdf = handleDownloadMedicaoPDF(
-        documentoMediacaoForm,
-        clienteAtual,
-        obraAtual
-      );
+      // ===== Seção A - MÃO DE OBRA =====
+      if (maoDeObraData && maoDeObraData.length > 0) {
+        const rows = maoDeObraData;
+        const headersMaoDeObra = ['Item', 'Função', 'Qtd', 'Dias', 'Custo/Dia', 'Obs', 'Valor Total'];
 
-      if (!resultadoPdf) {
-        throw new Error('A função de PDF não retornou os dados esperados.');
-      }
+        const headerTitleHeight = cellHeight; // 'A - MÃO DE OBRA' title row
+        const headerRowHeight = cellHeight; // column headers
+        const subtotalHeight = cellHeight + 3;
+        const tableFullHeight = headerTitleHeight + headerRowHeight + (rows.length * cellHeight) + subtotalHeight;
+        const singlePageContentHeight = pageHeight - margin * 2;
 
-      // 3. Salvar documento na obra
-      if (obraAtual) {
-        const documentosAtuais = Array.isArray(obraAtual.documentosNegocio) ? obraAtual.documentosNegocio : [];
-        
-        const novoDocumento: DocumentoNegocio = {
-          id: `doc-mediacao-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          nome: resultadoPdf.nomeArquivo,
-          tipo: 'application/pdf',
-          tamanho: resultadoPdf.tamanho,
-          dataUpload: new Date().toISOString(),
-          conteudo: resultadoPdf.conteudoDataUrl
+        const printSectionTitle = () => {
+          let xx = margin;
+          doc.setFont('Arial', 'bold');
+          doc.setFontSize(9);
+          doc.text('A', xx + 2, y + 3);
+          doc.rect(xx, y, baseColWidth, cellHeight);
+          xx += baseColWidth;
+          doc.setTextColor(255, 0, 0);
+          doc.text('MÃO DE OBRA', xx + 2, y + 3);
+          doc.rect(xx, y, baseColWidth * 9, cellHeight);
+          doc.setTextColor(0, 0, 0);
+          y += cellHeight;
         };
-        
-        persistirObraAtualizada({
-          ...obraAtual,
-          documentosNegocio: [...documentosAtuais, novoDocumento]
-        });
-      }
 
-      toast.success('Documento de medição gerado e baixado com sucesso!');
-      setShowDocumentoMediacaoModal(false);
-      
-    } catch (error: any) {
-      console.error('Erro ao gerar documento de medição:', error);
-      alert('❌ Erro ao gerar o PDF: ' + (error.message || 'Verifique o console para mais detalhes.'));
-      toast.error('Erro ao gerar o documento de medição.');
-    }
-  };
+        const printTableHeaders = () => {
+          let xx = margin;
+          headersMaoDeObra.forEach((h, index) => {
+            const colWidth = laborColWidths[index];
+            doc.setFont('Arial', 'bold');
+            doc.setFontSize(7);
+            doc.setTextColor(0, 0, 0);
+            doc.text(h, xx + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
+            doc.rect(xx, y, colWidth, cellHeight);
+            xx += colWidth;
+          });
+          y += cellHeight;
+        };
 
+        // Decide se move a tabela inteira para próxima página ou quebra com cabeçalho repetido
+        if (tableFullHeight <= (pageHeight - y - margin)) {
+          // cabe na página atual
+          printSectionTitle();
+          printTableHeaders();
+          for (let idx = 0; idx < rows.length; idx++) {
+            const item = rows[idx];
+            let xx = margin;
+            doc.setFont('Arial', 'normal');
+            doc.setFontSize(7);
 
-  // Função auxiliar para converter a imagem em Base64
-  const getBase64FromUrl = async (url: string): Promise<string> => {
-    const data = await fetch(url);
-    const blob = await data.blob();
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(blob);
-      reader.onloadend = () => {
-        resolve(reader.result as string);
-      };
-    });
-  };
+            // Item
+            doc.text(String(idx + 1), xx + 0.5, y + 2.5);
+            doc.rect(xx, y, laborColWidths[0], cellHeight);
+            xx += laborColWidths[0];
 
-  const handleGerarPropostaPDF = async () => { // <-- Atenção: agora a função é async
-    if (!selectedObraDetalhes?.propostas || selectedObraDetalhes.propostas.length === 0) {
-      alert('Nenhum dado de proposta encontrado.');
-      return;
-    }
+            // Função
+            drawCellWithAutoWrap(xx, y, laborColWidths[1], cellHeight, item.funcao || '');
+            xx += laborColWidths[1];
 
-    try {
-      const ultimaProposta = selectedObraDetalhes.propostas[selectedObraDetalhes.propostas.length - 1];
-      const clienteAtual = (clientes || []).find((c: any) => c.id === selectedObraDetalhes.clienteId);
+            // Quantidade
+            doc.text(String(item.quantidade || ''), xx + 0.5, y + 2.5);
+            doc.rect(xx, y, laborColWidths[2], cellHeight);
+            xx += laborColWidths[2];
 
-      // 1. FORMATA A TABELA DE ESCOPO EM TEXTO LIMPO
-      const escopoEmTextoLimpo = formatarEscopoBasicoParaTexto(ultimaProposta.escopoBasicoServicos || ultimaProposta.escopoA);
+            // Dias
+            doc.text(String(item.dias || ''), xx + 0.5, y + 2.5);
+            doc.rect(xx, y, laborColWidths[3], cellHeight);
+            xx += laborColWidths[3];
 
-      // 2. Prepara os dados para o formato que a nossa função de PDF espera
-      const formPropostaParaPDF = {
-        ...ultimaProposta,
-        escopoA: escopoEmTextoLimpo, // Passamos o texto limpo para o PDF
-        escopoBasicoServicos: escopoEmTextoLimpo, // Garantia de compatibilidade
-        cliente: clienteAtual?.razaoSocial,
-        empresaNome: 'VTS - Servinave Engenharia e Reparos Navais',
-        contato: ultimaProposta.atribuidoA || '',
-        assinaturaNome: ultimaProposta.assinaturaNome || 'Servinave Eng. e Rep. Navais',
-        assinaturaCargo: ultimaProposta.assinaturaCargo || 'Setor Comercial',
-      };
+            // Custo/Dia
+            doc.text(String(item.custoUnitDia ? parseFloat(item.custoUnitDia).toFixed(2) : ''), xx + 0.5, y + 2.5);
+            doc.rect(xx, y, laborColWidths[4], cellHeight);
+            xx += laborColWidths[4];
 
-      // 1. CARREGA A IMAGEM DA LOGO
-      let logoBase64 = undefined;
-      try {
-        // Busca o arquivo "image1.png" da sua pasta public
-        logoBase64 = await getBase64FromUrl('/image1.png'); 
-      } catch (err) {
-        console.warn('Aviso: Logo não encontrada. Gerando sem imagem no cabeçalho.', err);
+            // Observações
+            drawCellWithAutoWrap(xx, y, laborColWidths[5], cellHeight, item.observacoes || '');
+            xx += laborColWidths[5];
+
+            // Valor Total
+            doc.setFont('Arial', 'bold');
+            doc.setTextColor(255, 0, 0);
+            doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), xx + 0.5, y + 2.5);
+            doc.setTextColor(0, 0, 0);
+            doc.setFont('Arial', 'normal');
+            doc.rect(xx, y, laborColWidths[6], cellHeight);
+            xx += laborColWidths[6];
+
+            y += cellHeight;
+          }
+
+          // Subtotal
+          let xx = margin;
+          doc.setFont('Arial', 'bold');
+          doc.setFontSize(8);
+          doc.setTextColor(255, 0, 0);
+          doc.text('Sub-total', xx + 0.5, y + 2.5);
+          doc.setTextColor(0, 0, 0);
+          doc.rect(xx, y, baseColWidth * 9, cellHeight);
+          xx += baseColWidth * 9;
+          doc.setTextColor(255, 0, 0);
+          doc.text(totalMaoDeObra.toFixed(2), xx + 0.5, y + 2.5);
+          doc.setTextColor(0, 0, 0);
+          doc.rect(xx, y, baseColWidth, cellHeight);
+          y += cellHeight + 3;
+
+        } else if (tableFullHeight <= singlePageContentHeight) {
+          // move a tabela inteira para a próxima página (cabe nela inteira)
+          doc.addPage();
+          y = printCompactHeader();
+          printSectionTitle();
+          printTableHeaders();
+
+          for (let idx = 0; idx < rows.length; idx++) {
+            const item = rows[idx];
+            let xx = margin;
+            doc.setFont('Arial', 'normal');
+            doc.setFontSize(7);
+
+            doc.text(String(idx + 1), xx + 0.5, y + 2.5);
+            doc.rect(xx, y, laborColWidths[0], cellHeight);
+            xx += laborColWidths[0];
+
+            drawCellWithAutoWrap(xx, y, laborColWidths[1], cellHeight, item.funcao || '');
+            xx += laborColWidths[1];
+
+            doc.text(String(item.quantidade || ''), xx + 0.5, y + 2.5);
+            doc.rect(xx, y, laborColWidths[2], cellHeight);
+            xx += laborColWidths[2];
+
+            doc.text(String(item.dias || ''), xx + 0.5, y + 2.5);
+            doc.rect(xx, y, laborColWidths[3], cellHeight);
+            xx += laborColWidths[3];
+
+            doc.text(String(item.custoUnitDia ? parseFloat(item.custoUnitDia).toFixed(2) : ''), xx + 0.5, y + 2.5);
+            doc.rect(xx, y, laborColWidths[4], cellHeight);
+            xx += laborColWidths[4];
+
+            drawCellWithAutoWrap(xx, y, laborColWidths[5], cellHeight, item.observacoes || '');
+            xx += laborColWidths[5];
+
+            doc.setFont('Arial', 'bold');
+            doc.setTextColor(255, 0, 0);
+            doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), xx + 0.5, y + 2.5);
+            doc.setTextColor(0, 0, 0);
+            doc.setFont('Arial', 'normal');
+            doc.rect(xx, y, laborColWidths[6], cellHeight);
+            xx += laborColWidths[6];
+
+            y += cellHeight;
+          }
+
+          // Subtotal
+          let xx2 = margin;
+          doc.setFont('Arial', 'bold');
+          doc.setFontSize(8);
+          doc.setTextColor(255, 0, 0);
+          doc.text('Sub-total', xx2 + 0.5, y + 2.5);
+          doc.setTextColor(0, 0, 0);
+          doc.rect(xx2, y, baseColWidth * 9, cellHeight);
+          xx2 += baseColWidth * 9;
+          doc.setTextColor(255, 0, 0);
+          doc.text(totalMaoDeObra.toFixed(2), xx2 + 0.5, y + 2.5);
+          doc.setTextColor(0, 0, 0);
+          doc.rect(xx2, y, baseColWidth, cellHeight);
+          y += cellHeight + 3;
+
+        } else {
+          // tabela maior que uma página: quebrar em páginas, repetindo cabeçalho e o cabeçalho compacto da página
+          let idx = 0;
+          printSectionTitle();
+          printTableHeaders();
+
+          while (idx < rows.length) {
+            // Se não há espaço suficiente para uma linha + subtotal, cria nova página
+            if (y + cellHeight + subtotalHeight > pageHeight - margin) {
+              doc.addPage();
+              y = printCompactHeader();
+              printSectionTitle();
+              printTableHeaders();
+            }
+
+            const item = rows[idx];
+            let xx = margin;
+            doc.setFont('Arial', 'normal');
+            doc.setFontSize(7);
+
+            doc.text(String(idx + 1), xx + 0.5, y + 2.5);
+            doc.rect(xx, y, laborColWidths[0], cellHeight);
+            xx += laborColWidths[0];
+
+            drawCellWithAutoWrap(xx, y, laborColWidths[1], cellHeight, item.funcao || '');
+            xx += laborColWidths[1];
+
+            doc.text(String(item.quantidade || ''), xx + 0.5, y + 2.5);
+            doc.rect(xx, y, laborColWidths[2], cellHeight);
+            xx += laborColWidths[2];
+
+            doc.text(String(item.dias || ''), xx + 0.5, y + 2.5);
+            doc.rect(xx, y, laborColWidths[3], cellHeight);
+            xx += laborColWidths[3];
+
+            doc.text(String(item.custoUnitDia ? parseFloat(item.custoUnitDia).toFixed(2) : ''), xx + 0.5, y + 2.5);
+            doc.rect(xx, y, laborColWidths[4], cellHeight);
+            xx += laborColWidths[4];
+
+            drawCellWithAutoWrap(xx, y, laborColWidths[5], cellHeight, item.observacoes || '');
+            xx += laborColWidths[5];
+
+            doc.setFont('Arial', 'bold');
+            doc.setTextColor(255, 0, 0);
+            doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), xx + 0.5, y + 2.5);
+            doc.setTextColor(0, 0, 0);
+            doc.setFont('Arial', 'normal');
+            doc.rect(xx, y, laborColWidths[6], cellHeight);
+            xx += laborColWidths[6];
+
+            y += cellHeight;
+            idx += 1;
+          }
+
+          // Subtotal (garante espaço)
+          if (y + subtotalHeight > pageHeight - margin) {
+            doc.addPage();
+            y = printCompactHeader();
+          }
+          let xsub = margin;
+          doc.setFont('Arial', 'bold');
+          doc.setFontSize(8);
+          doc.setTextColor(255, 0, 0);
+          doc.text('Sub-total', xsub + 0.5, y + 2.5);
+          doc.setTextColor(0, 0, 0);
+          doc.rect(xsub, y, baseColWidth * 9, cellHeight);
+          xsub += baseColWidth * 9;
+          doc.setTextColor(255, 0, 0);
+          doc.text(totalMaoDeObra.toFixed(2), xsub + 0.5, y + 2.5);
+          doc.setTextColor(0, 0, 0);
+          doc.rect(xsub, y, baseColWidth, cellHeight);
+          y += cellHeight + 3;
+        }
       }
 
       // 2. Chama a função importada PASSANDO A IMAGEM
@@ -577,9 +859,9 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
 
       toast.success('Proposta em PDF gerada e baixada com sucesso!');
       
-    } catch (error: any) {
+    } catch (error) {
       console.error('Erro ao gerar proposta:', error);
-      alert('❌ Erro ao gerar o PDF da Proposta: ' + (error.message || 'Verifique o console para detalhes.'));
+      alert('❌ Erro ao gerar o PDF da Proposta: ' + (error?.message || 'Verifique o console para detalhes.'));
     }
   };
   
@@ -606,6 +888,59 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     document.body.appendChild(elemento);
     elemento.click();
     document.body.removeChild(elemento);
+  };
+
+  const handleGerarPropostaPDF = async () => {
+    if (!selectedObraDetalhes || !Array.isArray(selectedObraDetalhes.propostas) || selectedObraDetalhes.propostas.length === 0) {
+      toast.error('Nenhuma proposta disponivel para este negocio.');
+      return;
+    }
+
+    const ultimaProposta = selectedObraDetalhes.propostas[selectedObraDetalhes.propostas.length - 1];
+    const clienteAtual = (clientes || []).find((c: any) => c.id === selectedObraDetalhes.clienteId);
+
+    try {
+      let logoBase64: string | undefined;
+      try {
+        logoBase64 = await getBase64FromUrl('/image1.png');
+      } catch (logoError) {
+        console.warn('Logo da proposta nao encontrada.', logoError);
+      }
+
+      const resultadoPdf = handleDownloadPropostaPDF(
+        ultimaProposta,
+        clienteAtual,
+        selectedObraDetalhes,
+        logoBase64,
+      );
+
+      if (!resultadoPdf) {
+        throw new Error('A funcao de PDF da proposta nao retornou os dados esperados.');
+      }
+
+      const documentosAtuais = Array.isArray(selectedObraDetalhes.documentosNegocio)
+        ? selectedObraDetalhes.documentosNegocio
+        : [];
+
+      const novoDocumento = {
+        id: `doc-proposta-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        nome: resultadoPdf.nomeArquivo,
+        tipo: 'application/pdf',
+        tamanho: resultadoPdf.tamanho,
+        dataUpload: new Date().toISOString(),
+        conteudo: resultadoPdf.conteudoDataUrl
+      };
+
+      persistirObraAtualizada({
+        ...selectedObraDetalhes,
+        documentosNegocio: [...documentosAtuais, novoDocumento]
+      });
+
+      toast.success('Proposta em PDF gerada e baixada com sucesso!');
+    } catch (error: any) {
+      console.error('Erro ao gerar proposta:', error);
+      toast.error(`Erro ao gerar PDF da proposta${error?.message ? `: ${error.message}` : ''}`);
+    }
   };
 
   const fileToDataUrl = (file: File): Promise<string> => new Promise((resolve, reject) => {
@@ -940,6 +1275,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     const novaObra = {
       id: novoProjetoId,
       nome: nomeObra,
+      empresaPrestadora: formData.empresaPrestadora,
       clienteId: formData.clienteId,
       status: 'Planejamento',
       categoria: 'Planejamento' as CategoriaObra,
@@ -965,6 +1301,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
 
     const novasOS = formData.servicos.map((servico, idx) => ({
       id: `OS-${Date.now()}-${idx}`,
+      empresaPrestadora: formData.empresaPrestadora,
       clienteId: formData.clienteId,
       solicitante: formData.solicitante,
       email: formData.email,
@@ -994,6 +1331,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   };
 
   const handleShowDetalhes = (obra: any) => {
+    console.log('handleShowDetalhes called for obra:', obra?.id || obra?.nome || obra);
     setSelectedObraDetalhes(obra);
     setShowDetalhesObraModal(true);
     // Deixar o resumo financeiro sempre fechado quando abrir detalhes
@@ -1345,15 +1683,44 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     
     const ultimoOrcamento = selectedObraDetalhes.orcamentos[selectedObraDetalhes.orcamentos.length - 1];
     const cliente = (clientes || []).find(c => c.id === selectedObraDetalhes.clienteId);
+    const ultimaProposta = Array.isArray(selectedObraDetalhes?.propostas) && selectedObraDetalhes.propostas.length > 0
+      ? selectedObraDetalhes.propostas[selectedObraDetalhes.propostas.length - 1]
+      : null;
 
     try {
       const doc = new jsPDF('p', 'mm', 'a4');
       const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
       const lineHeight = 5;
       const cellHeight = lineHeight;
       let y = 10;
       const margin = 8;
       const baseColWidth = (pageWidth - margin * 2) / 10;
+      const laborColWidths = [
+        baseColWidth,
+        baseColWidth * 2.7,
+        baseColWidth,
+        baseColWidth,
+        baseColWidth * 1.4,
+        baseColWidth * 1.6,
+        baseColWidth * 1.3
+      ];
+      const materialsColWidths = [
+        baseColWidth,
+        baseColWidth * 3.3,
+        baseColWidth * 0.8,
+        baseColWidth * 0.9,
+        baseColWidth * 1.3,
+        baseColWidth * 1.4,
+        baseColWidth * 1.3
+      ];
+      const activitiesColWidths = [
+        baseColWidth,
+        baseColWidth * 3,
+        baseColWidth,
+        baseColWidth * 5
+      ];
+      const sumWidths = (widths: number[]) => widths.reduce((sum, width) => sum + width, 0);
 
       // Função para desenhar célula com quebra de texto dinâmica
       const drawCellWithAutoWrap = (x: number, y: number, width: number, height: number, text: string, bold = false, red = false) => {
@@ -1433,15 +1800,45 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
         return lines;
       };
 
+      // Helper: imprime um cabeçalho compacto (cliente / ship / escopo / data) e retorna a nova coordenada y
+      const printCompactHeader = () => {
+        let hy = margin;
+        let hx = margin;
+
+        drawCell(hx, hy, baseColWidth, cellHeight, 'Cliente:', true);
+        hx += baseColWidth;
+        drawCell(hx, hy, baseColWidth * 3, cellHeight, cliente?.razaoSocial || '');
+        hx += baseColWidth * 3;
+        drawCell(hx, hy, baseColWidth * 2, cellHeight, `Data: ${new Date().toLocaleDateString('pt-BR')}`);
+        hy += cellHeight;
+
+        hx = margin;
+        drawCell(hx, hy, baseColWidth, cellHeight, 'Ship:', true);
+        hx += baseColWidth;
+        drawCell(hx, hy, baseColWidth * 9, cellHeight, selectedObraDetalhes?.nome || '');
+        hy += cellHeight;
+
+        hx = margin;
+        drawCell(hx, hy, baseColWidth, cellHeight, 'Escopo:', true);
+        hx += baseColWidth;
+        const escopoPeq = formatarEscopoBasicoParaTexto(ultimaProposta?.escopoBasicoServicos || ultimaProposta?.escopoA || '');
+        drawCell(hx, hy, baseColWidth * 9, cellHeight, (escopoPeq || '').split('\n')[0] || '');
+        hy += cellHeight + 2;
+
+        doc.line(margin, hy, pageWidth - margin, hy);
+        hy += 4;
+        return hy;
+      };
+
       // Calcular valores
-      const base = (ultimoOrcamento.valores.totalBruto ?? ultimoOrcamento.valores.subtotal) || 0;
-      const margemPercent = ultimoOrcamento.valores.margem || 0;
-      const ohPercent = ultimoOrcamento.valores.oh || 0;
-      const impostosPercent = ultimoOrcamento.valores.impostos || 0;
-      const valorMargem = ultimoOrcamento.valores.valorMargem ?? ((base * margemPercent) / 100);
-      const valorOH = ultimoOrcamento.valores.valorOH ?? ((base * ohPercent) / 100);
-      const semImposto = ultimoOrcamento.valores.totalSemImposto ?? (base + valorMargem + valorOH);
-      const valorImposto = ultimoOrcamento.valores.valorImpostos ?? ((semImposto * impostosPercent) / 100);
+      const base = safeNumber(ultimoOrcamento.valores.totalBruto ?? ultimoOrcamento.valores.subtotal);
+      const margemPercent = safeNumber(ultimoOrcamento.valores.margem);
+      const ohPercent = safeNumber(ultimoOrcamento.valores.oh);
+      const impostosPercent = safeNumber(ultimoOrcamento.valores.impostos);
+      const valorMargem = safeNumber(ultimoOrcamento.valores.valorMargem ?? ((base * margemPercent) / 100));
+      const valorOH = safeNumber(ultimoOrcamento.valores.valorOH ?? ((base * ohPercent) / 100));
+      const semImposto = safeNumber(ultimoOrcamento.valores.totalSemImposto ?? (base + valorMargem + valorOH));
+      const valorImposto = safeNumber(ultimoOrcamento.valores.valorImpostos ?? ((semImposto * impostosPercent) / 100));
 
       // Dados
       const maoDeObraData = (ultimoOrcamento.data.maoDeObra || []).filter((item: any) => item.funcao);
@@ -1455,7 +1852,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       
       // Calcular quantidade de itens e preço por item
       const totalItens = maoDeObraData.length + materiaisData.length + terceirizadosData.length;
-      const precoFinal = ultimoOrcamento.valores.precoFinal || 0;
+      const precoFinal = safeNumber(ultimoOrcamento.valores.precoFinal);
       const precoPorItem = totalItens > 0 ? precoFinal / totalItens : 0;
 
       // Linha 1 - Cliente
@@ -1498,13 +1895,14 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
 
       // Cabeçalho tabela A
       x = margin;
-      const headersMaoDeObra = ['Item', 'Função', 'Qtd', 'Dias', 'Custo/Dia', 'Obs', '', '', '', 'Valor Total'];
-      headersMaoDeObra.forEach((h) => {
+      const headersMaoDeObra = ['Item', 'Função', 'Qtd', 'Dias', 'Custo/Dia', 'Obs', 'Valor Total'];
+      headersMaoDeObra.forEach((h, index) => {
+        const colWidth = laborColWidths[index];
         doc.setFont('Arial', 'bold');
         doc.setFontSize(7);
-        doc.text(h, x + 0.5, y + 2.5, { maxWidth: baseColWidth - 1 });
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
+        doc.text(h, x + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
+        doc.rect(x, y, colWidth, cellHeight);
+        x += colWidth;
       });
       y += cellHeight;
 
@@ -1516,37 +1914,31 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
 
         // Item
         doc.text(String(idx + 1), x + 0.5, y + 2.5);
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
+        doc.rect(x, y, laborColWidths[0], cellHeight);
+        x += laborColWidths[0];
 
         // Funcao (com auto wrap)
-        drawCellWithAutoWrap(x, y, baseColWidth, cellHeight, item.funcao || '');
-        x += baseColWidth;
+        drawCellWithAutoWrap(x, y, laborColWidths[1], cellHeight, item.funcao || '');
+        x += laborColWidths[1];
 
         // Quantidade
         doc.text(String(item.quantidade || ''), x + 0.5, y + 2.5);
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
+        doc.rect(x, y, laborColWidths[2], cellHeight);
+        x += laborColWidths[2];
 
         // Dias
         doc.text(String(item.dias || ''), x + 0.5, y + 2.5);
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
+        doc.rect(x, y, laborColWidths[3], cellHeight);
+        x += laborColWidths[3];
 
         // Custo/Dia
         doc.text(String(item.custoUnitDia ? parseFloat(item.custoUnitDia).toFixed(2) : ''), x + 0.5, y + 2.5);
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
+        doc.rect(x, y, laborColWidths[4], cellHeight);
+        x += laborColWidths[4];
 
         // Observações (com auto wrap)
-        drawCellWithAutoWrap(x, y, baseColWidth, cellHeight, item.observacoes || '');
-        x += baseColWidth;
-
-        // Espaços em branco (3 colunas)
-        for (let i = 0; i < 3; i++) {
-          doc.rect(x, y, baseColWidth, cellHeight);
-          x += baseColWidth;
-        }
+        drawCellWithAutoWrap(x, y, laborColWidths[5], cellHeight, item.observacoes || '');
+        x += laborColWidths[5];
 
         // Valor Total (última coluna)
         doc.setFont('Arial', 'bold');
@@ -1554,8 +1946,8 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
         doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
         doc.setTextColor(0, 0, 0);
         doc.setFont('Arial', 'normal');
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
+        doc.rect(x, y, laborColWidths[6], cellHeight);
+        x += laborColWidths[6];
 
         y += cellHeight;
       });
@@ -1567,216 +1959,365 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       doc.setTextColor(255, 0, 0);
       doc.text('Sub-total', x + 0.5, y + 2.5);
       doc.setTextColor(0, 0, 0);
-      doc.rect(x, y, baseColWidth * 9, cellHeight);
-      x += baseColWidth * 9;
+      doc.rect(x, y, sumWidths(laborColWidths.slice(0, -1)), cellHeight);
+      x += sumWidths(laborColWidths.slice(0, -1));
       doc.setTextColor(255, 0, 0);
       doc.text(totalMaoDeObra.toFixed(2), x + 0.5, y + 2.5);
       doc.setTextColor(0, 0, 0);
-      doc.rect(x, y, baseColWidth, cellHeight);
+      doc.rect(x, y, laborColWidths[6], cellHeight);
       y += cellHeight + 2;
 
-      // ===== Seção B - CONSUMÍVEIS =====
-      x = margin;
-      doc.setFont('Arial', 'bold');
-      doc.setFontSize(9);
-      doc.text('B', x + 2, y + 3);
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-      doc.setTextColor(255, 0, 0);
-      doc.text('CONSUMÍVEIS E MATERIAIS', x + 2, y + 3);
-      doc.rect(x, y, baseColWidth * 9, cellHeight);
-      doc.setTextColor(0, 0, 0);
-      y += cellHeight;
+      // ===== Seção B - CONSUMÍVEIS E MATERIAIS =====
+      if (materiaisData && materiaisData.length > 0) {
+        const rows = materiaisData;
+        const headersMateriais = ['Item', 'Descrição', 'Un', 'Qtd', 'Peso/Fat', 'Custo Un', 'Total'];
 
-      // Cabeçalho tabela B
-      x = margin;
-      const headersMateriais = ['Item', 'Descrição', 'Un', 'Qtd', 'Peso/Fat', 'Custo Un', '3º', 'Obs', '', 'Total'];
-      headersMateriais.forEach((h) => {
-        doc.setFont('Arial', 'bold');
-        doc.setFontSize(7);
-        doc.text(h, x + 0.5, y + 2.5, { maxWidth: baseColWidth - 1 });
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
-      });
-      y += cellHeight;
+        const headerTitleHeight = cellHeight;
+        const headerRowHeight = cellHeight;
+        const subtotalHeight = cellHeight + 2;
+        const tableFullHeight = headerTitleHeight + headerRowHeight + (rows.length * cellHeight) + subtotalHeight;
+        const singlePageContentHeight = pageHeight - margin * 2;
 
-      // Linhas de materiais
-      materiaisData.forEach((item: any, idx: number) => {
-        x = margin;
-        doc.setFont('Arial', 'normal');
-        doc.setFontSize(7);
+        const printSectionTitleB = () => {
+          let xx = margin;
+          doc.setFont('Arial', 'bold');
+          doc.setFontSize(9);
+          doc.text('B', xx + 2, y + 3);
+          doc.rect(xx, y, baseColWidth, cellHeight);
+          xx += baseColWidth;
+          doc.setTextColor(255, 0, 0);
+          doc.text('CONSUMÍVEIS E MATERIAIS', xx + 2, y + 3);
+          doc.rect(xx, y, baseColWidth * 9, cellHeight);
+          doc.setTextColor(0, 0, 0);
+          y += cellHeight;
+        };
 
-        // Item
-        doc.text(String(idx + 1), x + 0.5, y + 2.5);
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
+        const printHeadersB = () => {
+          let xx = margin;
+          headersMateriais.forEach((h, index) => {
+            const colWidth = materialsColWidths[index];
+            doc.setFont('Arial', 'bold');
+            doc.setFontSize(7);
+            doc.text(h, xx + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
+            doc.rect(xx, y, colWidth, cellHeight);
+            xx += colWidth;
+          });
+          y += cellHeight;
+        };
 
-        // Descrição (com auto wrap)
-        drawCellWithAutoWrap(x, y, baseColWidth, cellHeight, item.descricao || '');
-        x += baseColWidth;
-
-        // Unidade
-        doc.text(item.unidade || '', x + 0.5, y + 2.5);
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
-
-        // Quantidade
-        doc.text(String(item.quantidade || ''), x + 0.5, y + 2.5);
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
-
-        // Peso/Fator
-        doc.text(String(item.pesoFator || ''), x + 0.5, y + 2.5);
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
-
-        // Custo Unit
-        doc.text(String(item.custoUnit ? parseFloat(item.custoUnit).toFixed(2) : ''), x + 0.5, y + 2.5);
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
-
-        // Terceiros (Sim/Não)
-        doc.text(item.terceiros ? 'S' : 'N', x + 0.5, y + 2.5);
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
-
-        // Observações (com auto wrap)
-        drawCellWithAutoWrap(x, y, baseColWidth, cellHeight, item.observacoes || '');
-        x += baseColWidth;
-
-        // Espaço em branco
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
-
-        // Valor Total (última coluna)
-        doc.setFont('Arial', 'bold');
-        doc.setTextColor(255, 0, 0);
-        doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
-        doc.setTextColor(0, 0, 0);
-        doc.setFont('Arial', 'normal');
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
-
-        y += cellHeight;
-      });
-
-      // Total materiais
-      x = margin;
-      doc.setFont('Arial', 'bold');
-      doc.setFontSize(8);
-      doc.setTextColor(255, 0, 0);
-      doc.text('Valor total', x + 0.5, y + 2.5);
-      doc.setTextColor(0, 0, 0);
-      doc.rect(x, y, baseColWidth * 9, cellHeight);
-      x += baseColWidth * 9;
-      doc.setTextColor(255, 0, 0);
-      doc.text(totalMateriais.toFixed(2), x + 0.5, y + 2.5);
-      doc.setTextColor(0, 0, 0);
-      doc.rect(x, y, baseColWidth, cellHeight);
-      y += cellHeight + 2;
-
-      // ===== Seção C - TERCEIRIZADOS =====
-      x = margin;
-      doc.setFont('Arial', 'bold');
-      doc.setFontSize(9);
-      doc.text('C', x + 2, y + 3);
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-      doc.setTextColor(255, 0, 0);
-      doc.text('SERVIÇOS TERCEIRIZADOS', x + 2, y + 3);
-      doc.rect(x, y, baseColWidth * 9, cellHeight);
-      doc.setTextColor(0, 0, 0);
-      y += cellHeight;
-
-      // Cabeçalho tabela C
-      x = margin;
-      const headersTerceiros = ['Item', 'Descrição', 'Un', 'Qtd', 'Peso/Fat', 'Custo Un', 'Obs', '', '', 'Total'];
-      headersTerceiros.forEach((h) => {
-        doc.setFont('Arial', 'bold');
-        doc.setFontSize(7);
-        doc.text(h, x + 0.5, y + 2.5, { maxWidth: baseColWidth - 1 });
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
-      });
-      y += cellHeight;
-
-      // Linhas de terceiros
-      terceirizadosData.forEach((item: any, idx: number) => {
-        x = margin;
-        doc.setFont('Arial', 'normal');
-        doc.setFontSize(7);
-
-        // Item
-        doc.text(String(idx + 1), x + 0.5, y + 2.5);
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
-
-        // Descrição (com auto wrap)
-        drawCellWithAutoWrap(x, y, baseColWidth, cellHeight, item.descricao || '');
-        x += baseColWidth;
-
-        // Unidade
-        doc.text(item.unidade || '', x + 0.5, y + 2.5);
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
-
-        // Quantidade
-        doc.text(String(item.quantidade || ''), x + 0.5, y + 2.5);
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
-
-        // Peso/Fator
-        doc.text(String(item.pesoFator || ''), x + 0.5, y + 2.5);
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
-
-        // Custo Unit
-        doc.text(String(item.custoUnit ? parseFloat(item.custoUnit).toFixed(2) : ''), x + 0.5, y + 2.5);
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
-
-        // Observações (com auto wrap)
-        drawCellWithAutoWrap(x, y, baseColWidth, cellHeight, item.observacoes || '');
-        x += baseColWidth;
-
-        // Espaços em branco (2 colunas)
-        for (let i = 0; i < 2; i++) {
-          doc.rect(x, y, baseColWidth, cellHeight);
-          x += baseColWidth;
+        if (tableFullHeight <= (pageHeight - y - margin)) {
+          printSectionTitleB();
+          printHeadersB();
+        } else if (tableFullHeight <= singlePageContentHeight) {
+          doc.addPage();
+          y = printCompactHeader();
+          printSectionTitleB();
+          printHeadersB();
+        } else {
+          // cabeçalhos no início
+          printSectionTitleB();
+          printHeadersB();
         }
 
-        // Valor Total (última coluna)
+        // linhas
+        for (let idx = 0; idx < rows.length; idx++) {
+          const item = rows[idx];
+
+          // verifica espaço para próxima linha + subtotal
+          if (y + cellHeight + subtotalHeight > pageHeight - margin) {
+            doc.addPage();
+            y = printCompactHeader();
+            printSectionTitleB();
+            printHeadersB();
+          }
+
+          let xx = margin;
+          doc.setFont('Arial', 'normal');
+          doc.setFontSize(7);
+
+          doc.text(String(idx + 1), xx + 0.5, y + 2.5);
+          doc.rect(xx, y, materialsColWidths[0], cellHeight);
+          xx += materialsColWidths[0];
+
+          drawCellWithAutoWrap(xx, y, materialsColWidths[1], cellHeight, item.descricao || '');
+          xx += materialsColWidths[1];
+
+          doc.text(item.unidade || '', xx + 0.5, y + 2.5);
+          doc.rect(xx, y, materialsColWidths[2], cellHeight);
+          xx += materialsColWidths[2];
+
+          doc.text(String(item.quantidade || ''), xx + 0.5, y + 2.5);
+          doc.rect(xx, y, materialsColWidths[3], cellHeight);
+          xx += materialsColWidths[3];
+
+          doc.text(String(item.pesoFator || ''), xx + 0.5, y + 2.5);
+          doc.rect(xx, y, materialsColWidths[4], cellHeight);
+          xx += materialsColWidths[4];
+
+          doc.text(String(item.custoUnit ? parseFloat(item.custoUnit).toFixed(2) : ''), xx + 0.5, y + 2.5);
+          doc.rect(xx, y, materialsColWidths[5], cellHeight);
+          xx += materialsColWidths[5];
+
+          doc.setFont('Arial', 'bold');
+          doc.setTextColor(255, 0, 0);
+          doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), xx + 0.5, y + 2.5);
+          doc.setTextColor(0, 0, 0);
+          doc.setFont('Arial', 'normal');
+          doc.rect(xx, y, materialsColWidths[6], cellHeight);
+          xx += materialsColWidths[6];
+
+          y += cellHeight;
+        }
+
+        // Total materiais
+        if (y + subtotalHeight > pageHeight - margin) {
+          doc.addPage();
+          y = printCompactHeader();
+        }
+        let xt = margin;
         doc.setFont('Arial', 'bold');
+        doc.setFontSize(8);
         doc.setTextColor(255, 0, 0);
-        doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
+        doc.text('Valor total', xt + 0.5, y + 2.5);
         doc.setTextColor(0, 0, 0);
-        doc.setFont('Arial', 'normal');
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
+        doc.rect(xt, y, sumWidths(materialsColWidths.slice(0, -1)), cellHeight);
+        xt += sumWidths(materialsColWidths.slice(0, -1));
+        doc.setTextColor(255, 0, 0);
+        doc.text(totalMateriais.toFixed(2), xt + 0.5, y + 2.5);
+        doc.setTextColor(0, 0, 0);
+        doc.rect(xt, y, materialsColWidths[6], cellHeight);
+        y += cellHeight + 2;
+      }
 
-        y += cellHeight;
-      });
+      // ===== Seção C - SERVIÇOS TERCEIRIZADOS =====
+      if (terceirizadosData && terceirizadosData.length > 0) {
+        const rows = terceirizadosData;
+        const headersTerceiros = ['Item', 'Descrição', 'Un', 'Qtd', 'Peso/Fat', 'Custo Un', 'Total'];
 
-      // Sub-total terceiros
-      x = margin;
-      doc.setFont('Arial', 'bold');
-      doc.setFontSize(8);
-      doc.setTextColor(255, 0, 0);
-      doc.text('Sub-total', x + 0.5, y + 2.5);
-      doc.setTextColor(0, 0, 0);
-      doc.rect(x, y, baseColWidth * 9, cellHeight);
-      x += baseColWidth * 9;
-      doc.setTextColor(255, 0, 0);
-      doc.text(totalTerceiros.toFixed(2), x + 0.5, y + 2.5);
-      doc.setTextColor(0, 0, 0);
-      doc.rect(x, y, baseColWidth, cellHeight);
-      y += cellHeight + 2;
+        const headerTitleHeight = cellHeight;
+        const headerRowHeight = cellHeight;
+        const subtotalHeight = cellHeight + 2;
+        const tableFullHeight = headerTitleHeight + headerRowHeight + (rows.length * cellHeight) + subtotalHeight;
+        const singlePageContentHeight = pageHeight - margin * 2;
 
-      // ===== Seção D - CUSTO TOTAL =====
+        const printSectionTitleC = () => {
+          let xx = margin;
+          doc.setFont('Arial', 'bold');
+          doc.setFontSize(9);
+          doc.text('C', xx + 2, y + 3);
+          doc.rect(xx, y, baseColWidth, cellHeight);
+          xx += baseColWidth;
+          doc.setTextColor(255, 0, 0);
+          doc.text('SERVIÇOS TERCEIRIZADOS', xx + 2, y + 3);
+          doc.rect(xx, y, baseColWidth * 9, cellHeight);
+          doc.setTextColor(0, 0, 0);
+          y += cellHeight;
+        };
+
+        const printHeadersC = () => {
+          let xx = margin;
+          headersTerceiros.forEach((h, index) => {
+            const colWidth = materialsColWidths[index];
+            doc.setFont('Arial', 'bold');
+            doc.setFontSize(7);
+            doc.text(h, xx + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
+            doc.rect(xx, y, colWidth, cellHeight);
+            xx += colWidth;
+          });
+          y += cellHeight;
+        };
+
+        if (tableFullHeight <= (pageHeight - y - margin)) {
+          printSectionTitleC();
+          printHeadersC();
+        } else if (tableFullHeight <= singlePageContentHeight) {
+          doc.addPage();
+          y = printCompactHeader();
+          printSectionTitleC();
+          printHeadersC();
+        } else {
+          printSectionTitleC();
+          printHeadersC();
+        }
+
+        for (let idx = 0; idx < rows.length; idx++) {
+          const item = rows[idx];
+
+          if (y + cellHeight + subtotalHeight > pageHeight - margin) {
+            doc.addPage();
+            y = printCompactHeader();
+            printSectionTitleC();
+            printHeadersC();
+          }
+
+          let xx = margin;
+          doc.setFont('Arial', 'normal');
+          doc.setFontSize(7);
+
+          doc.text(String(idx + 1), xx + 0.5, y + 2.5);
+          doc.rect(xx, y, materialsColWidths[0], cellHeight);
+          xx += materialsColWidths[0];
+
+          drawCellWithAutoWrap(xx, y, materialsColWidths[1], cellHeight, item.descricao || '');
+          xx += materialsColWidths[1];
+
+          doc.text(item.unidade || '', xx + 0.5, y + 2.5);
+          doc.rect(xx, y, materialsColWidths[2], cellHeight);
+          xx += materialsColWidths[2];
+
+          doc.text(String(item.quantidade || ''), xx + 0.5, y + 2.5);
+          doc.rect(xx, y, materialsColWidths[3], cellHeight);
+          xx += materialsColWidths[3];
+
+          doc.text(String(item.pesoFator || ''), xx + 0.5, y + 2.5);
+          doc.rect(xx, y, materialsColWidths[4], cellHeight);
+          xx += materialsColWidths[4];
+
+          doc.text(String(item.custoUnit ? parseFloat(item.custoUnit).toFixed(2) : ''), xx + 0.5, y + 2.5);
+          doc.rect(xx, y, materialsColWidths[5], cellHeight);
+          xx += materialsColWidths[5];
+
+          doc.setFont('Arial', 'bold');
+          doc.setTextColor(255, 0, 0);
+          doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), xx + 0.5, y + 2.5);
+          doc.setTextColor(0, 0, 0);
+          doc.setFont('Arial', 'normal');
+          doc.rect(xx, y, materialsColWidths[6], cellHeight);
+          xx += materialsColWidths[6];
+
+          y += cellHeight;
+        }
+
+        // Sub-total terceiros
+        if (y + subtotalHeight > pageHeight - margin) {
+          doc.addPage();
+          y = printCompactHeader();
+        }
+        let xs = margin;
+        doc.setFont('Arial', 'bold');
+        doc.setFontSize(8);
+        doc.setTextColor(255, 0, 0);
+        doc.text('Sub-total', xs + 0.5, y + 2.5);
+        doc.setTextColor(0, 0, 0);
+        doc.rect(xs, y, sumWidths(materialsColWidths.slice(0, -1)), cellHeight);
+        xs += sumWidths(materialsColWidths.slice(0, -1));
+        doc.setTextColor(255, 0, 0);
+        doc.text(totalTerceiros.toFixed(2), xs + 0.5, y + 2.5);
+        doc.setTextColor(0, 0, 0);
+        doc.rect(xs, y, materialsColWidths[6], cellHeight);
+        y += cellHeight + 2;
+      }
+
+      // ===== Seção D - ATIVIDADES PREVISTAS =====
+      if (atividadesData && atividadesData.length > 0) {
+        const rows = atividadesData;
+        const headersAtividades = ['Item', 'Atividade', 'Dias', 'Observações'];
+
+        const headerTitleHeight = cellHeight;
+        const headerRowHeight = cellHeight;
+        const subtotalHeight = cellHeight + 2;
+        const tableFullHeight = headerTitleHeight + headerRowHeight + (rows.length * cellHeight) + subtotalHeight;
+        const singlePageContentHeight = pageHeight - margin * 2;
+
+        const printSectionTitleD = () => {
+          y += 1;
+          let xx = margin;
+          doc.setFont('Arial', 'bold');
+          doc.setFontSize(9);
+          doc.text('D', xx + 2, y + 3);
+          doc.rect(xx, y, baseColWidth, cellHeight);
+          xx += baseColWidth;
+          doc.setTextColor(255, 0, 0);
+          doc.text('ATIVIDADES PREVISTAS', xx + 2, y + 3);
+          doc.rect(xx, y, baseColWidth * 9, cellHeight);
+          doc.setTextColor(0, 0, 0);
+          y += cellHeight;
+        };
+
+        const printHeadersD = () => {
+          let xx = margin;
+          headersAtividades.forEach((h, index) => {
+            const colWidth = activitiesColWidths[index];
+            doc.setFont('Arial', 'bold');
+            doc.setFontSize(7);
+            doc.text(h, xx + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
+            doc.rect(xx, y, colWidth, cellHeight);
+            xx += colWidth;
+          });
+          y += cellHeight;
+        };
+
+        if (tableFullHeight <= (pageHeight - y - margin)) {
+          printSectionTitleD();
+          printHeadersD();
+        } else if (tableFullHeight <= singlePageContentHeight) {
+          doc.addPage();
+          y = printCompactHeader();
+          printSectionTitleD();
+          printHeadersD();
+        } else {
+          printSectionTitleD();
+          printHeadersD();
+        }
+
+        for (let idx = 0; idx < rows.length; idx++) {
+          const item = rows[idx];
+
+          if (y + cellHeight + subtotalHeight > pageHeight - margin) {
+            doc.addPage();
+            y = printCompactHeader();
+            printSectionTitleD();
+            printHeadersD();
+          }
+
+          let xx = margin;
+          doc.setFont('Arial', 'normal');
+          doc.setFontSize(7);
+
+          doc.text(String(idx + 1), xx + 0.5, y + 2.5);
+          doc.rect(xx, y, activitiesColWidths[0], cellHeight);
+          xx += activitiesColWidths[0];
+
+          drawCellWithAutoWrap(xx, y, activitiesColWidths[1], cellHeight, item.atividade || '');
+          xx += activitiesColWidths[1];
+
+          doc.text(String(item.dias || ''), xx + 0.5, y + 2.5);
+          doc.rect(xx, y, activitiesColWidths[2], cellHeight);
+          xx += activitiesColWidths[2];
+
+          drawCellWithAutoWrap(xx, y, activitiesColWidths[3], cellHeight, item.observacoes || '');
+          xx += activitiesColWidths[3];
+
+          y += cellHeight;
+        }
+
+        // Total dias
+        if (y + subtotalHeight > pageHeight - margin) {
+          doc.addPage();
+          y = printCompactHeader();
+        }
+        let xt = margin;
+        doc.setFont('Arial', 'bold');
+        doc.setFontSize(8);
+        doc.setTextColor(255, 0, 0);
+        doc.text('Total dias', xt + 0.5, y + 2.5);
+        doc.setTextColor(0, 0, 0);
+        doc.rect(xt, y, activitiesColWidths[0] + activitiesColWidths[1], cellHeight);
+        xt += activitiesColWidths[0] + activitiesColWidths[1];
+        doc.setTextColor(255, 0, 0);
+        doc.text(String(totalDias), xt + 0.5, y + 2.5);
+        doc.setTextColor(0, 0, 0);
+        doc.rect(xt, y, activitiesColWidths[2], cellHeight);
+        xt += activitiesColWidths[2];
+        doc.rect(xt, y, activitiesColWidths[3], cellHeight);
+        y += cellHeight + 2;
+      }
+
+      // ===== Seção E - CUSTO TOTAL =====
       x = margin;
       doc.setFont('Arial', 'bold');
       doc.setFontSize(9);
-      doc.text('D', x + 2, y + 3);
+      doc.text('E', x + 2, y + 3);
       doc.rect(x, y, baseColWidth, cellHeight);
       x += baseColWidth;
       doc.text('Cálculos Finais', x + 2, y + 3);
@@ -1793,7 +2334,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
         ['6', `Margem (${margemPercent}%)`, valorMargem.toFixed(2)],
         ['7', 'PV S/ imposto', semImposto.toFixed(2)],
         ['8', `Imposto S/ NF (${impostosPercent}%)`, valorImposto.toFixed(2)],
-        ['9', 'PV FINAL R$', ultimoOrcamento.valores.precoFinal.toFixed(2)]
+        ['9', 'PV FINAL R$', precoFinal.toFixed(2)]
       ];
 
       // Linhas de cálculo
@@ -1827,76 +2368,6 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
         }
         y += cellHeight;
       });
-
-      // ===== Seção E - ATIVIDADES PREVISTAS =====
-      y += 1;
-      x = margin;
-      doc.setFont('Arial', 'bold');
-      doc.setFontSize(9);
-      doc.text('E', x + 2, y + 3);
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-      doc.setTextColor(255, 0, 0);
-      doc.text('ATIVIDADES PREVISTAS', x + 2, y + 3);
-      doc.rect(x, y, baseColWidth * 9, cellHeight);
-      doc.setTextColor(0, 0, 0);
-      y += cellHeight;
-
-      // Cabeçalho tabela E
-      x = margin;
-      const headersAtividades = ['Item', 'Atividade', 'Dias', 'Observações', '', '', '', '', '', ''];
-      headersAtividades.forEach((h) => {
-        doc.setFont('Arial', 'bold');
-        doc.setFontSize(7);
-        doc.text(h, x + 0.5, y + 2.5, { maxWidth: baseColWidth - 1 });
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
-      });
-      y += cellHeight;
-
-      // Linhas de atividades
-      atividadesData.forEach((item: any, idx: number) => {
-        x = margin;
-        doc.setFont('Arial', 'normal');
-        doc.setFontSize(7);
-
-        // Item
-        doc.text(String(idx + 1), x + 0.5, y + 2.5);
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
-
-        // Atividade (com auto wrap)
-        drawCellWithAutoWrap(x, y, baseColWidth, cellHeight, item.atividade || '');
-        x += baseColWidth;
-
-        // Dias
-        doc.text(String(item.dias || ''), x + 0.5, y + 2.5);
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
-
-        // Observações (com auto wrap)
-        drawCellWithAutoWrap(x, y, baseColWidth, cellHeight, item.observacoes || '');
-        x += baseColWidth;
-        doc.rect(x, y, baseColWidth * 6, cellHeight);
-        x += baseColWidth * 6;
-
-        y += cellHeight;
-      });
-
-      // Total de dias
-      x = margin;
-      doc.setFont('Arial', 'bold');
-      doc.setFontSize(8);
-      doc.setTextColor(255, 0, 0);
-      doc.text('Total dias', x + 0.5, y + 2.5);
-      doc.setTextColor(0, 0, 0);
-      doc.rect(x, y, baseColWidth * 2, cellHeight);
-      x += baseColWidth * 2;
-      doc.setTextColor(255, 0, 0);
-      doc.text(String(totalDias), x + 0.5, y + 2.5);
-      doc.setTextColor(0, 0, 0);
-      doc.rect(x, y, baseColWidth * 8, cellHeight);
-      y += cellHeight + 2;
 
       // ===== RESUMO FINAL =====
       x = margin;
@@ -2278,7 +2749,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                               <span className="text-emerald-300 font-black text-xs">v{formatarVersaoOrcamento(ultimoOrcamento.versao)}</span>
                             </div>
                             <p className="text-emerald-200 font-black text-base">
-                              R$ {ultimoOrcamento.valores.precoFinal.toFixed(2)}
+                              R$ {safeNumber(ultimoOrcamento.valores.precoFinal).toFixed(2)}
                             </p>
                           </div>
                         )}
@@ -2288,7 +2759,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                           <div className="bg-gradient-to-r from-emerald-500/20 to-cyan-500/20 border border-emerald-500/30 rounded-lg p-2.5 mb-3">
                             <div className="flex justify-between items-center">
                               <p className="text-emerald-400 text-xs font-black">Orçamento v{formatarVersaoOrcamento(ultimoOrcamento.versao)}</p>
-                              <span className="text-emerald-300 font-black text-xs">R$ {ultimoOrcamento.valores.precoFinal.toFixed(2)}</span>
+                              <span className="text-emerald-300 font-black text-xs">R$ {safeNumber(ultimoOrcamento.valores.precoFinal).toFixed(2)}</span>
                             </div>
                           </div>
                         )}
@@ -2313,10 +2784,6 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                                 </p>
                                 <span className="text-xs font-black">v{ultimaProposta.versao}</span>
                               </div>
-                              {ultimaProposta.preco && (
-                                <p className="text-xs text-white/80 mt-1">Preço: {ultimaProposta.preco}</p>
-                              )}
-
                               <div className="mt-2.5 pt-2 border-t border-white/10 space-y-2">
                                 <div className="flex items-center justify-between">
                                   <p className="text-[10px] text-white/60 font-black uppercase tracking-widest">Doc. cliente</p>
@@ -2423,6 +2890,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
+                            console.log('Ver Detalhes button clicked for obra:', obra?.id || obra?.nome || obra);
                             handleShowDetalhes(obra);
                           }}
                           className="w-full py-2 bg-gradient-to-r from-white/10 to-white/5 hover:from-white/20 hover:to-white/10 text-white rounded-lg font-black text-xs uppercase tracking-wide transition-all border border-white/10 hover:border-white/20 flex items-center justify-center gap-2"
@@ -2501,8 +2969,11 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                       value={formData.empresaPrestadora}
                       onChange={e => setFormData({...formData, empresaPrestadora: e.target.value})}
                     >
-                      <option value="Linave">Linave</option>
-                      <option value="Nao">Não</option>
+                      {empresasPrestadoras.map((empresa) => (
+                        <option key={empresa.id} value={empresa.nome}>
+                          {empresa.nome}{empresa.cnpj ? ` - ${empresa.cnpj}` : ''}
+                        </option>
+                      ))}
                     </select>
                   </div>
 
@@ -2804,7 +3275,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       )}
 
       {/* MODAL - DETALHES DA OBRA */}
-      {showDetalhesObrraModal && selectedObraDetalhes && (
+      {showDetalhesObraModal && selectedObraDetalhes && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-[#101f3d] rounded-2xl border border-white/10 shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
             
@@ -2903,24 +3374,25 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                 return (
                   <div className="bg-gradient-to-r from-emerald-500/10 to-cyan-500/10 rounded-xl p-6 border border-emerald-500/30 space-y-4">
                     <button
-                      onClick={() => setExpandedOrcamentoSummary(!expandedOrcamentosummary)}
+                      onClick={() => setExpandedOrcamentoSummary(!expandedOrcamentoSummary)}
                       className="w-full flex justify-between items-center mb-4"
                     >
                       <h3 className="text-emerald-400 font-black text-lg">RESUMO DO ORÇAMENTO (v{formatarVersaoOrcamento(ultimoOrcamento.versao)})</h3>
-                      <ChevronDown size={20} className={`text-emerald-400 transition-transform ${expandedOrcamentosummary ? 'rotate-180' : ''}`} />
+                      <ChevronDown size={20} className={`text-emerald-400 transition-transform ${expandedOrcamentoSummary ? 'rotate-180' : ''}`} />
                     </button>
 
                     {/* Resumo Financeiro (Sempre Visível) */}
                     <div className="bg-gradient-to-r from-amber-500/20 to-orange-500/20 rounded-lg p-4 border border-amber-500/30 space-y-2">
                       {(() => {
-                        const base = ultimoOrcamento.valores.totalBruto ?? ultimoOrcamento.valores.subtotal;
-                        const margemPercent = ultimoOrcamento.valores.margem || 0;
-                        const ohPercent = ultimoOrcamento.valores.oh || 0;
-                        const impostosPercent = ultimoOrcamento.valores.impostos || 0;
-                        const valorMargem = ultimoOrcamento.valores.valorMargem ?? ((base * margemPercent) / 100);
-                        const valorOH = ultimoOrcamento.valores.valorOH ?? ((base * ohPercent) / 100);
-                        const semImposto = ultimoOrcamento.valores.totalSemImposto ?? (base + valorMargem + valorOH);
-                        const valorImposto = ultimoOrcamento.valores.valorImpostos ?? ((semImposto * impostosPercent) / 100);
+                        const base = safeNumber(ultimoOrcamento.valores.totalBruto ?? ultimoOrcamento.valores.subtotal);
+                        const margemPercent = safeNumber(ultimoOrcamento.valores.margem);
+                        const ohPercent = safeNumber(ultimoOrcamento.valores.oh);
+                        const impostosPercent = safeNumber(ultimoOrcamento.valores.impostos);
+                        const valorMargem = safeNumber(ultimoOrcamento.valores.valorMargem ?? ((base * margemPercent) / 100));
+                        const valorOH = safeNumber(ultimoOrcamento.valores.valorOH ?? ((base * ohPercent) / 100));
+                        const semImposto = safeNumber(ultimoOrcamento.valores.totalSemImposto ?? (base + valorMargem + valorOH));
+                        const valorImposto = safeNumber(ultimoOrcamento.valores.valorImpostos ?? ((semImposto * impostosPercent) / 100));
+                        const precoFinal = safeNumber(ultimoOrcamento.valores.precoFinal);
                         return (
                           <>
                       <div className="flex justify-between items-center mb-3">
@@ -2945,7 +3417,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                       </div>
                       <div className="flex justify-between items-center pt-2">
                         <span className="text-amber-300 font-black text-lg">PREÇO FINAL:</span>
-                        <span className="text-amber-300 font-black text-2xl">R$ {ultimoOrcamento.valores.precoFinal.toFixed(2)}</span>
+                        <span className="text-amber-300 font-black text-2xl">R$ {precoFinal.toFixed(2)}</span>
                       </div>
                           </>
                         );
@@ -2953,7 +3425,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                     </div>
 
                     {/* Detalhes Completos (Expandido) */}
-                    {expandedOrcamentosummary && (
+                    {expandedOrcamentoSummary && (
                       <div className="space-y-4">
                         {/* Dados do Orçamento */}
                         <div className="bg-[#0b1220] rounded-lg p-4 grid grid-cols-3 gap-4 text-sm border border-white/5">
@@ -3770,7 +4242,50 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                   <h3 className="text-white font-black text-lg">ESCOPOS DE SERVIÇOS</h3>
                   <div>
                     <p className="text-white/50 text-xs mb-2 font-black">A - Escopo Básico de Serviços</p>
-                    <p className="text-white whitespace-pre-wrap text-sm">{ultimaProposta.escopoA || '−'}</p>
+                    {(() => {
+                      const itensEscopo = normalizarEscopoBasicoEstruturado(ultimaProposta.escopoBasicoServicos || ultimaProposta.escopoA);
+                      if (itensEscopo.length === 0) {
+                        return <p className="text-white whitespace-pre-wrap text-sm">−</p>;
+                      }
+
+                      return (
+                        <div className="space-y-4">
+                          {itensEscopo.map((item: any, index: number) => (
+                            <div key={`escopo-${index}`} className="space-y-2">
+                              {item.titulo && (
+                                <p className="text-white font-bold text-sm">{index + 1}. {item.titulo}</p>
+                              )}
+                              {item.textosAntes.map((texto: string, textoIndex: number) => (
+                                <p key={`antes-${index}-${textoIndex}`} className="text-white whitespace-pre-wrap text-sm">{texto}</p>
+                              ))}
+                              {item.tabela.length > 0 && (
+                                <div className="overflow-x-auto rounded-lg border border-white/10">
+                                  <table className="min-w-full text-sm">
+                                    <tbody>
+                                      {item.tabela.map((linha: any[], linhaIndex: number) => (
+                                        <tr key={`linha-${index}-${linhaIndex}`} className="border-b border-white/10 last:border-b-0">
+                                          <td className="px-3 py-2 text-white font-bold border-r border-white/10 whitespace-nowrap">
+                                            {linhaIndex + 1}
+                                          </td>
+                                          {linha.map((coluna: any, colunaIndex: number) => (
+                                            <td key={`coluna-${index}-${linhaIndex}-${colunaIndex}`} className="px-3 py-2 text-white">
+                                              {coluna.valor}
+                                            </td>
+                                          ))}
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+                              {item.textosDepois.map((texto: string, textoIndex: number) => (
+                                <p key={`depois-${index}-${textoIndex}`} className="text-white whitespace-pre-wrap text-sm">{texto}</p>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
 
@@ -4267,14 +4782,15 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                 <div className="bg-gradient-to-r from-amber-500/20 to-orange-500/20 rounded-lg p-6 border border-amber-500/30 space-y-3">
                   <h3 className="text-amber-400 font-black text-lg">RESUMO FINANCEIRO</h3>
                   {(() => {
-                    const base = ultimoOrcamento.valores.totalBruto ?? ultimoOrcamento.valores.subtotal;
-                    const margemPercent = ultimoOrcamento.valores.margem || 0;
-                    const ohPercent = ultimoOrcamento.valores.oh || 0;
-                    const impostosPercent = ultimoOrcamento.valores.impostos || 0;
-                    const valorMargem = ultimoOrcamento.valores.valorMargem ?? ((base * margemPercent) / 100);
-                    const valorOH = ultimoOrcamento.valores.valorOH ?? ((base * ohPercent) / 100);
-                    const semImposto = ultimoOrcamento.valores.totalSemImposto ?? (base + valorMargem + valorOH);
-                    const valorImposto = ultimoOrcamento.valores.valorImpostos ?? ((semImposto * impostosPercent) / 100);
+                    const base = safeNumber(ultimoOrcamento.valores.totalBruto ?? ultimoOrcamento.valores.subtotal);
+                    const margemPercent = safeNumber(ultimoOrcamento.valores.margem);
+                    const ohPercent = safeNumber(ultimoOrcamento.valores.oh);
+                    const impostosPercent = safeNumber(ultimoOrcamento.valores.impostos);
+                    const valorMargem = safeNumber(ultimoOrcamento.valores.valorMargem ?? ((base * margemPercent) / 100));
+                    const valorOH = safeNumber(ultimoOrcamento.valores.valorOH ?? ((base * ohPercent) / 100));
+                    const semImposto = safeNumber(ultimoOrcamento.valores.totalSemImposto ?? (base + valorMargem + valorOH));
+                    const valorImposto = safeNumber(ultimoOrcamento.valores.valorImpostos ?? ((semImposto * impostosPercent) / 100));
+                    const precoFinal = safeNumber(ultimoOrcamento.valores.precoFinal);
                     return (
                   <div className="space-y-2">
                     <div className="flex justify-between items-center">
@@ -4299,7 +4815,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                     </div>
                     <div className="flex justify-between items-center pt-3">
                       <span className="text-amber-300 font-black text-lg">PREÇO FINAL:</span>
-                      <span className="text-amber-300 font-black text-2xl">R$ {ultimoOrcamento.valores.precoFinal.toFixed(2)}</span>
+                      <span className="text-amber-300 font-black text-2xl">R$ {precoFinal.toFixed(2)}</span>
                     </div>
                   </div>
                     );

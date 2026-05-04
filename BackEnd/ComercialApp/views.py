@@ -4,6 +4,9 @@ from rest_framework.decorators import api_view
 from django.db import transaction
 from .models import Cliente, Negocio, Servico, User
 from .serializers import ClienteSerializer, NegocioSerializer, ServicoSerializer, UserSerializer
+from django.http import FileResponse
+from django.conf import settings
+import os
 
 class ClienteViewSet(viewsets.ModelViewSet):
     queryset = Cliente.objects.all()
@@ -74,3 +77,15 @@ class NegocioViewSet(viewsets.ModelViewSet):
                 s_serializer.save()
 
         return Response(serializer.data)
+
+@api_view(['GET'])
+def visualizar_orcamento(request, filename):
+    # Caminho completo do arquivo
+    file_path = os.path.join(settings.MEDIA_ROOT, 'documentos_negocios', filename)
+
+    # Verifica se o arquivo existe
+    if not os.path.exists(file_path):
+        return Response({'error': 'Arquivo não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+    # Retorna o arquivo como resposta
+    return FileResponse(open(file_path, 'rb'), content_type='application/pdf')
