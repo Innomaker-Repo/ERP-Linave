@@ -71,6 +71,7 @@ export const handleDownloadPropostaPDF = (
   cliente: any,
   obra: any,
   logoBase64?: string,
+  isLinave?: boolean,
 ) => {
   if (!propostaForm) return;
 
@@ -93,19 +94,35 @@ export const handleDownloadPropostaPDF = (
       doc.setFontSize(11);
       currentY += 25;
 
-      const nomeEmpresa = propostaForm.empresaNome || 'VTS - Servinave Engenharia e Reparos Navais';
-      doc.text(nomeEmpresa, margin, currentY);
+      if (isLinave) {
+        // Cabeçalho específico para Linave
+        doc.text('Linave', margin, currentY);
+        doc.setFont('Arial', 'normal');
+        doc.setFontSize(9);
+        currentY += 5;
+        doc.text('End. Rua Visconde de Itaborai, 24 –', margin, currentY);
+        currentY += 5;
+        doc.text('Centro – Niteroi - RJ', margin, currentY);
+        currentY += 5;
+        doc.text('CEP 24.030-091', margin, currentY);
+        currentY += 5;
+        doc.text('+55 (21) 99129-3251 / 3629-1439', margin, currentY);
+      } else {
+        // Cabeçalho padrão para Servinave
+        const nomeEmpresa = propostaForm.empresaNome || 'VTS - Servinave Engenharia e Reparos Navais';
+        doc.text(nomeEmpresa, margin, currentY);
 
-      doc.setFont('Arial', 'normal');
-      doc.setFontSize(9);
-      currentY += 5;
-      doc.text("Rua Miguel de Lemos, 44 Fundos - Ponta D'areia", margin, currentY);
-      currentY += 5;
-      doc.text('Cep: 24040-260 - Niteroi - RJ', margin, currentY);
-      currentY += 5;
-      doc.text('Tel: +55 (21) 2620-1850', margin, currentY);
-      currentY += 5;
-      doc.text('Email: comercial@servinave.com.br', margin, currentY);
+        doc.setFont('Arial', 'normal');
+        doc.setFontSize(9);
+        currentY += 5;
+        doc.text("Rua Miguel de Lemos, 44 Fundos - Ponta D'areia", margin, currentY);
+        currentY += 5;
+        doc.text('Cep: 24040-260 - Niteroi - RJ', margin, currentY);
+        currentY += 5;
+        doc.text('Tel: +55 (21) 2620-1850', margin, currentY);
+        currentY += 5;
+        doc.text('Email: comercial@servinave.com.br', margin, currentY);
+      }
 
       currentY += 5;
       doc.setDrawColor(200, 200, 200);
