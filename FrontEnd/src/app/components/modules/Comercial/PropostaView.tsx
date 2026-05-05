@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
-import { Plus, X, FileText, CheckCircle, XCircle, ArrowLeft, Save } from 'lucide-react';
+import { Plus, X, FileText, CheckCircle, XCircle, ArrowLeft, Save, Download } from 'lucide-react';
 import { handleDownloadPropostaPDF } from '../CRM/handleDownloadPropostaPDF';
 import PizZip from 'pizzip';
 import Docxtemplater from 'docxtemplater';
@@ -292,6 +292,42 @@ export function PropostaView() {
         };
       })
     }));
+  };
+
+  const atualizarTituloEscopoServico = (escopoId: string, novoTitulo: string) => {
+    setPropostaForm((prev) => ({
+      ...prev,
+      escopoBasicoServicos: prev.escopoBasicoServicos.map((escopo) =>
+        escopo.id === escopoId
+          ? { ...escopo, titulo: novoTitulo }
+          : escopo
+      )
+    }));
+  };
+
+  const handleDownloadPropostaPDFWithLogo = async (proposta: any, obra: any) => {
+    const cliente = listaClientes.find(c => c.id === obra.clienteId);
+    const rawEmpresa = obra.empresaPrestadora || '';
+    const cleaned = (typeof rawEmpresa === 'string' ? rawEmpresa : (rawEmpresa.nome || '')).toLowerCase();
+    const isLinave = !cleaned.includes('servi');
+    
+    let logoBase64: string | undefined;
+    if (isLinave) {
+      try {
+        const response = await fetch('/image1.png');
+        const blob = await response.blob();
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          logoBase64 = reader.result as string;
+          handleDownloadPropostaPDF(proposta, cliente, obra, logoBase64, isLinave);
+        };
+        reader.readAsDataURL(blob);
+      } catch (e) {
+        handleDownloadPropostaPDF(proposta, cliente, obra, undefined, isLinave);
+      }
+    } else {
+      handleDownloadPropostaPDF(proposta, cliente, obra, undefined, isLinave);
+    }
   };
 
   const handleSelectObra = (obra: any) => {
@@ -689,6 +725,12 @@ export function PropostaView() {
                     </div>
 
                     <div className="flex gap-3">
+                      <button
+                        onClick={() => handleDownloadPropostaPDFWithLogo(ultimaProposta, obra)}
+                        className="flex-1 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/40 text-blue-300 py-2 rounded-lg font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                      >
+                        <Download size={14} /> Download
+                      </button>
                       <button
                         onClick={() => {
                           setSelectedObra(obra);

@@ -279,13 +279,32 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       ? config.empresasPrestadoras
       : [];
 
+    const empresasPadrao = [
+      { id: 'EMP-LINAVE', nome: 'Linave', cnpj: '' },
+      { id: 'EMP-SERVINAVE', nome: 'Servinave', cnpj: '' }
+    ];
+
     const fallbackNome = config?.empresaNome && config.empresaNome !== 'Linave ERP Demo'
       ? config.empresaNome
       : 'Linave';
 
     const origem = empresasCadastradas.length > 0
-      ? empresasCadastradas
+      ? [...empresasCadastradas]
       : [{ id: 'EMP-LINAVE', nome: fallbackNome }];
+
+    empresasPadrao.forEach((empresaPadrao) => {
+      const jaExiste = origem.some((empresa: any) => {
+        const nomeBase = typeof empresa === 'string'
+          ? empresa
+          : empresa?.nome || empresa?.razaoSocial || empresa?.empresaNome || '';
+
+        return String(nomeBase).trim().toLowerCase() === empresaPadrao.nome.toLowerCase();
+      });
+
+      if (!jaExiste) {
+        origem.push(empresaPadrao);
+      }
+    });
 
     const empresasUnicas = new Map<string, { id: string; nome: string; cnpj: string }>();
 

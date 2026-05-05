@@ -36,12 +36,33 @@ const normalizarEmpresasPrestadoras = (config: any): EmpresaPrestadora[] => {
     ? config.empresasPrestadoras
     : [];
 
+  const empresasPadrao = [
+    {
+      id: 'EMP-LINAVE',
+      nome: 'Linave',
+      cnpj: '',
+      endereco: '',
+      contato: '',
+      email: '',
+      ativa: true
+    },
+    {
+      id: 'EMP-SERVINAVE',
+      nome: 'Servinave',
+      cnpj: '',
+      endereco: 'Rua Miguel de Lemos, 44 Fundos - Ponta D\'areia',
+      contato: '+55 (21) 2620-1850',
+      email: 'comercial@servinave.com.br',
+      ativa: true
+    }
+  ];
+
   const fallbackNome = config?.empresaNome && config.empresaNome !== 'Linave ERP Demo'
     ? config.empresaNome
     : 'Linave';
 
   const origem = empresasCadastradas.length > 0
-    ? empresasCadastradas
+    ? [...empresasCadastradas]
     : [{
         id: 'EMP-LINAVE',
         nome: fallbackNome,
@@ -51,6 +72,20 @@ const normalizarEmpresasPrestadoras = (config: any): EmpresaPrestadora[] => {
         email: '',
         ativa: true
       }];
+
+  empresasPadrao.forEach((empresaPadrao) => {
+    const jaExiste = origem.some((empresa: any) => {
+      const nomeBase = typeof empresa === 'string'
+        ? empresa
+        : empresa?.nome || empresa?.razaoSocial || empresa?.empresaNome || '';
+
+      return String(nomeBase).trim().toLowerCase() === empresaPadrao.nome.toLowerCase();
+    });
+
+    if (!jaExiste) {
+      origem.push(empresaPadrao);
+    }
+  });
 
   const empresasUnicas = new Map<string, EmpresaPrestadora>();
 

@@ -529,12 +529,27 @@ export function OsView({ searchQuery }: OSViewProps) {
     saveEntity('os', listaOS.filter((item) => item.id !== osId));
   };
 
+  const handleDownloadOSFromList = (os: OsFormData) => {
+    // Sempre abre os detalhes para garantir que temos os dados completos
+    setSelectedOS(os);
+    setShowDetalhesOS(true);
+    // Após abrir, o usuário pode clicar em Download TXT
+    setTimeout(() => {
+      alert('A OS foi aberta. Clique em "Download TXT" para fazer o download.');
+    }, 500);
+  };
+
   const handleShowDetalhes = (item: OsFormData) => {
     setSelectedOS(item);
     setShowDetalhesOS(true);
   };
 
   const handleDownloadOSTXT = (item: OsFormData) => {
+    if (!item.ordemServicoNumero) {
+      alert('Erro: Dados da OS incompletos. Não é possível fazer o download.');
+      return;
+    }
+
     const resumo = item.resumoConsolidado;
     const itensASerIncluido = listarItensASerIncluido(item.aSerIncluido || A_SER_INCLUIDO_DEFAULT);
     const itensASerIncluidoTexto = itensASerIncluido.length > 0
@@ -697,6 +712,12 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                       <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase border ${osExistente.statusAprovacao === 'aprovada' ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' : 'bg-amber-500/20 border-amber-500/40 text-amber-300'}`}>
                         {osExistente.statusAprovacao === 'aprovada' ? 'Aprovada' : 'Pendente'}
                       </span>
+                      <button
+                        onClick={() => handleDownloadOSFromList(osExistente)}
+                        className="px-4 py-2 bg-blue-500/20 border border-blue-500/40 text-blue-300 rounded-lg font-black text-xs hover:bg-blue-500/30 transition flex items-center gap-2"
+                      >
+                        <Download size={14} /> Download
+                      </button>
                       <button
                         onClick={() => handleShowDetalhes(osExistente)}
                         className="px-4 py-2 bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 rounded-lg font-black text-xs hover:bg-cyan-500/30 transition flex items-center gap-2"

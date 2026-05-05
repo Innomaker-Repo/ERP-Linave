@@ -830,6 +830,15 @@ const createInitialData = (savedData: any) => {
           contato: '',
           email: '',
           ativa: true
+        },
+        {
+          id: 'EMP-SERVINAVE',
+          nome: 'Servinave',
+          cnpj: '',
+          endereco: 'Rua Miguel de Lemos, 44 Fundos - Ponta D\'areia',
+          contato: '+55 (21) 2620-1850',
+          email: 'comercial@servinave.com.br',
+          ativa: true
         }
       ]
     },
