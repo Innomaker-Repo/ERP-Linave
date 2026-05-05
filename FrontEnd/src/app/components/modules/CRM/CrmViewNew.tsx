@@ -635,266 +635,23 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
 
       console.log("Iniciando geração de PDF de medição...", { documentoMediacaoForm });
 
-      // ===== Seção A - MÃO DE OBRA =====
-      if (maoDeObraData && maoDeObraData.length > 0) {
-        const rows = maoDeObraData;
-        const headersMaoDeObra = ['Item', 'Função', 'Qtd', 'Dias', 'Custo/Dia', 'Obs', 'Valor Total'];
-
-        const headerTitleHeight = cellHeight; // 'A - MÃO DE OBRA' title row
-        const headerRowHeight = cellHeight; // column headers
-        const subtotalHeight = cellHeight + 3;
-        const tableFullHeight = headerTitleHeight + headerRowHeight + (rows.length * cellHeight) + subtotalHeight;
-        const singlePageContentHeight = pageHeight - margin * 2;
-
-        const printSectionTitle = () => {
-          let xx = margin;
-          doc.setFont('Arial', 'bold');
-          doc.setFontSize(9);
-          doc.text('A', xx + 2, y + 3);
-          doc.rect(xx, y, baseColWidth, cellHeight);
-          xx += baseColWidth;
-          doc.setTextColor(255, 0, 0);
-          doc.text('MÃO DE OBRA', xx + 2, y + 3);
-          doc.rect(xx, y, baseColWidth * 9, cellHeight);
-          doc.setTextColor(0, 0, 0);
-          y += cellHeight;
-        };
-
-        const printTableHeaders = () => {
-          let xx = margin;
-          headersMaoDeObra.forEach((h, index) => {
-            const colWidth = laborColWidths[index];
-            doc.setFont('Arial', 'bold');
-            doc.setFontSize(7);
-            doc.setTextColor(0, 0, 0);
-            doc.text(h, xx + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
-            doc.rect(xx, y, colWidth, cellHeight);
-            xx += colWidth;
-          });
-          y += cellHeight;
-        };
-
-        // Decide se move a tabela inteira para próxima página ou quebra com cabeçalho repetido
-        if (tableFullHeight <= (pageHeight - y - margin)) {
-          // cabe na página atual
-          printSectionTitle();
-          printTableHeaders();
-          for (let idx = 0; idx < rows.length; idx++) {
-            const item = rows[idx];
-            let xx = margin;
-            doc.setFont('Arial', 'normal');
-            doc.setFontSize(7);
-
-            // Item
-            doc.text(String(idx + 1), xx + 0.5, y + 2.5);
-            doc.rect(xx, y, laborColWidths[0], cellHeight);
-            xx += laborColWidths[0];
-
-            // Função
-            drawCellWithAutoWrap(xx, y, laborColWidths[1], cellHeight, item.funcao || '');
-            xx += laborColWidths[1];
-
-            // Quantidade
-            doc.text(String(item.quantidade || ''), xx + 0.5, y + 2.5);
-            doc.rect(xx, y, laborColWidths[2], cellHeight);
-            xx += laborColWidths[2];
-
-            // Dias
-            doc.text(String(item.dias || ''), xx + 0.5, y + 2.5);
-            doc.rect(xx, y, laborColWidths[3], cellHeight);
-            xx += laborColWidths[3];
-
-            // Custo/Dia
-            doc.text(String(item.custoUnitDia ? parseFloat(item.custoUnitDia).toFixed(2) : ''), xx + 0.5, y + 2.5);
-            doc.rect(xx, y, laborColWidths[4], cellHeight);
-            xx += laborColWidths[4];
-
-            // Observações
-            drawCellWithAutoWrap(xx, y, laborColWidths[5], cellHeight, item.observacoes || '');
-            xx += laborColWidths[5];
-
-            // Valor Total
-            doc.setFont('Arial', 'bold');
-            doc.setTextColor(255, 0, 0);
-            doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), xx + 0.5, y + 2.5);
-            doc.setTextColor(0, 0, 0);
-            doc.setFont('Arial', 'normal');
-            doc.rect(xx, y, laborColWidths[6], cellHeight);
-            xx += laborColWidths[6];
-
-            y += cellHeight;
-          }
-
-          // Subtotal
-          let xx = margin;
-          doc.setFont('Arial', 'bold');
-          doc.setFontSize(8);
-          doc.setTextColor(255, 0, 0);
-          doc.text('Sub-total', xx + 0.5, y + 2.5);
-          doc.setTextColor(0, 0, 0);
-          doc.rect(xx, y, baseColWidth * 9, cellHeight);
-          xx += baseColWidth * 9;
-          doc.setTextColor(255, 0, 0);
-          doc.text(totalMaoDeObra.toFixed(2), xx + 0.5, y + 2.5);
-          doc.setTextColor(0, 0, 0);
-          doc.rect(xx, y, baseColWidth, cellHeight);
-          y += cellHeight + 3;
-
-        } else if (tableFullHeight <= singlePageContentHeight) {
-          // move a tabela inteira para a próxima página (cabe nela inteira)
-          doc.addPage();
-          y = printCompactHeader();
-          printSectionTitle();
-          printTableHeaders();
-
-          for (let idx = 0; idx < rows.length; idx++) {
-            const item = rows[idx];
-            let xx = margin;
-            doc.setFont('Arial', 'normal');
-            doc.setFontSize(7);
-
-            doc.text(String(idx + 1), xx + 0.5, y + 2.5);
-            doc.rect(xx, y, laborColWidths[0], cellHeight);
-            xx += laborColWidths[0];
-
-            drawCellWithAutoWrap(xx, y, laborColWidths[1], cellHeight, item.funcao || '');
-            xx += laborColWidths[1];
-
-            doc.text(String(item.quantidade || ''), xx + 0.5, y + 2.5);
-            doc.rect(xx, y, laborColWidths[2], cellHeight);
-            xx += laborColWidths[2];
-
-            doc.text(String(item.dias || ''), xx + 0.5, y + 2.5);
-            doc.rect(xx, y, laborColWidths[3], cellHeight);
-            xx += laborColWidths[3];
-
-            doc.text(String(item.custoUnitDia ? parseFloat(item.custoUnitDia).toFixed(2) : ''), xx + 0.5, y + 2.5);
-            doc.rect(xx, y, laborColWidths[4], cellHeight);
-            xx += laborColWidths[4];
-
-            drawCellWithAutoWrap(xx, y, laborColWidths[5], cellHeight, item.observacoes || '');
-            xx += laborColWidths[5];
-
-            doc.setFont('Arial', 'bold');
-            doc.setTextColor(255, 0, 0);
-            doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), xx + 0.5, y + 2.5);
-            doc.setTextColor(0, 0, 0);
-            doc.setFont('Arial', 'normal');
-            doc.rect(xx, y, laborColWidths[6], cellHeight);
-            xx += laborColWidths[6];
-
-            y += cellHeight;
-          }
-
-          // Subtotal
-          let xx2 = margin;
-          doc.setFont('Arial', 'bold');
-          doc.setFontSize(8);
-          doc.setTextColor(255, 0, 0);
-          doc.text('Sub-total', xx2 + 0.5, y + 2.5);
-          doc.setTextColor(0, 0, 0);
-          doc.rect(xx2, y, baseColWidth * 9, cellHeight);
-          xx2 += baseColWidth * 9;
-          doc.setTextColor(255, 0, 0);
-          doc.text(totalMaoDeObra.toFixed(2), xx2 + 0.5, y + 2.5);
-          doc.setTextColor(0, 0, 0);
-          doc.rect(xx2, y, baseColWidth, cellHeight);
-          y += cellHeight + 3;
-
-        } else {
-          // tabela maior que uma página: quebrar em páginas, repetindo cabeçalho e o cabeçalho compacto da página
-          let idx = 0;
-          printSectionTitle();
-          printTableHeaders();
-
-          while (idx < rows.length) {
-            // Se não há espaço suficiente para uma linha + subtotal, cria nova página
-            if (y + cellHeight + subtotalHeight > pageHeight - margin) {
-              doc.addPage();
-              y = printCompactHeader();
-              printSectionTitle();
-              printTableHeaders();
-            }
-
-            const item = rows[idx];
-            let xx = margin;
-            doc.setFont('Arial', 'normal');
-            doc.setFontSize(7);
-
-            doc.text(String(idx + 1), xx + 0.5, y + 2.5);
-            doc.rect(xx, y, laborColWidths[0], cellHeight);
-            xx += laborColWidths[0];
-
-            drawCellWithAutoWrap(xx, y, laborColWidths[1], cellHeight, item.funcao || '');
-            xx += laborColWidths[1];
-
-            doc.text(String(item.quantidade || ''), xx + 0.5, y + 2.5);
-            doc.rect(xx, y, laborColWidths[2], cellHeight);
-            xx += laborColWidths[2];
-
-            doc.text(String(item.dias || ''), xx + 0.5, y + 2.5);
-            doc.rect(xx, y, laborColWidths[3], cellHeight);
-            xx += laborColWidths[3];
-
-            doc.text(String(item.custoUnitDia ? parseFloat(item.custoUnitDia).toFixed(2) : ''), xx + 0.5, y + 2.5);
-            doc.rect(xx, y, laborColWidths[4], cellHeight);
-            xx += laborColWidths[4];
-
-            drawCellWithAutoWrap(xx, y, laborColWidths[5], cellHeight, item.observacoes || '');
-            xx += laborColWidths[5];
-
-            doc.setFont('Arial', 'bold');
-            doc.setTextColor(255, 0, 0);
-            doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), xx + 0.5, y + 2.5);
-            doc.setTextColor(0, 0, 0);
-            doc.setFont('Arial', 'normal');
-            doc.rect(xx, y, laborColWidths[6], cellHeight);
-            xx += laborColWidths[6];
-
-            y += cellHeight;
-            idx += 1;
-          }
-
-          // Subtotal (garante espaço)
-          if (y + subtotalHeight > pageHeight - margin) {
-            doc.addPage();
-            y = printCompactHeader();
-          }
-          let xsub = margin;
-          doc.setFont('Arial', 'bold');
-          doc.setFontSize(8);
-          doc.setTextColor(255, 0, 0);
-          doc.text('Sub-total', xsub + 0.5, y + 2.5);
-          doc.setTextColor(0, 0, 0);
-          doc.rect(xsub, y, baseColWidth * 9, cellHeight);
-          xsub += baseColWidth * 9;
-          doc.setTextColor(255, 0, 0);
-          doc.text(totalMaoDeObra.toFixed(2), xsub + 0.5, y + 2.5);
-          doc.setTextColor(0, 0, 0);
-          doc.rect(xsub, y, baseColWidth, cellHeight);
-          y += cellHeight + 3;
-        }
-      }
-
-      // 2. Chama a função importada PASSANDO A IMAGEM
-      const resultadoPdf = handleDownloadPropostaPDF(
-        formPropostaParaPDF,
+      // 2. Chama a função EXTERNA para gerar o PDF (Não tenta desenhar o PDF aqui dentro)
+      const resultadoPdf = handleDownloadMedicaoPDF(
+        documentoMediacaoForm,
         clienteAtual,
-        selectedObraDetalhes,
-        logoBase64, // <-- AQUI A MAGIA ACONTECE (A IMAGEM VAI PRO CABEÇALHO)
-        isLinave
+        obraAtual
       );
 
       if (!resultadoPdf) {
-        throw new Error('A função de PDF da proposta não retornou os dados esperados.');
+        throw new Error('A função de PDF não retornou os dados esperados.');
       }
 
-      // 3. Salvar documento na lista de anexos da Obra no ERP
-      if (selectedObraDetalhes) {
-        const documentosAtuais = Array.isArray(selectedObraDetalhes.documentosNegocio) ? selectedObraDetalhes.documentosNegocio : [];
+      // 3. Salvar documento na obra
+      if (obraAtual) {
+        const documentosAtuais = Array.isArray(obraAtual.documentosNegocio) ? obraAtual.documentosNegocio : [];
         
-        const novoDocumento = {
-          id: `doc-proposta-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        const novoDocumento: DocumentoNegocio = {
+          id: `doc-mediacao-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           nome: resultadoPdf.nomeArquivo,
           tipo: 'application/pdf',
           tamanho: resultadoPdf.tamanho,
@@ -903,16 +660,18 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
         };
         
         persistirObraAtualizada({
-          ...selectedObraDetalhes,
+          ...obraAtual,
           documentosNegocio: [...documentosAtuais, novoDocumento]
         });
       }
 
-      toast.success('Proposta em PDF gerada e baixada com sucesso!');
+      toast.success('Documento de medição gerado e baixado com sucesso!');
+      setShowDocumentoMediacaoModal(false);
       
-    } catch (error) {
-      console.error('Erro ao gerar proposta:', error);
-      alert('❌ Erro ao gerar o PDF da Proposta: ' + (error?.message || 'Verifique o console para detalhes.'));
+    } catch (error: any) {
+      console.error('Erro ao gerar documento de medição:', error);
+      alert('❌ Erro ao gerar o PDF: ' + (error.message || 'Verifique o console para mais detalhes.'));
+      toast.error('Erro ao gerar o documento de medição.');
     }
   };
   

@@ -15,14 +15,22 @@ export const handleDownloadMedicaoPDF = (
     const usableWidth = pageWidth - margin * 2;
     let y = 15;
 
-    // Funções utilitárias de formatação
+    // --- FUNÇÕES UTILITÁRIAS SEGURAS ---
+    
+    // Converte strings com vírgula do Brasil para Float nativo
+    const parseBrFloat = (val: any) => {
+      if (typeof val === 'number') return val;
+      const str = String(val || '').replace(/\./g, '').replace(',', '.');
+      return parseFloat(str) || 0;
+    };
+
     const formatCurrency = (value: any) => {
-      const num = parseFloat(value) || 0;
+      const num = parseBrFloat(value);
       return num.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     };
 
     const formatNumber = (value: any) => {
-      const num = parseFloat(value) || 0;
+      const num = parseBrFloat(value);
       return num.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     };
 
@@ -219,8 +227,9 @@ export const handleDownloadMedicaoPDF = (
 
       x = margin;
       
-      // 1. Ítem
-      drawCellWithAutoWrap(x, y, colWidths[0], rowHeight, String(index + 1), 'center', true);
+      // 1. Ítem (Agora pega do usuário ou usa a posição como fallback)
+      const itemText = linha.item ? String(linha.item) : String(index + 1);
+      drawCellWithAutoWrap(x, y, colWidths[0], rowHeight, itemText, 'center', true);
       x += colWidths[0];
       
       // 2. Descrição
@@ -242,7 +251,7 @@ export const handleDownloadMedicaoPDF = (
       x += colWidths[4];
 
       // 6. Total
-      const total = parseFloat(linha.total) || 0;
+      const total = parseBrFloat(linha.total);
       totalGeral += total;
       const totalStr = formatCurrency(total);
       drawCellWithAutoWrap(x, y, colWidths[5], rowHeight, totalStr, 'right', false);
@@ -271,7 +280,7 @@ export const handleDownloadMedicaoPDF = (
     x += colWidths[4];
 
     // Célula final do somatório
-    doc.setFillColor(242, 242, 242); // Fundo cinza claro igual do CSS (.s56)
+    doc.setFillColor(242, 242, 242); // Fundo cinza claro
     doc.rect(x, y, colWidths[5], 8, 'FD'); // Fill + Border
     doc.text(formatCurrency(totalGeral), x + colWidths[5] - 2, y + 5.5, { align: 'right' });
 
@@ -297,7 +306,7 @@ export const handleDownloadMedicaoPDF = (
     const txtCliente = documentoMediacaoForm.representanteCliente || '';
     doc.text(txtCliente, margin + 5 + sig1Width/2, y, { align: 'center' });
     
-    // Nome Linave
+    // Nome Linave/Servinave
     const txtLinave = documentoMediacaoForm.representanteLinave || '';
     doc.text(txtLinave, margin + sig1Width + gap + sig2Width/2, y, { align: 'center' });
 
@@ -327,8 +336,13 @@ export const handleDownloadMedicaoPDF = (
       { align: 'center' }
     );
 
-    // Finalizar o Arquivo
-    const nomeArquivo = `Medicao_${documentoMediacaoForm.numeroBM || 'BM'}_${Date.now()}.pdf`;
+    // ===== 7. SALVAR ARQUIVO COM PREFIXO (LN / SN) =====
+    // Gera dinamicamente com base no nome da empresa (Ex: "Servinave" -> "SN", "Linave" -> "LN")
+    const nomeBaseDaEmpresa = documentoMediacaoForm.empresa?.toLowerCase() || '';
+    const prefixo = nomeBaseDaEmpresa.includes('servinave') ? 'SN' : 'LN';
+    
+    const nomeArquivo = `${prefixo}_Medicao_${documentoMediacaoForm.numeroBM || '001'}_${Date.now()}.pdf`;
+    
     const conteudoDataUrl = doc.output('datauristring');
     doc.save(nomeArquivo);
 
@@ -338,6 +352,7 @@ export const handleDownloadMedicaoPDF = (
       tamanho: conteudoDataUrl.length,
     };
   } catch (error) {
+    // Atualizado para informar Medição e não Orçamento
     console.error('Erro ao gerar PDF de medição:', error);
     throw error;
   }
