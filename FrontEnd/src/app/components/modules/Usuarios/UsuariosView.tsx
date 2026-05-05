@@ -46,7 +46,7 @@ export function UsuariosView() {
       });
       alert(`Convite enviado com sucesso para ${inviteEmail}`);
       setInviteEmail('');
-    } catch (e: any) {
+    } catch (e) {
       alert("Erro ao enviar convite. Verifique o servidor.");
     } finally {
       setLoading(false);

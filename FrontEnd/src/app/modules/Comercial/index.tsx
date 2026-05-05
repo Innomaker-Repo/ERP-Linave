@@ -3,6 +3,7 @@ import { CrmViewNew } from '../../components/modules/CRM/CrmViewNew';
 import { ClientesView } from '../../components/modules/Clientes/ClientesView';
 import { PropostaView } from '../../components/modules/Comercial/PropostaView';
 import { OsView } from '../../components/modules/OS/OsView';
+import { OrcamentosView } from '../../components/modules/Orcamentos/OrcamentosView';
 
 interface ComercialModuleProps {
   activeItem: string;
@@ -19,6 +20,8 @@ export function ComercialModule({ activeItem, searchQuery }: ComercialModuleProp
       return <PropostaView />;
     case 'fazerOs':
       return <OsView searchQuery={searchQuery} />;
+    case 'orcamentos':
+      return <OrcamentosView searchQuery={searchQuery} />;
     default:
       return <CrmViewNew searchQuery={searchQuery} />;
   }

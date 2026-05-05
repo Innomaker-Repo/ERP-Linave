@@ -8,7 +8,6 @@ import { useErp } from './context/ErpContext';
 import { GestaoModule } from './modules/Gestao';
 import { ProducaoModule } from './modules/Producao';
 import { ComercialModule } from './modules/Comercial';
-import { OrcamentosModule } from './modules/Orcamentos';
 import { FinanceiroModule } from './modules/Financeiro';
 import { ComprasModule } from './modules/Compras';
 import { AlmoxerifadoModule } from './modules/Almoxerifado';
@@ -30,9 +29,7 @@ function getAbaForSection(section: string): { aba: string; item: string } {
     'clientes': { aba: 'comercial', item: 'clientes' },
     'proposta': { aba: 'comercial', item: 'proposta' },
     'fazerOs': { aba: 'comercial', item: 'fazerOs' },
-    
-    // Orçamentos
-    'orcamentos': { aba: 'orcamentos', item: 'orcamentos' },
+    'orcamentos': { aba: 'comercial', item: 'orcamentos' },
     
     // Financeiro
     'financeiro': { aba: 'financeiro', item: 'financeiro' },
@@ -46,6 +43,7 @@ function getAbaForSection(section: string): { aba: string; item: string } {
     
     // Configurações
     'usuarios': { aba: 'config', item: 'usuarios' },
+    'empresas': { aba: 'config', item: 'empresas' },
     'listas': { aba: 'config', item: 'listas' },
     'templates': { aba: 'config', item: 'templates' },
   };
@@ -102,8 +100,6 @@ export default function App() {
                 return <ProducaoModule activeItem={item} searchQuery={searchQuery} />;
               case 'comercial':
                 return <ComercialModule activeItem={item} searchQuery={searchQuery} />;
-              case 'orcamentos':
-                return <OrcamentosModule activeItem={item} searchQuery={searchQuery} />;
               case 'financeiro':
                 return <FinanceiroModule activeItem={item} searchQuery={searchQuery} />;
               case 'compras':

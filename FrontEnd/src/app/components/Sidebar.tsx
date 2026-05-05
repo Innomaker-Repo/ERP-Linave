@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, HardHat, Anchor, ClipboardList, 
   ShoppingCart, DollarSign, BarChart3, Settings, Factory, 
   HeartHandshake, List, Clock, ChevronDown, ChevronRight, 
-  Briefcase, Wrench, Activity, FileText, Zap
+  Briefcase, Wrench, Activity, FileText, Zap, Building2
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -20,7 +20,6 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
     'gestao': true,
     'producao': true, // Mantém aberto por padrão para facilitar o acesso à operação
     'comercial': false,
-    'orcamentos': false,
     'financeiro': false,
     'compras': false,
     'almoxerifado': false,
@@ -56,6 +55,8 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
       items: [
         // CRM - Gerenciamento de Negócios
         { id: 'crm', label: 'Negócios (CRM)', icon: HeartHandshake },
+
+        { id: 'orcamentos', label: 'Orçar Negócios', icon: FileText },
         
         // Fazer Proposta
         { id: 'proposta', label: 'Fazer Proposta', icon: FileText },
@@ -65,14 +66,6 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
         
         // Base de Clientes
         { id: 'clientes', label: 'Base de Clientes', icon: Users },
-      ]
-    },
-    {
-      id: 'orcamentos',
-      title: 'Orçamentos',
-      icon: DollarSign,
-      items: [
-        { id: 'orcamentos', label: 'Orçar Negócios', icon: FileText },
       ]
     },
     {
@@ -106,6 +99,7 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
       icon: Settings,
       items: [
         { id: 'usuarios', label: 'Usuários & Acessos', icon: Settings },
+        { id: 'empresas', label: 'Empresas Prestadoras', icon: Building2 },
         { id: 'listas', label: 'Menus Suspensos', icon: List },
         { id: 'templates', label: 'Templates de Docs', icon: FileText }
       ]

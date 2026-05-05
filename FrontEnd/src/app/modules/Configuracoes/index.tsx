@@ -1,5 +1,6 @@
 import React from 'react';
 import { UsuariosView } from '../../components/modules/Usuarios/UsuariosView';
+import { EmpresasPrestadorasView } from '../../components/modules/Configuracoes/EmpresasPrestadorasView';
 import { ListasAuxiliaresView } from '../../components/modules/Configuracoes/ListasAuxiliaresView';
 import { TemplatesView } from '../../components/modules/Configuracoes/TemplatesView';
 
@@ -12,6 +13,8 @@ export function ConfiguracoesModule({ activeItem, searchQuery }: ConfiguracoesMo
   switch (activeItem) {
     case 'usuarios':
       return <UsuariosView />;
+    case 'empresas':
+      return <EmpresasPrestadorasView />;
     case 'listas':
       return <ListasAuxiliaresView />;
     case 'templates':

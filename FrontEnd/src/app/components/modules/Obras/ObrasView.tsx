@@ -717,41 +717,6 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
                   <p className="text-white font-bold text-base mb-1">Item A - Escopo Básico</p>
                   <p className="whitespace-pre-wrap">{selectedOSConsolidada.resumoConsolidado?.proposta?.escopoA || '-'}</p>
                 </div>
-                {(selectedOSConsolidada.resumoConsolidado?.proposta?.escopoBasicoServicos || []).length > 0 ? (
-                  (selectedOSConsolidada.resumoConsolidado?.proposta?.escopoBasicoServicos || []).map((escopo: any, idx: number) => (
-                    <div key={`escopo-prod-${idx}`} className="bg-[#101f3d] rounded-lg border border-white/10 p-4 space-y-2">
-                      <p className="text-white font-bold text-base">{escopo.titulo || `Escopo ${idx + 1}`}</p>
-                      {escopo.descricaoServico && <p className="text-white/80 text-sm">{escopo.descricaoServico}</p>}
-                      <p className="text-white/60 text-sm">Itens: {(Array.isArray(escopo.linhas) ? escopo.linhas.length : 0)}</p>
-                      {Array.isArray(escopo.colunas) && escopo.colunas.length > 0 && (
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-sm text-left border border-white/10">
-                            <thead className="bg-white/5 text-white/70">
-                              <tr>
-                                <th className="px-2 py-1 border border-white/10">Item</th>
-                                {escopo.colunas.map((coluna: string) => (
-                                  <th key={`${idx}-${coluna}`} className="px-2 py-1 border border-white/10">{coluna}</th>
-                                ))}
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {(escopo.linhas || []).map((linha: any, linhaIdx: number) => (
-                                <tr key={`${idx}-linha-${linhaIdx}`} className="text-white/80">
-                                  <td className="px-2 py-1 border border-white/10">{linhaIdx + 1}</td>
-                                  {escopo.colunas.map((coluna: string) => (
-                                    <td key={`${idx}-${linhaIdx}-${coluna}`} className="px-2 py-1 border border-white/10">{linha.valores?.[coluna] || '-'}</td>
-                                  ))}
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </div>
-                  ))
-                ) : (
-                  <p className="text-white/40 text-sm">Sem escopo da proposta disponível.</p>
-                )}
               </div>
 
               <div className="flex justify-end pt-2">

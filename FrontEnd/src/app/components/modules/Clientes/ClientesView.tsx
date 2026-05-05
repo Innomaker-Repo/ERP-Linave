@@ -1,89 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { UserPlus, Save, X, Edit2, Trash2, Building2, User, MapPin, Phone, Calendar, UserCheck, History, Eye } from 'lucide-react';
 import { useErp } from '../../../context/ErpContext';
 
-const CLIENTES_MOCK = [
-  {
-    id: 'CLI-1',
-    tipoPessoa: 'PJ',
-    razaoSocial: 'Linave Construções LTDA',
-    nomeFantasia: 'Linave',
-    cpfCnpj: '12.345.678/0001-90',
-    inscricaoEstadual: '123.456.789.012',
-    status: 'Ativo',
-    contato: '(41) 3333-4444 / contato@linave.com.br',
-    endereco: 'Rua das Construções, 123, Curitiba - PR',
-    dataCadastro: '2024-01-15',
-    usuarioResponsavel: 'Sistema'
-  },
-  {
-    id: 'CLI-2',
-    tipoPessoa: 'PJ',
-    razaoSocial: 'Construtora Alpha S.A.',
-    nomeFantasia: 'Alpha Construtora',
-    cpfCnpj: '23.456.789/0001-01',
-    inscricaoEstadual: '234.567.890.123',
-    status: 'Ativo',
-    contato: '(41) 3333-5555 / vendas@alpha.com.br',
-    endereco: 'Av. Principal, 456, Curitiba - PR',
-    dataCadastro: '2024-02-10',
-    usuarioResponsavel: 'Sistema'
-  },
-  {
-    id: 'CLI-3',
-    tipoPessoa: 'PJ',
-    razaoSocial: 'TC Engenharia e Consultoria',
-    nomeFantasia: 'TC Engenharia',
-    cpfCnpj: '34.567.890/0001-12',
-    inscricaoEstadual: '345.678.901.234',
-    status: 'Ativo',
-    contato: '(41) 3333-6666 / tech@tcengenharia.com.br',
-    endereco: 'Rua da Tecnologia, 789, Curitiba - PR',
-    dataCadastro: '2024-03-05',
-    usuarioResponsavel: 'Sistema'
-  },
-  {
-    id: 'CLI-4',
-    tipoPessoa: 'PJ',
-    razaoSocial: 'Projetos Marítimos LTDA',
-    nomeFantasia: 'ProMar',
-    cpfCnpj: '45.678.901/0001-23',
-    inscricaoEstadual: '456.789.012.345',
-    status: 'Ativo',
-    contato: '(41) 3333-7777 / projetos@promar.com.br',
-    endereco: 'Porto Boulevard, 321, Paranaguá - PR',
-    dataCadastro: '2024-01-20',
-    usuarioResponsavel: 'Sistema'
-  },
-  {
-    id: 'CLI-5',
-    tipoPessoa: 'PJ',
-    razaoSocial: 'Estaleiro Industrial do Sudeste',
-    nomeFantasia: 'EISE',
-    cpfCnpj: '56.789.012/0001-34',
-    inscricaoEstadual: '567.890.123.456',
-    status: 'Ativo',
-    contato: '(41) 3333-8888 / comercial@eise.com.br',
-    endereco: 'Distrito Industrial, 654, Paranaguá - PR',
-    dataCadastro: '2024-01-25',
-    usuarioResponsavel: 'Sistema'
-  }
-];
-
 export function ClientesView({ searchQuery }: { searchQuery: string }) {
   const { clientes, obras, saveEntity, userSession } = useErp();
+  const listaClientes = Array.isArray(clientes) ? clientes : [];
   
   const [showForm, setShowForm] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [selectedClienteDetalhes, setSelectedClienteDetalhes] = useState<any>(null);
   const [showClienteModal, setShowClienteModal] = useState(false);
-  
-  // Inicializar com mock se não houver clientes
-  useEffect(() => {
-    if (!clientes || clientes.length === 0) {
-      saveEntity('clientes', CLIENTES_MOCK);
-    }
-  }, []);
   
   // Estado inicial com a estrutura exata solicitada
   const initialClienteState = {
@@ -118,10 +44,10 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
   const handleSave = () => {
     let listaAtualizada;
     if (editMode) {
-      listaAtualizada = clientes.map((c: any) => c.id === currentCliente.id ? currentCliente : c);
+      listaAtualizada = listaClientes.map((c: any) => c.id === currentCliente.id ? currentCliente : c);
     } else {
       const newId = `CLI-${Date.now()}`;
-      listaAtualizada = [...(clientes || []), { ...currentCliente, id: newId }];
+      listaAtualizada = [...listaClientes, { ...currentCliente, id: newId }];
     }
     
     saveEntity('clientes', listaAtualizada);
@@ -130,13 +56,13 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
 
   const handleDelete = (id: string) => {
     if (confirm("Tem certeza que deseja excluir este cliente?")) {
-      const listaAtualizada = clientes.filter((c: any) => c.id !== id);
+      const listaAtualizada = listaClientes.filter((c: any) => c.id !== id);
       saveEntity('clientes', listaAtualizada);
     }
   };
 
   // Filtro de busca
-  const listaFiltrada = (clientes || []).filter((c: any) => 
+  const listaFiltrada = listaClientes.filter((c: any) => 
     c.razaoSocial?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     c.nomeFantasia?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     c.cpfCnpj?.includes(searchQuery)

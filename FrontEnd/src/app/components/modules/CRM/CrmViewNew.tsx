@@ -1,40 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { Plus, X, FileText, DollarSign, CheckCircle, Clock, ArrowRight, Edit2, ChevronDown, Zap, AlertCircle, Download, Eye } from 'lucide-react';
 import { toast } from 'sonner';
-
-const CLIENTES_MOCK = [
-  {
-    id: 'CLI-1',
-    razaoSocial: 'Linave Construções LTDA',
-    nomeFantasia: 'Linave',
-    cnpj: '12.345.678/0001-90'
-  },
-  {
-    id: 'CLI-2',
-    razaoSocial: 'Construtora Alpha S.A.',
-    nomeFantasia: 'Alpha Construtora',
-    cnpj: '23.456.789/0001-01'
-  },
-  {
-    id: 'CLI-3',
-    razaoSocial: 'TC Engenharia e Consultoria',
-    nomeFantasia: 'TC Engenharia',
-    cnpj: '34.567.890/0001-12'
-  },
-  {
-    id: 'CLI-4',
-    razaoSocial: 'Projetos Marítimos LTDA',
-    nomeFantasia: 'ProMar',
-    cnpj: '45.678.901/0001-23'
-  },
-  {
-    id: 'CLI-5',
-    razaoSocial: 'Estaleiro Industrial do Sudeste',
-    nomeFantasia: 'EISE',
-    cnpj: '56.789.012/0001-34'
-  }
-];
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable'; // Importação nomeada do plugin
+import { handleDownloadMedicaoPDF } from './handleDownloadMedicaoPDF';
+import { handleDownloadPropostaPDF } from './handleDownloadPropostaPDF'; 
 
 interface Servico {
   id: string;
@@ -62,8 +33,9 @@ interface LinhaTabelaMediacao {
   item: string;
   descricao: string;
   unidade: string;
-  previsto: string;
-  realizado: string;
+  quantidadeProduzida: string;
+  valorUnitario: string;
+  total: string;
   observacoes: string;
 }
 
@@ -85,6 +57,8 @@ interface DocumentoMediacaoForm {
   embarcacao: string;
   numeroBM: string;
   periodo: string;
+  representanteCliente: string; // Novo campo
+  representanteLinave: string;  // Novo campo
   tabelaItens: LinhaTabelaMediacao[];
   tabelaRecursos: LinhaTabelaRecursosMediacao[];
 }
@@ -115,14 +89,14 @@ const COLUNAS: { id: CategoriaObra; titulo: string; icon: any; cor: string }[] =
 ];
 
 export function CrmViewNew({ searchQuery }: CrmViewProps) {
-  const { obras, os, clientes, saveEntity, userSession } = useErp();
+  const { obras, os, clientes, saveEntity, userSession, config } = useErp();
   const [showFormNovoNegocio, setShowFormNovoNegocio] = useState(false);
   const [novoNegocioTab, setNovoNegocioTab] = useState<'dados' | 'servicos' | 'documentos'>('dados');
   const [selectedObraDetalhes, setSelectedObraDetalhes] = useState<any>(null);
-  const [showDetalhesObrraModal, setShowDetalhesObraModal] = useState(false);
+  const [showDetalhesObraModal, setShowDetalhesObraModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingObra, setEditingObra] = useState<any>(null);
-  const [expandedOrcamentosummary, setExpandedOrcamentoSummary] = useState(false);
+  const [expandedOrcamentoSummary, setExpandedOrcamentoSummary] = useState(false);
   const [expandedPropostaDetalhes, setExpandedPropostaDetalhes] = useState(false);
   const [showPropostaFullModal, setShowPropostaFullModal] = useState(false);
   const [showOSFullModal, setShowOSFullModal] = useState(false);
@@ -171,6 +145,123 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     return 'A';
   };
 
+  const formatarEscopoBasicoParaTexto = (escopo: any) => {
+    if (!escopo) {
+      return '−';
+    }
+
+    if (typeof escopo === 'string') {
+      return escopo;
+    }
+
+    const formatarItemEscopo = (item: any, index: number) => {
+      if (!item) return '';
+      if (typeof item === 'string') return item;
+
+      const partes = [item.titulo, item.descricaoServico, item.texto].filter(
+        (valor) => typeof valor === 'string' && valor.trim(),
+      );
+
+      if (Array.isArray(item.linhas) && item.linhas.length > 0) {
+        const linhas = item.linhas
+          .map((linha: any) => {
+            if (!linha?.valores || typeof linha.valores !== 'object') {
+              return '';
+            }
+
+            const valores = Object.values(linha.valores)
+              .filter((valor) => typeof valor === 'string' ? valor.trim() : Boolean(valor))
+              .map((valor) => String(valor).trim())
+              .filter(Boolean);
+
+            return valores.length > 0 ? `- ${valores.join(' | ')}` : '';
+          })
+          .filter(Boolean);
+
+        if (linhas.length > 0) {
+          partes.push(linhas.join('\n'));
+        }
+      }
+
+      if (partes.length === 0) {
+        return `Item ${index + 1}`;
+      }
+
+      return partes.join('\n');
+    };
+
+    if (Array.isArray(escopo)) {
+      return escopo
+        .map((item, index) => formatarItemEscopo(item, index))
+        .filter(Boolean)
+        .join('\n\n');
+    }
+
+    if (typeof escopo === 'object') {
+      return formatarItemEscopo(escopo, 0);
+    }
+
+    return String(escopo);
+  };
+
+  const normalizarEscopoBasicoEstruturado = (escopo: any) => {
+    if (!escopo) return [];
+
+    const normalizarLinha = (linha: any) => {
+      if (!linha?.valores || typeof linha.valores !== 'object') return [];
+      return Object.entries(linha.valores)
+        .map(([chave, valor]) => ({
+          chave: String(chave),
+          valor: String(valor ?? '').trim(),
+        }))
+        .filter((coluna) => coluna.valor);
+    };
+
+    const normalizarItem = (item: any, index: number) => {
+      if (!item) return null;
+      if (typeof item === 'string') {
+        return {
+          titulo: item.trim() || `Item ${index + 1}`,
+          textosAntes: [],
+          tabela: [],
+          textosDepois: [],
+        };
+      }
+
+      const titulo = [item.titulo, item.descricaoServico, item.descricao, item.texto]
+        .find((valor) => typeof valor === 'string' && valor.trim());
+
+      return {
+        titulo: titulo?.trim() || `Item ${index + 1}`,
+        textosAntes: [
+          ...(Array.isArray(item.textosAntesTabela) ? item.textosAntesTabela : []),
+          ...(typeof item.textoLivre === 'string' && item.textoLivre.trim() ? [item.textoLivre] : []),
+        ].filter((texto: any) => typeof texto === 'string' && texto.trim()).map((texto: string) => texto.trim()),
+        tabela: Array.isArray(item.linhas)
+          ? item.linhas.map((linha: any) => normalizarLinha(linha)).filter((linha: any[]) => linha.length > 0)
+          : [],
+        textosDepois: (Array.isArray(item.textosDepoisTabela) ? item.textosDepoisTabela : [])
+          .filter((texto: any) => typeof texto === 'string' && texto.trim())
+          .map((texto: string) => texto.trim()),
+      };
+    };
+
+    if (typeof escopo === 'string') {
+      return [{ titulo: '', textosAntes: [escopo], tabela: [], textosDepois: [] }];
+    }
+
+    if (Array.isArray(escopo)) {
+      return escopo.map((item, index) => normalizarItem(item, index)).filter(Boolean);
+    }
+
+    if (typeof escopo === 'object') {
+      const item = normalizarItem(escopo, 0);
+      return item ? [item] : [];
+    }
+
+    return [{ titulo: '', textosAntes: [String(escopo)], tabela: [], textosDepois: [] }];
+  };
+
   const initialServico: Servico = {
     id: '',
     tipo: '',
@@ -183,8 +274,50 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     observacoes: ''
   };
 
+  const empresasPrestadoras = useMemo(() => {
+    const empresasCadastradas = Array.isArray(config?.empresasPrestadoras)
+      ? config.empresasPrestadoras
+      : [];
+
+    const fallbackNome = config?.empresaNome && config.empresaNome !== 'Linave ERP Demo'
+      ? config.empresaNome
+      : 'Linave';
+
+    const origem = empresasCadastradas.length > 0
+      ? empresasCadastradas
+      : [{ id: 'EMP-LINAVE', nome: fallbackNome }];
+
+    const empresasUnicas = new Map<string, { id: string; nome: string; cnpj: string }>();
+
+    origem.forEach((empresa: any, index: number) => {
+      const nomeBase = typeof empresa === 'string'
+        ? empresa
+        : empresa?.nome || empresa?.razaoSocial || empresa?.empresaNome || '';
+      const nome = String(nomeBase).trim();
+
+      if (!nome) return;
+
+      const chave = nome.toLowerCase();
+      if (empresasUnicas.has(chave)) return;
+
+      empresasUnicas.set(chave, {
+        id: typeof empresa === 'object' && empresa?.id ? empresa.id : `empresa-${index}`,
+        nome,
+        cnpj: typeof empresa === 'object' ? empresa?.cnpj || empresa?.empresaCnpj || '' : ''
+      });
+    });
+
+    const empresasNormalizadas = Array.from(empresasUnicas.values());
+
+    return empresasNormalizadas.length > 0
+      ? empresasNormalizadas
+      : [{ id: 'EMP-LINAVE', nome: fallbackNome || 'Linave', cnpj: '' }];
+  }, [config?.empresasPrestadoras, config?.empresaNome]);
+
+  const empresaPrestadoraPadrao = empresasPrestadoras[0]?.nome || 'Linave';
+
   const initialForm = {
-    empresaPrestadora: 'Linave',
+    empresaPrestadora: empresaPrestadoraPadrao,
     nomeNegocio: '',
     clienteId: '',
     cnpj: '',
@@ -207,6 +340,17 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   };
 
   const [formData, setFormData] = useState(initialForm);
+
+  useEffect(() => {
+    const empresasDisponiveis = empresasPrestadoras.map((empresa) => empresa.nome);
+
+    if (
+      empresasDisponiveis.length > 0 &&
+      (!formData.empresaPrestadora || !empresasDisponiveis.includes(formData.empresaPrestadora))
+    ) {
+      setFormData((prev) => ({ ...prev, empresaPrestadora: empresasDisponiveis[0] }));
+    }
+  }, [empresasPrestadoras, formData.empresaPrestadora]);
 
   const handleAddServico = () => {
     setFormData({
@@ -246,6 +390,34 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
+  const parseDecimal = (value: string) => {
+    const normalized = String(value || '').trim();
+    const parsed = normalized.includes(',')
+      ? Number(normalized.replace(/\./g, '').replace(',', '.'))
+      : Number(normalized);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const formatDecimal = (value: number) => (Number.isFinite(value) ? value.toFixed(2) : '0.00');
+  const safeNumber = (value: any) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  const getBase64FromUrl = async (url: string): Promise<string> => {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Falha ao carregar arquivo: ${url}`);
+    }
+
+    const blob = await response.blob();
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error(`Falha ao converter arquivo: ${url}`));
+      reader.readAsDataURL(blob);
+    });
+  };
+
   const gerarIdLinha = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
   const novaLinhaTabelaMediacao = (): LinhaTabelaMediacao => ({
@@ -253,8 +425,9 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     item: '',
     descricao: '',
     unidade: '',
-    previsto: '',
-    realizado: '',
+    quantidadeProduzida: '',
+    valorUnitario: '',
+    total: '0.00',
     observacoes: ''
   });
 
@@ -296,13 +469,15 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     setSelectedObraDetalhes(obraAtual);
     setDocumentoMediacaoForm({
       obraId: obraAtual.id,
-      empresa: 'Linave',
+      empresa: obraAtual.empresaPrestadora || empresaPrestadoraPadrao,
       cliente: cliente?.razaoSocial || '',
       cnpj: obterCnpjCliente(cliente),
       dataEmissao: new Date().toISOString().split('T')[0],
       embarcacao: '',
       numeroBM: '',
       periodo: montarPeriodoMediacao(obraAtual),
+      representanteCliente: cliente?.razaoSocial || '', // Sugestão inicial
+      representanteLinave: 'Linave', // Sugestão inicial
       tabelaItens: [novaLinhaTabelaMediacao()],
       tabelaRecursos: [novaLinhaTabelaRecursosMediacao()]
     });
@@ -319,11 +494,23 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   const atualizarLinhaTabelaItens = (linhaId: string, campo: keyof LinhaTabelaMediacao, valor: string) => {
     setDocumentoMediacaoForm((prev) => {
       if (!prev) return prev;
+      const tabelaItens = prev.tabelaItens.map((linha) => {
+        if (linha.id !== linhaId) return linha;
+
+        const proximaLinha = { ...linha, [campo]: valor };
+        const quantidade = parseDecimal(proximaLinha.quantidadeProduzida);
+        const valorUnitario = parseDecimal(proximaLinha.valorUnitario);
+        const total = quantidade * valorUnitario;
+
+        return {
+          ...proximaLinha,
+          total: formatDecimal(total)
+        };
+      });
+
       return {
         ...prev,
-        tabelaItens: prev.tabelaItens.map((linha) => (
-          linha.id === linhaId ? { ...linha, [campo]: valor } : linha
-        ))
+        tabelaItens
       };
     });
   };
@@ -385,118 +572,299 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   const handleGerarDocumentoMediacao = () => {
     if (!documentoMediacaoForm) return;
 
-    if (!documentoMediacaoForm.embarcacao.trim()) {
-      toast.error('Preencha a embarcacao para gerar o documento de medicao.');
+    // 1. Verificação mais clara para a embarcação
+    if (!documentoMediacaoForm.embarcacao || !documentoMediacaoForm.embarcacao.trim()) {
+      alert('⚠️ Por favor, preencha o campo "Embarcação" antes de gerar o documento.');
+      toast.error('Preencha a embarcação para gerar o documento de medição.');
       return;
     }
 
-    const obraReferencia = (obras || []).find((item: any) => item.id === documentoMediacaoForm.obraId) || selectedObraDetalhes;
-    const nomeNegocio = obraReferencia?.nome || 'Negocio';
-    const dataGeracao = new Date().toLocaleString('pt-BR');
+    try {
+      const obraAtual = (obras || []).find((item: any) => item.id === documentoMediacaoForm.obraId);
+      const clienteAtual = (clientes || []).find((c: any) => c.id === obraAtual?.clienteId);
 
-    const blocoItens = documentoMediacaoForm.tabelaItens
-      .map((linha, index) => (
-        `${index + 1}. Item: ${linha.item || '-'}\n` +
-        `   Descricao: ${linha.descricao || '-'}\n` +
-        `   Unidade: ${linha.unidade || '-'}\n` +
-        `   Previsto: ${linha.previsto || '-'}\n` +
-        `   Realizado: ${linha.realizado || '-'}\n` +
-        `   Observacoes: ${linha.observacoes || '-'}\n`
-      ))
-      .join('\n');
+      console.log("Iniciando geração de PDF de medição...", { documentoMediacaoForm });
 
-    const blocoRecursos = documentoMediacaoForm.tabelaRecursos
-      .map((linha, index) => (
-        `${index + 1}. Recurso: ${linha.recurso || '-'}\n` +
-        `   Funcao: ${linha.funcao || '-'}\n` +
-        `   Periodo: ${linha.periodo || '-'}\n` +
-        `   Horas: ${linha.horas || '-'}\n` +
-        `   Observacoes: ${linha.observacoes || '-'}\n`
-      ))
-      .join('\n');
+      // ===== Seção A - MÃO DE OBRA =====
+      if (maoDeObraData && maoDeObraData.length > 0) {
+        const rows = maoDeObraData;
+        const headersMaoDeObra = ['Item', 'Função', 'Qtd', 'Dias', 'Custo/Dia', 'Obs', 'Valor Total'];
 
-    const conteudo = `
-================================================================================
-                    DOCUMENTO DE MEDICAO
-================================================================================
+        const headerTitleHeight = cellHeight; // 'A - MÃO DE OBRA' title row
+        const headerRowHeight = cellHeight; // column headers
+        const subtotalHeight = cellHeight + 3;
+        const tableFullHeight = headerTitleHeight + headerRowHeight + (rows.length * cellHeight) + subtotalHeight;
+        const singlePageContentHeight = pageHeight - margin * 2;
 
-Empresa: ${documentoMediacaoForm.empresa}
-Cliente: ${documentoMediacaoForm.cliente}
-CNPJ: ${documentoMediacaoForm.cnpj || '-'}
-Negocio: ${nomeNegocio}
-Data emissao: ${formatarDataInputParaBr(documentoMediacaoForm.dataEmissao)}
-Embarcacao: ${documentoMediacaoForm.embarcacao}
-Nr. BM: ${documentoMediacaoForm.numeroBM || '-'}
-Periodo: ${documentoMediacaoForm.periodo || '-'}
+        const printSectionTitle = () => {
+          let xx = margin;
+          doc.setFont('Arial', 'bold');
+          doc.setFontSize(9);
+          doc.text('A', xx + 2, y + 3);
+          doc.rect(xx, y, baseColWidth, cellHeight);
+          xx += baseColWidth;
+          doc.setTextColor(255, 0, 0);
+          doc.text('MÃO DE OBRA', xx + 2, y + 3);
+          doc.rect(xx, y, baseColWidth * 9, cellHeight);
+          doc.setTextColor(0, 0, 0);
+          y += cellHeight;
+        };
 
-================================================================================
-TABELA DE MEDICAO DE SERVICOS
-================================================================================
+        const printTableHeaders = () => {
+          let xx = margin;
+          headersMaoDeObra.forEach((h, index) => {
+            const colWidth = laborColWidths[index];
+            doc.setFont('Arial', 'bold');
+            doc.setFontSize(7);
+            doc.setTextColor(0, 0, 0);
+            doc.text(h, xx + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
+            doc.rect(xx, y, colWidth, cellHeight);
+            xx += colWidth;
+          });
+          y += cellHeight;
+        };
 
-${blocoItens || 'Sem registros.'}
+        // Decide se move a tabela inteira para próxima página ou quebra com cabeçalho repetido
+        if (tableFullHeight <= (pageHeight - y - margin)) {
+          // cabe na página atual
+          printSectionTitle();
+          printTableHeaders();
+          for (let idx = 0; idx < rows.length; idx++) {
+            const item = rows[idx];
+            let xx = margin;
+            doc.setFont('Arial', 'normal');
+            doc.setFontSize(7);
 
-================================================================================
-TABELA DE RECURSOS E HORAS
-================================================================================
+            // Item
+            doc.text(String(idx + 1), xx + 0.5, y + 2.5);
+            doc.rect(xx, y, laborColWidths[0], cellHeight);
+            xx += laborColWidths[0];
 
-${blocoRecursos || 'Sem registros.'}
+            // Função
+            drawCellWithAutoWrap(xx, y, laborColWidths[1], cellHeight, item.funcao || '');
+            xx += laborColWidths[1];
 
-================================================================================
-Documento gerado automaticamente pelo Linave ERP
-Geracao: ${dataGeracao}
-================================================================================
-    `;
+            // Quantidade
+            doc.text(String(item.quantidade || ''), xx + 0.5, y + 2.5);
+            doc.rect(xx, y, laborColWidths[2], cellHeight);
+            xx += laborColWidths[2];
 
-    const nomeArquivo = `Mediacao_${documentoMediacaoForm.numeroBM || documentoMediacaoForm.obraId}_${Date.now()}.txt`;
-    const conteudoDataUrl = `data:text/plain;charset=utf-8,${encodeURIComponent(conteudo)}`;
+            // Dias
+            doc.text(String(item.dias || ''), xx + 0.5, y + 2.5);
+            doc.rect(xx, y, laborColWidths[3], cellHeight);
+            xx += laborColWidths[3];
 
-    const obraAtual = (obras || []).find((item: any) => item.id === documentoMediacaoForm.obraId);
-    if (obraAtual) {
-      const documentosAtuais = Array.isArray(obraAtual.documentosNegocio) ? obraAtual.documentosNegocio : [];
-      const novoDocumento: DocumentoNegocio = {
-        id: `doc-mediacao-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        nome: nomeArquivo,
-        tipo: 'text/plain',
-        tamanho: conteudo.length,
-        dataUpload: new Date().toISOString(),
-        conteudo: conteudoDataUrl
-      };
-      persistirObraAtualizada({
-        ...obraAtual,
-        documentosNegocio: [...documentosAtuais, novoDocumento]
-      });
+            // Custo/Dia
+            doc.text(String(item.custoUnitDia ? parseFloat(item.custoUnitDia).toFixed(2) : ''), xx + 0.5, y + 2.5);
+            doc.rect(xx, y, laborColWidths[4], cellHeight);
+            xx += laborColWidths[4];
+
+            // Observações
+            drawCellWithAutoWrap(xx, y, laborColWidths[5], cellHeight, item.observacoes || '');
+            xx += laborColWidths[5];
+
+            // Valor Total
+            doc.setFont('Arial', 'bold');
+            doc.setTextColor(255, 0, 0);
+            doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), xx + 0.5, y + 2.5);
+            doc.setTextColor(0, 0, 0);
+            doc.setFont('Arial', 'normal');
+            doc.rect(xx, y, laborColWidths[6], cellHeight);
+            xx += laborColWidths[6];
+
+            y += cellHeight;
+          }
+
+          // Subtotal
+          let xx = margin;
+          doc.setFont('Arial', 'bold');
+          doc.setFontSize(8);
+          doc.setTextColor(255, 0, 0);
+          doc.text('Sub-total', xx + 0.5, y + 2.5);
+          doc.setTextColor(0, 0, 0);
+          doc.rect(xx, y, baseColWidth * 9, cellHeight);
+          xx += baseColWidth * 9;
+          doc.setTextColor(255, 0, 0);
+          doc.text(totalMaoDeObra.toFixed(2), xx + 0.5, y + 2.5);
+          doc.setTextColor(0, 0, 0);
+          doc.rect(xx, y, baseColWidth, cellHeight);
+          y += cellHeight + 3;
+
+        } else if (tableFullHeight <= singlePageContentHeight) {
+          // move a tabela inteira para a próxima página (cabe nela inteira)
+          doc.addPage();
+          y = printCompactHeader();
+          printSectionTitle();
+          printTableHeaders();
+
+          for (let idx = 0; idx < rows.length; idx++) {
+            const item = rows[idx];
+            let xx = margin;
+            doc.setFont('Arial', 'normal');
+            doc.setFontSize(7);
+
+            doc.text(String(idx + 1), xx + 0.5, y + 2.5);
+            doc.rect(xx, y, laborColWidths[0], cellHeight);
+            xx += laborColWidths[0];
+
+            drawCellWithAutoWrap(xx, y, laborColWidths[1], cellHeight, item.funcao || '');
+            xx += laborColWidths[1];
+
+            doc.text(String(item.quantidade || ''), xx + 0.5, y + 2.5);
+            doc.rect(xx, y, laborColWidths[2], cellHeight);
+            xx += laborColWidths[2];
+
+            doc.text(String(item.dias || ''), xx + 0.5, y + 2.5);
+            doc.rect(xx, y, laborColWidths[3], cellHeight);
+            xx += laborColWidths[3];
+
+            doc.text(String(item.custoUnitDia ? parseFloat(item.custoUnitDia).toFixed(2) : ''), xx + 0.5, y + 2.5);
+            doc.rect(xx, y, laborColWidths[4], cellHeight);
+            xx += laborColWidths[4];
+
+            drawCellWithAutoWrap(xx, y, laborColWidths[5], cellHeight, item.observacoes || '');
+            xx += laborColWidths[5];
+
+            doc.setFont('Arial', 'bold');
+            doc.setTextColor(255, 0, 0);
+            doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), xx + 0.5, y + 2.5);
+            doc.setTextColor(0, 0, 0);
+            doc.setFont('Arial', 'normal');
+            doc.rect(xx, y, laborColWidths[6], cellHeight);
+            xx += laborColWidths[6];
+
+            y += cellHeight;
+          }
+
+          // Subtotal
+          let xx2 = margin;
+          doc.setFont('Arial', 'bold');
+          doc.setFontSize(8);
+          doc.setTextColor(255, 0, 0);
+          doc.text('Sub-total', xx2 + 0.5, y + 2.5);
+          doc.setTextColor(0, 0, 0);
+          doc.rect(xx2, y, baseColWidth * 9, cellHeight);
+          xx2 += baseColWidth * 9;
+          doc.setTextColor(255, 0, 0);
+          doc.text(totalMaoDeObra.toFixed(2), xx2 + 0.5, y + 2.5);
+          doc.setTextColor(0, 0, 0);
+          doc.rect(xx2, y, baseColWidth, cellHeight);
+          y += cellHeight + 3;
+
+        } else {
+          // tabela maior que uma página: quebrar em páginas, repetindo cabeçalho e o cabeçalho compacto da página
+          let idx = 0;
+          printSectionTitle();
+          printTableHeaders();
+
+          while (idx < rows.length) {
+            // Se não há espaço suficiente para uma linha + subtotal, cria nova página
+            if (y + cellHeight + subtotalHeight > pageHeight - margin) {
+              doc.addPage();
+              y = printCompactHeader();
+              printSectionTitle();
+              printTableHeaders();
+            }
+
+            const item = rows[idx];
+            let xx = margin;
+            doc.setFont('Arial', 'normal');
+            doc.setFontSize(7);
+
+            doc.text(String(idx + 1), xx + 0.5, y + 2.5);
+            doc.rect(xx, y, laborColWidths[0], cellHeight);
+            xx += laborColWidths[0];
+
+            drawCellWithAutoWrap(xx, y, laborColWidths[1], cellHeight, item.funcao || '');
+            xx += laborColWidths[1];
+
+            doc.text(String(item.quantidade || ''), xx + 0.5, y + 2.5);
+            doc.rect(xx, y, laborColWidths[2], cellHeight);
+            xx += laborColWidths[2];
+
+            doc.text(String(item.dias || ''), xx + 0.5, y + 2.5);
+            doc.rect(xx, y, laborColWidths[3], cellHeight);
+            xx += laborColWidths[3];
+
+            doc.text(String(item.custoUnitDia ? parseFloat(item.custoUnitDia).toFixed(2) : ''), xx + 0.5, y + 2.5);
+            doc.rect(xx, y, laborColWidths[4], cellHeight);
+            xx += laborColWidths[4];
+
+            drawCellWithAutoWrap(xx, y, laborColWidths[5], cellHeight, item.observacoes || '');
+            xx += laborColWidths[5];
+
+            doc.setFont('Arial', 'bold');
+            doc.setTextColor(255, 0, 0);
+            doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), xx + 0.5, y + 2.5);
+            doc.setTextColor(0, 0, 0);
+            doc.setFont('Arial', 'normal');
+            doc.rect(xx, y, laborColWidths[6], cellHeight);
+            xx += laborColWidths[6];
+
+            y += cellHeight;
+            idx += 1;
+          }
+
+          // Subtotal (garante espaço)
+          if (y + subtotalHeight > pageHeight - margin) {
+            doc.addPage();
+            y = printCompactHeader();
+          }
+          let xsub = margin;
+          doc.setFont('Arial', 'bold');
+          doc.setFontSize(8);
+          doc.setTextColor(255, 0, 0);
+          doc.text('Sub-total', xsub + 0.5, y + 2.5);
+          doc.setTextColor(0, 0, 0);
+          doc.rect(xsub, y, baseColWidth * 9, cellHeight);
+          xsub += baseColWidth * 9;
+          doc.setTextColor(255, 0, 0);
+          doc.text(totalMaoDeObra.toFixed(2), xsub + 0.5, y + 2.5);
+          doc.setTextColor(0, 0, 0);
+          doc.rect(xsub, y, baseColWidth, cellHeight);
+          y += cellHeight + 3;
+        }
+      }
+
+      // 2. Chama a função importada PASSANDO A IMAGEM
+      const resultadoPdf = handleDownloadPropostaPDF(
+        formPropostaParaPDF,
+        clienteAtual,
+        selectedObraDetalhes,
+        logoBase64 // <-- AQUI A MAGIA ACONTECE (A IMAGEM VAI PRO CABEÇALHO)
+      );
+
+      if (!resultadoPdf) {
+        throw new Error('A função de PDF da proposta não retornou os dados esperados.');
+      }
+
+      // 3. Salvar documento na lista de anexos da Obra no ERP
+      if (selectedObraDetalhes) {
+        const documentosAtuais = Array.isArray(selectedObraDetalhes.documentosNegocio) ? selectedObraDetalhes.documentosNegocio : [];
+        
+        const novoDocumento = {
+          id: `doc-proposta-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          nome: resultadoPdf.nomeArquivo,
+          tipo: 'application/pdf',
+          tamanho: resultadoPdf.tamanho,
+          dataUpload: new Date().toISOString(),
+          conteudo: resultadoPdf.conteudoDataUrl
+        };
+        
+        persistirObraAtualizada({
+          ...selectedObraDetalhes,
+          documentosNegocio: [...documentosAtuais, novoDocumento]
+        });
+      }
+
+      toast.success('Proposta em PDF gerada e baixada com sucesso!');
+      
+    } catch (error) {
+      console.error('Erro ao gerar proposta:', error);
+      alert('❌ Erro ao gerar o PDF da Proposta: ' + (error?.message || 'Verifique o console para detalhes.'));
     }
-
-    const elemento = document.createElement('a');
-    elemento.href = conteudoDataUrl;
-    elemento.download = nomeArquivo;
-    document.body.appendChild(elemento);
-    elemento.click();
-    document.body.removeChild(elemento);
-
-    toast.success('Documento de medicao criado, anexado e baixado com sucesso.');
-    setShowDocumentoMediacaoModal(false);
   };
-
-  const dataUrlToBlob = (dataUrl: string) => {
-    const parts = dataUrl.split(',');
-    if (parts.length < 2) return null;
-
-    const metadata = parts[0];
-    const dataPart = parts[1];
-    const mimeMatch = metadata.match(/data:(.*?)(;|$)/);
-    const mimeType = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
-    const isBase64 = metadata.includes(';base64');
-    const raw = isBase64 ? atob(dataPart) : decodeURIComponent(dataPart);
-    const bytes = new Uint8Array(raw.length);
-
-    for (let i = 0; i < raw.length; i += 1) {
-      bytes[i] = raw.charCodeAt(i);
-    }
-
-    return new Blob([bytes], { type: mimeType });
-  };
-
+  
   const handleVerDocumentoNegocio = (doc: any) => {
     const href = doc?.conteudo || doc?.url;
     if (!href) {
@@ -520,6 +888,59 @@ Geracao: ${dataGeracao}
     document.body.appendChild(elemento);
     elemento.click();
     document.body.removeChild(elemento);
+  };
+
+  const handleGerarPropostaPDF = async () => {
+    if (!selectedObraDetalhes || !Array.isArray(selectedObraDetalhes.propostas) || selectedObraDetalhes.propostas.length === 0) {
+      toast.error('Nenhuma proposta disponivel para este negocio.');
+      return;
+    }
+
+    const ultimaProposta = selectedObraDetalhes.propostas[selectedObraDetalhes.propostas.length - 1];
+    const clienteAtual = (clientes || []).find((c: any) => c.id === selectedObraDetalhes.clienteId);
+
+    try {
+      let logoBase64: string | undefined;
+      try {
+        logoBase64 = await getBase64FromUrl('/image1.png');
+      } catch (logoError) {
+        console.warn('Logo da proposta nao encontrada.', logoError);
+      }
+
+      const resultadoPdf = handleDownloadPropostaPDF(
+        ultimaProposta,
+        clienteAtual,
+        selectedObraDetalhes,
+        logoBase64,
+      );
+
+      if (!resultadoPdf) {
+        throw new Error('A funcao de PDF da proposta nao retornou os dados esperados.');
+      }
+
+      const documentosAtuais = Array.isArray(selectedObraDetalhes.documentosNegocio)
+        ? selectedObraDetalhes.documentosNegocio
+        : [];
+
+      const novoDocumento = {
+        id: `doc-proposta-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        nome: resultadoPdf.nomeArquivo,
+        tipo: 'application/pdf',
+        tamanho: resultadoPdf.tamanho,
+        dataUpload: new Date().toISOString(),
+        conteudo: resultadoPdf.conteudoDataUrl
+      };
+
+      persistirObraAtualizada({
+        ...selectedObraDetalhes,
+        documentosNegocio: [...documentosAtuais, novoDocumento]
+      });
+
+      toast.success('Proposta em PDF gerada e baixada com sucesso!');
+    } catch (error: any) {
+      console.error('Erro ao gerar proposta:', error);
+      toast.error(`Erro ao gerar PDF da proposta${error?.message ? `: ${error.message}` : ''}`);
+    }
   };
 
   const fileToDataUrl = (file: File): Promise<string> => new Promise((resolve, reject) => {
@@ -854,6 +1275,7 @@ Geracao: ${dataGeracao}
     const novaObra = {
       id: novoProjetoId,
       nome: nomeObra,
+      empresaPrestadora: formData.empresaPrestadora,
       clienteId: formData.clienteId,
       status: 'Planejamento',
       categoria: 'Planejamento' as CategoriaObra,
@@ -879,6 +1301,7 @@ Geracao: ${dataGeracao}
 
     const novasOS = formData.servicos.map((servico, idx) => ({
       id: `OS-${Date.now()}-${idx}`,
+      empresaPrestadora: formData.empresaPrestadora,
       clienteId: formData.clienteId,
       solicitante: formData.solicitante,
       email: formData.email,
@@ -908,6 +1331,7 @@ Geracao: ${dataGeracao}
   };
 
   const handleShowDetalhes = (obra: any) => {
+    console.log('handleShowDetalhes called for obra:', obra?.id || obra?.nome || obra);
     setSelectedObraDetalhes(obra);
     setShowDetalhesObraModal(true);
     // Deixar o resumo financeiro sempre fechado quando abrir detalhes
@@ -951,12 +1375,9 @@ Geracao: ${dataGeracao}
         ? selectedObraDetalhes.propostas[selectedObraDetalhes.propostas.length - 1]
         : null;
       const propostaAceita = ultimaProposta?.status === 'aceita';
-      const possuiDocumentoCliente = Boolean(
-        selectedObraDetalhes.documentoClienteAssinado?.conteudo || selectedObraDetalhes.documentoClienteAssinado?.url
-      );
 
-      if (!propostaAceita || !possuiDocumentoCliente) {
-        return alert('Para iniciar o trabalho é obrigatório ter proposta aceita e documento assinado do cliente anexado.');
+      if (!propostaAceita) {
+        return alert('Para iniciar o trabalho é obrigatório ter proposta aceita.');
       }
 
       proximaCategoria = 'Em Andamento';
@@ -1031,158 +1452,975 @@ Geracao: ${dataGeracao}
     setSelectedObraDetalhes(null);
   };
 
-  const handleDownloadPropostaPDF = () => {
-    if (!selectedObraDetalhes?.propostas || selectedObraDetalhes.propostas.length === 0) return;
+  const handleDownloadOSPDF = async () => {
+    const osDoNegocio = (os || []).filter((o: any) => o.obraId === selectedObraDetalhes.id);
+    if (osDoNegocio.length === 0) {
+      toast.error('Nenhuma OS vinculada a este negócio.');
+      return;
+    }
+
+    const osPrincipal = osDoNegocio[0];
     
-    const ultimaProposta = selectedObraDetalhes.propostas[selectedObraDetalhes.propostas.length - 1];
-    const cliente = (clientes || []).find(c => c.id === selectedObraDetalhes.clienteId);
+    const orcamentosBase = Array.isArray(osPrincipal?.orcamentos) && osPrincipal.orcamentos.length > 0
+      ? osPrincipal.orcamentos
+      : Array.isArray(selectedObraDetalhes.orcamentos) && selectedObraDetalhes.orcamentos.length > 0
+        ? selectedObraDetalhes.orcamentos
+        : [];
+    
+    const propostasBase = Array.isArray(osPrincipal?.propostas) && osPrincipal.propostas.length > 0
+      ? osPrincipal.propostas
+      : Array.isArray(selectedObraDetalhes.propostas) && selectedObraDetalhes.propostas.length > 0
+        ? selectedObraDetalhes.propostas
+        : [];
 
-    // Gerar conteúdo do PDF em texto
-    const conteudo = `
-================================================================================
-                         PROPOSTA COMERCIAL
-================================================================================
+    const ultimoOrcamento = orcamentosBase.length > 0 ? orcamentosBase[orcamentosBase.length - 1] : null;
+    const ultimaProposta = propostasBase.length > 0 ? propostasBase[propostasBase.length - 1] : null;
+    const cliente = (clientes || []).find((c: any) => c.id === selectedObraDetalhes.clienteId);
 
-Data: ${new Date().toLocaleDateString('pt-BR')}
-Número: ${ultimaProposta.numeroProposta}
-Versão: ${ultimaProposta.versao}
-Status: ${ultimaProposta.status === 'pendente' ? 'Pendente' : ultimaProposta.status === 'aceita' ? 'Aceita' : 'Recusada'}
+    let logoBase64 = undefined;
+    try {
+      logoBase64 = await getBase64FromUrl('/image2.jpg');
+    } catch (err) {
+      console.warn('Logo não encontrada.');
+    }
 
-================================================================================
-INFORMAÇÕES BÁSICAS
-================================================================================
+    try {
+      const doc = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const margin = 10;
+      let y = margin;
 
-Cliente: ${cliente?.razaoSocial}
-CNPJ: ${cliente?.cnpj}
-Negócio: ${selectedObraDetalhes.nome}
-Data Criação: ${new Date(ultimaProposta.dataCriacao).toLocaleDateString('pt-BR')}
+      doc.setDrawColor(0);
+      doc.setLineWidth(0.3);
+      doc.rect(margin, y, pageWidth - 2 * margin, 35); 
+      
+      doc.line(margin + 50, y, margin + 50, y + 15); 
+      doc.line(margin + 130, y, margin + 130, y + 15); 
+      doc.line(margin, y + 15, pageWidth - margin, y + 15); 
 
-================================================================================
-DETALHES DA PROPOSTA
-================================================================================
+      if (logoBase64) {
+        doc.addImage(logoBase64, 'PNG', margin + 2, y + 2, 46, 11);
+      } else {
+        doc.setFont('Helvetica', 'bold');
+        doc.setFontSize(12);
+        doc.text('LINAVE', margin + 5, y + 10);
+      }
 
-Atribuído A: ${ultimaProposta.atribuidoA}
-Cargo: ${ultimaProposta.cargoContato}
-Referência: ${ultimaProposta.referencia}
+      doc.setFontSize(12);
+      doc.setFont('Helvetica', 'bold');
+      doc.text('ORDEM DE SERVIÇO\nDE PRODUÇÃO', margin + 90, y + 6.5, { align: 'center' });
 
-Saudação: ${ultimaProposta.saudacao}
-Assunto: ${ultimaProposta.assunto}
+      doc.setFontSize(7);
+      doc.text('Data Emissão:', margin + 132, y + 5);
+      doc.setFont('Helvetica', 'normal');
+      doc.text(osPrincipal.dataEmissao || new Date().toLocaleDateString('pt-BR'), margin + 155, y + 5);
+      
+      doc.setFont('Helvetica', 'bold');
+      doc.text('CC.:', margin + 132, y + 10);
+      doc.setFont('Helvetica', 'normal');
+      doc.text(osPrincipal.cc || 'Não inf.', margin + 142, y + 10);
 
-${ultimaProposta.textoAbertura ? `Texto de Abertura:\n${ultimaProposta.textoAbertura}\n` : ''}
+      y += 15;
 
-================================================================================
-ESCOPO DE SERVIÇOS
-================================================================================
+      const rowH = 5;
+      doc.line(margin, y + rowH, pageWidth - margin, y + rowH);
+      doc.line(margin, y + rowH * 2, pageWidth - margin, y + rowH * 2);
+      doc.line(margin, y + rowH * 3, pageWidth - margin, y + rowH * 3);
+      doc.line(margin + 100, y, margin + 100, y + 20); 
 
-A - Escopo Básico:
-${ultimaProposta.escopoA || 'Não preenchido'}
+      doc.setFontSize(8);
+      const printDado = (lbl: string, val: string, vx: number, vy: number) => {
+        doc.setFont('Helvetica', 'bold');
+        doc.text(lbl, vx, vy);
+        doc.setFont('Helvetica', 'normal');
+        doc.text(val || '−', vx + 25, vy);
+      };
 
-B - Responsabilidade da Contratada:
-${ultimaProposta.responsabilidadeContratada || 'Não preenchido'}
+      const dataInicio = osPrincipal.dataInicioPrevisto || selectedObraDetalhes.dataPrevistaInicio;
+      const dataTermino = osPrincipal.dataTerminoPrevisto || selectedObraDetalhes.dataPrevistaFinal;
 
-C - Responsabilidade da Contratante:
-${ultimaProposta.escopoC || 'Não preenchido'}
+      printDado('CLIENTE:', cliente?.razaoSocial || '', margin + 2, y + 3.5);
+      printDado('Início Previsto:', dataInicio ? new Date(dataInicio).toLocaleDateString('pt-BR') : '', margin + 102, y + 3.5);
+      y += rowH;
 
-================================================================================
-CONDIÇÕES COMERCIAIS
-================================================================================
+      printDado('PROJETO:', selectedObraDetalhes.nome || '', margin + 2, y + 3.5);
+      printDado('Térm. Previsto:', dataTermino ? new Date(dataTermino).toLocaleDateString('pt-BR') : '', margin + 102, y + 3.5);
+      y += rowH;
 
-D - Preço:
-${ultimaProposta.preco || 'Não preenchido'}
+      printDado('EQUIPAMENTO:', osPrincipal.equipamento || osPrincipal.tipo || '', margin + 2, y + 3.5);
+      printDado('OS Nº:', osPrincipal.ordemServicoNumero || '', margin + 102, y + 3.5);
+      y += rowH;
 
-Impostos/Observações Fiscais:
-${ultimaProposta.impostos || 'Não preenchido'}
+      printDado('LOCAL:', osPrincipal.local || osPrincipal.localExecucao || '', margin + 2, y + 3.5);
+      printDado('Encarregado:', osPrincipal.supervisorEncarregado || '', margin + 102, y + 3.5);
+      y += rowH;
 
-E - Condições Gerais:
-${ultimaProposta.condicoesGerais || 'Não preenchido'}
+      y += 5; 
 
-F - Condições de Pagamento:
-${ultimaProposta.condicoesPagamento || 'Não preenchido'}
+      const leftW = 120;
+      const rightW = (pageWidth - 2 * margin) - leftW;
+      
+      doc.setFont('Helvetica', 'bold');
+      doc.setFillColor(230, 230, 230);
+      doc.rect(margin, y, leftW, 6, 'FD');
+      doc.rect(margin + leftW, y, rightW, 6, 'FD');
+      
+      doc.text('DESCRIÇÃO DO SERVIÇO', margin + leftW/2, y + 4, { align: 'center' });
+      doc.text('A SER INCLUIDO', margin + leftW + rightW/2, y + 4, { align: 'center' });
+      y += 6;
 
-G - Prazo:
-${ultimaProposta.prazo || 'Não preenchido'}
+      const bodyY = y;
+      
+      doc.setFont('Helvetica', 'normal');
+      const descTexto = ultimaProposta ? formatarEscopoBasicoParaTexto(ultimaProposta.escopoBasicoServicos || ultimaProposta.escopoA) : (osPrincipal.descricao || osPrincipal.descricaoGeralServico || '');
+      const descLines = doc.splitTextToSize(descTexto, leftW - 4);
+      
+      let cursorEsq = bodyY + 5;
+      descLines.forEach((l: string) => {
+        doc.text(l, margin + 2, cursorEsq);
+        cursorEsq += 4;
+      });
 
-================================================================================
-REFERÊNCIAS E ENCERRAMENTO
-================================================================================
+      const checks = osPrincipal.aSerIncluido || {};
+      const chk = (val: any) => val ? '[ X ]' : '[   ]';
+      
+      const listChecks = [
+        { lbl: 'CERTIFICADO DE GAS', v: checks.certificadoGas },
+        { lbl: 'VENTILAÇÃO', v: checks.ventilacao },
+        { lbl: 'LIMPEZA ANTES', v: checks.limpezaAntes },
+        { lbl: 'LIMPEZA APÓS CONCLUSÃO', v: checks.limpezaApos },
+        { lbl: 'ANDAIMES', v: checks.andaimes },
+        { lbl: 'APOIO DE GUINDASTE', v: checks.apoioGuindastes },
+        { lbl: 'TRANSPORTE EXTERNO', v: checks.transporteExterno },
+        { lbl: 'TESTE DE PRESSÃO', v: checks.testePressao || checks.testesPressao },
+        { lbl: 'PINTURA', v: checks.pintura },
+        { lbl: 'LP / PM', v: checks.lpPm },
+        { lbl: 'TESTE DE ULTRASON', v: checks.testeUltrassom },
+        { lbl: 'INSPEÇÃO DIMENSIONAL', v: checks.inspecaoDimensional },
+        { lbl: 'VISUAL DE SOLDA', v: checks.visualSolda },
+        { lbl: 'SOLDADOR CERTIFICADO', v: checks.soldadorCertificado },
+        { lbl: 'PROCEDIMENTO DE SOLDA', v: checks.procedimentoSolda },
+        { lbl: 'CERTIFICAÇÃO DO MATERIAL', v: checks.certificacaoMaterial },
+        { lbl: 'VIGIA DE FOGO', v: checks.vigiaFogo }
+      ];
 
-Referências:
-${ultimaProposta.referencias || 'Não preenchido'}
+      let cursorDir = bodyY + 5;
+      doc.setFontSize(7);
+      listChecks.forEach(c => {
+        doc.setFont('Helvetica', 'bold');
+        doc.text(chk(c.v), margin + leftW + 2, cursorDir);
+        doc.setFont('Helvetica', 'normal');
+        doc.text(c.lbl, margin + leftW + 10, cursorDir);
+        cursorDir += 4;
+      });
 
-Encerramento:
-${ultimaProposta.encerramento || 'Não preenchido'}
+      const maxH = Math.max(cursorEsq, cursorDir) - bodyY + 5;
+      doc.rect(margin, bodyY, leftW, maxH);
+      doc.rect(margin + leftW, bodyY, rightW, maxH);
+      
+      y = bodyY + maxH + 5;
 
-Assinado por: ${ultimaProposta.assinaturaNome} (${ultimaProposta.assinaturaCargo})
+      const formatCurrency = (val: any) => val ? parseFloat(val).toLocaleString('pt-BR', {style: 'currency', currency: 'BRL'}) : 'R$ 0,00';
+      
+      const materiaisOS = ultimoOrcamento?.data?.materiais || [];
+      if (materiaisOS.length > 0) {
+        autoTable(doc, {
+          startY: y,
+          head: [['QUANT', 'UN', 'ESPECIFICAÇÃO DE MATERIAL', 'R$ / UNID', 'VALOR TOTAL']],
+          body: materiaisOS.map((m: any) => [
+            m.quantidade || '',
+            m.unidade || '',
+            m.descricao || '',
+            formatCurrency(m.custoUnit),
+            formatCurrency(m.valorTotal)
+          ]),
+          theme: 'grid',
+          headStyles: { fillColor: [230, 230, 230], textColor: [0,0,0], fontStyle: 'bold', fontSize: 8 },
+          styles: { fontSize: 7, cellPadding: 2, textColor: [0,0,0] },
+          margin: { left: margin, right: margin }
+        });
+        y = (doc as any).lastAutoTable.finalY + 5;
+      }
 
-================================================================================
-Documento gerado automaticamente pelo Linave ERP
-Geração: ${new Date().toLocaleString('pt-BR')}
-================================================================================
-    `;
+      const terceirizadosOS = ultimoOrcamento?.data?.terceirizados || [];
+      if (terceirizadosOS.length > 0) {
+        autoTable(doc, {
+          startY: y,
+          head: [['ITEM', 'TERCEIRIZAÇÃO OU SUB-CONTRATAÇÃO', 'VALOR TOTAL']],
+          body: terceirizadosOS.map((t: any, idx: number) => [
+            idx + 1,
+            t.descricao || '',
+            formatCurrency(t.valorTotal)
+          ]),
+          theme: 'grid',
+          headStyles: { fillColor: [230, 230, 230], textColor: [0,0,0], fontStyle: 'bold', fontSize: 8 },
+          styles: { fontSize: 7, cellPadding: 2, textColor: [0,0,0] },
+          margin: { left: margin, right: margin }
+        });
+      }
 
-    // Criar blob e baixar
-    const elemento = document.createElement('a');
-    const arquivo = new Blob([conteudo], { type: 'text/plain' });
-    elemento.href = URL.createObjectURL(arquivo);
-    elemento.download = `Proposta_${ultimaProposta.numeroProposta}_v${ultimaProposta.versao}.txt`;
-    document.body.appendChild(elemento);
-    elemento.click();
-    document.body.removeChild(elemento);
+      const pageCount = (doc as any).internal.getNumberOfPages();
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFontSize(6);
+        doc.setTextColor(150);
+        doc.text(`Documento gerado pelo Linave ERP em ${new Date().toLocaleString('pt-BR')}`, margin, pageHeight - 5);
+        doc.text(`Pag. ${i} / ${pageCount}`, pageWidth - margin - 15, pageHeight - 5);
+      }
+
+      doc.save(`OS_${osPrincipal.ordemServicoNumero || '001'}_${new Date().getTime()}.pdf`);
+      toast.success('OS baixada em PDF com sucesso!');
+
+    } catch (error) {
+      console.error('Erro ao gerar PDF:', error);
+      toast.error('Erro ao gerar OS em PDF');
+    }
   };
 
-  const handleDownloadOSPDF = () => {
-    const osDoNegocio = (os || []).filter(o => o.obraId === selectedObraDetalhes.id);
-    if (osDoNegocio.length === 0) return;
+  const handleDownloadOrcamentoPDF = () => {
+    if (!selectedObraDetalhes?.orcamentos || selectedObraDetalhes.orcamentos.length === 0) return;
+    
+    const ultimoOrcamento = selectedObraDetalhes.orcamentos[selectedObraDetalhes.orcamentos.length - 1];
+    const cliente = (clientes || []).find(c => c.id === selectedObraDetalhes.clienteId);
+    const ultimaProposta = Array.isArray(selectedObraDetalhes?.propostas) && selectedObraDetalhes.propostas.length > 0
+      ? selectedObraDetalhes.propostas[selectedObraDetalhes.propostas.length - 1]
+      : null;
 
-    // Gerar conteúdo combinado de todas as OS
-    const conteudo = `
-================================================================================
-                    ORDEM(NS) DE SERVIÇO
-================================================================================
+    try {
+      const doc = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const lineHeight = 5;
+      const cellHeight = lineHeight;
+      let y = 10;
+      const margin = 8;
+      const baseColWidth = (pageWidth - margin * 2) / 10;
+      const laborColWidths = [
+        baseColWidth,
+        baseColWidth * 2.7,
+        baseColWidth,
+        baseColWidth,
+        baseColWidth * 1.4,
+        baseColWidth * 1.6,
+        baseColWidth * 1.3
+      ];
+      const materialsColWidths = [
+        baseColWidth,
+        baseColWidth * 3.3,
+        baseColWidth * 0.8,
+        baseColWidth * 0.9,
+        baseColWidth * 1.3,
+        baseColWidth * 1.4,
+        baseColWidth * 1.3
+      ];
+      const activitiesColWidths = [
+        baseColWidth,
+        baseColWidth * 3,
+        baseColWidth,
+        baseColWidth * 5
+      ];
+      const sumWidths = (widths: number[]) => widths.reduce((sum, width) => sum + width, 0);
 
-Data: ${new Date().toLocaleDateString('pt-BR')}
-Negócio: ${selectedObraDetalhes.nome}
-Cliente: ${(clientes || []).find(c => c.id === selectedObraDetalhes.clienteId)?.razaoSocial}
+      // Função para desenhar célula com quebra de texto dinâmica
+      const drawCellWithAutoWrap = (x: number, y: number, width: number, height: number, text: string, bold = false, red = false) => {
+        doc.setFont('Arial', bold ? 'bold' : 'normal');
+        
+        if (red) {
+          doc.setTextColor(255, 0, 0);
+        } else {
+          doc.setTextColor(0, 0, 0);
+        }
 
-================================================================================
-DETALHES DAS ORDENS
-================================================================================
+        // Quebra o texto para caber na largura disponível
+        const lines = doc.splitTextToSize(text || '', width - 2);
+        
+        // Calcula a altura necessária (máximo de 2 linhas por padrão)
+        let fontSize = 8;
+        let displayLines = lines.slice(0, 2);
+        
+        // Se o texto ocupar mais de 2 linhas, reduz a font size
+        if (lines.length > 2) {
+          fontSize = 6;
+          doc.setFontSize(fontSize);
+          const newLines = doc.splitTextToSize(text || '', width - 2);
+          displayLines = newLines.slice(0, 3);
+        } else {
+          doc.setFontSize(fontSize);
+        }
 
-${osDoNegocio.map((o, idx) => `
---- ORDEM ${idx + 1} ---
-ID: ${o.id}
-Tipo: ${o.tipo}
-Status: ${o.status}
-Data Criação: ${o.dataCriacao}
+        // Desenha a célula
+        doc.rect(x, y, width, height);
+        
+        // Desenha o texto (centralizado verticalmente dentro da célula)
+        const lineHeightText = fontSize * 0.35;
+        const totalTextHeight = displayLines.length * lineHeightText;
+        let textY = y + (height - totalTextHeight) / 2 + lineHeightText * 0.7;
+        
+        displayLines.forEach((line: string) => {
+          doc.text(line, x + 1, textY, { maxWidth: width - 2 });
+          textY += lineHeightText;
+        });
+        
+        doc.setTextColor(0, 0, 0);
+      };
 
-Local: ${o.local || o.localExecucao || 'Não especificado'}
-Porto: ${o.porto || 'Não especificado'}
-Embarcação: ${o.embarcacao || 'Não especificado'}
+      // Função para desenhar célula (versão simples para headers)
+      const drawCell = (x: number, y: number, width: number, height: number, text: string, bold = false, red = false) => {
+        doc.rect(x, y, width, height);
+        doc.setFont('Arial', bold ? 'bold' : 'normal');
+        doc.setFontSize(9);
+        if (red) {
+          doc.setTextColor(255, 0, 0);
+        } else {
+          doc.setTextColor(0, 0, 0);
+        }
+        // Quebra texto se for muito longo
+        const maxChars = Math.floor(width / 1.5);
+        const wrappedText = text.length > maxChars ? text.substring(0, maxChars - 3) + '...' : text;
+        doc.text(wrappedText, x + 1, y + 3.5, { maxWidth: width - 2 });
+        doc.setTextColor(0, 0, 0);
+      };
 
-Descrição:
-${o.descricao}
+      // Função para quebrar texto em múltiplas linhas
+      const splitText = (text: string, maxWidth: number, fontSize: number = 7): string[] => {
+        if (!text) return [''];
+        const charsPerLine = Math.floor(maxWidth / 1.8);
+        const lines = [];
+        let currentText = text;
+        
+        while (currentText.length > 0) {
+          if (currentText.length <= charsPerLine) {
+            lines.push(currentText);
+            break;
+          }
+          lines.push(currentText.substring(0, charsPerLine));
+          currentText = currentText.substring(charsPerLine);
+        }
+        return lines;
+      };
 
-${o.observacoes ? `Observações:\n${o.observacoes}` : ''}
+      // Helper: imprime um cabeçalho compacto (cliente / ship / escopo / data) e retorna a nova coordenada y
+      const printCompactHeader = () => {
+        let hy = margin;
+        let hx = margin;
 
-Solicitante: ${o.solicitante}
-Contato: ${o.telefone} / ${o.email}
-`).join('\n')}
+        drawCell(hx, hy, baseColWidth, cellHeight, 'Cliente:', true);
+        hx += baseColWidth;
+        drawCell(hx, hy, baseColWidth * 3, cellHeight, cliente?.razaoSocial || '');
+        hx += baseColWidth * 3;
+        drawCell(hx, hy, baseColWidth * 2, cellHeight, `Data: ${new Date().toLocaleDateString('pt-BR')}`);
+        hy += cellHeight;
 
-================================================================================
-Documento gerado automaticamente pelo Linave ERP
-Geração: ${new Date().toLocaleString('pt-BR')}
-================================================================================
-    `;
+        hx = margin;
+        drawCell(hx, hy, baseColWidth, cellHeight, 'Ship:', true);
+        hx += baseColWidth;
+        drawCell(hx, hy, baseColWidth * 9, cellHeight, selectedObraDetalhes?.nome || '');
+        hy += cellHeight;
 
-    // Criar e fazer download
-    const elemento = document.createElement('a');
-    const arquivo = new Blob([conteudo], { type: 'text/plain' });
-    elemento.href = URL.createObjectURL(arquivo);
-    elemento.download = `OS_${selectedObraDetalhes.id}_${new Date().getTime()}.txt`;
-    document.body.appendChild(elemento);
-    elemento.click();
-    document.body.removeChild(elemento);
-    toast.success('OS baixada com sucesso!');
+        hx = margin;
+        drawCell(hx, hy, baseColWidth, cellHeight, 'Escopo:', true);
+        hx += baseColWidth;
+        const escopoPeq = formatarEscopoBasicoParaTexto(ultimaProposta?.escopoBasicoServicos || ultimaProposta?.escopoA || '');
+        drawCell(hx, hy, baseColWidth * 9, cellHeight, (escopoPeq || '').split('\n')[0] || '');
+        hy += cellHeight + 2;
+
+        doc.line(margin, hy, pageWidth - margin, hy);
+        hy += 4;
+        return hy;
+      };
+
+      // Calcular valores
+      const base = safeNumber(ultimoOrcamento.valores.totalBruto ?? ultimoOrcamento.valores.subtotal);
+      const margemPercent = safeNumber(ultimoOrcamento.valores.margem);
+      const ohPercent = safeNumber(ultimoOrcamento.valores.oh);
+      const impostosPercent = safeNumber(ultimoOrcamento.valores.impostos);
+      const valorMargem = safeNumber(ultimoOrcamento.valores.valorMargem ?? ((base * margemPercent) / 100));
+      const valorOH = safeNumber(ultimoOrcamento.valores.valorOH ?? ((base * ohPercent) / 100));
+      const semImposto = safeNumber(ultimoOrcamento.valores.totalSemImposto ?? (base + valorMargem + valorOH));
+      const valorImposto = safeNumber(ultimoOrcamento.valores.valorImpostos ?? ((semImposto * impostosPercent) / 100));
+
+      // Dados
+      const maoDeObraData = (ultimoOrcamento.data.maoDeObra || []).filter((item: any) => item.funcao);
+      const totalMaoDeObra = maoDeObraData.reduce((sum: number, item: any) => sum + parseFloat(item.valorTotal || 0), 0);
+      const materiaisData = (ultimoOrcamento.data.materiais || []).filter((item: any) => item.descricao);
+      const totalMateriais = materiaisData.reduce((sum: number, item: any) => sum + parseFloat(item.valorTotal || 0), 0);
+      const terceirizadosData = (ultimoOrcamento.data.terceirizados || []).filter((item: any) => item.descricao);
+      const totalTerceiros = terceirizadosData.reduce((sum: number, item: any) => sum + parseFloat(item.valorTotal || 0), 0);
+      const atividadesData = (ultimoOrcamento.data.atividades || []).filter((item: any) => item.atividade);
+      const totalDias = atividadesData.reduce((sum: number, item: any) => sum + parseFloat(item.dias || 0), 0);
+      
+      // Calcular quantidade de itens e preço por item
+      const totalItens = maoDeObraData.length + materiaisData.length + terceirizadosData.length;
+      const precoFinal = safeNumber(ultimoOrcamento.valores.precoFinal);
+      const precoPorItem = totalItens > 0 ? precoFinal / totalItens : 0;
+
+      // Linha 1 - Cliente
+      let x = margin;
+      drawCell(x, y, baseColWidth, cellHeight, 'Cliente:', true);
+      x += baseColWidth;
+      drawCell(x, y, baseColWidth * 3, cellHeight, cliente?.razaoSocial || '');
+      x += baseColWidth * 3;
+      drawCell(x, y, baseColWidth, cellHeight, '');
+      x += baseColWidth;
+      drawCell(x, y, baseColWidth * 5, cellHeight, `Data: ${new Date().toLocaleDateString('pt-BR')}`);
+      y += cellHeight;
+
+      // Linha 2 - Ship
+      x = margin;
+      drawCell(x, y, baseColWidth, cellHeight, 'Ship:', true);
+      x += baseColWidth;
+      drawCell(x, y, baseColWidth * 9, cellHeight, selectedObraDetalhes.nome);
+      y += cellHeight;
+
+      // Linha 3 - Escopo
+      x = margin;
+      drawCell(x, y, baseColWidth, cellHeight, 'Escopo:', true);
+      x += baseColWidth;
+      drawCell(x, y, baseColWidth * 9, cellHeight, 'Serviços conforme descrito abaixo');
+      y += cellHeight + 2;
+
+      // ===== Seção A - MÃO DE OBRA =====
+      x = margin;
+      doc.setFont('Arial', 'bold');
+      doc.setFontSize(9);
+      doc.text('A', x + 2, y + 3);
+      doc.rect(x, y, baseColWidth, cellHeight);
+      x += baseColWidth;
+      doc.setTextColor(255, 0, 0);
+      doc.text('MÃO DE OBRA', x + 2, y + 3);
+      doc.rect(x, y, baseColWidth * 9, cellHeight);
+      doc.setTextColor(0, 0, 0);
+      y += cellHeight;
+
+      // Cabeçalho tabela A
+      x = margin;
+      const headersMaoDeObra = ['Item', 'Função', 'Qtd', 'Dias', 'Custo/Dia', 'Obs', 'Valor Total'];
+      headersMaoDeObra.forEach((h, index) => {
+        const colWidth = laborColWidths[index];
+        doc.setFont('Arial', 'bold');
+        doc.setFontSize(7);
+        doc.text(h, x + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
+        doc.rect(x, y, colWidth, cellHeight);
+        x += colWidth;
+      });
+      y += cellHeight;
+
+      // Linhas de mão de obra
+      maoDeObraData.forEach((item: any, idx: number) => {
+        x = margin;
+        doc.setFont('Arial', 'normal');
+        doc.setFontSize(7);
+
+        // Item
+        doc.text(String(idx + 1), x + 0.5, y + 2.5);
+        doc.rect(x, y, laborColWidths[0], cellHeight);
+        x += laborColWidths[0];
+
+        // Funcao (com auto wrap)
+        drawCellWithAutoWrap(x, y, laborColWidths[1], cellHeight, item.funcao || '');
+        x += laborColWidths[1];
+
+        // Quantidade
+        doc.text(String(item.quantidade || ''), x + 0.5, y + 2.5);
+        doc.rect(x, y, laborColWidths[2], cellHeight);
+        x += laborColWidths[2];
+
+        // Dias
+        doc.text(String(item.dias || ''), x + 0.5, y + 2.5);
+        doc.rect(x, y, laborColWidths[3], cellHeight);
+        x += laborColWidths[3];
+
+        // Custo/Dia
+        doc.text(String(item.custoUnitDia ? parseFloat(item.custoUnitDia).toFixed(2) : ''), x + 0.5, y + 2.5);
+        doc.rect(x, y, laborColWidths[4], cellHeight);
+        x += laborColWidths[4];
+
+        // Observações (com auto wrap)
+        drawCellWithAutoWrap(x, y, laborColWidths[5], cellHeight, item.observacoes || '');
+        x += laborColWidths[5];
+
+        // Valor Total (última coluna)
+        doc.setFont('Arial', 'bold');
+        doc.setTextColor(255, 0, 0);
+        doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
+        doc.setTextColor(0, 0, 0);
+        doc.setFont('Arial', 'normal');
+        doc.rect(x, y, laborColWidths[6], cellHeight);
+        x += laborColWidths[6];
+
+        y += cellHeight;
+      });
+
+      // Sub-total MÃO DE OBRA
+      x = margin;
+      doc.setFont('Arial', 'bold');
+      doc.setFontSize(8);
+      doc.setTextColor(255, 0, 0);
+      doc.text('Sub-total', x + 0.5, y + 2.5);
+      doc.setTextColor(0, 0, 0);
+      doc.rect(x, y, sumWidths(laborColWidths.slice(0, -1)), cellHeight);
+      x += sumWidths(laborColWidths.slice(0, -1));
+      doc.setTextColor(255, 0, 0);
+      doc.text(totalMaoDeObra.toFixed(2), x + 0.5, y + 2.5);
+      doc.setTextColor(0, 0, 0);
+      doc.rect(x, y, laborColWidths[6], cellHeight);
+      y += cellHeight + 2;
+
+      // ===== Seção B - CONSUMÍVEIS E MATERIAIS =====
+      if (materiaisData && materiaisData.length > 0) {
+        const rows = materiaisData;
+        const headersMateriais = ['Item', 'Descrição', 'Un', 'Qtd', 'Peso/Fat', 'Custo Un', 'Total'];
+
+        const headerTitleHeight = cellHeight;
+        const headerRowHeight = cellHeight;
+        const subtotalHeight = cellHeight + 2;
+        const tableFullHeight = headerTitleHeight + headerRowHeight + (rows.length * cellHeight) + subtotalHeight;
+        const singlePageContentHeight = pageHeight - margin * 2;
+
+        const printSectionTitleB = () => {
+          let xx = margin;
+          doc.setFont('Arial', 'bold');
+          doc.setFontSize(9);
+          doc.text('B', xx + 2, y + 3);
+          doc.rect(xx, y, baseColWidth, cellHeight);
+          xx += baseColWidth;
+          doc.setTextColor(255, 0, 0);
+          doc.text('CONSUMÍVEIS E MATERIAIS', xx + 2, y + 3);
+          doc.rect(xx, y, baseColWidth * 9, cellHeight);
+          doc.setTextColor(0, 0, 0);
+          y += cellHeight;
+        };
+
+        const printHeadersB = () => {
+          let xx = margin;
+          headersMateriais.forEach((h, index) => {
+            const colWidth = materialsColWidths[index];
+            doc.setFont('Arial', 'bold');
+            doc.setFontSize(7);
+            doc.text(h, xx + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
+            doc.rect(xx, y, colWidth, cellHeight);
+            xx += colWidth;
+          });
+          y += cellHeight;
+        };
+
+        if (tableFullHeight <= (pageHeight - y - margin)) {
+          printSectionTitleB();
+          printHeadersB();
+        } else if (tableFullHeight <= singlePageContentHeight) {
+          doc.addPage();
+          y = printCompactHeader();
+          printSectionTitleB();
+          printHeadersB();
+        } else {
+          // cabeçalhos no início
+          printSectionTitleB();
+          printHeadersB();
+        }
+
+        // linhas
+        for (let idx = 0; idx < rows.length; idx++) {
+          const item = rows[idx];
+
+          // verifica espaço para próxima linha + subtotal
+          if (y + cellHeight + subtotalHeight > pageHeight - margin) {
+            doc.addPage();
+            y = printCompactHeader();
+            printSectionTitleB();
+            printHeadersB();
+          }
+
+          let xx = margin;
+          doc.setFont('Arial', 'normal');
+          doc.setFontSize(7);
+
+          doc.text(String(idx + 1), xx + 0.5, y + 2.5);
+          doc.rect(xx, y, materialsColWidths[0], cellHeight);
+          xx += materialsColWidths[0];
+
+          drawCellWithAutoWrap(xx, y, materialsColWidths[1], cellHeight, item.descricao || '');
+          xx += materialsColWidths[1];
+
+          doc.text(item.unidade || '', xx + 0.5, y + 2.5);
+          doc.rect(xx, y, materialsColWidths[2], cellHeight);
+          xx += materialsColWidths[2];
+
+          doc.text(String(item.quantidade || ''), xx + 0.5, y + 2.5);
+          doc.rect(xx, y, materialsColWidths[3], cellHeight);
+          xx += materialsColWidths[3];
+
+          doc.text(String(item.pesoFator || ''), xx + 0.5, y + 2.5);
+          doc.rect(xx, y, materialsColWidths[4], cellHeight);
+          xx += materialsColWidths[4];
+
+          doc.text(String(item.custoUnit ? parseFloat(item.custoUnit).toFixed(2) : ''), xx + 0.5, y + 2.5);
+          doc.rect(xx, y, materialsColWidths[5], cellHeight);
+          xx += materialsColWidths[5];
+
+          doc.setFont('Arial', 'bold');
+          doc.setTextColor(255, 0, 0);
+          doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), xx + 0.5, y + 2.5);
+          doc.setTextColor(0, 0, 0);
+          doc.setFont('Arial', 'normal');
+          doc.rect(xx, y, materialsColWidths[6], cellHeight);
+          xx += materialsColWidths[6];
+
+          y += cellHeight;
+        }
+
+        // Total materiais
+        if (y + subtotalHeight > pageHeight - margin) {
+          doc.addPage();
+          y = printCompactHeader();
+        }
+        let xt = margin;
+        doc.setFont('Arial', 'bold');
+        doc.setFontSize(8);
+        doc.setTextColor(255, 0, 0);
+        doc.text('Valor total', xt + 0.5, y + 2.5);
+        doc.setTextColor(0, 0, 0);
+        doc.rect(xt, y, sumWidths(materialsColWidths.slice(0, -1)), cellHeight);
+        xt += sumWidths(materialsColWidths.slice(0, -1));
+        doc.setTextColor(255, 0, 0);
+        doc.text(totalMateriais.toFixed(2), xt + 0.5, y + 2.5);
+        doc.setTextColor(0, 0, 0);
+        doc.rect(xt, y, materialsColWidths[6], cellHeight);
+        y += cellHeight + 2;
+      }
+
+      // ===== Seção C - SERVIÇOS TERCEIRIZADOS =====
+      if (terceirizadosData && terceirizadosData.length > 0) {
+        const rows = terceirizadosData;
+        const headersTerceiros = ['Item', 'Descrição', 'Un', 'Qtd', 'Peso/Fat', 'Custo Un', 'Total'];
+
+        const headerTitleHeight = cellHeight;
+        const headerRowHeight = cellHeight;
+        const subtotalHeight = cellHeight + 2;
+        const tableFullHeight = headerTitleHeight + headerRowHeight + (rows.length * cellHeight) + subtotalHeight;
+        const singlePageContentHeight = pageHeight - margin * 2;
+
+        const printSectionTitleC = () => {
+          let xx = margin;
+          doc.setFont('Arial', 'bold');
+          doc.setFontSize(9);
+          doc.text('C', xx + 2, y + 3);
+          doc.rect(xx, y, baseColWidth, cellHeight);
+          xx += baseColWidth;
+          doc.setTextColor(255, 0, 0);
+          doc.text('SERVIÇOS TERCEIRIZADOS', xx + 2, y + 3);
+          doc.rect(xx, y, baseColWidth * 9, cellHeight);
+          doc.setTextColor(0, 0, 0);
+          y += cellHeight;
+        };
+
+        const printHeadersC = () => {
+          let xx = margin;
+          headersTerceiros.forEach((h, index) => {
+            const colWidth = materialsColWidths[index];
+            doc.setFont('Arial', 'bold');
+            doc.setFontSize(7);
+            doc.text(h, xx + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
+            doc.rect(xx, y, colWidth, cellHeight);
+            xx += colWidth;
+          });
+          y += cellHeight;
+        };
+
+        if (tableFullHeight <= (pageHeight - y - margin)) {
+          printSectionTitleC();
+          printHeadersC();
+        } else if (tableFullHeight <= singlePageContentHeight) {
+          doc.addPage();
+          y = printCompactHeader();
+          printSectionTitleC();
+          printHeadersC();
+        } else {
+          printSectionTitleC();
+          printHeadersC();
+        }
+
+        for (let idx = 0; idx < rows.length; idx++) {
+          const item = rows[idx];
+
+          if (y + cellHeight + subtotalHeight > pageHeight - margin) {
+            doc.addPage();
+            y = printCompactHeader();
+            printSectionTitleC();
+            printHeadersC();
+          }
+
+          let xx = margin;
+          doc.setFont('Arial', 'normal');
+          doc.setFontSize(7);
+
+          doc.text(String(idx + 1), xx + 0.5, y + 2.5);
+          doc.rect(xx, y, materialsColWidths[0], cellHeight);
+          xx += materialsColWidths[0];
+
+          drawCellWithAutoWrap(xx, y, materialsColWidths[1], cellHeight, item.descricao || '');
+          xx += materialsColWidths[1];
+
+          doc.text(item.unidade || '', xx + 0.5, y + 2.5);
+          doc.rect(xx, y, materialsColWidths[2], cellHeight);
+          xx += materialsColWidths[2];
+
+          doc.text(String(item.quantidade || ''), xx + 0.5, y + 2.5);
+          doc.rect(xx, y, materialsColWidths[3], cellHeight);
+          xx += materialsColWidths[3];
+
+          doc.text(String(item.pesoFator || ''), xx + 0.5, y + 2.5);
+          doc.rect(xx, y, materialsColWidths[4], cellHeight);
+          xx += materialsColWidths[4];
+
+          doc.text(String(item.custoUnit ? parseFloat(item.custoUnit).toFixed(2) : ''), xx + 0.5, y + 2.5);
+          doc.rect(xx, y, materialsColWidths[5], cellHeight);
+          xx += materialsColWidths[5];
+
+          doc.setFont('Arial', 'bold');
+          doc.setTextColor(255, 0, 0);
+          doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), xx + 0.5, y + 2.5);
+          doc.setTextColor(0, 0, 0);
+          doc.setFont('Arial', 'normal');
+          doc.rect(xx, y, materialsColWidths[6], cellHeight);
+          xx += materialsColWidths[6];
+
+          y += cellHeight;
+        }
+
+        // Sub-total terceiros
+        if (y + subtotalHeight > pageHeight - margin) {
+          doc.addPage();
+          y = printCompactHeader();
+        }
+        let xs = margin;
+        doc.setFont('Arial', 'bold');
+        doc.setFontSize(8);
+        doc.setTextColor(255, 0, 0);
+        doc.text('Sub-total', xs + 0.5, y + 2.5);
+        doc.setTextColor(0, 0, 0);
+        doc.rect(xs, y, sumWidths(materialsColWidths.slice(0, -1)), cellHeight);
+        xs += sumWidths(materialsColWidths.slice(0, -1));
+        doc.setTextColor(255, 0, 0);
+        doc.text(totalTerceiros.toFixed(2), xs + 0.5, y + 2.5);
+        doc.setTextColor(0, 0, 0);
+        doc.rect(xs, y, materialsColWidths[6], cellHeight);
+        y += cellHeight + 2;
+      }
+
+      // ===== Seção D - ATIVIDADES PREVISTAS =====
+      if (atividadesData && atividadesData.length > 0) {
+        const rows = atividadesData;
+        const headersAtividades = ['Item', 'Atividade', 'Dias', 'Observações'];
+
+        const headerTitleHeight = cellHeight;
+        const headerRowHeight = cellHeight;
+        const subtotalHeight = cellHeight + 2;
+        const tableFullHeight = headerTitleHeight + headerRowHeight + (rows.length * cellHeight) + subtotalHeight;
+        const singlePageContentHeight = pageHeight - margin * 2;
+
+        const printSectionTitleD = () => {
+          y += 1;
+          let xx = margin;
+          doc.setFont('Arial', 'bold');
+          doc.setFontSize(9);
+          doc.text('D', xx + 2, y + 3);
+          doc.rect(xx, y, baseColWidth, cellHeight);
+          xx += baseColWidth;
+          doc.setTextColor(255, 0, 0);
+          doc.text('ATIVIDADES PREVISTAS', xx + 2, y + 3);
+          doc.rect(xx, y, baseColWidth * 9, cellHeight);
+          doc.setTextColor(0, 0, 0);
+          y += cellHeight;
+        };
+
+        const printHeadersD = () => {
+          let xx = margin;
+          headersAtividades.forEach((h, index) => {
+            const colWidth = activitiesColWidths[index];
+            doc.setFont('Arial', 'bold');
+            doc.setFontSize(7);
+            doc.text(h, xx + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
+            doc.rect(xx, y, colWidth, cellHeight);
+            xx += colWidth;
+          });
+          y += cellHeight;
+        };
+
+        if (tableFullHeight <= (pageHeight - y - margin)) {
+          printSectionTitleD();
+          printHeadersD();
+        } else if (tableFullHeight <= singlePageContentHeight) {
+          doc.addPage();
+          y = printCompactHeader();
+          printSectionTitleD();
+          printHeadersD();
+        } else {
+          printSectionTitleD();
+          printHeadersD();
+        }
+
+        for (let idx = 0; idx < rows.length; idx++) {
+          const item = rows[idx];
+
+          if (y + cellHeight + subtotalHeight > pageHeight - margin) {
+            doc.addPage();
+            y = printCompactHeader();
+            printSectionTitleD();
+            printHeadersD();
+          }
+
+          let xx = margin;
+          doc.setFont('Arial', 'normal');
+          doc.setFontSize(7);
+
+          doc.text(String(idx + 1), xx + 0.5, y + 2.5);
+          doc.rect(xx, y, activitiesColWidths[0], cellHeight);
+          xx += activitiesColWidths[0];
+
+          drawCellWithAutoWrap(xx, y, activitiesColWidths[1], cellHeight, item.atividade || '');
+          xx += activitiesColWidths[1];
+
+          doc.text(String(item.dias || ''), xx + 0.5, y + 2.5);
+          doc.rect(xx, y, activitiesColWidths[2], cellHeight);
+          xx += activitiesColWidths[2];
+
+          drawCellWithAutoWrap(xx, y, activitiesColWidths[3], cellHeight, item.observacoes || '');
+          xx += activitiesColWidths[3];
+
+          y += cellHeight;
+        }
+
+        // Total dias
+        if (y + subtotalHeight > pageHeight - margin) {
+          doc.addPage();
+          y = printCompactHeader();
+        }
+        let xt = margin;
+        doc.setFont('Arial', 'bold');
+        doc.setFontSize(8);
+        doc.setTextColor(255, 0, 0);
+        doc.text('Total dias', xt + 0.5, y + 2.5);
+        doc.setTextColor(0, 0, 0);
+        doc.rect(xt, y, activitiesColWidths[0] + activitiesColWidths[1], cellHeight);
+        xt += activitiesColWidths[0] + activitiesColWidths[1];
+        doc.setTextColor(255, 0, 0);
+        doc.text(String(totalDias), xt + 0.5, y + 2.5);
+        doc.setTextColor(0, 0, 0);
+        doc.rect(xt, y, activitiesColWidths[2], cellHeight);
+        xt += activitiesColWidths[2];
+        doc.rect(xt, y, activitiesColWidths[3], cellHeight);
+        y += cellHeight + 2;
+      }
+
+      // ===== Seção E - CUSTO TOTAL =====
+      x = margin;
+      doc.setFont('Arial', 'bold');
+      doc.setFontSize(9);
+      doc.text('E', x + 2, y + 3);
+      doc.rect(x, y, baseColWidth, cellHeight);
+      x += baseColWidth;
+      doc.text('Cálculos Finais', x + 2, y + 3);
+      doc.rect(x, y, baseColWidth * 9, cellHeight);
+      y += cellHeight;
+
+      // Dados de cálculo
+      const calculos = [
+        ['1', 'Valor mão de obra', totalMaoDeObra.toFixed(2)],
+        ['2', 'Valor consumível e material', totalMateriais.toFixed(2)],
+        ['3', 'Valor terceirizados', totalTerceiros.toFixed(2)],
+        ['4', 'Total', base.toFixed(2)],
+        ['5', `O.H (${ohPercent}%)`, valorOH.toFixed(2)],
+        ['6', `Margem (${margemPercent}%)`, valorMargem.toFixed(2)],
+        ['7', 'PV S/ imposto', semImposto.toFixed(2)],
+        ['8', `Imposto S/ NF (${impostosPercent}%)`, valorImposto.toFixed(2)],
+        ['9', 'PV FINAL R$', precoFinal.toFixed(2)]
+      ];
+
+      // Linhas de cálculo
+      calculos.forEach((row, idx) => {
+        const isLastRow = idx === calculos.length - 1;
+        x = margin;
+        doc.setFont('Arial', 'normal');
+        doc.setFontSize(8);
+        
+        if (isLastRow) {
+          doc.setFont('Arial', 'bold');
+          doc.setTextColor(255, 0, 0);
+        }
+
+        // Número
+        doc.text(row[0], x + 0.5, y + 2.5);
+        doc.rect(x, y, baseColWidth, cellHeight);
+        x += baseColWidth;
+
+        // Descrição (ocupa 8 colunas)
+        doc.text(row[1], x + 0.5, y + 2.5, { maxWidth: baseColWidth * 8 - 2 });
+        doc.rect(x, y, baseColWidth * 8, cellHeight);
+        x += baseColWidth * 8;
+
+        // Valor total na última coluna
+        doc.text(row[2], x + 0.5, y + 2.5);
+        doc.rect(x, y, baseColWidth, cellHeight);
+
+        if (isLastRow) {
+          doc.setTextColor(0, 0, 0);
+        }
+        y += cellHeight;
+      });
+
+      // ===== RESUMO FINAL =====
+      x = margin;
+      doc.setFont('Arial', 'bold');
+      doc.setFontSize(8);
+      doc.text('RESUMO:', x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth * 10, cellHeight);
+      y += cellHeight;
+
+      // Linha: Quantidade de itens
+      x = margin;
+      doc.setFont('Arial', 'normal');
+      doc.setFontSize(8);
+      doc.text('Qtd. de Itens:', x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth * 5, cellHeight);
+      x += baseColWidth * 5;
+      doc.setFont('Arial', 'bold');
+      doc.text(String(totalItens), x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth * 5, cellHeight);
+      y += cellHeight;
+
+      // Linha: Preço por item
+      x = margin;
+      doc.setFont('Arial', 'normal');
+      doc.setFontSize(8);
+      doc.text('Preço por Item:', x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth * 5, cellHeight);
+      x += baseColWidth * 5;
+      doc.setFont('Arial', 'bold');
+      doc.text(`R$ ${precoPorItem.toFixed(2)}`, x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth * 5, cellHeight);
+      y += cellHeight;
+
+      // Linha: Valor total
+      x = margin;
+      doc.setFont('Arial', 'normal');
+      doc.setFontSize(8);
+      doc.text('Valor Total:', x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth * 5, cellHeight);
+      x += baseColWidth * 5;
+      doc.setFont('Arial', 'bold');
+      doc.setTextColor(255, 0, 0);
+      doc.text(`R$ ${precoFinal.toFixed(2)}`, x + 0.5, y + 2.5);
+      doc.setTextColor(0, 0, 0);
+      doc.rect(x, y, baseColWidth * 5, cellHeight);
+
+      // Fazer download
+      doc.save(`Orcamento_${ultimoOrcamento.numeroOrcamento}_v${formatarVersaoOrcamento(ultimoOrcamento.versao)}.pdf`);
+      toast.success('Orçamento baixado em PDF com sucesso!');
+    } catch (error) {
+      console.error('Erro ao gerar PDF:', error);
+      toast.error('Erro ao gerar PDF do orçamento');
+    }
   };
 
   const handleEnviarOS = () => {
@@ -1256,21 +2494,20 @@ Geração: ${new Date().toLocaleString('pt-BR')}
     }
   };
 
-  const possuiOSAprovadaComAssinatura = (obraId: string) => {
+  const possuiOSAprovadaParaFinalizacao = (obraId: string) => {
     const osDoNegocio = (os || []).filter((item: any) => item.obraId === obraId);
     return osDoNegocio.some((item: any) => (
       item.statusEnvio === 'enviada'
       && item.statusAprovacao === 'aprovada'
-      && Boolean(item.documentoAssinaturaAprovacao?.conteudo || item.documentoAssinaturaAprovacao?.url)
     ));
   };
 
   const handleAvancarParaFinalizacao = () => {
     if (!selectedObraDetalhes) return;
 
-    const podeFinalizar = possuiOSAprovadaComAssinatura(selectedObraDetalhes.id);
+    const podeFinalizar = possuiOSAprovadaParaFinalizacao(selectedObraDetalhes.id);
     if (!podeFinalizar) {
-      return alert('Para avançar para Finalização é obrigatório ter OS enviada, aprovada e com assinatura anexada.');
+      return alert('Para avançar para Finalização é obrigatório ter OS enviada e aprovada.');
     }
 
     const obraAtualizada = {
@@ -1512,7 +2749,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                               <span className="text-emerald-300 font-black text-xs">v{formatarVersaoOrcamento(ultimoOrcamento.versao)}</span>
                             </div>
                             <p className="text-emerald-200 font-black text-base">
-                              R$ {ultimoOrcamento.valores.precoFinal.toFixed(2)}
+                              R$ {safeNumber(ultimoOrcamento.valores.precoFinal).toFixed(2)}
                             </p>
                           </div>
                         )}
@@ -1522,7 +2759,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                           <div className="bg-gradient-to-r from-emerald-500/20 to-cyan-500/20 border border-emerald-500/30 rounded-lg p-2.5 mb-3">
                             <div className="flex justify-between items-center">
                               <p className="text-emerald-400 text-xs font-black">Orçamento v{formatarVersaoOrcamento(ultimoOrcamento.versao)}</p>
-                              <span className="text-emerald-300 font-black text-xs">R$ {ultimoOrcamento.valores.precoFinal.toFixed(2)}</span>
+                              <span className="text-emerald-300 font-black text-xs">R$ {safeNumber(ultimoOrcamento.valores.precoFinal).toFixed(2)}</span>
                             </div>
                           </div>
                         )}
@@ -1547,10 +2784,6 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                                 </p>
                                 <span className="text-xs font-black">v{ultimaProposta.versao}</span>
                               </div>
-                              {ultimaProposta.preco && (
-                                <p className="text-xs text-white/80 mt-1">Preço: {ultimaProposta.preco}</p>
-                              )}
-
                               <div className="mt-2.5 pt-2 border-t border-white/10 space-y-2">
                                 <div className="flex items-center justify-between">
                                   <p className="text-[10px] text-white/60 font-black uppercase tracking-widest">Doc. cliente</p>
@@ -1647,7 +2880,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                                 }}
                                 className="w-full py-2 rounded-lg bg-gradient-to-r from-emerald-500/30 to-cyan-500/30 hover:from-emerald-500/50 hover:to-cyan-500/50 border border-emerald-400/40 text-emerald-200 text-[11px] font-black uppercase tracking-wider transition-all"
                               >
-                                <FileText size={14} className="inline mr-1" /> Criar Documento de Medicao
+                                <FileText size={14} className="inline mr-1" /> Criar Documento de Medição
                               </button>
                             </div>
                           );
@@ -1657,6 +2890,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
+                            console.log('Ver Detalhes button clicked for obra:', obra?.id || obra?.nome || obra);
                             handleShowDetalhes(obra);
                           }}
                           className="w-full py-2 bg-gradient-to-r from-white/10 to-white/5 hover:from-white/20 hover:to-white/10 text-white rounded-lg font-black text-xs uppercase tracking-wide transition-all border border-white/10 hover:border-white/20 flex items-center justify-center gap-2"
@@ -1735,8 +2969,11 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                       value={formData.empresaPrestadora}
                       onChange={e => setFormData({...formData, empresaPrestadora: e.target.value})}
                     >
-                      <option value="Linave">Linave</option>
-                      <option value="Nao">Não</option>
+                      {empresasPrestadoras.map((empresa) => (
+                        <option key={empresa.id} value={empresa.nome}>
+                          {empresa.nome}{empresa.cnpj ? ` - ${empresa.cnpj}` : ''}
+                        </option>
+                      ))}
                     </select>
                   </div>
 
@@ -2038,7 +3275,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
       )}
 
       {/* MODAL - DETALHES DA OBRA */}
-      {showDetalhesObrraModal && selectedObraDetalhes && (
+      {showDetalhesObraModal && selectedObraDetalhes && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-[#101f3d] rounded-2xl border border-white/10 shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
             
@@ -2137,24 +3374,25 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                 return (
                   <div className="bg-gradient-to-r from-emerald-500/10 to-cyan-500/10 rounded-xl p-6 border border-emerald-500/30 space-y-4">
                     <button
-                      onClick={() => setExpandedOrcamentoSummary(!expandedOrcamentosummary)}
+                      onClick={() => setExpandedOrcamentoSummary(!expandedOrcamentoSummary)}
                       className="w-full flex justify-between items-center mb-4"
                     >
                       <h3 className="text-emerald-400 font-black text-lg">RESUMO DO ORÇAMENTO (v{formatarVersaoOrcamento(ultimoOrcamento.versao)})</h3>
-                      <ChevronDown size={20} className={`text-emerald-400 transition-transform ${expandedOrcamentosummary ? 'rotate-180' : ''}`} />
+                      <ChevronDown size={20} className={`text-emerald-400 transition-transform ${expandedOrcamentoSummary ? 'rotate-180' : ''}`} />
                     </button>
 
                     {/* Resumo Financeiro (Sempre Visível) */}
                     <div className="bg-gradient-to-r from-amber-500/20 to-orange-500/20 rounded-lg p-4 border border-amber-500/30 space-y-2">
                       {(() => {
-                        const base = ultimoOrcamento.valores.totalBruto ?? ultimoOrcamento.valores.subtotal;
-                        const margemPercent = ultimoOrcamento.valores.margem || 0;
-                        const ohPercent = ultimoOrcamento.valores.oh || 0;
-                        const impostosPercent = ultimoOrcamento.valores.impostos || 0;
-                        const valorMargem = ultimoOrcamento.valores.valorMargem ?? ((base * margemPercent) / 100);
-                        const valorOH = ultimoOrcamento.valores.valorOH ?? ((base * ohPercent) / 100);
-                        const semImposto = ultimoOrcamento.valores.totalSemImposto ?? (base + valorMargem + valorOH);
-                        const valorImposto = ultimoOrcamento.valores.valorImpostos ?? ((semImposto * impostosPercent) / 100);
+                        const base = safeNumber(ultimoOrcamento.valores.totalBruto ?? ultimoOrcamento.valores.subtotal);
+                        const margemPercent = safeNumber(ultimoOrcamento.valores.margem);
+                        const ohPercent = safeNumber(ultimoOrcamento.valores.oh);
+                        const impostosPercent = safeNumber(ultimoOrcamento.valores.impostos);
+                        const valorMargem = safeNumber(ultimoOrcamento.valores.valorMargem ?? ((base * margemPercent) / 100));
+                        const valorOH = safeNumber(ultimoOrcamento.valores.valorOH ?? ((base * ohPercent) / 100));
+                        const semImposto = safeNumber(ultimoOrcamento.valores.totalSemImposto ?? (base + valorMargem + valorOH));
+                        const valorImposto = safeNumber(ultimoOrcamento.valores.valorImpostos ?? ((semImposto * impostosPercent) / 100));
+                        const precoFinal = safeNumber(ultimoOrcamento.valores.precoFinal);
                         return (
                           <>
                       <div className="flex justify-between items-center mb-3">
@@ -2179,7 +3417,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                       </div>
                       <div className="flex justify-between items-center pt-2">
                         <span className="text-amber-300 font-black text-lg">PREÇO FINAL:</span>
-                        <span className="text-amber-300 font-black text-2xl">R$ {ultimoOrcamento.valores.precoFinal.toFixed(2)}</span>
+                        <span className="text-amber-300 font-black text-2xl">R$ {precoFinal.toFixed(2)}</span>
                       </div>
                           </>
                         );
@@ -2187,7 +3425,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                     </div>
 
                     {/* Detalhes Completos (Expandido) */}
-                    {expandedOrcamentosummary && (
+                    {expandedOrcamentoSummary && (
                       <div className="space-y-4">
                         {/* Dados do Orçamento */}
                         <div className="bg-[#0b1220] rounded-lg p-4 grid grid-cols-3 gap-4 text-sm border border-white/5">
@@ -2270,13 +3508,21 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                     </div>
                     )}
 
-                    {/* Botão Ver Orçamento Completo */}
-                    <button
-                      onClick={() => setShowOrcamentoFullModal(true)}
-                      className="w-full mt-4 bg-gradient-to-r from-emerald-500/30 to-cyan-500/30 hover:from-emerald-500/50 hover:to-cyan-500/50 border border-emerald-400/40 text-emerald-300 hover:text-emerald-200 rounded-lg py-2 font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
-                    >
-                      <Eye size={16} /> Ver Orçamento Completo
-                    </button>
+                    {/* Botões do Orçamento */}
+                    <div className="flex gap-3 pt-4">
+                      <button
+                        onClick={handleDownloadOrcamentoPDF}
+                        className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                      >
+                        <Download size={16} /> Download PDF
+                      </button>
+                      <button
+                        onClick={() => setShowOrcamentoFullModal(true)}
+                        className="flex-1 bg-gradient-to-r from-emerald-500/30 to-cyan-500/30 hover:from-emerald-500/50 hover:to-cyan-500/50 border border-emerald-400/40 text-emerald-300 hover:text-emerald-200 rounded-lg py-2 font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                      >
+                        <Eye size={16} /> Ver Completo
+                      </button>
+                    </div>
                   </div>
                 );
               })()}
@@ -2362,13 +3608,9 @@ Geração: ${new Date().toLocaleString('pt-BR')}
 
                     <div className="bg-[#0b1220] rounded-lg p-4 border border-white/5 space-y-3">
                       <div className="flex items-center justify-between gap-3">
-                        <p className="text-white font-black text-sm">Documento Assinado do Cliente</p>
-                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${
-                          possuiDocumentoCliente
-                            ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-300'
-                            : 'bg-amber-500/20 border border-amber-500/40 text-amber-300'
-                        }`}>
-                          {possuiDocumentoCliente ? 'Anexado' : 'Pendente'}
+                        <p className="text-white font-black text-sm">Documento do Cliente</p>
+                        <span className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-slate-500/20 border border-slate-500/40 text-slate-300">
+                          Opcional
                         </span>
                       </div>
 
@@ -2384,7 +3626,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                         />
                       )}
 
-                      {possuiDocumentoCliente && (
+                      {documentoClienteAssinado && (
                         <div className="bg-[#101f3d] rounded-lg border border-white/10 p-3 space-y-2">
                           <p className="text-white text-xs font-bold truncate">{documentoClienteAssinado.nome}</p>
                           <p className="text-white/50 text-[11px]">{documentoClienteAssinado.tamanho ? formatFileSize(documentoClienteAssinado.tamanho) : 'Tamanho não informado'}</p>
@@ -2415,11 +3657,11 @@ Geração: ${new Date().toLocaleString('pt-BR')}
 
                       {isNegociacao ? (
                         <p className="text-[11px] text-white/40">
-                          Obrigatório para liberar o início do trabalho. O botão "Aprovar e Iniciar" só aparece com proposta aceita e documento anexado.
+                          O início do trabalho depende apenas de proposta aceita.
                         </p>
                       ) : (
                         <p className="text-[11px] text-white/40">
-                          Em andamento: visualização da proposta e do documento assinado do cliente.
+                          Em andamento: visualização da proposta e dos documentos do negócio.
                         </p>
                       )}
                     </div>
@@ -2427,7 +3669,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                     {/* Botões de Ação da Proposta */}
                     <div className="flex gap-3 pt-4 border-t border-white/10">
                       <button
-                        onClick={handleDownloadPropostaPDF}
+                        onClick={handleGerarPropostaPDF}
                         className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
                       >
                         <Download size={16} /> Download PDF
@@ -2566,7 +3808,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                     </div>
 
                     <p className="text-[11px] text-white/50">
-                      Para avançar para Finalização: a OS precisa estar enviada, aprovada e com assinatura anexada.
+                      Para avançar para Finalização: a OS precisa estar enviada e aprovada.
                     </p>
 
                     {selectedObraDetalhes.categoria === 'Finalização' && (
@@ -2574,7 +3816,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                         onClick={() => handleAbrirDocumentoMediacao(selectedObraDetalhes)}
                         className="w-full bg-gradient-to-r from-emerald-500/30 to-cyan-500/30 hover:from-emerald-500/50 hover:to-cyan-500/50 border border-emerald-400/40 text-emerald-300 hover:text-emerald-100 rounded-lg py-2.5 font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
                       >
-                        <FileText size={16} /> Criar Documento de Medicao
+                        <FileText size={16} /> Criar Documento de Medição
                       </button>
                     )}
                   </div>
@@ -2603,9 +3845,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                   const ultimaProposta = Array.isArray(selectedObraDetalhes.propostas) && selectedObraDetalhes.propostas.length > 0
                     ? selectedObraDetalhes.propostas[selectedObraDetalhes.propostas.length - 1]
                     : null;
-                  const podeIniciar = ultimaProposta?.status === 'aceita' && Boolean(
-                    selectedObraDetalhes.documentoClienteAssinado?.conteudo || selectedObraDetalhes.documentoClienteAssinado?.url
-                  );
+                  const podeIniciar = ultimaProposta?.status === 'aceita';
 
                   if (!podeIniciar) return null;
 
@@ -2619,7 +3859,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                   );
                 })()}
                 {selectedObraDetalhes.categoria === 'Em Andamento' && (() => {
-                  const podeFinalizar = possuiOSAprovadaComAssinatura(selectedObraDetalhes.id);
+                  const podeFinalizar = possuiOSAprovadaParaFinalizacao(selectedObraDetalhes.id);
                   return (
                     <button
                       onClick={handleAvancarParaFinalizacao}
@@ -2644,14 +3884,14 @@ Geração: ${new Date().toLocaleString('pt-BR')}
         </div>
       )}
 
-      {/* MODAL - DOCUMENTO DE MEDICAO */}
+      {/* MODAL - DOCUMENTO DE MEDIÇÃO */}
       {showDocumentoMediacaoModal && documentoMediacaoForm && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-[#101f3d] rounded-2xl border border-white/10 shadow-2xl max-w-6xl w-full max-h-[92vh] overflow-y-auto">
             <div className="sticky top-0 z-40 bg-gradient-to-r from-emerald-500/40 to-cyan-500/40 backdrop-blur-md p-8 border-b border-white/10 flex justify-between items-center">
               <div>
-                <h2 className="text-2xl font-black text-white">DOCUMENTO DE MEDICAO</h2>
-                <p className="text-white/60 text-sm mt-2">Preencha os dados e tabelas para gerar a medicao do periodo.</p>
+                <h2 className="text-2xl font-black text-white">DOCUMENTO DE MEDIÇÃO</h2>
+                <p className="text-white/60 text-sm mt-2">Preencha os dados para gerar a medição do período.</p>
               </div>
               <button
                 onClick={() => setShowDocumentoMediacaoModal(false)}
@@ -2691,7 +3931,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                   />
                 </div>
                 <div>
-                  <p className="text-white/50 text-xs mb-1 uppercase font-black tracking-widest">Data emissao</p>
+                  <p className="text-white/50 text-xs mb-1 uppercase font-black tracking-widest">Data de emissão</p>
                   <input
                     type="date"
                     value={documentoMediacaoForm.dataEmissao}
@@ -2700,7 +3940,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                   />
                 </div>
                 <div>
-                  <p className="text-white/50 text-xs mb-1 uppercase font-black tracking-widest">Embarcacao</p>
+                  <p className="text-white/50 text-xs mb-1 uppercase font-black tracking-widest">Embarcação</p>
                   <input
                     type="text"
                     value={documentoMediacaoForm.embarcacao}
@@ -2720,7 +3960,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                   />
                 </div>
                 <div className="col-span-2">
-                  <p className="text-white/50 text-xs mb-1 uppercase font-black tracking-widest">Periodo</p>
+                  <p className="text-white/50 text-xs mb-1 uppercase font-black tracking-widest">Período</p>
                   <input
                     type="text"
                     value={documentoMediacaoForm.periodo}
@@ -2730,9 +3970,31 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                 </div>
               </div>
 
+              <div className="col-span-1">
+  <p className="text-white/50 text-xs mb-1 uppercase font-black tracking-widest">Representante Cliente</p>
+  <input
+    type="text"
+    value={documentoMediacaoForm.representanteCliente}
+    onChange={(e) => atualizarCampoMediacao('representanteCliente', e.target.value)}
+    placeholder="Ex: Nome do Armador / Cliente"
+    className="w-full bg-[#101f3d] border border-white/10 rounded-lg px-3 py-2 text-white text-sm placeholder:text-white/30"
+  />
+</div>
+
+<div className="col-span-1">
+  <p className="text-white/50 text-xs mb-1 uppercase font-black tracking-widest">Representante Linave</p>
+  <input
+    type="text"
+    value={documentoMediacaoForm.representanteLinave}
+    onChange={(e) => atualizarCampoMediacao('representanteLinave', e.target.value)}
+    placeholder="Ex: Nome do Responsável Linave"
+    className="w-full bg-[#101f3d] border border-white/10 rounded-lg px-3 py-2 text-white text-sm placeholder:text-white/30"
+  />
+</div>
+
               <div className="bg-[#0b1220] rounded-xl border border-white/10 p-6 space-y-4">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-emerald-300 text-lg font-black uppercase">Tabela de Medicao de Servicos</h3>
+                  <h3 className="text-emerald-300 text-lg font-black uppercase">Tabela de Medição de Serviços</h3>
                   <button
                     onClick={adicionarLinhaTabelaItens}
                     className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-xs font-black uppercase"
@@ -2745,12 +4007,13 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                     <thead>
                       <tr className="bg-white/5 text-white/70 uppercase tracking-wider">
                         <th className="border border-white/10 px-3 py-2 text-left">Item</th>
-                        <th className="border border-white/10 px-3 py-2 text-left">Descricao</th>
+                        <th className="border border-white/10 px-3 py-2 text-left">Descrição</th>
                         <th className="border border-white/10 px-3 py-2 text-left">Unidade</th>
-                        <th className="border border-white/10 px-3 py-2 text-left">Previsto</th>
-                        <th className="border border-white/10 px-3 py-2 text-left">Realizado</th>
-                        <th className="border border-white/10 px-3 py-2 text-left">Observacoes</th>
-                        <th className="border border-white/10 px-3 py-2 text-center">Acao</th>
+                        <th className="border border-white/10 px-3 py-2 text-left">Quantidade produzida</th>
+                        <th className="border border-white/10 px-3 py-2 text-left">Valor / unidade</th>
+                        <th className="border border-white/10 px-3 py-2 text-left">Total</th>
+                        <th className="border border-white/10 px-3 py-2 text-left">Observações</th>
+                        <th className="border border-white/10 px-3 py-2 text-center">Ação</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2759,8 +4022,9 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                           <td className="border border-white/10 p-1.5"><input value={linha.item} onChange={(e) => atualizarLinhaTabelaItens(linha.id, 'item', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
                           <td className="border border-white/10 p-1.5"><input value={linha.descricao} onChange={(e) => atualizarLinhaTabelaItens(linha.id, 'descricao', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
                           <td className="border border-white/10 p-1.5"><input value={linha.unidade} onChange={(e) => atualizarLinhaTabelaItens(linha.id, 'unidade', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
-                          <td className="border border-white/10 p-1.5"><input value={linha.previsto} onChange={(e) => atualizarLinhaTabelaItens(linha.id, 'previsto', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
-                          <td className="border border-white/10 p-1.5"><input value={linha.realizado} onChange={(e) => atualizarLinhaTabelaItens(linha.id, 'realizado', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
+                          <td className="border border-white/10 p-1.5"><input value={linha.quantidadeProduzida} onChange={(e) => atualizarLinhaTabelaItens(linha.id, 'quantidadeProduzida', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
+                          <td className="border border-white/10 p-1.5"><input value={linha.valorUnitario} onChange={(e) => atualizarLinhaTabelaItens(linha.id, 'valorUnitario', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
+                          <td className="border border-white/10 p-1.5"><input value={linha.total} readOnly className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1 text-emerald-300 font-black" /></td>
                           <td className="border border-white/10 p-1.5"><input value={linha.observacoes} onChange={(e) => atualizarLinhaTabelaItens(linha.id, 'observacoes', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
                           <td className="border border-white/10 p-1.5 text-center">
                             <button
@@ -2775,50 +4039,14 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                     </tbody>
                   </table>
                 </div>
-              </div>
 
-              <div className="bg-[#0b1220] rounded-xl border border-white/10 p-6 space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-cyan-300 text-lg font-black uppercase">Tabela de Recursos e Horas</h3>
-                  <button
-                    onClick={adicionarLinhaTabelaRecursos}
-                    className="px-3 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-200 text-xs font-black uppercase"
-                  >
-                    + Linha
-                  </button>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[900px] text-xs border-collapse">
-                    <thead>
-                      <tr className="bg-white/5 text-white/70 uppercase tracking-wider">
-                        <th className="border border-white/10 px-3 py-2 text-left">Recurso</th>
-                        <th className="border border-white/10 px-3 py-2 text-left">Funcao</th>
-                        <th className="border border-white/10 px-3 py-2 text-left">Periodo</th>
-                        <th className="border border-white/10 px-3 py-2 text-left">Horas</th>
-                        <th className="border border-white/10 px-3 py-2 text-left">Observacoes</th>
-                        <th className="border border-white/10 px-3 py-2 text-center">Acao</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {documentoMediacaoForm.tabelaRecursos.map((linha) => (
-                        <tr key={linha.id} className="text-white">
-                          <td className="border border-white/10 p-1.5"><input value={linha.recurso} onChange={(e) => atualizarLinhaTabelaRecursos(linha.id, 'recurso', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
-                          <td className="border border-white/10 p-1.5"><input value={linha.funcao} onChange={(e) => atualizarLinhaTabelaRecursos(linha.id, 'funcao', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
-                          <td className="border border-white/10 p-1.5"><input value={linha.periodo} onChange={(e) => atualizarLinhaTabelaRecursos(linha.id, 'periodo', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
-                          <td className="border border-white/10 p-1.5"><input value={linha.horas} onChange={(e) => atualizarLinhaTabelaRecursos(linha.id, 'horas', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
-                          <td className="border border-white/10 p-1.5"><input value={linha.observacoes} onChange={(e) => atualizarLinhaTabelaRecursos(linha.id, 'observacoes', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
-                          <td className="border border-white/10 p-1.5 text-center">
-                            <button
-                              onClick={() => removerLinhaTabelaRecursos(linha.id)}
-                              className="px-2 py-1 rounded bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300"
-                            >
-                              <X size={12} className="inline" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="grid grid-cols-1 gap-4">
+                  <div className="bg-[#101f3d] rounded-xl border border-white/10 p-4">
+                    <p className="text-white/50 text-xs mb-1 uppercase font-black tracking-widest">Total da medição</p>
+                    <p className="text-emerald-300 font-black text-lg">
+                      {`R$ ${formatDecimal(documentoMediacaoForm.tabelaItens.reduce((total, linha) => total + parseDecimal(linha.total), 0))}`}
+                    </p>
+                  </div>
                 </div>
               </div>
 
@@ -2827,7 +4055,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                   onClick={handleGerarDocumentoMediacao}
                   className="flex-1 py-3 rounded-lg bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-white font-black uppercase text-sm tracking-widest"
                 >
-                  <Download size={16} className="inline mr-2" /> Gerar Documento de Medicao
+                  <Download size={16} className="inline mr-2" /> Gerar Documento de Medição
                 </button>
                 <button
                   onClick={() => setShowDocumentoMediacaoModal(false)}
@@ -3012,19 +4240,52 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                 {/* Escopos */}
                 <div className="bg-white/5 border border-white/10 rounded-xl p-6 space-y-4">
                   <h3 className="text-white font-black text-lg">ESCOPOS DE SERVIÇOS</h3>
-                  <div className="space-y-4">
-                    <div>
-                      <p className="text-white/50 text-xs mb-2 font-black">A - Escopo Básico de Serviços</p>
-                      <p className="text-white whitespace-pre-wrap text-sm">{ultimaProposta.escopoA || '−'}</p>
-                    </div>
-                    <div>
-                      <p className="text-white/50 text-xs mb-2 font-black">B - Responsabilidade da Contratada</p>
-                      <p className="text-white whitespace-pre-wrap text-sm">{ultimaProposta.responsabilidadeContratada || '−'}</p>
-                    </div>
-                    <div>
-                      <p className="text-white/50 text-xs mb-2 font-black">C - Responsabilidade da Contratante</p>
-                      <p className="text-white whitespace-pre-wrap text-sm">{ultimaProposta.escopoC || '−'}</p>
-                    </div>
+                  <div>
+                    <p className="text-white/50 text-xs mb-2 font-black">A - Escopo Básico de Serviços</p>
+                    {(() => {
+                      const itensEscopo = normalizarEscopoBasicoEstruturado(ultimaProposta.escopoBasicoServicos || ultimaProposta.escopoA);
+                      if (itensEscopo.length === 0) {
+                        return <p className="text-white whitespace-pre-wrap text-sm">−</p>;
+                      }
+
+                      return (
+                        <div className="space-y-4">
+                          {itensEscopo.map((item: any, index: number) => (
+                            <div key={`escopo-${index}`} className="space-y-2">
+                              {item.titulo && (
+                                <p className="text-white font-bold text-sm">{index + 1}. {item.titulo}</p>
+                              )}
+                              {item.textosAntes.map((texto: string, textoIndex: number) => (
+                                <p key={`antes-${index}-${textoIndex}`} className="text-white whitespace-pre-wrap text-sm">{texto}</p>
+                              ))}
+                              {item.tabela.length > 0 && (
+                                <div className="overflow-x-auto rounded-lg border border-white/10">
+                                  <table className="min-w-full text-sm">
+                                    <tbody>
+                                      {item.tabela.map((linha: any[], linhaIndex: number) => (
+                                        <tr key={`linha-${index}-${linhaIndex}`} className="border-b border-white/10 last:border-b-0">
+                                          <td className="px-3 py-2 text-white font-bold border-r border-white/10 whitespace-nowrap">
+                                            {linhaIndex + 1}
+                                          </td>
+                                          {linha.map((coluna: any, colunaIndex: number) => (
+                                            <td key={`coluna-${index}-${linhaIndex}-${colunaIndex}`} className="px-3 py-2 text-white">
+                                              {coluna.valor}
+                                            </td>
+                                          ))}
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+                              {item.textosDepois.map((texto: string, textoIndex: number) => (
+                                <p key={`depois-${index}-${textoIndex}`} className="text-white whitespace-pre-wrap text-sm">{texto}</p>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
 
@@ -3088,7 +4349,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                 {/* Botões de Ação */}
                 <div className="flex gap-4 pt-6 border-t border-white/5">
                   <button
-                    onClick={handleDownloadPropostaPDF}
+                    onClick={handleGerarPropostaPDF}
                     className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-black text-sm uppercase tracking-widest transition-all flex items-center justify-center gap-2"
                   >
                     <Download size={18} /> Download PDF
@@ -3131,7 +4392,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
         const maoDeObraOS = Array.isArray(ultimoOrcamento?.data?.maoDeObra) ? ultimoOrcamento.data.maoDeObra : [];
         const materiaisOS = Array.isArray(ultimoOrcamento?.data?.materiais) ? ultimoOrcamento.data.materiais : [];
         const terceirizadosOS = Array.isArray(ultimoOrcamento?.data?.terceirizados) ? ultimoOrcamento.data.terceirizados : [];
-        const escopoBasicoProposta = ultimaProposta?.escopoBasicoServicos || ultimaProposta?.escopoA || '−';
+        const escopoBasicoProposta = formatarEscopoBasicoParaTexto(ultimaProposta?.escopoBasicoServicos || ultimaProposta?.escopoA || '−');
         return (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
             <div className="bg-[#101f3d] rounded-2xl border border-white/10 shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
@@ -3196,7 +4457,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                   </div>
                 </div>
 
-                {/* Orçamento sem valores */}
+                {/* Orçamento */}
                 <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-6 space-y-4">
                   <div className="flex items-center justify-between gap-3">
                     <h3 className="text-emerald-300 font-black text-lg uppercase">Orçamento</h3>
@@ -3297,7 +4558,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                   )}
                 </div>
 
-                {/* Proposta sem valores */}
+                {/* Proposta */}
                 <div className="bg-cyan-500/10 border border-cyan-500/20 rounded-xl p-6 space-y-4">
                   <div className="flex items-center justify-between gap-3">
                     <h3 className="text-cyan-300 font-black text-lg uppercase">Proposta</h3>
@@ -3328,73 +4589,9 @@ Geração: ${new Date().toLocaleString('pt-BR')}
 
                       <div className="bg-white/5 border border-white/10 rounded-xl p-6 space-y-4">
                         <h4 className="text-white font-black text-sm uppercase">Escopo de Serviços</h4>
-                        <div className="space-y-4">
-                          <div>
-                            <p className="text-white/50 text-xs mb-2 font-black">A - Escopo Básico de Serviços</p>
-                            <p className="text-white whitespace-pre-wrap text-sm">{escopoBasicoProposta}</p>
-                          </div>
-                          <div>
-                            <p className="text-white/50 text-xs mb-2 font-black">B - Responsabilidade da Contratada</p>
-                            <p className="text-white whitespace-pre-wrap text-sm">{ultimaProposta.responsabilidadeContratada || '−'}</p>
-                          </div>
-                          <div>
-                            <p className="text-white/50 text-xs mb-2 font-black">C - Responsabilidade da Contratante</p>
-                            <p className="text-white whitespace-pre-wrap text-sm">{ultimaProposta.escopoC || '−'}</p>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="bg-white/5 border border-white/10 rounded-xl p-6 space-y-4">
-                        <h4 className="text-white font-black text-sm uppercase">Condições Comerciais</h4>
-                        <div className="space-y-4">
-                          <div>
-                            <p className="text-white/50 text-xs mb-2 font-black">D - Preço</p>
-                            <p className="text-white whitespace-pre-wrap text-sm">Vinculado ao orçamento aprovado, sem valores exibidos na OS.</p>
-                          </div>
-                          <div>
-                            <p className="text-white/50 text-xs mb-2 font-black">Impostos / Observações Fiscais</p>
-                            <p className="text-white whitespace-pre-wrap text-sm">{ultimaProposta.impostos || '−'}</p>
-                          </div>
-                          <div>
-                            <p className="text-white/50 text-xs mb-2 font-black">E - Condições Gerais</p>
-                            <p className="text-white whitespace-pre-wrap text-sm">{ultimaProposta.condicoesGerais || '−'}</p>
-                          </div>
-                          <div>
-                            <p className="text-white/50 text-xs mb-2 font-black">F - Condições de Pagamento</p>
-                            <p className="text-white whitespace-pre-wrap text-sm">{ultimaProposta.condicoesPagamento || '−'}</p>
-                          </div>
-                          <div>
-                            <p className="text-white/50 text-xs mb-2 font-black">G - Prazo</p>
-                            <p className="text-white whitespace-pre-wrap text-sm">{ultimaProposta.prazo || '−'}</p>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="bg-white/5 border border-white/10 rounded-xl p-6 space-y-3">
-                        <h4 className="text-white font-black text-sm uppercase">Referências e Encerramento</h4>
-                        <div className="space-y-3">
-                          <div>
-                            <p className="text-white/50 text-xs mb-1 font-black">Referências</p>
-                            <p className="text-white whitespace-pre-wrap">{ultimaProposta.referencias || '−'}</p>
-                          </div>
-                          <div>
-                            <p className="text-white/50 text-xs mb-1 font-black">Encerramento</p>
-                            <p className="text-white whitespace-pre-wrap">{ultimaProposta.encerramento || '−'}</p>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="bg-white/5 border border-white/10 rounded-xl p-6 space-y-3">
-                        <h4 className="text-white font-black text-sm uppercase">Assinatura</h4>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <p className="text-white/50 text-xs mb-1">Nome</p>
-                            <p className="text-white font-bold">{ultimaProposta.assinaturaNome || '−'}</p>
-                          </div>
-                          <div>
-                            <p className="text-white/50 text-xs mb-1">Cargo</p>
-                            <p className="text-white font-bold">{ultimaProposta.assinaturaCargo || '−'}</p>
-                          </div>
+                        <div>
+                          <p className="text-white/50 text-xs mb-2 font-black">A - Escopo Básico de Serviços</p>
+                          <p className="text-white whitespace-pre-wrap text-sm">{escopoBasicoProposta}</p>
                         </div>
                       </div>
                     </div>
@@ -3585,14 +4782,15 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                 <div className="bg-gradient-to-r from-amber-500/20 to-orange-500/20 rounded-lg p-6 border border-amber-500/30 space-y-3">
                   <h3 className="text-amber-400 font-black text-lg">RESUMO FINANCEIRO</h3>
                   {(() => {
-                    const base = ultimoOrcamento.valores.totalBruto ?? ultimoOrcamento.valores.subtotal;
-                    const margemPercent = ultimoOrcamento.valores.margem || 0;
-                    const ohPercent = ultimoOrcamento.valores.oh || 0;
-                    const impostosPercent = ultimoOrcamento.valores.impostos || 0;
-                    const valorMargem = ultimoOrcamento.valores.valorMargem ?? ((base * margemPercent) / 100);
-                    const valorOH = ultimoOrcamento.valores.valorOH ?? ((base * ohPercent) / 100);
-                    const semImposto = ultimoOrcamento.valores.totalSemImposto ?? (base + valorMargem + valorOH);
-                    const valorImposto = ultimoOrcamento.valores.valorImpostos ?? ((semImposto * impostosPercent) / 100);
+                    const base = safeNumber(ultimoOrcamento.valores.totalBruto ?? ultimoOrcamento.valores.subtotal);
+                    const margemPercent = safeNumber(ultimoOrcamento.valores.margem);
+                    const ohPercent = safeNumber(ultimoOrcamento.valores.oh);
+                    const impostosPercent = safeNumber(ultimoOrcamento.valores.impostos);
+                    const valorMargem = safeNumber(ultimoOrcamento.valores.valorMargem ?? ((base * margemPercent) / 100));
+                    const valorOH = safeNumber(ultimoOrcamento.valores.valorOH ?? ((base * ohPercent) / 100));
+                    const semImposto = safeNumber(ultimoOrcamento.valores.totalSemImposto ?? (base + valorMargem + valorOH));
+                    const valorImposto = safeNumber(ultimoOrcamento.valores.valorImpostos ?? ((semImposto * impostosPercent) / 100));
+                    const precoFinal = safeNumber(ultimoOrcamento.valores.precoFinal);
                     return (
                   <div className="space-y-2">
                     <div className="flex justify-between items-center">
@@ -3617,7 +4815,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                     </div>
                     <div className="flex justify-between items-center pt-3">
                       <span className="text-amber-300 font-black text-lg">PREÇO FINAL:</span>
-                      <span className="text-amber-300 font-black text-2xl">R$ {ultimoOrcamento.valores.precoFinal.toFixed(2)}</span>
+                      <span className="text-amber-300 font-black text-2xl">R$ {precoFinal.toFixed(2)}</span>
                     </div>
                   </div>
                     );
@@ -3698,6 +4896,12 @@ Geração: ${new Date().toLocaleString('pt-BR')}
 
                 {/* Botões de Ação */}
                 <div className="flex gap-4 pt-6 border-t border-white/5">
+                  <button
+                    onClick={handleDownloadOrcamentoPDF}
+                    className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-black text-sm uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                  >
+                    <Download size={18} /> Download PDF
+                  </button>
                   <button 
                     onClick={() => setShowOrcamentoFullModal(false)}
                     className="flex-1 bg-white/10 text-white py-3 rounded-lg font-black text-sm hover:bg-white/15 transition"

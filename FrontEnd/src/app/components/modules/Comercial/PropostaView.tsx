@@ -1,14 +1,10 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
-import { Plus, X, FileText, ChevronDown, CheckCircle, XCircle, ArrowLeft } from 'lucide-react';
-
-const CLIENTES_MOCK = [
-  { id: 'CLI-1', razaoSocial: 'Linave Construções LTDA', nomeFantasia: 'Linave' },
-  { id: 'CLI-2', razaoSocial: 'Construtora Alpha S.A.', nomeFantasia: 'Alpha Construtora' },
-  { id: 'CLI-3', razaoSocial: 'TC Engenharia e Consultoria', nomeFantasia: 'TC Engenharia' },
-  { id: 'CLI-4', razaoSocial: 'Projetos Marítimos LTDA', nomeFantasia: 'ProMar' },
-  { id: 'CLI-5', razaoSocial: 'Estaleiro Industrial do Sudeste', nomeFantasia: 'EISE' }
-];
+import { Plus, X, FileText, CheckCircle, XCircle, ArrowLeft, Save } from 'lucide-react';
+import { handleDownloadPropostaPDF } from '../CRM/handleDownloadPropostaPDF';
+import PizZip from 'pizzip';
+import Docxtemplater from 'docxtemplater';
+import { saveAs } from 'file-saver';
 
 interface EscopoLinha {
   id: string;
@@ -20,7 +16,7 @@ interface EscopoServico {
   servicoId: string;
   titulo: string;
   descricaoServico: string;
-  texto: string;
+  textosDepois: string[];
   colunas: string[];
   linhas: EscopoLinha[];
 }
@@ -39,19 +35,16 @@ interface PropostaFormData {
   escopoBasicoServicos: EscopoServico[];
   responsabilidadeContratada: string;
   escopoC: string;
-  referencias: string;
   preco: string;
-  impostos: string;
   condicoesGerais: string;
   condicoesPagamento: string;
   prazo: string;
-  assinaturaNome: string;
-  assinaturaCargo: string;
   encerramento: string;
 }
 
 export function PropostaView() {
-  const { obras, saveEntity } = useErp();
+  const { obras, clientes, saveEntity } = useErp();
+  const listaClientes = Array.isArray(clientes) ? clientes : [];
   const [viewMode, setViewMode] = useState<'list' | 'form' | 'historico'>('list');
   const [selectedObra, setSelectedObra] = useState<any>(null);
   const [selectedPropostaVersion, setSelectedPropostaVersion] = useState<number | null>(null);
@@ -65,19 +58,15 @@ export function PropostaView() {
     referencia: '',
     saudacao: '',
     assunto: '',
-    textoAbertura: '',
+    textoAbertura: `Vimos através desta apresentar nossa Proposta Técnica-Comercial, para serviços, conforme escopo e delineamento realizado a bordo, conforme solicitado para vossa avaliação e aprovação.\n\n\nEstamos à disposição para quaisquer esclarecimentos que se façam necessários.\n\n\nAtenciosamente,\n\n\nDiretoria Comercial`,
     escopoA: '',
     escopoBasicoServicos: [],
     responsabilidadeContratada: '',
     escopoC: '',
-    referencias: '',
     preco: '',
-    impostos: '',
     condicoesGerais: '',
     condicoesPagamento: '',
     prazo: '',
-    assinaturaNome: '',
-    assinaturaCargo: '',
     encerramento: ''
   });
 
@@ -110,7 +99,7 @@ export function PropostaView() {
         servicoId: '',
         titulo: 'Serviço Geral',
         descricaoServico: '',
-        texto: '',
+        textosDepois: [],
         colunas: colunasPadrao,
         linhas: [criarLinhaEscopo(colunasPadrao)]
       }];
@@ -123,7 +112,7 @@ export function PropostaView() {
         servicoId: String(servico.id || idx + 1),
         titulo: `${idx + 1}. ${servico.tipo || 'Serviço'}${servico.localExecucao ? ` - ${servico.localExecucao}` : ''}`,
         descricaoServico: servico.descricao || '',
-        texto: '',
+        textosDepois: [],
         colunas: colunasPadrao,
         linhas: [criarLinhaEscopo(colunasPadrao)]
       };
@@ -132,26 +121,77 @@ export function PropostaView() {
 
   const gerarEscopoBasicoConsolidado = (escopos: EscopoServico[]): string => {
     return escopos.map((escopo) => {
-      const cabecalho = `Serviço: ${escopo.titulo}`;
-      const descricaoServico = escopo.descricaoServico?.trim() ? `Descrição do serviço: ${escopo.descricaoServico.trim()}` : 'Descrição do serviço: -';
-      const textoLivre = escopo.texto?.trim() ? `Texto: ${escopo.texto.trim()}` : 'Texto: -';
+      const cabecalho = escopo.titulo;
+      const descricaoServico = escopo.descricaoServico?.trim() || '';
+      const textosDepois = Array.isArray(escopo.textosDepois) && escopo.textosDepois.length > 0 ? escopo.textosDepois.join('\n') : '';
       const linhasTabela = escopo.linhas
         .map((linha, idx) => {
-          const valores = escopo.colunas.map((coluna) => `${coluna}: ${linha.valores[coluna] || '-'}`).join(' | ');
-          return `Item ${idx + 1}: ${valores}`;
+          const valores = escopo.colunas.map((coluna) => linha.valores[coluna] || '-').join(' | ');
+          return `${idx + 1} | ${valores}`;
         })
         .join('\n');
-
-      return [cabecalho, descricaoServico, textoLivre, linhasTabela || 'Sem itens na planilha'].join('\n');
+      // Ordem: Título, Descrição (antes da tabela), Tabela, Textos depois
+      return [cabecalho, descricaoServico, linhasTabela || 'Sem itens na planilha', textosDepois || ''].filter(Boolean).join('\n');
     }).join('\n\n');
   };
 
-  const atualizarTextoEscopoServico = (escopoId: string, texto: string) => {
-    setPropostaForm((prev) => ({
+  const adicionarEscopoServico = () => {
+    const novo: EscopoServico = {
+      id: `escopo-adicional-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
+      servicoId: `ad-${Date.now()}`,
+      titulo: `${propostaForm.escopoBasicoServicos.length + 1}. Serviço Adicional`,
+      descricaoServico: '',
+      textosDepois: [],
+      colunas: ['Descrição'],
+      linhas: [criarLinhaEscopo(['Descrição'])]
+    };
+    setPropostaForm(prev => ({ ...prev, escopoBasicoServicos: [...prev.escopoBasicoServicos, novo] }));
+  };
+
+  const removerEscopoServico = (escopoId: string) => {
+    setPropostaForm(prev => ({ ...prev, escopoBasicoServicos: prev.escopoBasicoServicos.filter(e => e.id !== escopoId) }));
+  };
+
+  const adicionarTextoLivre = (escopoId: string, pos: 'depois') => {
+    setPropostaForm(prev => ({
       ...prev,
-      escopoBasicoServicos: prev.escopoBasicoServicos.map((escopo) =>
-        escopo.id === escopoId ? { ...escopo, texto } : escopo
-      )
+      escopoBasicoServicos: prev.escopoBasicoServicos.map(escopo => {
+        if (escopo.id !== escopoId) return escopo;
+        return { ...escopo, textosDepois: [...(escopo.textosDepois || []), ''] };
+      })
+    }));
+  };
+
+  const atualizarTextoLivre = (escopoId: string, pos: 'depois', index: number, valor: string) => {
+    setPropostaForm(prev => ({
+      ...prev,
+      escopoBasicoServicos: prev.escopoBasicoServicos.map(escopo => {
+        if (escopo.id !== escopoId) return escopo;
+        const arr2 = [...(escopo.textosDepois || [])];
+        arr2[index] = valor;
+        return { ...escopo, textosDepois: arr2 };
+      })
+    }));
+  };
+
+  const atualizarDescricaoServico = (escopoId: string, valor: string) => {
+    setPropostaForm(prev => ({
+      ...prev,
+      escopoBasicoServicos: prev.escopoBasicoServicos.map(escopo => (
+        escopo.id === escopoId ? { ...escopo, descricaoServico: valor } : escopo
+      ))
+    }));
+  };
+
+  const removerTextoLivre = (escopoId: string, pos: 'depois', index: number) => {
+    setPropostaForm(prev => ({
+      ...prev,
+      escopoBasicoServicos: prev.escopoBasicoServicos.map(escopo => {
+        if (escopo.id !== escopoId) return escopo;
+        const arr2 = [...(escopo.textosDepois || [])];
+        arr2.splice(index, 1);
+        return { ...escopo, textosDepois: arr2 };
+      })
     }));
   };
 
@@ -258,16 +298,34 @@ export function PropostaView() {
     setSelectedObra(obra);
     
     // Pré-preencher dados
-    const cliente = CLIENTES_MOCK.find(c => c.id === obra.clienteId);
+    const cliente = listaClientes.find(c => c.id === obra.clienteId);
     const proximaVersao = (obra.propostas?.length || 0) + 1;
     
+    // Seleciona template de proposta conforme a empresa prestadora da obra (aceita variações)
+    const baseForm = getInitialPropostaForm();
+    const textoAberturaPadrao = baseForm.textoAbertura;
+    const textoAberturaServinave = textoAberturaPadrao.replace('Diretoria Comercial', 'Diretoria Comercial - Servinave');
+
+    const rawEmpresa = (() => {
+      const ep = obra.empresaPrestadora || '';
+      if (!ep) return '';
+      if (typeof ep === 'string') return ep;
+      return (ep.nome || ep.razaoSocial || ep.empresaNome || '').toString();
+    })();
+
+    const normalize = (s: string) => s
+      .normalize ? s.normalize('NFD').replace(/[ -]/g, (c: string) => c) : s;
+    const cleaned = (rawEmpresa || '').toString().normalize('NFD').replace(/[ -]/g, (c: string) => c).toLowerCase();
+    const isLinave = String(cleaned).includes('linave');
+
     setPropostaForm(prev => ({
-      ...getInitialPropostaForm(),
+      ...baseForm,
       dataProposta: new Date().toISOString().split('T')[0],
       cliente: cliente?.razaoSocial || '',
       atribuidoA: obra.responsavelComercial || '',
       cargoContato: obra.tipo || '',
       numeroProposta: `LN-0${proximaVersao}/26`,
+      textoAbertura: isLinave ? textoAberturaPadrao : textoAberturaServinave,
       escopoBasicoServicos: criarEscopoBasicoServicos(obra)
     }));
     setNovaColunaPorEscopo({});
@@ -310,6 +368,87 @@ export function PropostaView() {
     setNovaColunaPorEscopo({});
   };
 
+  const handleSalvarRascunho = () => {
+    if (!selectedObra) return;
+
+    // Não criar nova versão ao salvar rascunho: armazenar rascunho separado
+    const escopoAConsolidado = propostaForm.escopoBasicoServicos.length > 0
+      ? gerarEscopoBasicoConsolidado(propostaForm.escopoBasicoServicos)
+      : propostaForm.escopoA;
+
+    const novaPropostaRascunho = {
+      dataCriacao: new Date().toISOString().split('T')[0],
+      status: 'rascunho',
+      ...propostaForm,
+      escopoA: escopoAConsolidado
+    };
+
+    const obraAtualizada = {
+      ...selectedObra,
+      propostaRascunho: novaPropostaRascunho // salva rascunho sem alterar lista de propostas/versionamento
+    };
+
+    const obrasAtualizadas = obras?.map((o: any) => o.id === selectedObra.id ? obraAtualizada : o) || [];
+    saveEntity('obras', obrasAtualizadas);
+
+    // Mantém o usuário na mesma tela para continuar edição
+    setSelectedObra(obraAtualizada);
+    alert('Proposta salva como rascunho. (Não alterou versão)');
+  };
+
+  // Gera DOCX a partir de template .docx (deve existir em /public/templates/LINAVE.docx e SERVINAVE.docx)
+  const gerarDocxTemplate = async () => {
+    if (!selectedObra) return alert('Selecione uma obra antes');
+    const rawEmpresa = (() => {
+      const ep = selectedObra.empresaPrestadora || '';
+      if (!ep) return '';
+      if (typeof ep === 'string') return ep;
+      return (ep.nome || ep.razaoSocial || ep.empresaNome || '').toString();
+    })();
+    const cleaned = (rawEmpresa || '').toString().toLowerCase();
+    const isLinave = cleaned.includes('linave');
+
+    try {
+      const templateUrl = isLinave ? '/templates/LINAVE.docx' : '/templates/SERVINAVE.docx';
+      const res = await fetch(templateUrl);
+      if (!res.ok) return alert(`Template ${isLinave ? 'LINAVE.docx' : 'SERVINAVE.docx'} não encontrado em /public/templates/`);
+      const arrayBuffer = await res.arrayBuffer();
+
+      const zip = new PizZip(arrayBuffer);
+      const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
+
+      const escopoConsolidado = gerarEscopoBasicoConsolidado(propostaForm.escopoBasicoServicos);
+      const dataForTemplate: Record<string, any> = {
+        dataProposta: propostaForm.dataProposta,
+        numeroProposta: propostaForm.numeroProposta,
+        cliente: propostaForm.cliente,
+        atribuidoA: propostaForm.atribuidoA,
+        cargoContato: propostaForm.cargoContato,
+        referencia: propostaForm.referencia,
+        saudacao: propostaForm.saudacao,
+        assunto: propostaForm.assunto,
+        textoAbertura: propostaForm.textoAbertura,
+        escopoA: escopoConsolidado,
+        responsabilidadeContratada: propostaForm.responsabilidadeContratada,
+        escopoC: propostaForm.escopoC,
+        preco: propostaForm.preco,
+        condicoesGerais: propostaForm.condicoesGerais,
+        condicoesPagamento: propostaForm.condicoesPagamento,
+        prazo: propostaForm.prazo,
+        encerramento: propostaForm.encerramento
+      };
+
+      doc.render(dataForTemplate);
+      const out = doc.getZip().generate({ type: 'blob' });
+      saveAs(out, `${propostaForm.numeroProposta || selectedObra.nome || 'proposta'}.docx`);
+    } catch (err) {
+      console.error('Erro gerarDocxTemplate:', err);
+      const msg = err?.message ? err.message : String(err);
+      const details = err?.stack ? `\n\nStack:\n${err.stack}` : '';
+      alert(`Erro ao gerar DOCX: ${msg}${details}`);
+    }
+  };
+
   const handleAprovacaoCliente = (obra: any) => {
     const ultimaProposta = obra.propostas?.[obra.propostas.length - 1];
     if (!ultimaProposta) return;
@@ -331,6 +470,31 @@ export function PropostaView() {
     saveEntity('obras', obrasAtualizadas);
 
     alert('Proposta aprovada pelo cliente!');
+  };
+
+  const handlePendenteCliente = (obra: any) => {
+    const ultimaProposta = obra.propostas?.[obra.propostas.length - 1];
+    if (!ultimaProposta) return;
+
+    const propostasAtualizadas = obra.propostas.map((p: any, idx: number) => 
+      idx === obra.propostas.length - 1 ? { ...p, status: 'pendente' as const } : p
+    );
+
+    const obraAtualizada = {
+      ...obra,
+      propostas: propostasAtualizadas,
+      propostaPendenteNovaVersao: true,
+      motivoRecusaProposta: '',
+      houveAlteracaoDocumentosRecusa: false,
+      dataRecusaProposta: '',
+      categoria: 'Negociação',
+      status: 'Aguardando proposta'
+    };
+
+    const obrasAtualizadas = obras?.map((o: any) => o.id === obra.id ? obraAtualizada : o) || [];
+    saveEntity('obras', obrasAtualizadas);
+
+    alert('Proposta marcada como pendente. Negócio retornou para Fazer Proposta.');
   };
 
   const handleRecusaCliente = (obra: any) => {
@@ -432,7 +596,7 @@ export function PropostaView() {
                       <div>
                         <h3 className="text-lg font-black text-white">{obra.nome}</h3>
                         <p className="text-white/70 text-sm mt-1">
-                          Cliente: {CLIENTES_MOCK.find(c => c.id === obra.clienteId)?.razaoSocial}
+                          Cliente: {listaClientes.find(c => c.id === obra.clienteId)?.razaoSocial}
                         </p>
                       </div>
                     </div>
@@ -487,7 +651,7 @@ export function PropostaView() {
                       <div>
                         <h3 className="text-lg font-black text-white">{obra.nome}</h3>
                         <p className="text-white/70 text-sm mt-1">
-                          Cliente: {CLIENTES_MOCK.find(c => c.id === obra.clienteId)?.razaoSocial}
+                          Cliente: {listaClientes.find(c => c.id === obra.clienteId)?.razaoSocial}
                         </p>
                       </div>
                       <div className="flex gap-2">
@@ -804,24 +968,33 @@ export function PropostaView() {
         <div className="space-y-6">
           {propostaForm.escopoBasicoServicos.map((escopoServico) => (
             <div key={escopoServico.id} className="bg-[#0b1220] border border-white/10 rounded-xl p-4 space-y-4">
+
               <div className="flex items-center justify-between gap-3">
-                <h4 className="text-white font-black text-sm uppercase">{escopoServico.titulo}</h4>
+                <input
+                  type="text"
+                  className="flex-1 bg-transparent border border-white/10 rounded-lg px-3 py-2 text-white font-black text-sm uppercase outline-none focus:border-blue-400"
+                  value={escopoServico.titulo}
+                  onChange={(e) => atualizarTituloEscopoServico(escopoServico.id, e.target.value)}
+                  placeholder="Título do serviço (ex: 1. ASASSA - ASSASA)"
+                />
                 <span className="text-[10px] text-white/40 font-black uppercase tracking-widest">{escopoServico.linhas.length} item(ns)</span>
               </div>
-
-              <div className="bg-white/5 border border-white/10 rounded-lg p-3">
-                <p className="text-white/40 text-[10px] font-black uppercase tracking-widest mb-1">Descrição do Serviço</p>
-                <p className="text-white/85 text-xs whitespace-pre-wrap">{escopoServico.descricaoServico || 'Sem descrição cadastrada para este serviço.'}</p>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className={labelClass}>Texto Livre do Serviço</label>
+              <div className="mt-2">
+                <label className={labelClass}>Descrição do Serviço</label>
                 <textarea
                   className={`${inputClass} h-20`}
-                  value={escopoServico.texto}
-                  onChange={(e) => atualizarTextoEscopoServico(escopoServico.id, e.target.value)}
-                  placeholder="Escreva o escopo textual deste serviço"
+                  value={escopoServico.descricaoServico || ''}
+                  onChange={(e) => atualizarDescricaoServico(escopoServico.id, e.target.value)}
+                  placeholder="Descrição do serviço"
                 />
+              </div>
+
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => removerEscopoServico(escopoServico.id)}
+                  className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white rounded-lg font-black text-xs uppercase tracking-widest transition"
+                >Remover Servi�o</button>
               </div>
 
               <div className="space-y-2">
@@ -908,6 +1081,33 @@ export function PropostaView() {
               >
                 <Plus size={14} className="inline mr-1" /> Adicionar Item
               </button>
+
+              <div className="mt-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className={labelClass}>Textos após a tabela</label>
+                  <button
+                    type="button"
+                    onClick={() => adicionarTextoLivre(escopoServico.id, 'depois')}
+                    className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-black text-xs uppercase tracking-widest transition"
+                  >
+                    <Plus size={12} className="inline mr-1" /> Adicionar Texto
+                  </button>
+                </div>
+
+                {(escopoServico.textosDepois || []).map((txt, i) => (
+                  <div key={`${escopoServico.id}-depois-${i}`} className="flex gap-2">
+                    <textarea
+                      className={`${inputClass} h-20 flex-1`}
+                      value={txt}
+                      onChange={(e) => atualizarTextoLivre(escopoServico.id, 'depois', i, e.target.value)}
+                      placeholder={`Texto depois #${i + 1}`}
+                    />
+                    <button type="button" onClick={() => removerTextoLivre(escopoServico.id, 'depois', i)} className="text-red-300 p-2">
+                      <X size={18} />
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
           ))}
 
@@ -916,6 +1116,22 @@ export function PropostaView() {
               <p className="text-white/40 text-xs font-bold uppercase tracking-widest">Nenhum serviço encontrado para montar escopo</p>
             </div>
           )}
+
+          <div className="flex gap-2 mt-4">
+            <button
+              type="button"
+              onClick={adicionarEscopoServico}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-black text-xs uppercase tracking-widest transition"
+            >
+              <Plus size={14} className="inline mr-1" /> Adicionar Serviço
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { const exemplo = gerarEscopoBasicoConsolidado(propostaForm.escopoBasicoServicos); window.alert(exemplo || 'Sem conteúdo para visualizar'); }}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-black text-xs uppercase tracking-widest transition"
+            >Visualização de Exemplo</button>
+          </div>
         </div>
       </div>
 
@@ -945,19 +1161,6 @@ export function PropostaView() {
         </div>
       </div>
 
-      {/* SEÇÃO 11: REFERÊNCIAS */}
-      <div className={sectionClass}>
-        <h3 className="text-base font-black text-white uppercase mb-4">Referências</h3>
-        <div className="space-y-1.5">
-          <label className={labelClass}>Referências</label>
-          <textarea 
-            className={`${inputClass} h-20`}
-            value={propostaForm.referencias}
-            onChange={e => setPropostaForm({...propostaForm, referencias: e.target.value})}
-          />
-        </div>
-      </div>
-
       {/* SEÇÃO 12: D - PREÇO */}
       <div className={sectionClass}>
         <h3 className="text-base font-black text-white uppercase mb-4">D - Preço</h3>
@@ -971,19 +1174,7 @@ export function PropostaView() {
         </div>
       </div>
 
-      {/* SEÇÃO 13: IMPOSTOS / OBSERVAÇÕES FISCAIS */}
-      <div className={sectionClass}>
-        <h3 className="text-base font-black text-white uppercase mb-4">Impostos / Observações Fiscais</h3>
-        <div className="space-y-1.5">
-          <label className={labelClass}>Impostos e Observações</label>
-          <textarea 
-            className={`${inputClass} h-20`}
-            value={propostaForm.impostos}
-            onChange={e => setPropostaForm({...propostaForm, impostos: e.target.value})}
-          />
-        </div>
-      </div>
-
+      
       {/* SEÇÃO 14: E - CONDIÇÕES GERAIS */}
       <div className={sectionClass}>
         <h3 className="text-base font-black text-white uppercase mb-4">E - Condições Gerais</h3>
@@ -1023,30 +1214,7 @@ export function PropostaView() {
         </div>
       </div>
 
-      {/* SEÇÃO 17: ASSINATURA */}
-      <div className={sectionClass}>
-        <h3 className="text-base font-black text-white uppercase mb-4">Assinatura</h3>
-        <div className="space-y-1.5 mb-4">
-          <label className={labelClass}>Nome</label>
-          <input 
-            type="text"
-            className={inputClass}
-            value={propostaForm.assinaturaNome}
-            onChange={e => setPropostaForm({...propostaForm, assinaturaNome: e.target.value})}
-          />
-        </div>
-        <h3 className="text-base font-black text-white uppercase mb-4">Cargo</h3>
-        <div className="space-y-1.5">
-          <label className={labelClass}>Cargo</label>
-          <input 
-            type="text"
-            className={inputClass}
-            value={propostaForm.assinaturaCargo}
-            onChange={e => setPropostaForm({...propostaForm, assinaturaCargo: e.target.value})}
-          />
-        </div>
-      </div>
-
+      
       {/* SEÇÃO 18: ENCERRAMENTO */}
       <div className={sectionClass}>
         <h3 className="text-base font-black text-white uppercase mb-4">Encerramento</h3>
@@ -1077,7 +1245,21 @@ export function PropostaView() {
         >
           <FileText size={18} /> Enviar Proposta
         </button>
+        <button 
+          onClick={handleSalvarRascunho}
+          className="flex-1 bg-white/10 text-white py-3 rounded-lg font-black uppercase text-sm hover:bg-white/15 transition flex items-center justify-center gap-2"
+        >
+          <Save size={18} /> Salvar Rascunho
+        </button>
+        {selectedObra && (
+          <button
+            type="button"
+            onClick={gerarDocxTemplate}
+            className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-3 rounded-lg font-black uppercase text-sm tracking-widest transition-all flex items-center justify-center gap-2"
+          >Gerar DOCX</button>
+        )}
       </div>
     </div>
   );
 }
+

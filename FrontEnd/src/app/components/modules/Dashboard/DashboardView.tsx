@@ -17,9 +17,41 @@ import {
   Line,
 } from 'recharts';
 
+const MESES_PT = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+
+const agruparFinanceiroPorMes = (items: any[] = []) => {
+  const agrupado = new Map<number, { mes: string; receitas: number; despesas: number }>();
+
+  items.forEach((item: any) => {
+    const dataReferencia = item?.dataRealizada || item?.dataPrevista || item?.data || item?.createdAt;
+    if (!dataReferencia) return;
+
+    const data = new Date(dataReferencia);
+    if (Number.isNaN(data.getTime())) return;
+
+    const mesIndex = data.getMonth();
+    const atual = agrupado.get(mesIndex) || { mes: MESES_PT[mesIndex], receitas: 0, despesas: 0 };
+
+    if (item?.tipo === 'receita') {
+      atual.receitas += Number(item?.valor) || 0;
+    }
+
+    if (item?.tipo === 'despesa') {
+      atual.despesas += Number(item?.valor) || 0;
+    }
+
+    agrupado.set(mesIndex, atual);
+  });
+
+  return [...agrupado.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([, value]) => value);
+};
+
 export function DashboardView() {
   const { clientes, obras, financeiro, funcionarios } = useErp();
   const listaFinanceiro = Array.isArray(financeiro) ? financeiro : [];
+  const temFinanceiro = listaFinanceiro.length > 0;
   
   // Cálculos de saldo
   const totalReceitas = listaFinanceiro
@@ -32,27 +64,23 @@ export function DashboardView() {
   
   const saldo = totalReceitas - totalDespesas;
 
-  // Dados para gráfico de pizza - Distribuição Financeira
-  // Se não houver dados reais, usa dados de demonstração
-  const pieData = (totalReceitas === 0 && totalDespesas === 0) 
+  const pieData = temFinanceiro
     ? [
-        { name: 'Receitas', value: 45000 },
-        { name: 'Despesas', value: 28000 },
-      ]
-    : [
         { name: 'Receitas', value: totalReceitas || 0 },
         { name: 'Despesas', value: totalDespesas || 0 },
-      ];
+      ]
+    : [];
 
-  // Dados para histograma - Receitas vs Despesas
-  const barData = [
-    { mes: 'Jan', receitas: 15000, despesas: 8000 },
-    { mes: 'Fev', receitas: 18000, despesas: 9500 },
-    { mes: 'Mar', receitas: 22000, despesas: 10200 },
-    { mes: 'Abr', receitas: 19500, despesas: 11000 },
-    { mes: 'Mai', receitas: 25000, despesas: 12500 },
-    { mes: 'Jun', receitas: totalReceitas, despesas: totalDespesas },
-  ];
+  const financeiroPorMes = agruparFinanceiroPorMes(listaFinanceiro);
+  const barData = financeiroPorMes;
+  const lineData = financeiroPorMes.reduce((acumulado: Array<{ mes: string; saldo: number }>, item) => {
+    const saldoAnterior = acumulado.length > 0 ? acumulado[acumulado.length - 1].saldo : 0;
+    acumulado.push({
+      mes: item.mes,
+      saldo: saldoAnterior + item.receitas - item.despesas,
+    });
+    return acumulado;
+  }, []);
 
   // Cores
   const COLORS = ['#f59e0b', '#ef4444', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899'];
@@ -116,86 +144,92 @@ export function DashboardView() {
         <div className="bg-[#101f3d] p-3 rounded-3xl border border-white/5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-black text-white ml-4">Distribuição Financeira</h2>
-            {totalReceitas === 0 && totalDespesas === 0 && (
-              <span className="text-xs bg-amber-500/20 text-amber-400 px-2 py-1 rounded">Dados de Demonstração</span>
-            )}
           </div>
-          <ResponsiveContainer width="100%" height={350}>
-            <PieChart>
-              <Pie
-                data={pieData}
-                cx="50%"
-                cy="50%"
-                labelLine={false}
-                label={({ name, value }) => `${name}: R$ ${(value / 1000).toFixed(1)}k`}
-                outerRadius={110}
-                fill="#8884d8"
-                dataKey="value"
-              >
-                {pieData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                ))}
-              </Pie>
-              <Tooltip
-                contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px', color: '#fff' }}
-                formatter={(value) => `R$ ${(value / 1000).toFixed(1)}k`}
-              />
-            </PieChart>
-          </ResponsiveContainer>
+          {temFinanceiro ? (
+            <ResponsiveContainer width="100%" height={350}>
+              <PieChart>
+                <Pie
+                  data={pieData}
+                  cx="50%"
+                  cy="50%"
+                  labelLine={false}
+                  label={({ name, value }) => `${name}: R$ ${(Number(value) / 1000).toFixed(1)}k`}
+                  outerRadius={110}
+                  fill="#8884d8"
+                  dataKey="value"
+                >
+                  {pieData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px', color: '#fff' }}
+                  formatter={(value) => `R$ ${(Number(value) / 1000).toFixed(1)}k`}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="h-[350px] rounded-2xl border border-dashed border-white/10 flex items-center justify-center text-white/30 text-sm px-8 text-center">
+              Nenhum lançamento financeiro cadastrado ainda. Cadastre receitas e despesas para visualizar a distribuição.
+            </div>
+          )}
         </div>
 
         {/* Gráfico de Barras - Receitas vs Despesas */}
         <div className="bg-[#101f3d] p-6 rounded-3xl border border-white/5">
           <h2 className="text-lg font-black text-white mb-6">Receitas vs Despesas</h2>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={barData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#ffffff20" />
-              <XAxis dataKey="mes" stroke="#ffffff40" />
-              <YAxis stroke="#ffffff40" />
-              <Tooltip
-                contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px', color: '#fff' }}
-                formatter={(value) => `R$ ${(value / 1000).toFixed(1)}k`}
-              />
-              <Legend />
-              <Bar dataKey="receitas" fill="#10b981" name="Receitas" radius={[8, 8, 0, 0]} />
-              <Bar dataKey="despesas" fill="#ef4444" name="Despesas" radius={[8, 8, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
+          {temFinanceiro ? (
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={barData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff20" />
+                <XAxis dataKey="mes" stroke="#ffffff40" />
+                <YAxis stroke="#ffffff40" />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px', color: '#fff' }}
+                  formatter={(value) => `R$ ${(Number(value) / 1000).toFixed(1)}k`}
+                />
+                <Legend />
+                <Bar dataKey="receitas" fill="#10b981" name="Receitas" radius={[8, 8, 0, 0]} />
+                <Bar dataKey="despesas" fill="#ef4444" name="Despesas" radius={[8, 8, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="h-[300px] rounded-2xl border border-dashed border-white/10 flex items-center justify-center text-white/30 text-sm px-8 text-center">
+              Ainda não há movimentações para montar o gráfico mensal.
+            </div>
+          )}
         </div>
       </div>
 
       {/* Gráfico de Linha - Evolução do Saldo */}
       <div className="bg-[#101f3d] p-6 rounded-3xl border border-white/5">
         <h2 className="text-lg font-black text-white mb-6">Evolução do Saldo Mensal</h2>
-        <ResponsiveContainer width="100%" height={300}>
-          <LineChart
-            data={[
-              { mes: 'Jan', saldo: 7000 },
-              { mes: 'Fev', saldo: 8500 },
-              { mes: 'Mar', saldo: 11800 },
-              { mes: 'Abr', saldo: 8500 },
-              { mes: 'Mai', saldo: 12500 },
-              { mes: 'Jun', saldo: saldo },
-            ]}
-          >
-            <CartesianGrid strokeDasharray="3 3" stroke="#ffffff20" />
-            <XAxis dataKey="mes" stroke="#ffffff40" />
-            <YAxis stroke="#ffffff40" />
-            <Tooltip
-              contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px', color: '#fff' }}
-              formatter={(value) => `R$ ${(value / 1000).toFixed(1)}k`}
-            />
-            <Line
-              type="monotone"
-              dataKey="saldo"
-              stroke="#f59e0b"
-              dot={{ fill: '#f59e0b', r: 5 }}
-              activeDot={{ r: 7 }}
-              strokeWidth={2}
-              name="Saldo"
-            />
-          </LineChart>
-        </ResponsiveContainer>
+        {temFinanceiro ? (
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={lineData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#ffffff20" />
+              <XAxis dataKey="mes" stroke="#ffffff40" />
+              <YAxis stroke="#ffffff40" />
+              <Tooltip
+                contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px', color: '#fff' }}
+                formatter={(value) => `R$ ${(Number(value) / 1000).toFixed(1)}k`}
+              />
+              <Line
+                type="monotone"
+                dataKey="saldo"
+                stroke="#f59e0b"
+                dot={{ fill: '#f59e0b', r: 5 }}
+                activeDot={{ r: 7 }}
+                strokeWidth={2}
+                name="Saldo"
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className="h-[300px] rounded-2xl border border-dashed border-white/10 flex items-center justify-center text-white/30 text-sm px-8 text-center">
+            O saldo mensal será calculado a partir dos lançamentos cadastrados manualmente.
+          </div>
+        )}
       </div>
 
       {/* Cards adicionais de estatísticas */}
