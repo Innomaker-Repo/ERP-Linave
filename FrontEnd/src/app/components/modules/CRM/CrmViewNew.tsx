@@ -316,6 +316,18 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
 
   const empresaPrestadoraPadrao = empresasPrestadoras[0]?.nome || 'Linave';
 
+  const getEmpresaPrestadoraNome = (nome?: string) => {
+    const valor = String(nome || '').trim();
+    if (!valor) return 'Não informado';
+
+    const empresaEncontrada = empresasPrestadoras.find((empresa) =>
+      String(empresa.nome || '').toLowerCase() === valor.toLowerCase() ||
+      String(empresa.id || '').toLowerCase() === valor.toLowerCase()
+    );
+
+    return empresaEncontrada?.nome || valor;
+  };
+
   const initialForm = {
     empresaPrestadora: empresaPrestadoraPadrao,
     nomeNegocio: '',
@@ -831,7 +843,8 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
         formPropostaParaPDF,
         clienteAtual,
         selectedObraDetalhes,
-        logoBase64 // <-- AQUI A MAGIA ACONTECE (A IMAGEM VAI PRO CABEÇALHO)
+        logoBase64, // <-- AQUI A MAGIA ACONTECE (A IMAGEM VAI PRO CABEÇALHO)
+        isLinave
       );
 
       if (!resultadoPdf) {
@@ -901,10 +914,21 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
 
     try {
       let logoBase64: string | undefined;
+      const empresaPrestadora = String(selectedObraDetalhes.empresaPrestadora || '').trim().toLowerCase();
+      const isLinave = empresaPrestadora.includes('linave');
+      const logoUrl = isLinave ? '/image2.jpg' : '/image1.png';
+
       try {
-        logoBase64 = await getBase64FromUrl('/image1.png');
+        logoBase64 = await getBase64FromUrl(logoUrl);
       } catch (logoError) {
-        console.warn('Logo da proposta nao encontrada.', logoError);
+        console.warn(`Logo da proposta nao encontrada em ${logoUrl}.`, logoError);
+        if (empresaPrestadora === 'linave') {
+          try {
+            logoBase64 = await getBase64FromUrl('/image1.png');
+          } catch (fallbackError) {
+            console.warn('Fallback para logo original nao encontrou a imagem.', fallbackError);
+          }
+        }
       }
 
       const resultadoPdf = handleDownloadPropostaPDF(
@@ -912,6 +936,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
         clienteAtual,
         selectedObraDetalhes,
         logoBase64,
+        isLinave,
       );
 
       if (!resultadoPdf) {
@@ -2724,6 +2749,11 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                         {/* Cliente */}
                         <p className="text-white/70 text-xs font-bold mb-2 truncate">
                           {cliente?.razaoSocial}
+                        </p>
+
+                        {/* Prestador */}
+                        <p className="text-white/50 text-[11px] mb-2 truncate">
+                          <span className="font-black text-white/80">Prestador:</span> {getEmpresaPrestadoraNome(obra.empresaPrestadora)}
                         </p>
 
                         {/* Responsável */}
