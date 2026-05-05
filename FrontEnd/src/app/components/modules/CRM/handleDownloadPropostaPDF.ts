@@ -4,7 +4,7 @@ import autoTable from 'jspdf-autotable';
 const normalizarEscopoBasico = (escopo: any) => {
   if (!escopo) return [];
 
-  const normalizarLinha = (linha: any) => {
+  const normalizarLinha = (linha: any, index: number) => { // <-- Adicione o index aqui
     if (!linha?.valores || typeof linha.valores !== 'object') return [];
     const colunas = Object.entries(linha.valores)
       .map(([chave, valor]) => ({
@@ -16,7 +16,8 @@ const normalizarEscopoBasico = (escopo: any) => {
     if (colunas.length === 0) return [];
 
     return [
-      { chave: 'Item', valor: String(linha.item || linha.id || '') || '' },
+      // Correção aqui: Usa linha.item se existir, senão usa index + 1 (1, 2, 3...)
+      { chave: 'Item', valor: String(linha.item || (index + 1)) }, 
       ...colunas,
     ];
   };
@@ -42,7 +43,8 @@ const normalizarEscopoBasico = (escopo: any) => {
         ...(typeof item.textoLivre === 'string' && item.textoLivre.trim() ? [item.textoLivre] : []),
       ].filter((texto: any) => typeof texto === 'string' && texto.trim()).map((texto: string) => texto.trim()),
       tabela: Array.isArray(item.linhas)
-        ? item.linhas.map((linha: any) => normalizarLinha(linha)).filter((linha: any[]) => linha.length > 0)
+        // Correção aqui: pegamos o index do map e passamos pro normalizarLinha
+        ? item.linhas.map((linha: any, idx: number) => normalizarLinha(linha, idx)).filter((linha: any[]) => linha.length > 0)
         : [],
       textosDepois: (Array.isArray(item.textosDepoisTabela) ? item.textosDepoisTabela : [])
         .filter((texto: any) => typeof texto === 'string' && texto.trim())

@@ -88,6 +88,22 @@ const COLUNAS: { id: CategoriaObra; titulo: string; icon: any; cor: string }[] =
   { id: 'Finalização', titulo: 'Finalização', icon: CheckCircle, cor: 'emerald' }
 ];
 
+export const getPrefixoEmpresa = (empresaPrestadora?: string) => {
+  if (!empresaPrestadora) return 'LN';
+  return empresaPrestadora.toLowerCase().includes('servinave') ? 'SN' : 'LN';
+};
+
+export const indexToVersaoAlfabetica = (index: number) => {
+  if (index < 0) return 'A';
+  let value = index;
+  let output = '';
+  while (value >= 0) {
+    output = String.fromCharCode((value % 26) + 65) + output;
+    value = Math.floor(value / 26) - 1;
+  }
+  return output;
+};
+
 export function CrmViewNew({ searchQuery }: CrmViewProps) {
   const { obras, os, clientes, saveEntity, userSession, config } = useErp();
   const [showFormNovoNegocio, setShowFormNovoNegocio] = useState(false);
@@ -107,6 +123,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   const [documentoMediacaoForm, setDocumentoMediacaoForm] = useState<DocumentoMediacaoForm | null>(null);
   const [showDocumentoPreviewModal, setShowDocumentoPreviewModal] = useState(false);
   const [documentoVisualizado, setDocumentoVisualizado] = useState<any>(null);
+
 
   const indexToVersaoAlfabetica = (index: number) => {
     if (index < 0) return 'A';
@@ -346,6 +363,8 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
 
     return empresaEncontrada?.nome || valor;
   };
+
+    
 
   const initialForm = {
     empresaPrestadora: empresaPrestadoraPadrao,
@@ -1083,79 +1102,80 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   };
 
   const criarReorcamentoPorAlteracaoArquivos = (obra: any) => {
-    const hoje = new Date().toISOString().split('T')[0];
-    const orcamentos = normalizarOrcamentosDaObra(obra);
-
-    if (orcamentos.length === 0) {
-      return {
-        ...obra,
-        orcamentoRealizado: false,
-        requerReorcamento: true,
-        categoria: 'Planejamento' as CategoriaObra,
-        status: 'Aguardando orçamento'
-      };
-    }
-
-    const ultimoOrcamento = orcamentos[orcamentos.length - 1];
-    const jaTemReorcamentoPendente = ultimoOrcamento?.status === 'pendente_reorcamento';
-
-    if (jaTemReorcamentoPendente) {
-      return {
-        ...obra,
-        orcamentos,
-        orcamentoRealizado: false,
-        requerReorcamento: true,
-        categoria: 'Planejamento' as CategoriaObra,
-        status: 'Aguardando orçamento'
-      };
-    }
-
-    const orcamentosRecusados = orcamentos.map((orcamento: any, idx: number, lista: any[]) => (
-      idx === lista.length - 1
-        ? { ...orcamento, status: 'recusado' as const, dataRecusa: hoje, motivoRecusa: 'Alteração de arquivos' }
-        : orcamento
-    ));
-
-    const maiorIndiceVersao = orcamentosRecusados.reduce((maior: number, orcamento: any) => {
-      const indice = versaoAlfabeticaToIndex(formatarVersaoOrcamento(orcamento?.versao));
-      return Math.max(maior, indice);
-    }, -1);
-
-    const novaVersao = indexToVersaoAlfabetica(maiorIndiceVersao + 1);
-
-    const novoOrcamentoPendente = {
-      versao: novaVersao,
-      dataCriacao: hoje,
-      status: 'pendente_reorcamento' as const,
-      numeroOrcamento: `BM-${new Date().getFullYear()}-${novaVersao}`,
-      data: ultimoOrcamento?.data || {},
-      valores: ultimoOrcamento?.valores || {
-        totalMaoDeObra: 0,
-        totalMateriais: 0,
-        totalTerceirizados: 0,
-        totalBruto: 0,
-        totalSemImposto: 0,
-        subtotal: 0,
-        margem: 0,
-        oh: 0,
-        impostos: 0,
-        valorMargem: 0,
-        valorOH: 0,
-        valorImpostos: 0,
-        precoFinal: 0
-      },
-      origemRevisao: 'alteracao_arquivos'
-    };
-
+  const hoje = new Date().toISOString().split('T')[0];
+  const orcamentos = normalizarOrcamentosDaObra(obra);
+  
+  if (orcamentos.length === 0) {
     return {
       ...obra,
-      orcamentos: [...orcamentosRecusados, novoOrcamentoPendente],
       orcamentoRealizado: false,
       requerReorcamento: true,
       categoria: 'Planejamento' as CategoriaObra,
       status: 'Aguardando orçamento'
     };
+  }
+  
+  const ultimoOrcamento = orcamentos[orcamentos.length - 1];
+  const jaTemReorcamentoPendente = ultimoOrcamento?.status === 'pendente_reorcamento';
+  
+  if (jaTemReorcamentoPendente) {
+    return {
+      ...obra,
+      orcamentos,
+      orcamentoRealizado: false,
+      requerReorcamento: true,
+      categoria: 'Planejamento' as CategoriaObra,
+      status: 'Aguardando orçamento'
+    };
+  }
+  
+  const orcamentosRecusados = orcamentos.map((orcamento: any, idx: number, lista: any[]) => (
+    idx === lista.length - 1
+      ? { ...orcamento, status: 'recusado' as const, dataRecusa: hoje, motivoRecusa: 'Alteração de arquivos' }
+      : orcamento
+  ));
+  
+  const maiorIndiceVersao = orcamentosRecusados.reduce((maior: number, orcamento: any) => {
+    const indice = versaoAlfabeticaToIndex(formatarVersaoOrcamento(orcamento?.versao));
+    return Math.max(maior, indice);
+  }, -1);
+  
+  const novaVersao = indexToVersaoAlfabetica(maiorIndiceVersao + 1);
+  const prefixo = getPrefixoEmpresa(obra.empresaPrestadora);
+  
+  const novoOrcamentoPendente = {
+    versao: novaVersao,
+    dataCriacao: hoje,
+    status: 'pendente_reorcamento' as const,
+    numeroOrcamento: `${prefixo}-${new Date().getFullYear()}-${novaVersao}`,
+    data: ultimoOrcamento?.data || {},
+    valores: ultimoOrcamento?.valores || {
+      totalMaoDeObra: 0,
+      totalMateriais: 0,
+      totalTerceirizados: 0,
+      totalBruto: 0,
+      totalSemImposto: 0,
+      subtotal: 0,
+      margem: 0,
+      oh: 0,
+      impostos: 0,
+      valorMargem: 0,
+      valorOH: 0,
+      valorImpostos: 0,
+      precoFinal: 0
+    },
+    origemRevisao: 'alteracao_arquivos'
   };
+  
+  return {
+    ...obra,
+    orcamentos: [...orcamentosRecusados, novoOrcamentoPendente],
+    orcamentoRealizado: false,
+    requerReorcamento: true,
+    categoria: 'Planejamento' as CategoriaObra,
+    status: 'Aguardando orçamento'
+  };
+};
 
   const aplicarAlteracaoDocumentosNoNegocio = (
     obra: any,
@@ -1497,975 +1517,768 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   };
 
   const handleDownloadOSPDF = async () => {
-    const osDoNegocio = (os || []).filter((o: any) => o.obraId === selectedObraDetalhes.id);
-    if (osDoNegocio.length === 0) {
-      toast.error('Nenhuma OS vinculada a este negócio.');
-      return;
-    }
-
-    const osPrincipal = osDoNegocio[0];
-    
-    const orcamentosBase = Array.isArray(osPrincipal?.orcamentos) && osPrincipal.orcamentos.length > 0
-      ? osPrincipal.orcamentos
-      : Array.isArray(selectedObraDetalhes.orcamentos) && selectedObraDetalhes.orcamentos.length > 0
-        ? selectedObraDetalhes.orcamentos
-        : [];
-    
-    const propostasBase = Array.isArray(osPrincipal?.propostas) && osPrincipal.propostas.length > 0
-      ? osPrincipal.propostas
-      : Array.isArray(selectedObraDetalhes.propostas) && selectedObraDetalhes.propostas.length > 0
-        ? selectedObraDetalhes.propostas
-        : [];
-
-    const ultimoOrcamento = orcamentosBase.length > 0 ? orcamentosBase[orcamentosBase.length - 1] : null;
-    const ultimaProposta = propostasBase.length > 0 ? propostasBase[propostasBase.length - 1] : null;
-    const cliente = (clientes || []).find((c: any) => c.id === selectedObraDetalhes.clienteId);
-
-    let logoBase64 = undefined;
-    try {
-      logoBase64 = await getBase64FromUrl('/image2.jpg');
-    } catch (err) {
-      console.warn('Logo não encontrada.');
-    }
-
-    try {
-      const doc = new jsPDF('p', 'mm', 'a4');
-      const pageWidth = doc.internal.pageSize.getWidth();
-      const pageHeight = doc.internal.pageSize.getHeight();
-      const margin = 10;
-      let y = margin;
-
-      doc.setDrawColor(0);
-      doc.setLineWidth(0.3);
-      doc.rect(margin, y, pageWidth - 2 * margin, 35); 
+  const osDoNegocio = (os || []).filter((o: any) => o.obraId === selectedObraDetalhes.id);
+  if (osDoNegocio.length === 0) {
+    toast.error('Nenhuma OS vinculada a este negócio.');
+    return;
+  }
+  const osPrincipal = osDoNegocio[0];
+  
+  const orcamentosBase = Array.isArray(osPrincipal?.orcamentos) && osPrincipal.orcamentos.length > 0
+    ? osPrincipal.orcamentos
+    : Array.isArray(selectedObraDetalhes.orcamentos) && selectedObraDetalhes.orcamentos.length > 0
+      ? selectedObraDetalhes.orcamentos
+      : [];
       
-      doc.line(margin + 50, y, margin + 50, y + 15); 
-      doc.line(margin + 130, y, margin + 130, y + 15); 
-      doc.line(margin, y + 15, pageWidth - margin, y + 15); 
-
-      if (logoBase64) {
-        doc.addImage(logoBase64, 'PNG', margin + 2, y + 2, 46, 11);
-      } else {
-        doc.setFont('Helvetica', 'bold');
-        doc.setFontSize(12);
-        doc.text('LINAVE', margin + 5, y + 10);
-      }
-
+  const propostasBase = Array.isArray(osPrincipal?.propostas) && osPrincipal.propostas.length > 0
+    ? osPrincipal.propostas
+    : Array.isArray(selectedObraDetalhes.propostas) && selectedObraDetalhes.propostas.length > 0
+      ? selectedObraDetalhes.propostas
+      : [];
+      
+  const ultimoOrcamento = orcamentosBase.length > 0 ? orcamentosBase[orcamentosBase.length - 1] : null;
+  const ultimaProposta = propostasBase.length > 0 ? propostasBase[propostasBase.length - 1] : null;
+  const cliente = (clientes || []).find((c: any) => c.id === selectedObraDetalhes.clienteId);
+  
+  let logoBase64 = undefined;
+  try {
+    logoBase64 = await getBase64FromUrl('/image2.jpg');
+  } catch (err) {
+    console.warn('Logo não encontrada.');
+  }
+  
+  try {
+    const doc = new jsPDF('p', 'mm', 'a4');
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 10;
+    let y = margin;
+    
+    doc.setDrawColor(0);
+    doc.setLineWidth(0.3);
+    doc.rect(margin, y, pageWidth - 2 * margin, 35);        
+    doc.line(margin + 50, y, margin + 50, y + 15); 
+    doc.line(margin + 130, y, margin + 130, y + 15); 
+    doc.line(margin, y + 15, pageWidth - margin, y + 15); 
+    
+    if (logoBase64) {
+      doc.addImage(logoBase64, 'PNG', margin + 2, y + 2, 46, 11);
+    } else {
+      doc.setFont('Helvetica', 'bold');
       doc.setFontSize(12);
-      doc.setFont('Helvetica', 'bold');
-      doc.text('ORDEM DE SERVIÇO\nDE PRODUÇÃO', margin + 90, y + 6.5, { align: 'center' });
-
-      doc.setFontSize(7);
-      doc.text('Data Emissão:', margin + 132, y + 5);
-      doc.setFont('Helvetica', 'normal');
-      doc.text(osPrincipal.dataEmissao || new Date().toLocaleDateString('pt-BR'), margin + 155, y + 5);
-      
-      doc.setFont('Helvetica', 'bold');
-      doc.text('CC.:', margin + 132, y + 10);
-      doc.setFont('Helvetica', 'normal');
-      doc.text(osPrincipal.cc || 'Não inf.', margin + 142, y + 10);
-
-      y += 15;
-
-      const rowH = 5;
-      doc.line(margin, y + rowH, pageWidth - margin, y + rowH);
-      doc.line(margin, y + rowH * 2, pageWidth - margin, y + rowH * 2);
-      doc.line(margin, y + rowH * 3, pageWidth - margin, y + rowH * 3);
-      doc.line(margin + 100, y, margin + 100, y + 20); 
-
-      doc.setFontSize(8);
-      const printDado = (lbl: string, val: string, vx: number, vy: number) => {
-        doc.setFont('Helvetica', 'bold');
-        doc.text(lbl, vx, vy);
-        doc.setFont('Helvetica', 'normal');
-        doc.text(val || '−', vx + 25, vy);
-      };
-
-      const dataInicio = osPrincipal.dataInicioPrevisto || selectedObraDetalhes.dataPrevistaInicio;
-      const dataTermino = osPrincipal.dataTerminoPrevisto || selectedObraDetalhes.dataPrevistaFinal;
-
-      printDado('CLIENTE:', cliente?.razaoSocial || '', margin + 2, y + 3.5);
-      printDado('Início Previsto:', dataInicio ? new Date(dataInicio).toLocaleDateString('pt-BR') : '', margin + 102, y + 3.5);
-      y += rowH;
-
-      printDado('PROJETO:', selectedObraDetalhes.nome || '', margin + 2, y + 3.5);
-      printDado('Térm. Previsto:', dataTermino ? new Date(dataTermino).toLocaleDateString('pt-BR') : '', margin + 102, y + 3.5);
-      y += rowH;
-
-      printDado('EQUIPAMENTO:', osPrincipal.equipamento || osPrincipal.tipo || '', margin + 2, y + 3.5);
-      printDado('OS Nº:', osPrincipal.ordemServicoNumero || '', margin + 102, y + 3.5);
-      y += rowH;
-
-      printDado('LOCAL:', osPrincipal.local || osPrincipal.localExecucao || '', margin + 2, y + 3.5);
-      printDado('Encarregado:', osPrincipal.supervisorEncarregado || '', margin + 102, y + 3.5);
-      y += rowH;
-
-      y += 5; 
-
-      const leftW = 120;
-      const rightW = (pageWidth - 2 * margin) - leftW;
-      
-      doc.setFont('Helvetica', 'bold');
-      doc.setFillColor(230, 230, 230);
-      doc.rect(margin, y, leftW, 6, 'FD');
-      doc.rect(margin + leftW, y, rightW, 6, 'FD');
-      
-      doc.text('DESCRIÇÃO DO SERVIÇO', margin + leftW/2, y + 4, { align: 'center' });
-      doc.text('A SER INCLUIDO', margin + leftW + rightW/2, y + 4, { align: 'center' });
-      y += 6;
-
-      const bodyY = y;
-      
-      doc.setFont('Helvetica', 'normal');
-      const descTexto = ultimaProposta ? formatarEscopoBasicoParaTexto(ultimaProposta.escopoBasicoServicos || ultimaProposta.escopoA) : (osPrincipal.descricao || osPrincipal.descricaoGeralServico || '');
-      const descLines = doc.splitTextToSize(descTexto, leftW - 4);
-      
-      let cursorEsq = bodyY + 5;
-      descLines.forEach((l: string) => {
-        doc.text(l, margin + 2, cursorEsq);
-        cursorEsq += 4;
-      });
-
-      const checks = osPrincipal.aSerIncluido || {};
-      const chk = (val: any) => val ? '[ X ]' : '[   ]';
-      
-      const listChecks = [
-        { lbl: 'CERTIFICADO DE GAS', v: checks.certificadoGas },
-        { lbl: 'VENTILAÇÃO', v: checks.ventilacao },
-        { lbl: 'LIMPEZA ANTES', v: checks.limpezaAntes },
-        { lbl: 'LIMPEZA APÓS CONCLUSÃO', v: checks.limpezaApos },
-        { lbl: 'ANDAIMES', v: checks.andaimes },
-        { lbl: 'APOIO DE GUINDASTE', v: checks.apoioGuindastes },
-        { lbl: 'TRANSPORTE EXTERNO', v: checks.transporteExterno },
-        { lbl: 'TESTE DE PRESSÃO', v: checks.testePressao || checks.testesPressao },
-        { lbl: 'PINTURA', v: checks.pintura },
-        { lbl: 'LP / PM', v: checks.lpPm },
-        { lbl: 'TESTE DE ULTRASON', v: checks.testeUltrassom },
-        { lbl: 'INSPEÇÃO DIMENSIONAL', v: checks.inspecaoDimensional },
-        { lbl: 'VISUAL DE SOLDA', v: checks.visualSolda },
-        { lbl: 'SOLDADOR CERTIFICADO', v: checks.soldadorCertificado },
-        { lbl: 'PROCEDIMENTO DE SOLDA', v: checks.procedimentoSolda },
-        { lbl: 'CERTIFICAÇÃO DO MATERIAL', v: checks.certificacaoMaterial },
-        { lbl: 'VIGIA DE FOGO', v: checks.vigiaFogo }
-      ];
-
-      let cursorDir = bodyY + 5;
-      doc.setFontSize(7);
-      listChecks.forEach(c => {
-        doc.setFont('Helvetica', 'bold');
-        doc.text(chk(c.v), margin + leftW + 2, cursorDir);
-        doc.setFont('Helvetica', 'normal');
-        doc.text(c.lbl, margin + leftW + 10, cursorDir);
-        cursorDir += 4;
-      });
-
-      const maxH = Math.max(cursorEsq, cursorDir) - bodyY + 5;
-      doc.rect(margin, bodyY, leftW, maxH);
-      doc.rect(margin + leftW, bodyY, rightW, maxH);
-      
-      y = bodyY + maxH + 5;
-
-      const formatCurrency = (val: any) => val ? parseFloat(val).toLocaleString('pt-BR', {style: 'currency', currency: 'BRL'}) : 'R$ 0,00';
-      
-      const materiaisOS = ultimoOrcamento?.data?.materiais || [];
-      if (materiaisOS.length > 0) {
-        autoTable(doc, {
-          startY: y,
-          head: [['QUANT', 'UN', 'ESPECIFICAÇÃO DE MATERIAL', 'R$ / UNID', 'VALOR TOTAL']],
-          body: materiaisOS.map((m: any) => [
-            m.quantidade || '',
-            m.unidade || '',
-            m.descricao || '',
-            formatCurrency(m.custoUnit),
-            formatCurrency(m.valorTotal)
-          ]),
-          theme: 'grid',
-          headStyles: { fillColor: [230, 230, 230], textColor: [0,0,0], fontStyle: 'bold', fontSize: 8 },
-          styles: { fontSize: 7, cellPadding: 2, textColor: [0,0,0] },
-          margin: { left: margin, right: margin }
-        });
-        y = (doc as any).lastAutoTable.finalY + 5;
-      }
-
-      const terceirizadosOS = ultimoOrcamento?.data?.terceirizados || [];
-      if (terceirizadosOS.length > 0) {
-        autoTable(doc, {
-          startY: y,
-          head: [['ITEM', 'TERCEIRIZAÇÃO OU SUB-CONTRATAÇÃO', 'VALOR TOTAL']],
-          body: terceirizadosOS.map((t: any, idx: number) => [
-            idx + 1,
-            t.descricao || '',
-            formatCurrency(t.valorTotal)
-          ]),
-          theme: 'grid',
-          headStyles: { fillColor: [230, 230, 230], textColor: [0,0,0], fontStyle: 'bold', fontSize: 8 },
-          styles: { fontSize: 7, cellPadding: 2, textColor: [0,0,0] },
-          margin: { left: margin, right: margin }
-        });
-      }
-
-      const pageCount = (doc as any).internal.getNumberOfPages();
-      for (let i = 1; i <= pageCount; i++) {
-        doc.setPage(i);
-        doc.setFontSize(6);
-        doc.setTextColor(150);
-        doc.text(`Documento gerado pelo Linave ERP em ${new Date().toLocaleString('pt-BR')}`, margin, pageHeight - 5);
-        doc.text(`Pag. ${i} / ${pageCount}`, pageWidth - margin - 15, pageHeight - 5);
-      }
-
-      doc.save(`OS_${osPrincipal.ordemServicoNumero || '001'}_${new Date().getTime()}.pdf`);
-      toast.success('OS baixada em PDF com sucesso!');
-
-    } catch (error) {
-      console.error('Erro ao gerar PDF:', error);
-      toast.error('Erro ao gerar OS em PDF');
+      doc.text('LINAVE', margin + 5, y + 10);
     }
-  };
+    
+    doc.setFontSize(12);
+    doc.setFont('Helvetica', 'bold');
+    doc.text('ORDEM DE SERVIÇO\nDE PRODUÇÃO', margin + 90, y + 6.5, { align: 'center' });
+    
+    doc.setFontSize(7);
+    doc.text('Data Emissão:', margin + 132, y + 5);
+    doc.setFont('Helvetica', 'normal');
+    doc.text(osPrincipal.dataEmissao || new Date().toLocaleDateString('pt-BR'), margin + 155, y + 5);
+    
+    doc.setFont('Helvetica', 'bold');
+    doc.text('CC.:', margin + 132, y + 10);
+    doc.setFont('Helvetica', 'normal');
+    doc.text(osPrincipal.cc || 'Não inf.', margin + 142, y + 10);
+    y += 15;
+    
+    const rowH = 5;
+    doc.line(margin, y + rowH, pageWidth - margin, y + rowH);
+    doc.line(margin, y + rowH * 2, pageWidth - margin, y + rowH * 2);
+    doc.line(margin, y + rowH * 3, pageWidth - margin, y + rowH * 3);
+    doc.line(margin + 100, y, margin + 100, y + 20); 
+    
+    doc.setFontSize(8);
+    const printDado = (lbl: string, val: string, vx: number, vy: number) => {
+      doc.setFont('Helvetica', 'bold');
+      doc.text(lbl, vx, vy);
+      doc.setFont('Helvetica', 'normal');
+      doc.text(val || ' ', vx + 25, vy);
+    };
+    
+    const dataInicio = osPrincipal.dataInicioPrevisto || selectedObraDetalhes.dataPrevistaInicio;
+    const dataTermino = osPrincipal.dataTerminoPrevisto || selectedObraDetalhes.dataPrevistaFinal;
+    
+    printDado('CLIENTE:', cliente?.razaoSocial || '', margin + 2, y + 3.5);
+    printDado('Início Previsto:', dataInicio ? new Date(dataInicio).toLocaleDateString('pt-BR') : '', margin + 102, y + 3.5);
+    y += rowH;
+    
+    printDado('PROJETO:', selectedObraDetalhes.nome || '', margin + 2, y + 3.5);
+    printDado('Térm. Previsto:', dataTermino ? new Date(dataTermino).toLocaleDateString('pt-BR') : '', margin + 102, y + 3.5);
+    y += rowH;
+    
+    printDado('EQUIPAMENTO:', osPrincipal.equipamento || osPrincipal.tipo || '', margin + 2, y + 3.5);
+    printDado('OS Nº:', osPrincipal.ordemServicoNumero || '', margin + 102, y + 3.5);
+    y += rowH;
+    
+    printDado('LOCAL:', osPrincipal.local || osPrincipal.localExecucao || '', margin + 2, y + 3.5);
+    printDado('Encarregado:', osPrincipal.supervisorEncarregado || '', margin + 102, y + 3.5);
+    y += rowH;
+    y += 5; 
+    
+    const leftW = 120;
+    const rightW = (pageWidth - 2 * margin) - leftW;
+    
+    doc.setFont('Helvetica', 'bold');
+    doc.setFillColor(230, 230, 230);
+    doc.rect(margin, y, leftW, 6, 'FD');
+    doc.rect(margin + leftW, y, rightW, 6, 'FD');
+    
+    doc.text('DESCRIÇÃO DO SERVIÇO', margin + leftW/2, y + 4, { align: 'center' });
+    doc.text('A SER INCLUIDO', margin + leftW + rightW/2, y + 4, { align: 'center' });
+    y += 6;
+    
+    const bodyY = y;
+    
+    doc.setFont('Helvetica', 'normal');
+    const descTexto = ultimaProposta ? formatarEscopoBasicoParaTexto(ultimaProposta.escopoBasicoServicos || ultimaProposta.escopoA) : (osPrincipal.descricao || osPrincipal.descricaoGeralServico || '');
+    const descLines = doc.splitTextToSize(descTexto, leftW - 4);
+    
+    let cursorEsq = bodyY + 5;
+    descLines.forEach((l: string) => {
+      doc.text(l, margin + 2, cursorEsq);
+      cursorEsq += 4;
+    });
+    
+    const checks = osPrincipal.aSerIncluido || {};
+    const chk = (val: any) => val ? '[ X ]' : '[   ]';
+    
+    const listChecks = [
+      { lbl: 'CERTIFICADO DE GAS', v: checks.certificadoGas },
+      { lbl: 'VENTILAÇÃO', v: checks.ventilacao },
+      { lbl: 'LIMPEZA ANTES', v: checks.limpezaAntes },
+      { lbl: 'LIMPEZA APÓS CONCLUSÃO', v: checks.limpezaApos },
+      { lbl: 'ANDAIMES', v: checks.andaimes },
+      { lbl: 'APOIO DE GUINDASTE', v: checks.apoioGuindastes },
+      { lbl: 'TRANSPORTE EXTERNO', v: checks.transporteExterno },
+      { lbl: 'TESTE DE PRESSÃO', v: checks.testePressao || checks.testesPressao },
+      { lbl: 'PINTURA', v: checks.pintura },
+      { lbl: 'LP / PM', v: checks.lpPm },
+      { lbl: 'TESTE DE ULTRASON', v: checks.testeUltrassom },
+      { lbl: 'INSPEÇÃO DIMENSIONAL', v: checks.inspecaoDimensional },
+      { lbl: 'VISUAL DE SOLDA', v: checks.visualSolda },
+      { lbl: 'SOLDADOR CERTIFICADO', v: checks.soldadorCertificado },
+      { lbl: 'PROCEDIMENTO DE SOLDA', v: checks.procedimentoSolda },
+      { lbl: 'CERTIFICAÇÃO DO MATERIAL', v: checks.certificacaoMaterial },
+      { lbl: 'VIGIA DE FOGO', v: checks.vigiaFogo }
+    ];
+    
+    let cursorDir = bodyY + 5;
+    doc.setFontSize(7);
+    listChecks.forEach(c => {
+      doc.setFont('Helvetica', 'bold');
+      doc.text(chk(c.v), margin + leftW + 2, cursorDir);
+      doc.setFont('Helvetica', 'normal');
+      doc.text(c.lbl, margin + leftW + 10, cursorDir);
+      cursorDir += 4;
+    });
+    
+    const maxH = Math.max(cursorEsq, cursorDir) - bodyY + 5;
+    doc.rect(margin, bodyY, leftW, maxH);
+    doc.rect(margin + leftW, bodyY, rightW, maxH);
+    
+    y = bodyY + maxH + 5;
+    const formatCurrency = (val: any) => val ? parseFloat(val).toLocaleString('pt-BR', {style: 'currency', currency: 'BRL'}) : 'R$ 0,00';
+    
+    const materiaisOS = ultimoOrcamento?.data?.materiais || [];
+    if (materiaisOS.length > 0) {
+      autoTable(doc, {
+        startY: y,
+        head: [['QUANT', 'UN', 'ESPECIFICAÇÃO DE MATERIAL', 'R$ / UNID', 'VALOR TOTAL']],
+        body: materiaisOS.map((m: any) => [
+          m.quantidade || '',
+          m.unidade || '',
+          m.descricao || '',
+          formatCurrency(m.custoUnit),
+          formatCurrency(m.valorTotal)
+        ]),
+        theme: 'grid',
+        headStyles: { fillColor: [230, 230, 230], textColor: [0,0,0], fontStyle: 'bold', fontSize: 8 },
+        styles: { fontSize: 7, cellPadding: 2, textColor: [0,0,0] },
+        margin: { left: margin, right: margin }
+      });
+      y = (doc as any).lastAutoTable.finalY + 5;
+    }
+    
+    const terceirizadosOS = ultimoOrcamento?.data?.terceirizados || [];
+    if (terceirizadosOS.length > 0) {
+      autoTable(doc, {
+        startY: y,
+        head: [['ITEM', 'TERCEIRIZAÇÃO OU SUB-CONTRATAÇÃO', 'VALOR TOTAL']],
+        body: terceirizadosOS.map((t: any, idx: number) => [
+          idx + 1,
+          t.descricao || '',
+          formatCurrency(t.valorTotal)
+        ]),
+        theme: 'grid',
+        headStyles: { fillColor: [230, 230, 230], textColor: [0,0,0], fontStyle: 'bold', fontSize: 8 },
+        styles: { fontSize: 7, cellPadding: 2, textColor: [0,0,0] },
+        margin: { left: margin, right: margin }
+      });
+    }
+    
+    const pageCount = (doc as any).internal.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setFontSize(6);
+      doc.setTextColor(150);
+      doc.text(`Documento gerado pelo Linave ERP em ${new Date().toLocaleString('pt-BR')}`, margin, pageHeight - 5);
+      doc.text(`Pag. ${i} / ${pageCount}`, pageWidth - margin - 15, pageHeight - 5);
+    }
+    
+    const prefixo = getPrefixoEmpresa(selectedObraDetalhes.empresaPrestadora);
+    doc.save(`${prefixo}_OS_${osPrincipal.ordemServicoNumero || '001'}_${new Date().getTime()}.pdf`);
+    
+    toast.success('OS baixada em PDF com sucesso!');
+  } catch (error) {
+    console.error('Erro ao gerar PDF:', error);
+    toast.error('Erro ao gerar OS em PDF');
+  }
+};
 
   const handleDownloadOrcamentoPDF = () => {
-    if (!selectedObraDetalhes?.orcamentos || selectedObraDetalhes.orcamentos.length === 0) return;
+  if (!selectedObraDetalhes?.orcamentos || selectedObraDetalhes.orcamentos.length === 0) return;
+  
+  const ultimoOrcamento = selectedObraDetalhes.orcamentos[selectedObraDetalhes.orcamentos.length - 1];
+  const cliente = (clientes || []).find(c => c.id === selectedObraDetalhes.clienteId);
+  
+  try {
+    const doc = new jsPDF('p', 'mm', 'a4');
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const lineHeight = 5;
+    const cellHeight = lineHeight;
+    let y = 10;
+    const margin = 8;
+    const baseColWidth = (pageWidth - margin * 2) / 10;
     
-    const ultimoOrcamento = selectedObraDetalhes.orcamentos[selectedObraDetalhes.orcamentos.length - 1];
-    const cliente = (clientes || []).find(c => c.id === selectedObraDetalhes.clienteId);
-    const ultimaProposta = Array.isArray(selectedObraDetalhes?.propostas) && selectedObraDetalhes.propostas.length > 0
-      ? selectedObraDetalhes.propostas[selectedObraDetalhes.propostas.length - 1]
-      : null;
-
-    try {
-      const doc = new jsPDF('p', 'mm', 'a4');
-      const pageWidth = doc.internal.pageSize.getWidth();
-      const pageHeight = doc.internal.pageSize.getHeight();
-      const lineHeight = 5;
-      const cellHeight = lineHeight;
-      let y = 10;
-      const margin = 8;
-      const baseColWidth = (pageWidth - margin * 2) / 10;
-      const laborColWidths = [
-        baseColWidth,
-        baseColWidth * 2.7,
-        baseColWidth,
-        baseColWidth,
-        baseColWidth * 1.4,
-        baseColWidth * 1.6,
-        baseColWidth * 1.3
-      ];
-      const materialsColWidths = [
-        baseColWidth,
-        baseColWidth * 3.3,
-        baseColWidth * 0.8,
-        baseColWidth * 0.9,
-        baseColWidth * 1.3,
-        baseColWidth * 1.4,
-        baseColWidth * 1.3
-      ];
-      const activitiesColWidths = [
-        baseColWidth,
-        baseColWidth * 3,
-        baseColWidth,
-        baseColWidth * 5
-      ];
-      const sumWidths = (widths: number[]) => widths.reduce((sum, width) => sum + width, 0);
-
-      // Função para desenhar célula com quebra de texto dinâmica
-      const drawCellWithAutoWrap = (x: number, y: number, width: number, height: number, text: string, bold = false, red = false) => {
-        doc.setFont('Arial', bold ? 'bold' : 'normal');
-        
-        if (red) {
-          doc.setTextColor(255, 0, 0);
-        } else {
-          doc.setTextColor(0, 0, 0);
-        }
-
-        // Quebra o texto para caber na largura disponível
-        const lines = doc.splitTextToSize(text || '', width - 2);
-        
-        // Calcula a altura necessária (máximo de 2 linhas por padrão)
-        let fontSize = 8;
-        let displayLines = lines.slice(0, 2);
-        
-        // Se o texto ocupar mais de 2 linhas, reduz a font size
-        if (lines.length > 2) {
-          fontSize = 6;
-          doc.setFontSize(fontSize);
-          const newLines = doc.splitTextToSize(text || '', width - 2);
-          displayLines = newLines.slice(0, 3);
-        } else {
-          doc.setFontSize(fontSize);
-        }
-
-        // Desenha a célula
-        doc.rect(x, y, width, height);
-        
-        // Desenha o texto (centralizado verticalmente dentro da célula)
-        const lineHeightText = fontSize * 0.35;
-        const totalTextHeight = displayLines.length * lineHeightText;
-        let textY = y + (height - totalTextHeight) / 2 + lineHeightText * 0.7;
-        
-        displayLines.forEach((line: string) => {
-          doc.text(line, x + 1, textY, { maxWidth: width - 2 });
-          textY += lineHeightText;
-        });
-        
-        doc.setTextColor(0, 0, 0);
-      };
-
-      // Função para desenhar célula (versão simples para headers)
-      const drawCell = (x: number, y: number, width: number, height: number, text: string, bold = false, red = false) => {
-        doc.rect(x, y, width, height);
-        doc.setFont('Arial', bold ? 'bold' : 'normal');
-        doc.setFontSize(9);
-        if (red) {
-          doc.setTextColor(255, 0, 0);
-        } else {
-          doc.setTextColor(0, 0, 0);
-        }
-        // Quebra texto se for muito longo
-        const maxChars = Math.floor(width / 1.5);
-        const wrappedText = text.length > maxChars ? text.substring(0, maxChars - 3) + '...' : text;
-        doc.text(wrappedText, x + 1, y + 3.5, { maxWidth: width - 2 });
-        doc.setTextColor(0, 0, 0);
-      };
-
-      // Função para quebrar texto em múltiplas linhas
-      const splitText = (text: string, maxWidth: number, fontSize: number = 7): string[] => {
-        if (!text) return [''];
-        const charsPerLine = Math.floor(maxWidth / 1.8);
-        const lines = [];
-        let currentText = text;
-        
-        while (currentText.length > 0) {
-          if (currentText.length <= charsPerLine) {
-            lines.push(currentText);
-            break;
-          }
-          lines.push(currentText.substring(0, charsPerLine));
-          currentText = currentText.substring(charsPerLine);
-        }
-        return lines;
-      };
-
-      // Helper: imprime um cabeçalho compacto (cliente / ship / escopo / data) e retorna a nova coordenada y
-      const printCompactHeader = () => {
-        let hy = margin;
-        let hx = margin;
-
-        drawCell(hx, hy, baseColWidth, cellHeight, 'Cliente:', true);
-        hx += baseColWidth;
-        drawCell(hx, hy, baseColWidth * 3, cellHeight, cliente?.razaoSocial || '');
-        hx += baseColWidth * 3;
-        drawCell(hx, hy, baseColWidth * 2, cellHeight, `Data: ${new Date().toLocaleDateString('pt-BR')}`);
-        hy += cellHeight;
-
-        hx = margin;
-        drawCell(hx, hy, baseColWidth, cellHeight, 'Ship:', true);
-        hx += baseColWidth;
-        drawCell(hx, hy, baseColWidth * 9, cellHeight, selectedObraDetalhes?.nome || '');
-        hy += cellHeight;
-
-        hx = margin;
-        drawCell(hx, hy, baseColWidth, cellHeight, 'Escopo:', true);
-        hx += baseColWidth;
-        const escopoPeq = formatarEscopoBasicoParaTexto(ultimaProposta?.escopoBasicoServicos || ultimaProposta?.escopoA || '');
-        drawCell(hx, hy, baseColWidth * 9, cellHeight, (escopoPeq || '').split('\n')[0] || '');
-        hy += cellHeight + 2;
-
-        doc.line(margin, hy, pageWidth - margin, hy);
-        hy += 4;
-        return hy;
-      };
-
-      // Calcular valores
-      const base = safeNumber(ultimoOrcamento.valores.totalBruto ?? ultimoOrcamento.valores.subtotal);
-      const margemPercent = safeNumber(ultimoOrcamento.valores.margem);
-      const ohPercent = safeNumber(ultimoOrcamento.valores.oh);
-      const impostosPercent = safeNumber(ultimoOrcamento.valores.impostos);
-      const valorMargem = safeNumber(ultimoOrcamento.valores.valorMargem ?? ((base * margemPercent) / 100));
-      const valorOH = safeNumber(ultimoOrcamento.valores.valorOH ?? ((base * ohPercent) / 100));
-      const semImposto = safeNumber(ultimoOrcamento.valores.totalSemImposto ?? (base + valorMargem + valorOH));
-      const valorImposto = safeNumber(ultimoOrcamento.valores.valorImpostos ?? ((semImposto * impostosPercent) / 100));
-
-      // Dados
-      const maoDeObraData = (ultimoOrcamento.data.maoDeObra || []).filter((item: any) => item.funcao);
-      const totalMaoDeObra = maoDeObraData.reduce((sum: number, item: any) => sum + parseFloat(item.valorTotal || 0), 0);
-      const materiaisData = (ultimoOrcamento.data.materiais || []).filter((item: any) => item.descricao);
-      const totalMateriais = materiaisData.reduce((sum: number, item: any) => sum + parseFloat(item.valorTotal || 0), 0);
-      const terceirizadosData = (ultimoOrcamento.data.terceirizados || []).filter((item: any) => item.descricao);
-      const totalTerceiros = terceirizadosData.reduce((sum: number, item: any) => sum + parseFloat(item.valorTotal || 0), 0);
-      const atividadesData = (ultimoOrcamento.data.atividades || []).filter((item: any) => item.atividade);
-      const totalDias = atividadesData.reduce((sum: number, item: any) => sum + parseFloat(item.dias || 0), 0);
+    const drawCellWithAutoWrap = (x: number, y: number, width: number, height: number, text: string, bold = false, red = false) => {
+      doc.setFont('Arial', bold ? 'bold' : 'normal');
       
-      // Calcular quantidade de itens e preço por item
-      const totalItens = maoDeObraData.length + materiaisData.length + terceirizadosData.length;
-      const precoFinal = safeNumber(ultimoOrcamento.valores.precoFinal);
-      const precoPorItem = totalItens > 0 ? precoFinal / totalItens : 0;
+      if (red) {
+        doc.setTextColor(255, 0, 0);
+      } else {
+        doc.setTextColor(0, 0, 0);
+      }
+      
+      const lines = doc.splitTextToSize(text || '', width - 2);
+      
+      let fontSize = 8;
+      let displayLines = lines.slice(0, 2);
+      
+      if (lines.length > 2) {
+        fontSize = 6;
+        doc.setFontSize(fontSize);
+        const newLines = doc.splitTextToSize(text || '', width - 2);
+        displayLines = newLines.slice(0, 3);
+      } else {
+        doc.setFontSize(fontSize);
+      }
+      
+      doc.rect(x, y, width, height);
+      
+      const lineHeightText = fontSize * 0.35;
+      const totalTextHeight = displayLines.length * lineHeightText;
+      let textY = y + (height - totalTextHeight) / 2 + lineHeightText * 0.7;
+      
+      displayLines.forEach((line: string) => {
+        doc.text(line, x + 1, textY, { maxWidth: width - 2 });
+        textY += lineHeightText;
+      });
+      
+      doc.setTextColor(0, 0, 0);
+    };
 
-      // Linha 1 - Cliente
-      let x = margin;
-      drawCell(x, y, baseColWidth, cellHeight, 'Cliente:', true);
-      x += baseColWidth;
-      drawCell(x, y, baseColWidth * 3, cellHeight, cliente?.razaoSocial || '');
-      x += baseColWidth * 3;
-      drawCell(x, y, baseColWidth, cellHeight, '');
-      x += baseColWidth;
-      drawCell(x, y, baseColWidth * 5, cellHeight, `Data: ${new Date().toLocaleDateString('pt-BR')}`);
-      y += cellHeight;
-
-      // Linha 2 - Ship
-      x = margin;
-      drawCell(x, y, baseColWidth, cellHeight, 'Ship:', true);
-      x += baseColWidth;
-      drawCell(x, y, baseColWidth * 9, cellHeight, selectedObraDetalhes.nome);
-      y += cellHeight;
-
-      // Linha 3 - Escopo
-      x = margin;
-      drawCell(x, y, baseColWidth, cellHeight, 'Escopo:', true);
-      x += baseColWidth;
-      drawCell(x, y, baseColWidth * 9, cellHeight, 'Serviços conforme descrito abaixo');
-      y += cellHeight + 2;
-
-      // ===== Seção A - MÃO DE OBRA =====
-      x = margin;
-      doc.setFont('Arial', 'bold');
+    const drawCell = (x: number, y: number, width: number, height: number, text: string, bold = false, red = false) => {
+      doc.rect(x, y, width, height);
+      doc.setFont('Arial', bold ? 'bold' : 'normal');
       doc.setFontSize(9);
-      doc.text('A', x + 2, y + 3);
+      if (red) {
+        doc.setTextColor(255, 0, 0);
+      } else {
+        doc.setTextColor(0, 0, 0);
+      }
+      const maxChars = Math.floor(width / 1.5);
+      const wrappedText = text.length > maxChars ? text.substring(0, maxChars - 3) + '...' : text;
+      doc.text(wrappedText, x + 1, y + 3.5, { maxWidth: width - 2 });
+      doc.setTextColor(0, 0, 0);
+    };
+
+    const splitText = (text: string, maxWidth: number, fontSize: number = 7): string[] => {
+      if (!text) return [''];
+      const charsPerLine = Math.floor(maxWidth / 1.8);
+      const lines = [];
+      let currentText = text;
+      
+      while (currentText.length > 0) {
+        if (currentText.length <= charsPerLine) {
+          lines.push(currentText);
+          break;
+        }
+        lines.push(currentText.substring(0, charsPerLine));
+        currentText = currentText.substring(charsPerLine);
+      }
+      return lines;
+    };
+
+    const base = (ultimoOrcamento.valores.totalBruto ?? ultimoOrcamento.valores.subtotal) || 0;
+    const margemPercent = ultimoOrcamento.valores.margem || 0;
+    const ohPercent = ultimoOrcamento.valores.oh || 0;
+    const impostosPercent = ultimoOrcamento.valores.impostos || 0;
+    const valorMargem = ultimoOrcamento.valores.valorMargem ?? ((base * margemPercent) / 100);
+    const valorOH = ultimoOrcamento.valores.valorOH ?? ((base * ohPercent) / 100);
+    const semImposto = ultimoOrcamento.valores.totalSemImposto ?? (base + valorMargem + valorOH);
+    const valorImposto = ultimoOrcamento.valores.valorImpostos ?? ((semImposto * impostosPercent) / 100);
+
+    const maoDeObraData = (ultimoOrcamento.data.maoDeObra || []).filter((item: any) => item.funcao);
+    const totalMaoDeObra = maoDeObraData.reduce((sum: number, item: any) => sum + parseFloat(item.valorTotal || 0), 0);
+    
+    const materiaisData = (ultimoOrcamento.data.materiais || []).filter((item: any) => item.descricao);
+    const totalMateriais = materiaisData.reduce((sum: number, item: any) => sum + parseFloat(item.valorTotal || 0), 0);
+    
+    const terceirizadosData = (ultimoOrcamento.data.terceirizados || []).filter((item: any) => item.descricao);
+    const totalTerceiros = terceirizadosData.reduce((sum: number, item: any) => sum + parseFloat(item.valorTotal || 0), 0);
+    
+    const atividadesData = (ultimoOrcamento.data.atividades || []).filter((item: any) => item.atividade);
+    const totalDias = atividadesData.reduce((sum: number, item: any) => sum + parseFloat(item.dias || 0), 0);
+    
+    const totalItens = maoDeObraData.length + materiaisData.length + terceirizadosData.length;
+    const precoFinal = ultimoOrcamento.valores.precoFinal || 0;
+    const precoPorItem = totalItens > 0 ? precoFinal / totalItens : 0;
+
+    let x = margin;
+    drawCell(x, y, baseColWidth, cellHeight, 'Cliente:', true);
+    x += baseColWidth;
+    drawCell(x, y, baseColWidth * 3, cellHeight, cliente?.razaoSocial || '');
+    x += baseColWidth * 3;
+    drawCell(x, y, baseColWidth, cellHeight, '');
+    x += baseColWidth;
+    drawCell(x, y, baseColWidth * 5, cellHeight, `Data: ${new Date().toLocaleDateString('pt-BR')}`);
+    y += cellHeight;
+
+    x = margin;
+    drawCell(x, y, baseColWidth, cellHeight, 'Ship:', true);
+    x += baseColWidth;
+    drawCell(x, y, baseColWidth * 9, cellHeight, selectedObraDetalhes.nome);
+    y += cellHeight;
+
+    x = margin;
+    drawCell(x, y, baseColWidth, cellHeight, 'Escopo:', true);
+    x += baseColWidth;
+    drawCell(x, y, baseColWidth * 9, cellHeight, 'Serviços conforme descrito abaixo');
+    y += cellHeight + 2;
+
+    x = margin;
+    doc.setFont('Arial', 'bold');
+    doc.setFontSize(9);
+    doc.text('A', x + 2, y + 3);
+    doc.rect(x, y, baseColWidth, cellHeight);
+    x += baseColWidth;
+    doc.setTextColor(255, 0, 0);
+    doc.text('MÃO DE OBRA', x + 2, y + 3);
+    doc.rect(x, y, baseColWidth * 9, cellHeight);
+    doc.setTextColor(0, 0, 0);
+    y += cellHeight;
+
+    x = margin;
+    const headersMaoDeObra = ['Item', 'Função', 'Qtd', 'Dias', 'Custo/Dia', 'Obs', '', '', '', 'Valor Total'];
+    headersMaoDeObra.forEach((h) => {
+      doc.setFont('Arial', 'bold');
+      doc.setFontSize(7);
+      doc.text(h, x + 0.5, y + 2.5, { maxWidth: baseColWidth - 1 });
       doc.rect(x, y, baseColWidth, cellHeight);
       x += baseColWidth;
-      doc.setTextColor(255, 0, 0);
-      doc.text('MÃO DE OBRA', x + 2, y + 3);
-      doc.rect(x, y, baseColWidth * 9, cellHeight);
-      doc.setTextColor(0, 0, 0);
-      y += cellHeight;
+    });
+    y += cellHeight;
 
-      // Cabeçalho tabela A
+    maoDeObraData.forEach((item: any, idx: number) => {
       x = margin;
-      const headersMaoDeObra = ['Item', 'Função', 'Qtd', 'Dias', 'Custo/Dia', 'Obs', 'Valor Total'];
-      headersMaoDeObra.forEach((h, index) => {
-        const colWidth = laborColWidths[index];
-        doc.setFont('Arial', 'bold');
-        doc.setFontSize(7);
-        doc.text(h, x + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
-        doc.rect(x, y, colWidth, cellHeight);
-        x += colWidth;
-      });
-      y += cellHeight;
-
-      // Linhas de mão de obra
-      maoDeObraData.forEach((item: any, idx: number) => {
-        x = margin;
-        doc.setFont('Arial', 'normal');
-        doc.setFontSize(7);
-
-        // Item
-        doc.text(String(idx + 1), x + 0.5, y + 2.5);
-        doc.rect(x, y, laborColWidths[0], cellHeight);
-        x += laborColWidths[0];
-
-        // Funcao (com auto wrap)
-        drawCellWithAutoWrap(x, y, laborColWidths[1], cellHeight, item.funcao || '');
-        x += laborColWidths[1];
-
-        // Quantidade
-        doc.text(String(item.quantidade || ''), x + 0.5, y + 2.5);
-        doc.rect(x, y, laborColWidths[2], cellHeight);
-        x += laborColWidths[2];
-
-        // Dias
-        doc.text(String(item.dias || ''), x + 0.5, y + 2.5);
-        doc.rect(x, y, laborColWidths[3], cellHeight);
-        x += laborColWidths[3];
-
-        // Custo/Dia
-        doc.text(String(item.custoUnitDia ? parseFloat(item.custoUnitDia).toFixed(2) : ''), x + 0.5, y + 2.5);
-        doc.rect(x, y, laborColWidths[4], cellHeight);
-        x += laborColWidths[4];
-
-        // Observações (com auto wrap)
-        drawCellWithAutoWrap(x, y, laborColWidths[5], cellHeight, item.observacoes || '');
-        x += laborColWidths[5];
-
-        // Valor Total (última coluna)
-        doc.setFont('Arial', 'bold');
-        doc.setTextColor(255, 0, 0);
-        doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
-        doc.setTextColor(0, 0, 0);
-        doc.setFont('Arial', 'normal');
-        doc.rect(x, y, laborColWidths[6], cellHeight);
-        x += laborColWidths[6];
-
-        y += cellHeight;
-      });
-
-      // Sub-total MÃO DE OBRA
-      x = margin;
-      doc.setFont('Arial', 'bold');
-      doc.setFontSize(8);
-      doc.setTextColor(255, 0, 0);
-      doc.text('Sub-total', x + 0.5, y + 2.5);
-      doc.setTextColor(0, 0, 0);
-      doc.rect(x, y, sumWidths(laborColWidths.slice(0, -1)), cellHeight);
-      x += sumWidths(laborColWidths.slice(0, -1));
-      doc.setTextColor(255, 0, 0);
-      doc.text(totalMaoDeObra.toFixed(2), x + 0.5, y + 2.5);
-      doc.setTextColor(0, 0, 0);
-      doc.rect(x, y, laborColWidths[6], cellHeight);
-      y += cellHeight + 2;
-
-      // ===== Seção B - CONSUMÍVEIS E MATERIAIS =====
-      if (materiaisData && materiaisData.length > 0) {
-        const rows = materiaisData;
-        const headersMateriais = ['Item', 'Descrição', 'Un', 'Qtd', 'Peso/Fat', 'Custo Un', 'Total'];
-
-        const headerTitleHeight = cellHeight;
-        const headerRowHeight = cellHeight;
-        const subtotalHeight = cellHeight + 2;
-        const tableFullHeight = headerTitleHeight + headerRowHeight + (rows.length * cellHeight) + subtotalHeight;
-        const singlePageContentHeight = pageHeight - margin * 2;
-
-        const printSectionTitleB = () => {
-          let xx = margin;
-          doc.setFont('Arial', 'bold');
-          doc.setFontSize(9);
-          doc.text('B', xx + 2, y + 3);
-          doc.rect(xx, y, baseColWidth, cellHeight);
-          xx += baseColWidth;
-          doc.setTextColor(255, 0, 0);
-          doc.text('CONSUMÍVEIS E MATERIAIS', xx + 2, y + 3);
-          doc.rect(xx, y, baseColWidth * 9, cellHeight);
-          doc.setTextColor(0, 0, 0);
-          y += cellHeight;
-        };
-
-        const printHeadersB = () => {
-          let xx = margin;
-          headersMateriais.forEach((h, index) => {
-            const colWidth = materialsColWidths[index];
-            doc.setFont('Arial', 'bold');
-            doc.setFontSize(7);
-            doc.text(h, xx + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
-            doc.rect(xx, y, colWidth, cellHeight);
-            xx += colWidth;
-          });
-          y += cellHeight;
-        };
-
-        if (tableFullHeight <= (pageHeight - y - margin)) {
-          printSectionTitleB();
-          printHeadersB();
-        } else if (tableFullHeight <= singlePageContentHeight) {
-          doc.addPage();
-          y = printCompactHeader();
-          printSectionTitleB();
-          printHeadersB();
-        } else {
-          // cabeçalhos no início
-          printSectionTitleB();
-          printHeadersB();
-        }
-
-        // linhas
-        for (let idx = 0; idx < rows.length; idx++) {
-          const item = rows[idx];
-
-          // verifica espaço para próxima linha + subtotal
-          if (y + cellHeight + subtotalHeight > pageHeight - margin) {
-            doc.addPage();
-            y = printCompactHeader();
-            printSectionTitleB();
-            printHeadersB();
-          }
-
-          let xx = margin;
-          doc.setFont('Arial', 'normal');
-          doc.setFontSize(7);
-
-          doc.text(String(idx + 1), xx + 0.5, y + 2.5);
-          doc.rect(xx, y, materialsColWidths[0], cellHeight);
-          xx += materialsColWidths[0];
-
-          drawCellWithAutoWrap(xx, y, materialsColWidths[1], cellHeight, item.descricao || '');
-          xx += materialsColWidths[1];
-
-          doc.text(item.unidade || '', xx + 0.5, y + 2.5);
-          doc.rect(xx, y, materialsColWidths[2], cellHeight);
-          xx += materialsColWidths[2];
-
-          doc.text(String(item.quantidade || ''), xx + 0.5, y + 2.5);
-          doc.rect(xx, y, materialsColWidths[3], cellHeight);
-          xx += materialsColWidths[3];
-
-          doc.text(String(item.pesoFator || ''), xx + 0.5, y + 2.5);
-          doc.rect(xx, y, materialsColWidths[4], cellHeight);
-          xx += materialsColWidths[4];
-
-          doc.text(String(item.custoUnit ? parseFloat(item.custoUnit).toFixed(2) : ''), xx + 0.5, y + 2.5);
-          doc.rect(xx, y, materialsColWidths[5], cellHeight);
-          xx += materialsColWidths[5];
-
-          doc.setFont('Arial', 'bold');
-          doc.setTextColor(255, 0, 0);
-          doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), xx + 0.5, y + 2.5);
-          doc.setTextColor(0, 0, 0);
-          doc.setFont('Arial', 'normal');
-          doc.rect(xx, y, materialsColWidths[6], cellHeight);
-          xx += materialsColWidths[6];
-
-          y += cellHeight;
-        }
-
-        // Total materiais
-        if (y + subtotalHeight > pageHeight - margin) {
-          doc.addPage();
-          y = printCompactHeader();
-        }
-        let xt = margin;
-        doc.setFont('Arial', 'bold');
-        doc.setFontSize(8);
-        doc.setTextColor(255, 0, 0);
-        doc.text('Valor total', xt + 0.5, y + 2.5);
-        doc.setTextColor(0, 0, 0);
-        doc.rect(xt, y, sumWidths(materialsColWidths.slice(0, -1)), cellHeight);
-        xt += sumWidths(materialsColWidths.slice(0, -1));
-        doc.setTextColor(255, 0, 0);
-        doc.text(totalMateriais.toFixed(2), xt + 0.5, y + 2.5);
-        doc.setTextColor(0, 0, 0);
-        doc.rect(xt, y, materialsColWidths[6], cellHeight);
-        y += cellHeight + 2;
-      }
-
-      // ===== Seção C - SERVIÇOS TERCEIRIZADOS =====
-      if (terceirizadosData && terceirizadosData.length > 0) {
-        const rows = terceirizadosData;
-        const headersTerceiros = ['Item', 'Descrição', 'Un', 'Qtd', 'Peso/Fat', 'Custo Un', 'Total'];
-
-        const headerTitleHeight = cellHeight;
-        const headerRowHeight = cellHeight;
-        const subtotalHeight = cellHeight + 2;
-        const tableFullHeight = headerTitleHeight + headerRowHeight + (rows.length * cellHeight) + subtotalHeight;
-        const singlePageContentHeight = pageHeight - margin * 2;
-
-        const printSectionTitleC = () => {
-          let xx = margin;
-          doc.setFont('Arial', 'bold');
-          doc.setFontSize(9);
-          doc.text('C', xx + 2, y + 3);
-          doc.rect(xx, y, baseColWidth, cellHeight);
-          xx += baseColWidth;
-          doc.setTextColor(255, 0, 0);
-          doc.text('SERVIÇOS TERCEIRIZADOS', xx + 2, y + 3);
-          doc.rect(xx, y, baseColWidth * 9, cellHeight);
-          doc.setTextColor(0, 0, 0);
-          y += cellHeight;
-        };
-
-        const printHeadersC = () => {
-          let xx = margin;
-          headersTerceiros.forEach((h, index) => {
-            const colWidth = materialsColWidths[index];
-            doc.setFont('Arial', 'bold');
-            doc.setFontSize(7);
-            doc.text(h, xx + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
-            doc.rect(xx, y, colWidth, cellHeight);
-            xx += colWidth;
-          });
-          y += cellHeight;
-        };
-
-        if (tableFullHeight <= (pageHeight - y - margin)) {
-          printSectionTitleC();
-          printHeadersC();
-        } else if (tableFullHeight <= singlePageContentHeight) {
-          doc.addPage();
-          y = printCompactHeader();
-          printSectionTitleC();
-          printHeadersC();
-        } else {
-          printSectionTitleC();
-          printHeadersC();
-        }
-
-        for (let idx = 0; idx < rows.length; idx++) {
-          const item = rows[idx];
-
-          if (y + cellHeight + subtotalHeight > pageHeight - margin) {
-            doc.addPage();
-            y = printCompactHeader();
-            printSectionTitleC();
-            printHeadersC();
-          }
-
-          let xx = margin;
-          doc.setFont('Arial', 'normal');
-          doc.setFontSize(7);
-
-          doc.text(String(idx + 1), xx + 0.5, y + 2.5);
-          doc.rect(xx, y, materialsColWidths[0], cellHeight);
-          xx += materialsColWidths[0];
-
-          drawCellWithAutoWrap(xx, y, materialsColWidths[1], cellHeight, item.descricao || '');
-          xx += materialsColWidths[1];
-
-          doc.text(item.unidade || '', xx + 0.5, y + 2.5);
-          doc.rect(xx, y, materialsColWidths[2], cellHeight);
-          xx += materialsColWidths[2];
-
-          doc.text(String(item.quantidade || ''), xx + 0.5, y + 2.5);
-          doc.rect(xx, y, materialsColWidths[3], cellHeight);
-          xx += materialsColWidths[3];
-
-          doc.text(String(item.pesoFator || ''), xx + 0.5, y + 2.5);
-          doc.rect(xx, y, materialsColWidths[4], cellHeight);
-          xx += materialsColWidths[4];
-
-          doc.text(String(item.custoUnit ? parseFloat(item.custoUnit).toFixed(2) : ''), xx + 0.5, y + 2.5);
-          doc.rect(xx, y, materialsColWidths[5], cellHeight);
-          xx += materialsColWidths[5];
-
-          doc.setFont('Arial', 'bold');
-          doc.setTextColor(255, 0, 0);
-          doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), xx + 0.5, y + 2.5);
-          doc.setTextColor(0, 0, 0);
-          doc.setFont('Arial', 'normal');
-          doc.rect(xx, y, materialsColWidths[6], cellHeight);
-          xx += materialsColWidths[6];
-
-          y += cellHeight;
-        }
-
-        // Sub-total terceiros
-        if (y + subtotalHeight > pageHeight - margin) {
-          doc.addPage();
-          y = printCompactHeader();
-        }
-        let xs = margin;
-        doc.setFont('Arial', 'bold');
-        doc.setFontSize(8);
-        doc.setTextColor(255, 0, 0);
-        doc.text('Sub-total', xs + 0.5, y + 2.5);
-        doc.setTextColor(0, 0, 0);
-        doc.rect(xs, y, sumWidths(materialsColWidths.slice(0, -1)), cellHeight);
-        xs += sumWidths(materialsColWidths.slice(0, -1));
-        doc.setTextColor(255, 0, 0);
-        doc.text(totalTerceiros.toFixed(2), xs + 0.5, y + 2.5);
-        doc.setTextColor(0, 0, 0);
-        doc.rect(xs, y, materialsColWidths[6], cellHeight);
-        y += cellHeight + 2;
-      }
-
-      // ===== Seção D - ATIVIDADES PREVISTAS =====
-      if (atividadesData && atividadesData.length > 0) {
-        const rows = atividadesData;
-        const headersAtividades = ['Item', 'Atividade', 'Dias', 'Observações'];
-
-        const headerTitleHeight = cellHeight;
-        const headerRowHeight = cellHeight;
-        const subtotalHeight = cellHeight + 2;
-        const tableFullHeight = headerTitleHeight + headerRowHeight + (rows.length * cellHeight) + subtotalHeight;
-        const singlePageContentHeight = pageHeight - margin * 2;
-
-        const printSectionTitleD = () => {
-          y += 1;
-          let xx = margin;
-          doc.setFont('Arial', 'bold');
-          doc.setFontSize(9);
-          doc.text('D', xx + 2, y + 3);
-          doc.rect(xx, y, baseColWidth, cellHeight);
-          xx += baseColWidth;
-          doc.setTextColor(255, 0, 0);
-          doc.text('ATIVIDADES PREVISTAS', xx + 2, y + 3);
-          doc.rect(xx, y, baseColWidth * 9, cellHeight);
-          doc.setTextColor(0, 0, 0);
-          y += cellHeight;
-        };
-
-        const printHeadersD = () => {
-          let xx = margin;
-          headersAtividades.forEach((h, index) => {
-            const colWidth = activitiesColWidths[index];
-            doc.setFont('Arial', 'bold');
-            doc.setFontSize(7);
-            doc.text(h, xx + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
-            doc.rect(xx, y, colWidth, cellHeight);
-            xx += colWidth;
-          });
-          y += cellHeight;
-        };
-
-        if (tableFullHeight <= (pageHeight - y - margin)) {
-          printSectionTitleD();
-          printHeadersD();
-        } else if (tableFullHeight <= singlePageContentHeight) {
-          doc.addPage();
-          y = printCompactHeader();
-          printSectionTitleD();
-          printHeadersD();
-        } else {
-          printSectionTitleD();
-          printHeadersD();
-        }
-
-        for (let idx = 0; idx < rows.length; idx++) {
-          const item = rows[idx];
-
-          if (y + cellHeight + subtotalHeight > pageHeight - margin) {
-            doc.addPage();
-            y = printCompactHeader();
-            printSectionTitleD();
-            printHeadersD();
-          }
-
-          let xx = margin;
-          doc.setFont('Arial', 'normal');
-          doc.setFontSize(7);
-
-          doc.text(String(idx + 1), xx + 0.5, y + 2.5);
-          doc.rect(xx, y, activitiesColWidths[0], cellHeight);
-          xx += activitiesColWidths[0];
-
-          drawCellWithAutoWrap(xx, y, activitiesColWidths[1], cellHeight, item.atividade || '');
-          xx += activitiesColWidths[1];
-
-          doc.text(String(item.dias || ''), xx + 0.5, y + 2.5);
-          doc.rect(xx, y, activitiesColWidths[2], cellHeight);
-          xx += activitiesColWidths[2];
-
-          drawCellWithAutoWrap(xx, y, activitiesColWidths[3], cellHeight, item.observacoes || '');
-          xx += activitiesColWidths[3];
-
-          y += cellHeight;
-        }
-
-        // Total dias
-        if (y + subtotalHeight > pageHeight - margin) {
-          doc.addPage();
-          y = printCompactHeader();
-        }
-        let xt = margin;
-        doc.setFont('Arial', 'bold');
-        doc.setFontSize(8);
-        doc.setTextColor(255, 0, 0);
-        doc.text('Total dias', xt + 0.5, y + 2.5);
-        doc.setTextColor(0, 0, 0);
-        doc.rect(xt, y, activitiesColWidths[0] + activitiesColWidths[1], cellHeight);
-        xt += activitiesColWidths[0] + activitiesColWidths[1];
-        doc.setTextColor(255, 0, 0);
-        doc.text(String(totalDias), xt + 0.5, y + 2.5);
-        doc.setTextColor(0, 0, 0);
-        doc.rect(xt, y, activitiesColWidths[2], cellHeight);
-        xt += activitiesColWidths[2];
-        doc.rect(xt, y, activitiesColWidths[3], cellHeight);
-        y += cellHeight + 2;
-      }
-
-      // ===== Seção E - CUSTO TOTAL =====
-      x = margin;
-      doc.setFont('Arial', 'bold');
-      doc.setFontSize(9);
-      doc.text('E', x + 2, y + 3);
+      doc.setFont('Arial', 'normal');
+      doc.setFontSize(7);
+      
+      doc.text(String(idx + 1), x + 0.5, y + 2.5);
       doc.rect(x, y, baseColWidth, cellHeight);
       x += baseColWidth;
-      doc.text('Cálculos Finais', x + 2, y + 3);
-      doc.rect(x, y, baseColWidth * 9, cellHeight);
-      y += cellHeight;
-
-      // Dados de cálculo
-      const calculos = [
-        ['1', 'Valor mão de obra', totalMaoDeObra.toFixed(2)],
-        ['2', 'Valor consumível e material', totalMateriais.toFixed(2)],
-        ['3', 'Valor terceirizados', totalTerceiros.toFixed(2)],
-        ['4', 'Total', base.toFixed(2)],
-        ['5', `O.H (${ohPercent}%)`, valorOH.toFixed(2)],
-        ['6', `Margem (${margemPercent}%)`, valorMargem.toFixed(2)],
-        ['7', 'PV S/ imposto', semImposto.toFixed(2)],
-        ['8', `Imposto S/ NF (${impostosPercent}%)`, valorImposto.toFixed(2)],
-        ['9', 'PV FINAL R$', precoFinal.toFixed(2)]
-      ];
-
-      // Linhas de cálculo
-      calculos.forEach((row, idx) => {
-        const isLastRow = idx === calculos.length - 1;
-        x = margin;
-        doc.setFont('Arial', 'normal');
-        doc.setFontSize(8);
-        
-        if (isLastRow) {
-          doc.setFont('Arial', 'bold');
-          doc.setTextColor(255, 0, 0);
-        }
-
-        // Número
-        doc.text(row[0], x + 0.5, y + 2.5);
+      
+      drawCellWithAutoWrap(x, y, baseColWidth, cellHeight, item.funcao || '');
+      x += baseColWidth;
+      
+      doc.text(String(item.quantidade || ''), x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth, cellHeight);
+      x += baseColWidth;
+      
+      doc.text(String(item.dias || ''), x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth, cellHeight);
+      x += baseColWidth;
+      
+      doc.text(String(item.custoUnitDia ? parseFloat(item.custoUnitDia).toFixed(2) : ''), x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth, cellHeight);
+      x += baseColWidth;
+      
+      drawCellWithAutoWrap(x, y, baseColWidth, cellHeight, item.observacoes || '');
+      x += baseColWidth;
+      
+      for (let i = 0; i < 3; i++) {
         doc.rect(x, y, baseColWidth, cellHeight);
         x += baseColWidth;
-
-        // Descrição (ocupa 8 colunas)
-        doc.text(row[1], x + 0.5, y + 2.5, { maxWidth: baseColWidth * 8 - 2 });
-        doc.rect(x, y, baseColWidth * 8, cellHeight);
-        x += baseColWidth * 8;
-
-        // Valor total na última coluna
-        doc.text(row[2], x + 0.5, y + 2.5);
-        doc.rect(x, y, baseColWidth, cellHeight);
-
-        if (isLastRow) {
-          doc.setTextColor(0, 0, 0);
-        }
-        y += cellHeight;
-      });
-
-      // ===== RESUMO FINAL =====
-      x = margin;
-      doc.setFont('Arial', 'bold');
-      doc.setFontSize(8);
-      doc.text('RESUMO:', x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth * 10, cellHeight);
-      y += cellHeight;
-
-      // Linha: Quantidade de itens
-      x = margin;
-      doc.setFont('Arial', 'normal');
-      doc.setFontSize(8);
-      doc.text('Qtd. de Itens:', x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth * 5, cellHeight);
-      x += baseColWidth * 5;
-      doc.setFont('Arial', 'bold');
-      doc.text(String(totalItens), x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth * 5, cellHeight);
-      y += cellHeight;
-
-      // Linha: Preço por item
-      x = margin;
-      doc.setFont('Arial', 'normal');
-      doc.setFontSize(8);
-      doc.text('Preço por Item:', x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth * 5, cellHeight);
-      x += baseColWidth * 5;
-      doc.setFont('Arial', 'bold');
-      doc.text(`R$ ${precoPorItem.toFixed(2)}`, x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth * 5, cellHeight);
-      y += cellHeight;
-
-      // Linha: Valor total
-      x = margin;
-      doc.setFont('Arial', 'normal');
-      doc.setFontSize(8);
-      doc.text('Valor Total:', x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth * 5, cellHeight);
-      x += baseColWidth * 5;
+      }
+      
       doc.setFont('Arial', 'bold');
       doc.setTextColor(255, 0, 0);
-      doc.text(`R$ ${precoFinal.toFixed(2)}`, x + 0.5, y + 2.5);
+      doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
       doc.setTextColor(0, 0, 0);
-      doc.rect(x, y, baseColWidth * 5, cellHeight);
+      doc.setFont('Arial', 'normal');
+      doc.rect(x, y, baseColWidth, cellHeight);
+      x += baseColWidth;
+      y += cellHeight;
+    });
 
-      // Fazer download
-      doc.save(`Orcamento_${ultimoOrcamento.numeroOrcamento}_v${formatarVersaoOrcamento(ultimoOrcamento.versao)}.pdf`);
-      toast.success('Orçamento baixado em PDF com sucesso!');
-    } catch (error) {
-      console.error('Erro ao gerar PDF:', error);
-      toast.error('Erro ao gerar PDF do orçamento');
-    }
-  };
+    x = margin;
+    doc.setFont('Arial', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(255, 0, 0);
+    doc.text('Sub-total', x + 0.5, y + 2.5);
+    doc.setTextColor(0, 0, 0);
+    doc.rect(x, y, baseColWidth * 9, cellHeight);
+    x += baseColWidth * 9;
+    doc.setTextColor(255, 0, 0);
+    doc.text(totalMaoDeObra.toFixed(2), x + 0.5, y + 2.5);
+    doc.setTextColor(0, 0, 0);
+    doc.rect(x, y, baseColWidth, cellHeight);
+    y += cellHeight + 2;
+
+    x = margin;
+    doc.setFont('Arial', 'bold');
+    doc.setFontSize(9);
+    doc.text('B', x + 2, y + 3);
+    doc.rect(x, y, baseColWidth, cellHeight);
+    x += baseColWidth;
+    doc.setTextColor(255, 0, 0);
+    doc.text('CONSUMÍVEIS E MATERIAIS', x + 2, y + 3);
+    doc.rect(x, y, baseColWidth * 9, cellHeight);
+    doc.setTextColor(0, 0, 0);
+    y += cellHeight;
+
+    x = margin;
+    const headersMateriais = ['Item', 'Descrição', 'Un', 'Qtd', 'Peso/Fat', 'Custo Un', '3º', 'Obs', '', 'Total'];
+    headersMateriais.forEach((h) => {
+      doc.setFont('Arial', 'bold');
+      doc.setFontSize(7);
+      doc.text(h, x + 0.5, y + 2.5, { maxWidth: baseColWidth - 1 });
+      doc.rect(x, y, baseColWidth, cellHeight);
+      x += baseColWidth;
+    });
+    y += cellHeight;
+
+    materiaisData.forEach((item: any, idx: number) => {
+      x = margin;
+      doc.setFont('Arial', 'normal');
+      doc.setFontSize(7);
+      
+      doc.text(String(idx + 1), x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth, cellHeight);
+      x += baseColWidth;
+      
+      drawCellWithAutoWrap(x, y, baseColWidth, cellHeight, item.descricao || '');
+      x += baseColWidth;
+      
+      doc.text(item.unidade || '', x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth, cellHeight);
+      x += baseColWidth;
+      
+      doc.text(String(item.quantidade || ''), x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth, cellHeight);
+      x += baseColWidth;
+      
+      doc.text(String(item.pesoFator || ''), x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth, cellHeight);
+      x += baseColWidth;
+      
+      doc.text(String(item.custoUnit ? parseFloat(item.custoUnit).toFixed(2) : ''), x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth, cellHeight);
+      x += baseColWidth;
+      
+      doc.text(item.terceiros ? 'S' : 'N', x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth, cellHeight);
+      x += baseColWidth;
+      
+      drawCellWithAutoWrap(x, y, baseColWidth, cellHeight, item.observacoes || '');
+      x += baseColWidth;
+      
+      doc.rect(x, y, baseColWidth, cellHeight);
+      x += baseColWidth;
+      
+      doc.setFont('Arial', 'bold');
+      doc.setTextColor(255, 0, 0);
+      doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
+      doc.setTextColor(0, 0, 0);
+      doc.setFont('Arial', 'normal');
+      doc.rect(x, y, baseColWidth, cellHeight);
+      x += baseColWidth;
+      y += cellHeight;
+    });
+
+    x = margin;
+    doc.setFont('Arial', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(255, 0, 0);
+    doc.text('Valor total', x + 0.5, y + 2.5);
+    doc.setTextColor(0, 0, 0);
+    doc.rect(x, y, baseColWidth * 9, cellHeight);
+    x += baseColWidth * 9;
+    doc.setTextColor(255, 0, 0);
+    doc.text(totalMateriais.toFixed(2), x + 0.5, y + 2.5);
+    doc.setTextColor(0, 0, 0);
+    doc.rect(x, y, baseColWidth, cellHeight);
+    y += cellHeight + 2;
+
+    x = margin;
+    doc.setFont('Arial', 'bold');
+    doc.setFontSize(9);
+    doc.text('C', x + 2, y + 3);
+    doc.rect(x, y, baseColWidth, cellHeight);
+    x += baseColWidth;
+    doc.setTextColor(255, 0, 0);
+    doc.text('SERVIÇOS TERCEIRIZADOS', x + 2, y + 3);
+    doc.rect(x, y, baseColWidth * 9, cellHeight);
+    doc.setTextColor(0, 0, 0);
+    y += cellHeight;
+
+    x = margin;
+    const headersTerceiros = ['Item', 'Descrição', 'Un', 'Qtd', 'Peso/Fat', 'Custo Un', 'Obs', '', '', 'Total'];
+    headersTerceiros.forEach((h) => {
+      doc.setFont('Arial', 'bold');
+      doc.setFontSize(7);
+      doc.text(h, x + 0.5, y + 2.5, { maxWidth: baseColWidth - 1 });
+      doc.rect(x, y, baseColWidth, cellHeight);
+      x += baseColWidth;
+    });
+    y += cellHeight;
+
+    terceirizadosData.forEach((item: any, idx: number) => {
+      x = margin;
+      doc.setFont('Arial', 'normal');
+      doc.setFontSize(7);
+      
+      doc.text(String(idx + 1), x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth, cellHeight);
+      x += baseColWidth;
+      
+      drawCellWithAutoWrap(x, y, baseColWidth, cellHeight, item.descricao || '');
+      x += baseColWidth;
+      
+      doc.text(item.unidade || '', x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth, cellHeight);
+      x += baseColWidth;
+      
+      doc.text(String(item.quantidade || ''), x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth, cellHeight);
+      x += baseColWidth;
+      
+      doc.text(String(item.pesoFator || ''), x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth, cellHeight);
+      x += baseColWidth;
+      
+      doc.text(String(item.custoUnit ? parseFloat(item.custoUnit).toFixed(2) : ''), x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth, cellHeight);
+      x += baseColWidth;
+      
+      drawCellWithAutoWrap(x, y, baseColWidth, cellHeight, item.observacoes || '');
+      x += baseColWidth;
+      
+      for (let i = 0; i < 2; i++) {
+        doc.rect(x, y, baseColWidth, cellHeight);
+        x += baseColWidth;
+      }
+      
+      doc.setFont('Arial', 'bold');
+      doc.setTextColor(255, 0, 0);
+      doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
+      doc.setTextColor(0, 0, 0);
+      doc.setFont('Arial', 'normal');
+      doc.rect(x, y, baseColWidth, cellHeight);
+      x += baseColWidth;
+      y += cellHeight;
+    });
+
+    x = margin;
+    doc.setFont('Arial', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(255, 0, 0);
+    doc.text('Sub-total', x + 0.5, y + 2.5);
+    doc.setTextColor(0, 0, 0);
+    doc.rect(x, y, baseColWidth * 9, cellHeight);
+    x += baseColWidth * 9;
+    doc.setTextColor(255, 0, 0);
+    doc.text(totalTerceiros.toFixed(2), x + 0.5, y + 2.5);
+    doc.setTextColor(0, 0, 0);
+    doc.rect(x, y, baseColWidth, cellHeight);
+    y += cellHeight + 2;
+
+    x = margin;
+    doc.setFont('Arial', 'bold');
+    doc.setFontSize(9);
+    doc.text('D', x + 2, y + 3);
+    doc.rect(x, y, baseColWidth, cellHeight);
+    x += baseColWidth;
+    doc.text('Cálculos Finais', x + 2, y + 3);
+    doc.rect(x, y, baseColWidth * 9, cellHeight);
+    y += cellHeight;
+
+    const calculos = [
+      ['1', 'Valor mão de obra', totalMaoDeObra.toFixed(2)],
+      ['2', 'Valor consumível e material', totalMateriais.toFixed(2)],
+      ['3', 'Valor terceirizados', totalTerceiros.toFixed(2)],
+      ['4', 'Total', base.toFixed(2)],
+      ['5', `O.H (${ohPercent}%)`, valorOH.toFixed(2)],
+      ['6', `Margem (${margemPercent}%)`, valorMargem.toFixed(2)],
+      ['7', 'PV S/ imposto', semImposto.toFixed(2)],
+      ['8', `Imposto S/ NF (${impostosPercent}%)`, valorImposto.toFixed(2)],
+      ['9', 'PV FINAL R$', ultimoOrcamento.valores.precoFinal.toFixed(2)]
+    ];
+
+    calculos.forEach((row, idx) => {
+      const isLastRow = idx === calculos.length - 1;
+      x = margin;
+      doc.setFont('Arial', 'normal');
+      doc.setFontSize(8);
+      
+      if (isLastRow) {
+        doc.setFont('Arial', 'bold');
+        doc.setTextColor(255, 0, 0);
+      }
+      
+      doc.text(row[0], x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth, cellHeight);
+      x += baseColWidth;
+      
+      doc.text(row[1], x + 0.5, y + 2.5, { maxWidth: baseColWidth * 8 - 2 });
+      doc.rect(x, y, baseColWidth * 8, cellHeight);
+      x += baseColWidth * 8;
+      
+      doc.text(row[2], x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth, cellHeight);
+      if (isLastRow) {
+        doc.setTextColor(0, 0, 0);
+      }
+      y += cellHeight;
+    });
+
+    y += 1;
+    x = margin;
+    doc.setFont('Arial', 'bold');
+    doc.setFontSize(9);
+    doc.text('E', x + 2, y + 3);
+    doc.rect(x, y, baseColWidth, cellHeight);
+    x += baseColWidth;
+    doc.setTextColor(255, 0, 0);
+    doc.text('ATIVIDADES PREVISTAS', x + 2, y + 3);
+    doc.rect(x, y, baseColWidth * 9, cellHeight);
+    doc.setTextColor(0, 0, 0);
+    y += cellHeight;
+
+    x = margin;
+    const headersAtividades = ['Item', 'Atividade', 'Dias', 'Observações', '', '', '', '', '', ''];
+    headersAtividades.forEach((h) => {
+      doc.setFont('Arial', 'bold');
+      doc.setFontSize(7);
+      doc.text(h, x + 0.5, y + 2.5, { maxWidth: baseColWidth - 1 });
+      doc.rect(x, y, baseColWidth, cellHeight);
+      x += baseColWidth;
+    });
+    y += cellHeight;
+
+    atividadesData.forEach((item: any, idx: number) => {
+      x = margin;
+      doc.setFont('Arial', 'normal');
+      doc.setFontSize(7);
+      
+      doc.text(String(idx + 1), x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth, cellHeight);
+      x += baseColWidth;
+      
+      drawCellWithAutoWrap(x, y, baseColWidth, cellHeight, item.atividade || '');
+      x += baseColWidth;
+      
+      doc.text(String(item.dias || ''), x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth, cellHeight);
+      x += baseColWidth;
+      
+      drawCellWithAutoWrap(x, y, baseColWidth, cellHeight, item.observacoes || '');
+      x += baseColWidth;
+      doc.rect(x, y, baseColWidth * 6, cellHeight);
+      x += baseColWidth * 6;
+      y += cellHeight;
+    });
+
+    x = margin;
+    doc.setFont('Arial', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(255, 0, 0);
+    doc.text('Total dias', x + 0.5, y + 2.5);
+    doc.setTextColor(0, 0, 0);
+    doc.rect(x, y, baseColWidth * 2, cellHeight);
+    x += baseColWidth * 2;
+    doc.setTextColor(255, 0, 0);
+    doc.text(String(totalDias), x + 0.5, y + 2.5);
+    doc.setTextColor(0, 0, 0);
+    doc.rect(x, y, baseColWidth * 8, cellHeight);
+    y += cellHeight + 2;
+
+    x = margin;
+    doc.setFont('Arial', 'bold');
+    doc.setFontSize(8);
+    doc.text('RESUMO:', x + 0.5, y + 2.5);
+    doc.rect(x, y, baseColWidth * 10, cellHeight);
+    y += cellHeight;
+
+    x = margin;
+    doc.setFont('Arial', 'normal');
+    doc.setFontSize(8);
+    doc.text('Qtd. de Itens:', x + 0.5, y + 2.5);
+    doc.rect(x, y, baseColWidth * 5, cellHeight);
+    x += baseColWidth * 5;
+    doc.setFont('Arial', 'bold');
+    doc.text(String(totalItens), x + 0.5, y + 2.5);
+    doc.rect(x, y, baseColWidth * 5, cellHeight);
+    y += cellHeight;
+
+    x = margin;
+    doc.setFont('Arial', 'normal');
+    doc.setFontSize(8);
+    doc.text('Preço por Item:', x + 0.5, y + 2.5);
+    doc.rect(x, y, baseColWidth * 5, cellHeight);
+    x += baseColWidth * 5;
+    doc.setFont('Arial', 'bold');
+    doc.text(`R$ ${precoPorItem.toFixed(2)}`, x + 0.5, y + 2.5);
+    doc.rect(x, y, baseColWidth * 5, cellHeight);
+    y += cellHeight;
+
+    x = margin;
+    doc.setFont('Arial', 'normal');
+    doc.setFontSize(8);
+    doc.text('Valor Total:', x + 0.5, y + 2.5);
+    doc.rect(x, y, baseColWidth * 5, cellHeight);
+    x += baseColWidth * 5;
+    doc.setFont('Arial', 'bold');
+    doc.setTextColor(255, 0, 0);
+    doc.text(`R$ ${precoFinal.toFixed(2)}`, x + 0.5, y + 2.5);
+    doc.setTextColor(0, 0, 0);
+    doc.rect(x, y, baseColWidth * 5, cellHeight);
+
+    // Fazer download com Prefixo
+    const prefixo = getPrefixoEmpresa(selectedObraDetalhes.empresaPrestadora);
+    const numeroSemPrefixoAntigo = ultimoOrcamento.numeroOrcamento ? ultimoOrcamento.numeroOrcamento.replace(/^(BM|LN|SN)-/, '') : 'SemNumero';
+    
+    doc.save(`${prefixo}_Orcamento_${numeroSemPrefixoAntigo}_v${formatarVersaoOrcamento(ultimoOrcamento.versao)}.pdf`);
+    
+    toast.success('Orçamento baixado em PDF com sucesso!');
+  } catch (error) {
+    console.error('Erro ao gerar PDF:', error);
+    toast.error('Erro ao gerar PDF do orçamento');
+  }
+};
 
   const handleEnviarOS = () => {
     if (!selectedObraDetalhes) return;

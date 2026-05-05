@@ -42,6 +42,25 @@ interface PropostaFormData {
   encerramento: string;
 }
 
+// --- FUNÇÕES AUXILIARES ---
+const getPrefixoEmpresa = (empresaPrestadora?: string) => {
+  if (!empresaPrestadora) return 'LN';
+  return empresaPrestadora.toLowerCase().includes('servinave') ? 'SN' : 'LN';
+};
+
+const indexToVersaoAlfabetica = (index: number) => {
+  if (index < 0) return 'A';
+  let value = index;
+  let output = '';
+  while (value >= 0) {
+    output = String.fromCharCode((value % 26) + 65) + output;
+    value = Math.floor(value / 26) - 1;
+  }
+  return output;
+};
+// --------------------------
+
+
 export function PropostaView() {
   const { obras, clientes, saveEntity } = useErp();
   const listaClientes = Array.isArray(clientes) ? clientes : [];
@@ -330,55 +349,46 @@ export function PropostaView() {
     }
   };
 
-  const handleSelectObra = (obra: any) => {
+ const handleSelectObra = (obra: any) => {
     setSelectedObra(obra);
-    
+         
     // Pré-preencher dados
     const cliente = listaClientes.find(c => c.id === obra.clienteId);
-    const proximaVersao = (obra.propostas?.length || 0) + 1;
     
-    // Seleciona template de proposta conforme a empresa prestadora da obra (aceita variações)
-    const baseForm = getInitialPropostaForm();
-    const textoAberturaPadrao = baseForm.textoAbertura;
-    const textoAberturaServinave = textoAberturaPadrao.replace('Diretoria Comercial', 'Diretoria Comercial - Servinave');
-
-    const rawEmpresa = (() => {
-      const ep = obra.empresaPrestadora || '';
-      if (!ep) return '';
-      if (typeof ep === 'string') return ep;
-      return (ep.nome || ep.razaoSocial || ep.empresaNome || '').toString();
-    })();
-
-    const normalize = (s: string) => s
-      .normalize ? s.normalize('NFD').replace(/[ -]/g, (c: string) => c) : s;
-    const cleaned = (rawEmpresa || '').toString().normalize('NFD').replace(/[ -]/g, (c: string) => c).toLowerCase();
-    const isLinave = String(cleaned).includes('linave');
-
+    // Descobrir a versão alfabética e o prefixo (Ex: A, B, C...)
+    const indexVersao = obra.propostas?.length || 0;
+    const proximaVersaoLetra = indexToVersaoAlfabetica(indexVersao);
+    const prefixo = getPrefixoEmpresa(obra.empresaPrestadora);
+    const anoAtual = new Date().getFullYear().toString().slice(-2);
+         
     setPropostaForm(prev => ({
-      ...baseForm,
+      ...getInitialPropostaForm(),
       dataProposta: new Date().toISOString().split('T')[0],
       cliente: cliente?.razaoSocial || '',
       atribuidoA: obra.responsavelComercial || '',
       cargoContato: obra.tipo || '',
-      numeroProposta: `LN-0${proximaVersao}/26`,
-      textoAbertura: isLinave ? textoAberturaPadrao : textoAberturaServinave,
+      // Aplica a letra no número da proposta gerado na tela
+      numeroProposta: `${prefixo}-${proximaVersaoLetra}/${anoAtual}`,
       escopoBasicoServicos: criarEscopoBasicoServicos(obra)
     }));
     setNovaColunaPorEscopo({});
-    
+         
     setViewMode('form');
   };
 
   const handleSaveProposta = () => {
     if (!selectedObra) return;
-
-    const proximaVersao = (selectedObra.propostas?.length || 0) + 1;
+    
+    // Aqui está o segredo: Calcular a versão em LETRA na hora de salvar!
+    const indexVersao = selectedObra.propostas?.length || 0;
+    const proximaVersaoLetra = indexToVersaoAlfabetica(indexVersao);
+    
     const escopoAConsolidado = propostaForm.escopoBasicoServicos.length > 0
       ? gerarEscopoBasicoConsolidado(propostaForm.escopoBasicoServicos)
       : propostaForm.escopoA;
-    
+           
     const novaProposta = {
-      versao: proximaVersao,
+      versao: proximaVersaoLetra, // <-- Agora salva como 'A', 'B', 'C', etc.
       dataCriacao: new Date().toISOString().split('T')[0],
       status: 'pendente' as const,
       ...propostaForm,
