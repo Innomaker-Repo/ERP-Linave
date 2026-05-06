@@ -1046,7 +1046,7 @@ export function PropostaView() {
                   type="button"
                   onClick={() => removerEscopoServico(escopoServico.id)}
                   className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white rounded-lg font-black text-xs uppercase tracking-widest transition"
-                >Remover Servi�o</button>
+                >Remover Serviço</button>
               </div>
 
               <div className="space-y-2">
