@@ -2,8 +2,8 @@ from django.shortcuts import render
 
 from rest_framework.response import Response
 from rest_framework import viewsets
-from .models import Cliente, Negocio, Servico, User, Levantamento, MDO, Ativ_previstas, Materiais, Servicos_terceirizados, Observacoes_setor_orcamento, Resumo_orcamento
-from .serializers import ClienteSerializer, NegocioSerializer, ServicoSerializer, UserSerializer, LevantamentoSerializer, MDOSerializer, Ativ_previstasSerializer, MateriaisSerializer, Servicos_terceirizadosSerializer, Observacoes_setor_orcamentoSerializer, Resumo_orcamentoSerializer
+from .models import Cliente, Negocio, Servico, User, Levantamento, MDO, Ativ_prevista, Material, Servico_terceirizado, Resumo_orcamento, Orcamento
+from .serializers import ClienteSerializer, NegocioSerializer, ServicoSerializer, UserSerializer, LevantamentoSerializer, MDOSerializer, Ativ_previstaSerializer, MaterialSerializer, Servicos_terceirizadosSerializer, OrcamentoSerializer, Resumo_orcamentoSerializer
 
 
 from rest_framework.decorators import api_view
@@ -46,47 +46,48 @@ def cadastrar_negocio_completo(request):
 # ...ação: criar uma entrada orçamento...
 
 class OrcamentoViewSet(viewsets.ModelViewSet):
-    queryset = Levantamento.objects.all()   
-    serializer_class = LevantamentoSerializer  # Fixed typo
-    
+    queryset = Orcamento.objects.all()   
+    serializer_class = OrcamentoSerializer 
+
 @api_view(['POST'])
 def criar_orcamento(request):
     """
-    POST request expects:
+    Expects JSON:
     {
-        "levantamento": { ...levantamento fields... },
-        "resumo": { ...resumo_orcamento fields... }
+        "levantamento": { ... },
+        "resumo": { ... },
+        "observacoes": "Texto opcional"
     }
-    Returns combined data with total cost.
     """
     with transaction.atomic():
-        # 1. Create Levantamento
-        levantamento_data = request.data.get('levantamento')
-        levantamento_serializer = LevantamentoSerializer(data=levantamento_data)
-        
-        if not levantamento_serializer.is_valid():
-            return Response(levantamento_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
-        levantamento_instance = levantamento_serializer.save()
-        
-        # 2. Create Resumo_orcamento linked to Levantamento
+        # 1. Handle Levantamento
+        lev_data = request.data.get('levantamento')
+        lev_serializer = LevantamentoSerializer(data=lev_data)
+        if not lev_serializer.is_valid():
+            return Response({"error": "Levantamento inválido", "details": lev_serializer.errors}, status=400)
+        levantamento_instance = lev_serializer.save()
+
+        # 2. Handle Resumo
         resumo_data = request.data.get('resumo')
-        resumo_data['credenciais'] = levantamento_instance.id_orcamento  # Link to Levantamento
-        
-        resumo_serializer = Resumo_orcamentoSerializer(data=resumo_data)
-        
-        if not resumo_serializer.is_valid():
-            return Response(resumo_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
-        resumo_instance = resumo_serializer.save()
-        
-        # 3. Return combined response with total cost
+        res_serializer = Resumo_orcamentoSerializer(data=resumo_data)
+        if not res_serializer.is_valid():
+            # Rollback triggered automatically by transaction.atomic()
+            return Response({"error": "Resumo inválido", "details": res_serializer.errors}, status=400)
+        resumo_instance = res_serializer.save()
+
+        # 3. Create the Parent 'Orcamento' to join them
+        orcamento_instance = Orcamento.objects.create(
+            levantamento=levantamento_instance,
+            resumo=resumo_instance,
+            Observacoes_setor_orcamento=request.data.get('observacoes', '')
+        )
+
+        # 4. Return combined data
         return Response({
-            "message": "Orçamento criado com sucesso!",
+            "message": "Orçamento centralizado criado com sucesso!",
+            "orcamento_id": orcamento_instance.id,
             "levantamento_id": levantamento_instance.id_orcamento,
             "resumo_id": resumo_instance.id,
-            "custo_final": str(resumo_instance.custo_final),
-            "levantamento": levantamento_serializer.data,
-            "resumo": resumo_serializer.data
+            "custo_total": str(resumo_instance.custo_com_impostos), # Using our property
+            "custo_unitario": str(resumo_instance.custo_por_unidade)
         }, status=status.HTTP_201_CREATED)
-    #resultado final são 2 entradas separadas, mas vinculadas entre si, e a resposta da API inclui os dados de ambas e o custo final calculado. Se qualquer parte falhar, nada é salvo no banco. Uma contem dados de abertura, a outra os dados economicos.

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from .models import Cliente, Negocio, Servico, User
-from .models import Levantamento, MDO, Ativ_prevista, Material, Servicos_terceirizados, Observacoes_setor_orcamento, Resumo_orcamento 
+from .models import Levantamento, MDO, Ativ_prevista, Material, Servico_terceirizado,Orcamento, Resumo_orcamento 
 
 
 #----------------- Core ------------------
@@ -53,12 +53,7 @@ class MaterialSerializer(serializers.ModelSerializer):
 
 class Servicos_terceirizadosSerializer(serializers.ModelSerializer):
     class Meta:
-        model = Servicos_terceirizados
-        fields = '__all__'
-
-class Observacoes_setor_orcamentoSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Observacoes_setor_orcamento
+        model = Servico_terceirizado
         fields = '__all__'
 
 class Resumo_orcamentoSerializer(serializers.ModelSerializer):
@@ -69,4 +64,16 @@ class Resumo_orcamentoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Resumo_orcamento
         fields = '__all__'
+
+class OrcamentoSerializer(serializers.ModelSerializer):
+    # These let you see the full data instead of just IDs
+    levantamento = LevantamentoSerializer(read_only=True)
+    resumo = Resumo_orcamentoSerializer(read_only=True)
     
+    # These bring the "Lists of N" into the view
+    materiais = MaterialSerializer(many=True, read_only=True)
+    mao_de_obra = MDOSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Orcamento
+        fields = '__all__'
