@@ -19,6 +19,8 @@
 
   run `python manage.py migrate ComercialApp` to create entries just for ComercialApp
 
+  run `git checkout ERP-Linave/main -- FrontEnd` to update frontend
+
 
   ## Creating a database for testing:
   1.Instale MySQL
