@@ -97,13 +97,26 @@ def criar_orcamento(request):
             resumo=resumo_instance,
             Observacoes_setor_orcamento=request.data.get('observacoes', '')
         )
+        
+        # Save MDO (Mão de Obra)
+        mdo_data = request.data.get('mao_de_obra', [])
+        for item in mdo_data:
+            MDO.objects.create(orcamento=orcamento_instance, **item)
+            
+        # Save Materials
+        materiais_data = request.data.get('materiais', [])
+        for item in materiais_data:
+            Material.objects.create(orcamento=orcamento_instance, **item)
+            
+        # Save Outsource Services
+        terceirizados_data = request.data.get('terceirizados', [])
+        for item in terceirizados_data:
+            Servico_terceirizado.objects.create(orcamento=orcamento_instance, **item)
 
-        # 4. Return combined data
+        # 4. Return combined data (Now including property totals!)
         return Response({
-            "message": "Orçamento centralizado criado com sucesso!",
+            "message": "Orçamento completo criado com sucesso!",
             "orcamento_id": orcamento_instance.id,
-            "levantamento_id": levantamento_instance.id_orcamento,
-            "resumo_id": resumo_instance.id,
-            "custo_total": str(resumo_instance.custo_com_impostos), # Using our property
-            "custo_unitario": str(resumo_instance.custo_por_unidade)
+            "custo_total": str(resumo_instance.custo_com_impostos),
+            # The properties now work because the items above were just saved!
         }, status=status.HTTP_201_CREATED)
