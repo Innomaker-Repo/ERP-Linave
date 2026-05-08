@@ -3,7 +3,7 @@ from django.shortcuts import render
 from rest_framework.response import Response
 from rest_framework import viewsets
 from .models import Cliente, Negocio, Servico, User, Levantamento, MDO, Ativ_prevista, Material, Servico_terceirizado, Resumo_orcamento, Orcamento
-from .serializers import ClienteSerializer, NegocioSerializer, ServicoSerializer, UserSerializer, LevantamentoSerializer, MDOSerializer, Ativ_previstaSerializer, MaterialSerializer, Servicos_terceirizadosSerializer, OrcamentoSerializer, Resumo_orcamentoSerializer
+from .serializers import ClienteSerializer, NegocioSerializer, ServicoSerializer, UserSerializer, LevantamentoSerializer, MDOSerializer, Ativ_previstaSerializer, MaterialSerializer, ServicosTerceirizadosSerializer, OrcamentoSerializer, Resumo_orcamentoSerializer
 
 
 from rest_framework.decorators import api_view
@@ -54,10 +54,11 @@ def criar_orcamento(request):
     """
     Expects JSON:
     {
-        "levantamento": { ... },
+        "levantamento": { "negocio": <id>, "cliente": <id> },
         "resumo": { ... },
         "observacoes": "Texto opcional"
     }
+    Note: A Negocio can only have ONE Levantamento (OneToOne relationship).
     """
     with transaction.atomic():
         # 1. Handle Levantamento
@@ -65,7 +66,22 @@ def criar_orcamento(request):
         lev_serializer = LevantamentoSerializer(data=lev_data)
         if not lev_serializer.is_valid():
             return Response({"error": "Levantamento inválido", "details": lev_serializer.errors}, status=400)
-        levantamento_instance = lev_serializer.save()
+        
+        # Check if Levantamento already exists for this Negocio (OneToOne constraint)
+        negocio_id = lev_data.get('negocio')
+        if Levantamento.objects.filter(negocio_id=negocio_id).exists():
+            return Response({
+                "error": "Levantamento já existe para este Negócio",
+                "details": "Cada Negócio pode ter apenas um Levantamento. Atualize o Levantamento existente em vez de criar um novo."
+            }, status=400)
+        
+        try:
+            levantamento_instance = lev_serializer.save()
+        except Exception as e:
+            return Response({
+                "error": "Erro ao criar Levantamento",
+                "details": str(e)
+            }, status=400)
 
         # 2. Handle Resumo
         resumo_data = request.data.get('resumo')
