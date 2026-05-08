@@ -129,17 +129,27 @@ def criar_orcamento(request):
             Observacoes_setor_orcamento=request.data.get('observacoes', '')
         )
         
-        # 4. Itens (Looping para salvar cada lista)
-        for item in request.data.get('mao_de_obra', []):
+        # Save MDO (Mão de Obra)
+        mdo_data = request.data.get('mao_de_obra', [])
+        for item in mdo_data:
             MDO.objects.create(orcamento=orcamento_instance, **item)
-        for item in request.data.get('materiais', []):
+            
+        # Save Materials
+        materiais_data = request.data.get('materiais', [])
+        for item in materiais_data:
             Material.objects.create(orcamento=orcamento_instance, **item)
-        for item in request.data.get('terceirizados', []):
+            
+        # Save Outsource Services
+        terceirizados_data = request.data.get('terceirizados', [])
+        for item in terceirizados_data:
             Servico_terceirizado.objects.create(orcamento=orcamento_instance, **item)
 
+        # 4. Return combined data (Now including property totals!)
         return Response({
             "message": "Orçamento completo criado com sucesso!",
-            "orcamento_id": orcamento_instance.id
+            "orcamento_id": orcamento_instance.id,
+            "custo_total": str(resumo_instance.custo_com_impostos),
+            # The properties now work because the items above were just saved!
         }, status=status.HTTP_201_CREATED)
 
 
