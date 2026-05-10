@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { CLIENTES_MOCK } from '../mocks/clientesMock';
+import { CLIENTES_MOCK } from '../mocks/clientesMock';
 
 const FORNECEDORES_MOCK = [
   {
@@ -114,6 +115,7 @@ const cloneDeep = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 
 const buildTextDataUrl = (text: string) => `data:text/plain;charset=utf-8,${encodeURIComponent(text)}`;
 const buildHtmlDataUrl = (html: string) => `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+const buildHtmlDataUrl = (html: string) => `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 
 const SEVEN_OCEAN_MAO_DE_OBRA = [
   { funcao: 'Encarregado', quantidade: '0,5', dias: '10', valorTotal: '1640.00' },
@@ -198,6 +200,8 @@ Condicoes comerciais
 Assinatura
 - Nome: XXXX
 - Cargo: Diretoria Comercial`;
+
+// (HTML preview constants defined later) 
 
 // (HTML preview constants defined later) 
 
@@ -304,6 +308,23 @@ const getProposalHtmlForCompany = (companyName: string | undefined | null) => is
   ? SEVEN_OCEAN_PROPOSTA_PREVIEW_HTML
   : SEVEN_OCEAN_PROPOSTA_PREVIEW_HTML_SERVINAVE;
 
+// Versão HTML da proposta que inclui a logo no topo (usa /image2.jpg e /image1.jpg servidos a partir de /public)
+const SEVEN_OCEAN_PROPOSTA_PREVIEW_HTML = `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial,Helvetica,sans-serif;white-space:pre-wrap;margin:28px;} .logo{text-align:center;margin-bottom:12px;}</style></head><body><div class="logo"><img src="/image2.jpg" alt="logo" style="max-width:260px;height:auto;"/></div><div>${SEVEN_OCEAN_PROPOSTA_PREVIEW.replace(/</g,'&lt;')}</div></body></html>`;
+const SEVEN_OCEAN_PROPOSTA_PREVIEW_HTML_SERVINAVE = `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial,Helvetica,sans-serif;white-space:pre-wrap;margin:28px;} .logo{text-align:center;margin-bottom:12px;}</style></head><body><div class="logo"><img src="/image1.jpg" alt="logo" style="max-width:260px;height:auto;"/></div><div>${SEVEN_OCEAN_PROPOSTA_PREVIEW.replace(/</g,'&lt;')}</div></body></html>`;
+
+const isLinaveName = (s: string | undefined | null) => {
+  if (!s) return false;
+  try {
+    return String(s).toLowerCase().includes('linave');
+  } catch (e) {
+    return false;
+  }
+};
+
+const getProposalHtmlForCompany = (companyName: string | undefined | null) => isLinaveName(companyName)
+  ? SEVEN_OCEAN_PROPOSTA_PREVIEW_HTML
+  : SEVEN_OCEAN_PROPOSTA_PREVIEW_HTML_SERVINAVE;
+
 const buildOrcamentoValores = (precoFinal: number) => ({
   totalMaoDeObra: 16916,
   totalMateriais: 21597.96,
@@ -389,6 +410,8 @@ const buildProposta = (
   assinaturaCargo: 'Diretoria Comercial',
   preco
 });
+
+// (restaurado para comportamento antigo: usar SEVEN_OCEAN_PROPOSTA_PREVIEW)
 
 // (restaurado para comportamento antigo: usar SEVEN_OCEAN_PROPOSTA_PREVIEW)
 
@@ -813,10 +836,15 @@ const createInitialData = (savedData: any) => {
     funcionarios: [],
     obras: [],
     financeiro: [],
+    funcionarios: [],
+    obras: [],
+    financeiro: [],
     compras: [],
+    os: [],
     os: [],
     usuarios: [],
     equipes: [],
+    fornecedores: [],
     fornecedores: [],
     horas: [],
     config: {
@@ -878,20 +906,48 @@ const createInitialData = (savedData: any) => {
   }
 
   const sanitizedData = {
+  const sanitizedData = {
     ...baseData,
+    clientes: mergeRecordsById(baseData.clientes, sanitizeCollection('clientes', savedData.clientes)),
+    funcionarios: sanitizeCollection('funcionarios', savedData.funcionarios),
+    obras: sanitizeCollection('obras', savedData.obras),
+    financeiro: sanitizeCollection('financeiro', savedData.financeiro),
     clientes: mergeRecordsById(baseData.clientes, sanitizeCollection('clientes', savedData.clientes)),
     funcionarios: sanitizeCollection('funcionarios', savedData.funcionarios),
     obras: sanitizeCollection('obras', savedData.obras),
     financeiro: sanitizeCollection('financeiro', savedData.financeiro),
     compras: Array.isArray(savedData.compras) ? savedData.compras : [],
     os: sanitizeCollection('os', savedData.os),
+    os: sanitizeCollection('os', savedData.os),
     usuarios: Array.isArray(savedData.usuarios) ? savedData.usuarios : [],
     equipes: Array.isArray(savedData.equipes) ? savedData.equipes : [],
+    fornecedores: sanitizeCollection('fornecedores', savedData.fornecedores),
     fornecedores: sanitizeCollection('fornecedores', savedData.fornecedores),
     horas: Array.isArray(savedData.horas) ? savedData.horas : [],
     config: savedData.config ? { ...baseData.config, ...savedData.config } : baseData.config,
     listas: savedData.listas ? { ...baseData.listas, ...savedData.listas } : baseData.listas
+    config: savedData.config ? { ...baseData.config, ...savedData.config } : baseData.config,
+    listas: savedData.listas ? { ...baseData.listas, ...savedData.listas } : baseData.listas
   };
+
+  const hasUserData = [
+    sanitizedData.clientes,
+    sanitizedData.funcionarios,
+    sanitizedData.obras,
+    sanitizedData.financeiro,
+    sanitizedData.compras,
+    sanitizedData.os,
+    sanitizedData.usuarios,
+    sanitizedData.equipes,
+    sanitizedData.fornecedores,
+    sanitizedData.horas
+  ].some((collection) => collection.length > 0);
+
+  if (!hasUserData && (!sanitizedData.config?.empresaNome || sanitizedData.config.empresaNome === 'Linave ERP' || sanitizedData.config.empresaNome === 'Nova Empresa')) {
+    return baseData;
+  }
+
+  return sanitizedData;
 
   const hasUserData = [
     sanitizedData.clientes,
@@ -1017,6 +1073,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
   };
 
   const saveListas = async (l: any) => saveEntity('listas', l);
+  const saveConfig = async (c: any) => saveEntity('config', { ...(data.config || {}), ...c });
   const saveConfig = async (c: any) => saveEntity('config', { ...(data.config || {}), ...c });
 
   const logout = () => {

@@ -84,9 +84,9 @@ WSGI_APPLICATION = 'ERP_Linave_BackEnd.wsgi.application'
 DATABASES = {
    'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'linave_db',
-        'USER': 'root',
-        'PASSWORD': 'Ferreira@123',
+        'NAME': 'linave_erp_db',
+        'USER': 'hugo_admin',
+        'PASSWORD': 'password123',
         'HOST': 'localhost',
         'PORT': '3306',
     }

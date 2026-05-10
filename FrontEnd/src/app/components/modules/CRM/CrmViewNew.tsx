@@ -1,7 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { Plus, X, FileText, DollarSign, CheckCircle, Clock, ArrowRight, Edit2, ChevronDown, Zap, AlertCircle, Download, Eye } from 'lucide-react';
 import { toast } from 'sonner';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable'; // Importação nomeada do plugin
+import { handleDownloadMedicaoPDF } from './handleDownloadMedicaoPDF';
+import { handleDownloadPropostaPDF } from './handleDownloadPropostaPDF'; 
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable'; // Importação nomeada do plugin
 import { handleDownloadMedicaoPDF } from './handleDownloadMedicaoPDF';
@@ -36,6 +41,9 @@ interface LinhaTabelaMediacao {
   quantidadeProduzida: string;
   valorUnitario: string;
   total: string;
+  quantidadeProduzida: string;
+  valorUnitario: string;
+  total: string;
   observacoes: string;
 }
 
@@ -57,6 +65,8 @@ interface DocumentoMediacaoForm {
   embarcacao: string;
   numeroBM: string;
   periodo: string;
+  representanteCliente: string; // Novo campo
+  representanteLinave: string;  // Novo campo
   representanteCliente: string; // Novo campo
   representanteLinave: string;  // Novo campo
   tabelaItens: LinhaTabelaMediacao[];
@@ -106,12 +116,15 @@ export const indexToVersaoAlfabetica = (index: number) => {
 
 export function CrmViewNew({ searchQuery }: CrmViewProps) {
   const { obras, os, clientes, saveEntity, userSession, config } = useErp();
+  const { obras, os, clientes, saveEntity, userSession, config } = useErp();
   const [showFormNovoNegocio, setShowFormNovoNegocio] = useState(false);
   const [novoNegocioTab, setNovoNegocioTab] = useState<'dados' | 'servicos' | 'documentos'>('dados');
   const [selectedObraDetalhes, setSelectedObraDetalhes] = useState<any>(null);
   const [showDetalhesObraModal, setShowDetalhesObraModal] = useState(false);
+  const [showDetalhesObraModal, setShowDetalhesObraModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingObra, setEditingObra] = useState<any>(null);
+  const [expandedOrcamentoSummary, setExpandedOrcamentoSummary] = useState(false);
   const [expandedOrcamentoSummary, setExpandedOrcamentoSummary] = useState(false);
   const [expandedPropostaDetalhes, setExpandedPropostaDetalhes] = useState(false);
   const [showPropostaFullModal, setShowPropostaFullModal] = useState(false);
@@ -160,6 +173,123 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     }
 
     return 'A';
+  };
+
+  const formatarEscopoBasicoParaTexto = (escopo: any) => {
+    if (!escopo) {
+      return '−';
+    }
+
+    if (typeof escopo === 'string') {
+      return escopo;
+    }
+
+    const formatarItemEscopo = (item: any, index: number) => {
+      if (!item) return '';
+      if (typeof item === 'string') return item;
+
+      const partes = [item.titulo, item.descricaoServico, item.texto].filter(
+        (valor) => typeof valor === 'string' && valor.trim(),
+      );
+
+      if (Array.isArray(item.linhas) && item.linhas.length > 0) {
+        const linhas = item.linhas
+          .map((linha: any) => {
+            if (!linha?.valores || typeof linha.valores !== 'object') {
+              return '';
+            }
+
+            const valores = Object.values(linha.valores)
+              .filter((valor) => typeof valor === 'string' ? valor.trim() : Boolean(valor))
+              .map((valor) => String(valor).trim())
+              .filter(Boolean);
+
+            return valores.length > 0 ? `- ${valores.join(' | ')}` : '';
+          })
+          .filter(Boolean);
+
+        if (linhas.length > 0) {
+          partes.push(linhas.join('\n'));
+        }
+      }
+
+      if (partes.length === 0) {
+        return `Item ${index + 1}`;
+      }
+
+      return partes.join('\n');
+    };
+
+    if (Array.isArray(escopo)) {
+      return escopo
+        .map((item, index) => formatarItemEscopo(item, index))
+        .filter(Boolean)
+        .join('\n\n');
+    }
+
+    if (typeof escopo === 'object') {
+      return formatarItemEscopo(escopo, 0);
+    }
+
+    return String(escopo);
+  };
+
+  const normalizarEscopoBasicoEstruturado = (escopo: any) => {
+    if (!escopo) return [];
+
+    const normalizarLinha = (linha: any) => {
+      if (!linha?.valores || typeof linha.valores !== 'object') return [];
+      return Object.entries(linha.valores)
+        .map(([chave, valor]) => ({
+          chave: String(chave),
+          valor: String(valor ?? '').trim(),
+        }))
+        .filter((coluna) => coluna.valor);
+    };
+
+    const normalizarItem = (item: any, index: number) => {
+      if (!item) return null;
+      if (typeof item === 'string') {
+        return {
+          titulo: item.trim() || `Item ${index + 1}`,
+          textosAntes: [],
+          tabela: [],
+          textosDepois: [],
+        };
+      }
+
+      const titulo = [item.titulo, item.descricaoServico, item.descricao, item.texto]
+        .find((valor) => typeof valor === 'string' && valor.trim());
+
+      return {
+        titulo: titulo?.trim() || `Item ${index + 1}`,
+        textosAntes: [
+          ...(Array.isArray(item.textosAntesTabela) ? item.textosAntesTabela : []),
+          ...(typeof item.textoLivre === 'string' && item.textoLivre.trim() ? [item.textoLivre] : []),
+        ].filter((texto: any) => typeof texto === 'string' && texto.trim()).map((texto: string) => texto.trim()),
+        tabela: Array.isArray(item.linhas)
+          ? item.linhas.map((linha: any) => normalizarLinha(linha)).filter((linha: any[]) => linha.length > 0)
+          : [],
+        textosDepois: (Array.isArray(item.textosDepoisTabela) ? item.textosDepoisTabela : [])
+          .filter((texto: any) => typeof texto === 'string' && texto.trim())
+          .map((texto: string) => texto.trim()),
+      };
+    };
+
+    if (typeof escopo === 'string') {
+      return [{ titulo: '', textosAntes: [escopo], tabela: [], textosDepois: [] }];
+    }
+
+    if (Array.isArray(escopo)) {
+      return escopo.map((item, index) => normalizarItem(item, index)).filter(Boolean);
+    }
+
+    if (typeof escopo === 'object') {
+      const item = normalizarItem(escopo, 0);
+      return item ? [item] : [];
+    }
+
+    return [{ titulo: '', textosAntes: [String(escopo)], tabela: [], textosDepois: [] }];
   };
 
   const formatarEscopoBasicoParaTexto = (escopo: any) => {
@@ -368,6 +498,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
 
   const initialForm = {
     empresaPrestadora: empresaPrestadoraPadrao,
+    empresaPrestadora: empresaPrestadoraPadrao,
     nomeNegocio: '',
     clienteId: '',
     cnpj: '',
@@ -390,6 +521,17 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   };
 
   const [formData, setFormData] = useState(initialForm);
+
+  useEffect(() => {
+    const empresasDisponiveis = empresasPrestadoras.map((empresa) => empresa.nome);
+
+    if (
+      empresasDisponiveis.length > 0 &&
+      (!formData.empresaPrestadora || !empresasDisponiveis.includes(formData.empresaPrestadora))
+    ) {
+      setFormData((prev) => ({ ...prev, empresaPrestadora: empresasDisponiveis[0] }));
+    }
+  }, [empresasPrestadoras, formData.empresaPrestadora]);
 
   useEffect(() => {
     const empresasDisponiveis = empresasPrestadoras.map((empresa) => empresa.nome);
@@ -468,6 +610,34 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     });
   };
 
+  const parseDecimal = (value: string) => {
+    const normalized = String(value || '').trim();
+    const parsed = normalized.includes(',')
+      ? Number(normalized.replace(/\./g, '').replace(',', '.'))
+      : Number(normalized);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const formatDecimal = (value: number) => (Number.isFinite(value) ? value.toFixed(2) : '0.00');
+  const safeNumber = (value: any) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  const getBase64FromUrl = async (url: string): Promise<string> => {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Falha ao carregar arquivo: ${url}`);
+    }
+
+    const blob = await response.blob();
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error(`Falha ao converter arquivo: ${url}`));
+      reader.readAsDataURL(blob);
+    });
+  };
+
   const gerarIdLinha = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
   const novaLinhaTabelaMediacao = (): LinhaTabelaMediacao => ({
@@ -475,6 +645,9 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     item: '',
     descricao: '',
     unidade: '',
+    quantidadeProduzida: '',
+    valorUnitario: '',
+    total: '0.00',
     quantidadeProduzida: '',
     valorUnitario: '',
     total: '0.00',
@@ -520,12 +693,15 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     setDocumentoMediacaoForm({
       obraId: obraAtual.id,
       empresa: obraAtual.empresaPrestadora || empresaPrestadoraPadrao,
+      empresa: obraAtual.empresaPrestadora || empresaPrestadoraPadrao,
       cliente: cliente?.razaoSocial || '',
       cnpj: obterCnpjCliente(cliente),
       dataEmissao: new Date().toISOString().split('T')[0],
       embarcacao: '',
       numeroBM: '',
       periodo: montarPeriodoMediacao(obraAtual),
+      representanteCliente: cliente?.razaoSocial || '', // Sugestão inicial
+      representanteLinave: 'Linave', // Sugestão inicial
       representanteCliente: cliente?.razaoSocial || '', // Sugestão inicial
       representanteLinave: 'Linave', // Sugestão inicial
       tabelaItens: [novaLinhaTabelaMediacao()],
@@ -558,8 +734,23 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
         };
       });
 
+      const tabelaItens = prev.tabelaItens.map((linha) => {
+        if (linha.id !== linhaId) return linha;
+
+        const proximaLinha = { ...linha, [campo]: valor };
+        const quantidade = parseDecimal(proximaLinha.quantidadeProduzida);
+        const valorUnitario = parseDecimal(proximaLinha.valorUnitario);
+        const total = quantidade * valorUnitario;
+
+        return {
+          ...proximaLinha,
+          total: formatDecimal(total)
+        };
+      });
+
       return {
         ...prev,
+        tabelaItens
         tabelaItens
       };
     });
@@ -626,6 +817,10 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     if (!documentoMediacaoForm.embarcacao || !documentoMediacaoForm.embarcacao.trim()) {
       alert('⚠️ Por favor, preencha o campo "Embarcação" antes de gerar o documento.');
       toast.error('Preencha a embarcação para gerar o documento de medição.');
+    // 1. Verificação mais clara para a embarcação
+    if (!documentoMediacaoForm.embarcacao || !documentoMediacaoForm.embarcacao.trim()) {
+      alert('⚠️ Por favor, preencha o campo "Embarcação" antes de gerar o documento.');
+      toast.error('Preencha a embarcação para gerar o documento de medição.');
       return;
     }
 
@@ -674,6 +869,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       toast.error('Erro ao gerar o documento de medição.');
     }
   };
+  
   
   const handleVerDocumentoNegocio = (doc: any) => {
     const href = doc?.conteudo || doc?.url;
@@ -1099,6 +1295,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       id: novoProjetoId,
       nome: nomeObra,
       empresaPrestadora: formData.empresaPrestadora,
+      empresaPrestadora: formData.empresaPrestadora,
       clienteId: formData.clienteId,
       status: 'Planejamento',
       categoria: 'Planejamento' as CategoriaObra,
@@ -1124,6 +1321,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
 
     const novasOS = formData.servicos.map((servico, idx) => ({
       id: `OS-${Date.now()}-${idx}`,
+      empresaPrestadora: formData.empresaPrestadora,
       empresaPrestadora: formData.empresaPrestadora,
       clienteId: formData.clienteId,
       solicitante: formData.solicitante,
@@ -1154,6 +1352,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   };
 
   const handleShowDetalhes = (obra: any) => {
+    console.log('handleShowDetalhes called for obra:', obra?.id || obra?.nome || obra);
     console.log('handleShowDetalhes called for obra:', obra?.id || obra?.nome || obra);
     setSelectedObraDetalhes(obra);
     setShowDetalhesObraModal(true);
@@ -1199,6 +1398,8 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
         : null;
       const propostaAceita = ultimaProposta?.status === 'aceita';
 
+      if (!propostaAceita) {
+        return alert('Para iniciar o trabalho é obrigatório ter proposta aceita.');
       if (!propostaAceita) {
         return alert('Para iniciar o trabalho é obrigatório ter proposta aceita.');
       }
@@ -2111,6 +2312,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   };
 
   const possuiOSAprovadaParaFinalizacao = (obraId: string) => {
+  const possuiOSAprovadaParaFinalizacao = (obraId: string) => {
     const osDoNegocio = (os || []).filter((item: any) => item.obraId === obraId);
     return osDoNegocio.some((item: any) => (
       item.statusEnvio === 'enviada'
@@ -2122,7 +2324,9 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     if (!selectedObraDetalhes) return;
 
     const podeFinalizar = possuiOSAprovadaParaFinalizacao(selectedObraDetalhes.id);
+    const podeFinalizar = possuiOSAprovadaParaFinalizacao(selectedObraDetalhes.id);
     if (!podeFinalizar) {
+      return alert('Para avançar para Finalização é obrigatório ter OS enviada e aprovada.');
       return alert('Para avançar para Finalização é obrigatório ter OS enviada e aprovada.');
     }
 
@@ -2371,6 +2575,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                             </div>
                             <p className="text-emerald-200 font-black text-base">
                               R$ {safeNumber(ultimoOrcamento.valores.precoFinal).toFixed(2)}
+                              R$ {safeNumber(ultimoOrcamento.valores.precoFinal).toFixed(2)}
                             </p>
                           </div>
                         )}
@@ -2380,6 +2585,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                           <div className="bg-gradient-to-r from-emerald-500/20 to-cyan-500/20 border border-emerald-500/30 rounded-lg p-2.5 mb-3">
                             <div className="flex justify-between items-center">
                               <p className="text-emerald-400 text-xs font-black">Orçamento v{formatarVersaoOrcamento(ultimoOrcamento.versao)}</p>
+                              <span className="text-emerald-300 font-black text-xs">R$ {safeNumber(ultimoOrcamento.valores.precoFinal).toFixed(2)}</span>
                               <span className="text-emerald-300 font-black text-xs">R$ {safeNumber(ultimoOrcamento.valores.precoFinal).toFixed(2)}</span>
                             </div>
                           </div>
@@ -2502,6 +2708,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                                 className="w-full py-2 rounded-lg bg-gradient-to-r from-emerald-500/30 to-cyan-500/30 hover:from-emerald-500/50 hover:to-cyan-500/50 border border-emerald-400/40 text-emerald-200 text-[11px] font-black uppercase tracking-wider transition-all"
                               >
                                 <FileText size={14} className="inline mr-1" /> Criar Documento de Medição
+                                <FileText size={14} className="inline mr-1" /> Criar Documento de Medição
                               </button>
                             </div>
                           );
@@ -2511,6 +2718,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
+                            console.log('Ver Detalhes button clicked for obra:', obra?.id || obra?.nome || obra);
                             console.log('Ver Detalhes button clicked for obra:', obra?.id || obra?.nome || obra);
                             handleShowDetalhes(obra);
                           }}
@@ -2590,6 +2798,11 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                       value={formData.empresaPrestadora}
                       onChange={e => setFormData({...formData, empresaPrestadora: e.target.value})}
                     >
+                      {empresasPrestadoras.map((empresa) => (
+                        <option key={empresa.id} value={empresa.nome}>
+                          {empresa.nome}{empresa.cnpj ? ` - ${empresa.cnpj}` : ''}
+                        </option>
+                      ))}
                       {empresasPrestadoras.map((empresa) => (
                         <option key={empresa.id} value={empresa.nome}>
                           {empresa.nome}{empresa.cnpj ? ` - ${empresa.cnpj}` : ''}
@@ -2897,6 +3110,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
 
       {/* MODAL - DETALHES DA OBRA */}
       {showDetalhesObraModal && selectedObraDetalhes && (
+      {showDetalhesObraModal && selectedObraDetalhes && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-[#101f3d] rounded-2xl border border-white/10 shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
             
@@ -2996,15 +3210,26 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                   <div className="bg-gradient-to-r from-emerald-500/10 to-cyan-500/10 rounded-xl p-6 border border-emerald-500/30 space-y-4">
                     <button
                       onClick={() => setExpandedOrcamentoSummary(!expandedOrcamentoSummary)}
+                      onClick={() => setExpandedOrcamentoSummary(!expandedOrcamentoSummary)}
                       className="w-full flex justify-between items-center mb-4"
                     >
                       <h3 className="text-emerald-400 font-black text-lg">RESUMO DO ORÇAMENTO (v{formatarVersaoOrcamento(ultimoOrcamento.versao)})</h3>
+                      <ChevronDown size={20} className={`text-emerald-400 transition-transform ${expandedOrcamentoSummary ? 'rotate-180' : ''}`} />
                       <ChevronDown size={20} className={`text-emerald-400 transition-transform ${expandedOrcamentoSummary ? 'rotate-180' : ''}`} />
                     </button>
 
                     {/* Resumo Financeiro (Sempre Visível) */}
                     <div className="bg-gradient-to-r from-amber-500/20 to-orange-500/20 rounded-lg p-4 border border-amber-500/30 space-y-2">
                       {(() => {
+                        const base = safeNumber(ultimoOrcamento.valores.totalBruto ?? ultimoOrcamento.valores.subtotal);
+                        const margemPercent = safeNumber(ultimoOrcamento.valores.margem);
+                        const ohPercent = safeNumber(ultimoOrcamento.valores.oh);
+                        const impostosPercent = safeNumber(ultimoOrcamento.valores.impostos);
+                        const valorMargem = safeNumber(ultimoOrcamento.valores.valorMargem ?? ((base * margemPercent) / 100));
+                        const valorOH = safeNumber(ultimoOrcamento.valores.valorOH ?? ((base * ohPercent) / 100));
+                        const semImposto = safeNumber(ultimoOrcamento.valores.totalSemImposto ?? (base + valorMargem + valorOH));
+                        const valorImposto = safeNumber(ultimoOrcamento.valores.valorImpostos ?? ((semImposto * impostosPercent) / 100));
+                        const precoFinal = safeNumber(ultimoOrcamento.valores.precoFinal);
                         const base = safeNumber(ultimoOrcamento.valores.totalBruto ?? ultimoOrcamento.valores.subtotal);
                         const margemPercent = safeNumber(ultimoOrcamento.valores.margem);
                         const ohPercent = safeNumber(ultimoOrcamento.valores.oh);
@@ -3039,6 +3264,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                       <div className="flex justify-between items-center pt-2">
                         <span className="text-amber-300 font-black text-lg">PREÇO FINAL:</span>
                         <span className="text-amber-300 font-black text-2xl">R$ {precoFinal.toFixed(2)}</span>
+                        <span className="text-amber-300 font-black text-2xl">R$ {precoFinal.toFixed(2)}</span>
                       </div>
                           </>
                         );
@@ -3046,6 +3272,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                     </div>
 
                     {/* Detalhes Completos (Expandido) */}
+                    {expandedOrcamentoSummary && (
                     {expandedOrcamentoSummary && (
                       <div className="space-y-4">
                         {/* Dados do Orçamento */}
@@ -3129,6 +3356,21 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                     </div>
                     )}
 
+                    {/* Botões do Orçamento */}
+                    <div className="flex gap-3 pt-4">
+                      <button
+                        onClick={handleDownloadOrcamentoPDF}
+                        className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                      >
+                        <Download size={16} /> Download PDF
+                      </button>
+                      <button
+                        onClick={() => setShowOrcamentoFullModal(true)}
+                        className="flex-1 bg-gradient-to-r from-emerald-500/30 to-cyan-500/30 hover:from-emerald-500/50 hover:to-cyan-500/50 border border-emerald-400/40 text-emerald-300 hover:text-emerald-200 rounded-lg py-2 font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                      >
+                        <Eye size={16} /> Ver Completo
+                      </button>
+                    </div>
                     {/* Botões do Orçamento */}
                     <div className="flex gap-3 pt-4">
                       <button
@@ -3232,6 +3474,9 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                         <p className="text-white font-black text-sm">Documento do Cliente</p>
                         <span className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-slate-500/20 border border-slate-500/40 text-slate-300">
                           Opcional
+                        <p className="text-white font-black text-sm">Documento do Cliente</p>
+                        <span className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-slate-500/20 border border-slate-500/40 text-slate-300">
+                          Opcional
                         </span>
                       </div>
 
@@ -3247,6 +3492,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                         />
                       )}
 
+                      {documentoClienteAssinado && (
                       {documentoClienteAssinado && (
                         <div className="bg-[#101f3d] rounded-lg border border-white/10 p-3 space-y-2">
                           <p className="text-white text-xs font-bold truncate">{documentoClienteAssinado.nome}</p>
@@ -3279,9 +3525,11 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                       {isNegociacao ? (
                         <p className="text-[11px] text-white/40">
                           O início do trabalho depende apenas de proposta aceita.
+                          O início do trabalho depende apenas de proposta aceita.
                         </p>
                       ) : (
                         <p className="text-[11px] text-white/40">
+                          Em andamento: visualização da proposta e dos documentos do negócio.
                           Em andamento: visualização da proposta e dos documentos do negócio.
                         </p>
                       )}
@@ -3290,6 +3538,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                     {/* Botões de Ação da Proposta */}
                     <div className="flex gap-3 pt-4 border-t border-white/10">
                       <button
+                        onClick={handleGerarPropostaPDF}
                         onClick={handleGerarPropostaPDF}
                         className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
                       >
@@ -3430,6 +3679,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
 
                     <p className="text-[11px] text-white/50">
                       Para avançar para Finalização: a OS precisa estar enviada e aprovada.
+                      Para avançar para Finalização: a OS precisa estar enviada e aprovada.
                     </p>
 
                     {selectedObraDetalhes.categoria === 'Finalização' && (
@@ -3437,6 +3687,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                         onClick={() => handleAbrirDocumentoMediacao(selectedObraDetalhes)}
                         className="w-full bg-gradient-to-r from-emerald-500/30 to-cyan-500/30 hover:from-emerald-500/50 hover:to-cyan-500/50 border border-emerald-400/40 text-emerald-300 hover:text-emerald-100 rounded-lg py-2.5 font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
                       >
+                        <FileText size={16} /> Criar Documento de Medição
                         <FileText size={16} /> Criar Documento de Medição
                       </button>
                     )}
@@ -3467,6 +3718,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                     ? selectedObraDetalhes.propostas[selectedObraDetalhes.propostas.length - 1]
                     : null;
                   const podeIniciar = ultimaProposta?.status === 'aceita';
+                  const podeIniciar = ultimaProposta?.status === 'aceita';
 
                   if (!podeIniciar) return null;
 
@@ -3480,6 +3732,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                   );
                 })()}
                 {selectedObraDetalhes.categoria === 'Em Andamento' && (() => {
+                  const podeFinalizar = possuiOSAprovadaParaFinalizacao(selectedObraDetalhes.id);
                   const podeFinalizar = possuiOSAprovadaParaFinalizacao(selectedObraDetalhes.id);
                   return (
                     <button
@@ -3506,11 +3759,14 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       )}
 
       {/* MODAL - DOCUMENTO DE MEDIÇÃO */}
+      {/* MODAL - DOCUMENTO DE MEDIÇÃO */}
       {showDocumentoMediacaoModal && documentoMediacaoForm && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-[#101f3d] rounded-2xl border border-white/10 shadow-2xl max-w-6xl w-full max-h-[92vh] overflow-y-auto">
             <div className="sticky top-0 z-40 bg-gradient-to-r from-emerald-500/40 to-cyan-500/40 backdrop-blur-md p-8 border-b border-white/10 flex justify-between items-center">
               <div>
+                <h2 className="text-2xl font-black text-white">DOCUMENTO DE MEDIÇÃO</h2>
+                <p className="text-white/60 text-sm mt-2">Preencha os dados para gerar a medição do período.</p>
                 <h2 className="text-2xl font-black text-white">DOCUMENTO DE MEDIÇÃO</h2>
                 <p className="text-white/60 text-sm mt-2">Preencha os dados para gerar a medição do período.</p>
               </div>
@@ -3553,6 +3809,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                 </div>
                 <div>
                   <p className="text-white/50 text-xs mb-1 uppercase font-black tracking-widest">Data de emissão</p>
+                  <p className="text-white/50 text-xs mb-1 uppercase font-black tracking-widest">Data de emissão</p>
                   <input
                     type="date"
                     value={documentoMediacaoForm.dataEmissao}
@@ -3561,6 +3818,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                   />
                 </div>
                 <div>
+                  <p className="text-white/50 text-xs mb-1 uppercase font-black tracking-widest">Embarcação</p>
                   <p className="text-white/50 text-xs mb-1 uppercase font-black tracking-widest">Embarcação</p>
                   <input
                     type="text"
@@ -3581,6 +3839,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                   />
                 </div>
                 <div className="col-span-2">
+                  <p className="text-white/50 text-xs mb-1 uppercase font-black tracking-widest">Período</p>
                   <p className="text-white/50 text-xs mb-1 uppercase font-black tracking-widest">Período</p>
                   <input
                     type="text"
@@ -3612,9 +3871,33 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     className="w-full bg-[#101f3d] border border-white/10 rounded-lg px-3 py-2 text-white text-sm placeholder:text-white/30"
   />
 </div>
+              </div>
+
+              <div className="col-span-1">
+  <p className="text-white/50 text-xs mb-1 uppercase font-black tracking-widest">Representante Cliente</p>
+  <input
+    type="text"
+    value={documentoMediacaoForm.representanteCliente}
+    onChange={(e) => atualizarCampoMediacao('representanteCliente', e.target.value)}
+    placeholder="Ex: Nome do Armador / Cliente"
+    className="w-full bg-[#101f3d] border border-white/10 rounded-lg px-3 py-2 text-white text-sm placeholder:text-white/30"
+  />
+</div>
+
+<div className="col-span-1">
+  <p className="text-white/50 text-xs mb-1 uppercase font-black tracking-widest">Representante Linave</p>
+  <input
+    type="text"
+    value={documentoMediacaoForm.representanteLinave}
+    onChange={(e) => atualizarCampoMediacao('representanteLinave', e.target.value)}
+    placeholder="Ex: Nome do Responsável Linave"
+    className="w-full bg-[#101f3d] border border-white/10 rounded-lg px-3 py-2 text-white text-sm placeholder:text-white/30"
+  />
+</div>
 
               <div className="bg-[#0b1220] rounded-xl border border-white/10 p-6 space-y-4">
                 <div className="flex items-center justify-between">
+                  <h3 className="text-emerald-300 text-lg font-black uppercase">Tabela de Medição de Serviços</h3>
                   <h3 className="text-emerald-300 text-lg font-black uppercase">Tabela de Medição de Serviços</h3>
                   <button
                     onClick={adicionarLinhaTabelaItens}
@@ -3629,7 +3912,13 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                       <tr className="bg-white/5 text-white/70 uppercase tracking-wider">
                         <th className="border border-white/10 px-3 py-2 text-left">Item</th>
                         <th className="border border-white/10 px-3 py-2 text-left">Descrição</th>
+                        <th className="border border-white/10 px-3 py-2 text-left">Descrição</th>
                         <th className="border border-white/10 px-3 py-2 text-left">Unidade</th>
+                        <th className="border border-white/10 px-3 py-2 text-left">Quantidade produzida</th>
+                        <th className="border border-white/10 px-3 py-2 text-left">Valor / unidade</th>
+                        <th className="border border-white/10 px-3 py-2 text-left">Total</th>
+                        <th className="border border-white/10 px-3 py-2 text-left">Observações</th>
+                        <th className="border border-white/10 px-3 py-2 text-center">Ação</th>
                         <th className="border border-white/10 px-3 py-2 text-left">Quantidade produzida</th>
                         <th className="border border-white/10 px-3 py-2 text-left">Valor / unidade</th>
                         <th className="border border-white/10 px-3 py-2 text-left">Total</th>
@@ -3643,6 +3932,9 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                           <td className="border border-white/10 p-1.5"><input value={linha.item} onChange={(e) => atualizarLinhaTabelaItens(linha.id, 'item', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
                           <td className="border border-white/10 p-1.5"><input value={linha.descricao} onChange={(e) => atualizarLinhaTabelaItens(linha.id, 'descricao', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
                           <td className="border border-white/10 p-1.5"><input value={linha.unidade} onChange={(e) => atualizarLinhaTabelaItens(linha.id, 'unidade', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
+                          <td className="border border-white/10 p-1.5"><input value={linha.quantidadeProduzida} onChange={(e) => atualizarLinhaTabelaItens(linha.id, 'quantidadeProduzida', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
+                          <td className="border border-white/10 p-1.5"><input value={linha.valorUnitario} onChange={(e) => atualizarLinhaTabelaItens(linha.id, 'valorUnitario', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
+                          <td className="border border-white/10 p-1.5"><input value={linha.total} readOnly className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1 text-emerald-300 font-black" /></td>
                           <td className="border border-white/10 p-1.5"><input value={linha.quantidadeProduzida} onChange={(e) => atualizarLinhaTabelaItens(linha.id, 'quantidadeProduzida', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
                           <td className="border border-white/10 p-1.5"><input value={linha.valorUnitario} onChange={(e) => atualizarLinhaTabelaItens(linha.id, 'valorUnitario', e.target.value)} className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
                           <td className="border border-white/10 p-1.5"><input value={linha.total} readOnly className="w-full bg-[#101f3d] border border-white/10 rounded px-2 py-1 text-emerald-300 font-black" /></td>
@@ -3660,7 +3952,15 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                     </tbody>
                   </table>
                 </div>
+                </div>
 
+                <div className="grid grid-cols-1 gap-4">
+                  <div className="bg-[#101f3d] rounded-xl border border-white/10 p-4">
+                    <p className="text-white/50 text-xs mb-1 uppercase font-black tracking-widest">Total da medição</p>
+                    <p className="text-emerald-300 font-black text-lg">
+                      {`R$ ${formatDecimal(documentoMediacaoForm.tabelaItens.reduce((total, linha) => total + parseDecimal(linha.total), 0))}`}
+                    </p>
+                  </div>
                 <div className="grid grid-cols-1 gap-4">
                   <div className="bg-[#101f3d] rounded-xl border border-white/10 p-4">
                     <p className="text-white/50 text-xs mb-1 uppercase font-black tracking-widest">Total da medição</p>
@@ -3676,6 +3976,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                   onClick={handleGerarDocumentoMediacao}
                   className="flex-1 py-3 rounded-lg bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-white font-black uppercase text-sm tracking-widest"
                 >
+                  <Download size={16} className="inline mr-2" /> Gerar Documento de Medição
                   <Download size={16} className="inline mr-2" /> Gerar Documento de Medição
                 </button>
                 <button
@@ -3907,6 +4208,52 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                         </div>
                       );
                     })()}
+                  <div>
+                    <p className="text-white/50 text-xs mb-2 font-black">A - Escopo Básico de Serviços</p>
+                    {(() => {
+                      const itensEscopo = normalizarEscopoBasicoEstruturado(ultimaProposta.escopoBasicoServicos || ultimaProposta.escopoA);
+                      if (itensEscopo.length === 0) {
+                        return <p className="text-white whitespace-pre-wrap text-sm">−</p>;
+                      }
+
+                      return (
+                        <div className="space-y-4">
+                          {itensEscopo.map((item: any, index: number) => (
+                            <div key={`escopo-${index}`} className="space-y-2">
+                              {item.titulo && (
+                                <p className="text-white font-bold text-sm">{index + 1}. {item.titulo}</p>
+                              )}
+                              {item.textosAntes.map((texto: string, textoIndex: number) => (
+                                <p key={`antes-${index}-${textoIndex}`} className="text-white whitespace-pre-wrap text-sm">{texto}</p>
+                              ))}
+                              {item.tabela.length > 0 && (
+                                <div className="overflow-x-auto rounded-lg border border-white/10">
+                                  <table className="min-w-full text-sm">
+                                    <tbody>
+                                      {item.tabela.map((linha: any[], linhaIndex: number) => (
+                                        <tr key={`linha-${index}-${linhaIndex}`} className="border-b border-white/10 last:border-b-0">
+                                          <td className="px-3 py-2 text-white font-bold border-r border-white/10 whitespace-nowrap">
+                                            {linhaIndex + 1}
+                                          </td>
+                                          {linha.map((coluna: any, colunaIndex: number) => (
+                                            <td key={`coluna-${index}-${linhaIndex}-${colunaIndex}`} className="px-3 py-2 text-white">
+                                              {coluna.valor}
+                                            </td>
+                                          ))}
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+                              {item.textosDepois.map((texto: string, textoIndex: number) => (
+                                <p key={`depois-${index}-${textoIndex}`} className="text-white whitespace-pre-wrap text-sm">{texto}</p>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
 
@@ -3971,6 +4318,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                 <div className="flex gap-4 pt-6 border-t border-white/5">
                   <button
                     onClick={handleGerarPropostaPDF}
+                    onClick={handleGerarPropostaPDF}
                     className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-black text-sm uppercase tracking-widest transition-all flex items-center justify-center gap-2"
                   >
                     <Download size={18} /> Download PDF
@@ -4013,6 +4361,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
         const maoDeObraOS = Array.isArray(ultimoOrcamento?.data?.maoDeObra) ? ultimoOrcamento.data.maoDeObra : [];
         const materiaisOS = Array.isArray(ultimoOrcamento?.data?.materiais) ? ultimoOrcamento.data.materiais : [];
         const terceirizadosOS = Array.isArray(ultimoOrcamento?.data?.terceirizados) ? ultimoOrcamento.data.terceirizados : [];
+        const escopoBasicoProposta = formatarEscopoBasicoParaTexto(ultimaProposta?.escopoBasicoServicos || ultimaProposta?.escopoA || '−');
         const escopoBasicoProposta = formatarEscopoBasicoParaTexto(ultimaProposta?.escopoBasicoServicos || ultimaProposta?.escopoA || '−');
         return (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -4078,6 +4427,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                   </div>
                 </div>
 
+                {/* Orçamento */}
                 {/* Orçamento */}
                 <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-6 space-y-4">
                   <div className="flex items-center justify-between gap-3">
@@ -4180,6 +4530,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                 </div>
 
                 {/* Proposta */}
+                {/* Proposta */}
                 <div className="bg-cyan-500/10 border border-cyan-500/20 rounded-xl p-6 space-y-4">
                   <div className="flex items-center justify-between gap-3">
                     <h3 className="text-cyan-300 font-black text-lg uppercase">Proposta</h3>
@@ -4210,6 +4561,10 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
 
                       <div className="bg-white/5 border border-white/10 rounded-xl p-6 space-y-4">
                         <h4 className="text-white font-black text-sm uppercase">Escopo de Serviços</h4>
+                        <div>
+                          <p className="text-white/50 text-xs mb-2 font-black">A - Escopo Básico de Serviços</p>
+                          <p className="text-white whitespace-pre-wrap text-sm">{escopoBasicoProposta}</p>
+                        </div>
                         <div>
                           <p className="text-white/50 text-xs mb-2 font-black">A - Escopo Básico de Serviços</p>
                           <p className="text-white whitespace-pre-wrap text-sm">{escopoBasicoProposta}</p>
@@ -4412,6 +4767,15 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                     const semImposto = safeNumber(ultimoOrcamento.valores.totalSemImposto ?? (base + valorMargem + valorOH));
                     const valorImposto = safeNumber(ultimoOrcamento.valores.valorImpostos ?? ((semImposto * impostosPercent) / 100));
                     const precoFinal = safeNumber(ultimoOrcamento.valores.precoFinal);
+                    const base = safeNumber(ultimoOrcamento.valores.totalBruto ?? ultimoOrcamento.valores.subtotal);
+                    const margemPercent = safeNumber(ultimoOrcamento.valores.margem);
+                    const ohPercent = safeNumber(ultimoOrcamento.valores.oh);
+                    const impostosPercent = safeNumber(ultimoOrcamento.valores.impostos);
+                    const valorMargem = safeNumber(ultimoOrcamento.valores.valorMargem ?? ((base * margemPercent) / 100));
+                    const valorOH = safeNumber(ultimoOrcamento.valores.valorOH ?? ((base * ohPercent) / 100));
+                    const semImposto = safeNumber(ultimoOrcamento.valores.totalSemImposto ?? (base + valorMargem + valorOH));
+                    const valorImposto = safeNumber(ultimoOrcamento.valores.valorImpostos ?? ((semImposto * impostosPercent) / 100));
+                    const precoFinal = safeNumber(ultimoOrcamento.valores.precoFinal);
                     return (
                   <div className="space-y-2">
                     <div className="flex justify-between items-center">
@@ -4436,6 +4800,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                     </div>
                     <div className="flex justify-between items-center pt-3">
                       <span className="text-amber-300 font-black text-lg">PREÇO FINAL:</span>
+                      <span className="text-amber-300 font-black text-2xl">R$ {precoFinal.toFixed(2)}</span>
                       <span className="text-amber-300 font-black text-2xl">R$ {precoFinal.toFixed(2)}</span>
                     </div>
                   </div>
@@ -4517,6 +4882,12 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
 
                 {/* Botões de Ação */}
                 <div className="flex gap-4 pt-6 border-t border-white/5">
+                  <button
+                    onClick={handleDownloadOrcamentoPDF}
+                    className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-black text-sm uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                  >
+                    <Download size={18} /> Download PDF
+                  </button>
                   <button
                     onClick={handleDownloadOrcamentoPDF}
                     className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-black text-sm uppercase tracking-widest transition-all flex items-center justify-center gap-2"
