@@ -371,7 +371,7 @@ export function PropostaView() {
     const draft = loadDraft(key);
 
     setPropostaForm(prev => ({
-      ...baseForm,
+      ...getInitialPropostaForm(),
       dataProposta: new Date().toISOString().split('T')[0],
       cliente: cliente?.razaoSocial || '',
       atribuidoA: obra.responsavelComercial || '',
