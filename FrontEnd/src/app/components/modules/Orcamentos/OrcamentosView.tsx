@@ -63,8 +63,6 @@ interface OrcamentosViewProps {
 export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   const { obras, clientes, saveEntity } = useErp();
   const listaClientes = Array.isArray(clientes) ? clientes : [];
-  const { obras, clientes, saveEntity } = useErp();
-  const listaClientes = Array.isArray(clientes) ? clientes : [];
   const [showForm, setShowForm] = useState(false);
   const [selectedObra, setSelectedObra] = useState<any>(null);
 
@@ -136,8 +134,6 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     observacoes: '',
     margem: '15',
     oh: '5',
-    impostos: '18',
-    quantidadeItensProduzidos: ''
     impostos: '18',
     quantidadeItensProduzidos: ''
   });
@@ -280,13 +276,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     const totalMaoDeObra = orcamentoData.maoDeObra.reduce((sum: number, item: any) => sum + (parseDecimal(item.valorTotal) || 0), 0);
     const totalMateriais = orcamentoData.materiais.reduce((sum: number, item: any) => sum + (parseDecimal(item.valorTotal) || 0), 0);
     const totalTerceirizados = orcamentoData.terceirizados.reduce((sum: number, item: any) => sum + (parseDecimal(item.valorTotal) || 0), 0);
-    const totalMaoDeObra = orcamentoData.maoDeObra.reduce((sum: number, item: any) => sum + (parseDecimal(item.valorTotal) || 0), 0);
-    const totalMateriais = orcamentoData.materiais.reduce((sum: number, item: any) => sum + (parseDecimal(item.valorTotal) || 0), 0);
-    const totalTerceirizados = orcamentoData.terceirizados.reduce((sum: number, item: any) => sum + (parseDecimal(item.valorTotal) || 0), 0);
     const totalBruto = totalMaoDeObra + totalMateriais + totalTerceirizados;
-    const margemPercentual = parseDecimal(orcamentoData.margem) || 0;
-    const ohPercentual = parseDecimal(orcamentoData.oh) || 0;
-    const impostosPercentual = parseDecimal(orcamentoData.impostos) || 0;
     const margemPercentual = parseDecimal(orcamentoData.margem) || 0;
     const ohPercentual = parseDecimal(orcamentoData.oh) || 0;
     const impostosPercentual = parseDecimal(orcamentoData.impostos) || 0;
@@ -295,8 +285,6 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     const totalSemImposto = totalBruto + margemValor + ohValor;
     const impostoValor = (totalSemImposto * impostosPercentual) / 100;
     const precoFinal = totalSemImposto + impostoValor;
-    const quantidadeItensProduzidos = Number(orcamentoData.quantidadeItensProduzidos) || 0;
-    const valorPorUnidade = quantidadeItensProduzidos > 0 ? precoFinal / quantidadeItensProduzidos : 0;
     const quantidadeItensProduzidos = Number(orcamentoData.quantidadeItensProduzidos) || 0;
     const valorPorUnidade = quantidadeItensProduzidos > 0 ? precoFinal / quantidadeItensProduzidos : 0;
 
@@ -320,9 +308,6 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
         valorMargem: margemValor,
         valorOH: ohValor,
         valorImpostos: impostoValor,
-        precoFinal,
-        quantidadeItensProduzidos,
-        valorPorUnidade
         precoFinal,
         quantidadeItensProduzidos,
         valorPorUnidade
@@ -889,24 +874,10 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     // fallback: remove non-numeric chars except dot and minus
     const cleaned = s.replace(/[^0-9.-]/g, '');
     const numeric = parseFloat(cleaned);
-    const s = String(value ?? '').trim();
-    if (s === '') return 0;
-    // pt-BR formatted numbers use '.' as thousands separator and ',' as decimal
-    if (s.includes(',')) {
-      const cleaned = s.replace(/\./g, '').replace(',', '.');
-      const numeric = parseFloat(cleaned);
-      return Number.isFinite(numeric) ? numeric : 0;
-    }
-    // fallback: remove non-numeric chars except dot and minus
-    const cleaned = s.replace(/[^0-9.-]/g, '');
-    const numeric = parseFloat(cleaned);
     return Number.isFinite(numeric) ? numeric : 0;
   };
 
   const toMoneyString = (value: number) => value.toFixed(2);
-
-  const formatNumber = (value: number) => Number.isFinite(value) ? value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0,00';
-  const formatMoney = (value: number) => `R$ ${formatNumber(value)}`;
 
   const formatNumber = (value: number) => Number.isFinite(value) ? value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0,00';
   const formatMoney = (value: number) => `R$ ${formatNumber(value)}`;
@@ -1008,9 +979,6 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   const totalMaoDeObra = orcamentoData.maoDeObra.reduce((sum, item) => sum + (parseDecimal(item.valorTotal) || 0), 0);
   const totalMateriais = orcamentoData.materiais.reduce((sum, item) => sum + (parseDecimal(item.valorTotal) || 0), 0);
   const totalTerceirizados = orcamentoData.terceirizados.reduce((sum, item) => sum + (parseDecimal(item.valorTotal) || 0), 0);
-  const totalMaoDeObra = orcamentoData.maoDeObra.reduce((sum, item) => sum + (parseDecimal(item.valorTotal) || 0), 0);
-  const totalMateriais = orcamentoData.materiais.reduce((sum, item) => sum + (parseDecimal(item.valorTotal) || 0), 0);
-  const totalTerceirizados = orcamentoData.terceirizados.reduce((sum, item) => sum + (parseDecimal(item.valorTotal) || 0), 0);
   const totalDiasAtividades = orcamentoData.atividades.reduce((sum, item) => sum + parseDecimal(item.dias), 0);
   const totalBruto = totalMaoDeObra + totalMateriais + totalTerceirizados;
   const margemPercentual = parseFloat(orcamentoData.margem) || 0;
@@ -1025,12 +993,6 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   const inputClass = "w-full bg-[#0b1220] border border-white/10 p-3 rounded-lg text-white text-sm outline-none focus:border-amber-500 transition-all placeholder:text-white/20";
   const labelClass = "text-[9px] font-black text-white/40 uppercase tracking-widest ml-1 mb-1.5 block";
   const tableInputClass = "w-full bg-[#0b1220] border border-white/10 p-2 rounded text-white text-xs outline-none focus:border-amber-500";
-
-  // Função para abrir o documento gerado
-  const visualizarDocumento = (filename: string) => {
-    const url = `${process.env.REACT_APP_API_URL}/orcamentos/${filename}`;
-    window.open(url, '_blank');
-  };
 
   // Função para abrir o documento gerado
   const visualizarDocumento = (filename: string) => {
@@ -1062,7 +1024,6 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
             {projetosAOrcar.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {projetosAOrcar.map((obra: any) => {
-                  const cliente = listaClientes.find((c: any) => c.id === obra.clienteId);
                   const cliente = listaClientes.find((c: any) => c.id === obra.clienteId);
                   const ultimoOrcamento = obterUltimoOrcamento(obra);
                   const reorcamentoArquivos = obra.requerReorcamento || ultimoOrcamento?.status === 'pendente_reorcamento';
@@ -1138,7 +1099,6 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
               
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {obrasComOrcamentos.map((obra: any) => {
-                  const cliente = listaClientes.find((c: any) => c.id === obra.clienteId);
                   const cliente = listaClientes.find((c: any) => c.id === obra.clienteId);
                   const orcamentos = normalizarOrcamentos(obra);
                   const ultimoOrcamento = orcamentos[orcamentos.length - 1];
@@ -1219,7 +1179,6 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
             <div className="grid grid-cols-5 gap-4 mb-6">
               <div className="space-y-1.5">
                 <label className={labelClass}>Cliente</label>
-                <input type="text" className={inputClass} disabled value={listaClientes.find(c => c.id === selectedObra?.clienteId)?.razaoSocial || ''} />
                 <input type="text" className={inputClass} disabled value={listaClientes.find(c => c.id === selectedObra?.clienteId)?.razaoSocial || ''} />
               </div>
               <div className="space-y-1.5">
@@ -1431,13 +1390,6 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                 <p className="text-amber-400 font-black text-lg text-right">R$ {totalMaoDeObra.toFixed(2)}</p>
               </div>
             </div>
-
-            <div className="mt-4 pt-4 border-t border-white/10 flex justify-end">
-              <div className="bg-[#0b1220] border border-white/10 rounded-lg px-4 py-2.5">
-                <p className="text-white/60 text-[10px] font-black uppercase tracking-widest">Subtotal Mão de Obra</p>
-                <p className="text-amber-400 font-black text-lg text-right">R$ {totalMaoDeObra.toFixed(2)}</p>
-              </div>
-            </div>
           </div>
 
           {/* SECTION 3: CONSUMÍVEIS E MATERIAIS */}
@@ -1505,13 +1457,6 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                 <p className="text-amber-400 font-black text-lg text-right">R$ {totalMateriais.toFixed(2)}</p>
               </div>
             </div>
-
-            <div className="mt-4 pt-4 border-t border-white/10 flex justify-end">
-              <div className="bg-[#0b1220] border border-white/10 rounded-lg px-4 py-2.5">
-                <p className="text-white/60 text-[10px] font-black uppercase tracking-widest">Subtotal Consumíveis + Materiais</p>
-                <p className="text-amber-400 font-black text-lg text-right">R$ {totalMateriais.toFixed(2)}</p>
-              </div>
-            </div>
           </div>
 
           {/* SECTION 4: SERVIÇOS TERCEIRIZADOS */}
@@ -1564,13 +1509,6 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                   ))}
                 </tbody>
               </table>
-            </div>
-
-            <div className="mt-4 pt-4 border-t border-white/10 flex justify-end">
-              <div className="bg-[#0b1220] border border-white/10 rounded-lg px-4 py-2.5">
-                <p className="text-white/60 text-[10px] font-black uppercase tracking-widest">Subtotal Serviços Terceirizados</p>
-                <p className="text-amber-400 font-black text-lg text-right">R$ {totalTerceirizados.toFixed(2)}</p>
-              </div>
             </div>
 
             <div className="mt-4 pt-4 border-t border-white/10 flex justify-end">
@@ -1746,27 +1684,6 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                 </div>
               </div>
             </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
-              <div className="bg-[#101f3d] rounded-lg p-4 border border-white/5 space-y-2.5">
-                <label className={labelClass}>Quantidade de itens produzidos</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  className={inputClass}
-                  value={orcamentoData.quantidadeItensProduzidos}
-                  onChange={e => setOrcamentoData({ ...orcamentoData, quantidadeItensProduzidos: e.target.value })}
-                  placeholder="0"
-                />
-              </div>
-              <div className="bg-[#101f3d] rounded-lg p-4 border border-white/5 space-y-2.5">
-                <p className={labelClass}>Valor por unidade</p>
-                <div className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-4 py-3 text-white font-black text-lg">
-                  R$ {(Number(orcamentoData.quantidadeItensProduzidos) > 0 ? precoFinal / Number(orcamentoData.quantidadeItensProduzidos) : 0).toFixed(2)}
-                </div>
-              </div>
-            </div>
           </div>
 
           {/* SEÇÃO 8: BOTÕES DE AÇÃO */}
@@ -1789,12 +1706,6 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     </div>
   );
 }
-
-// Função para abrir o documento gerado
-const visualizarDocumento = (filename: string) => {
-  const url = `${process.env.REACT_APP_API_URL}/orcamentos/${filename}`;
-  window.open(url, '_blank');
-};
 
 // Função para abrir o documento gerado
 const visualizarDocumento = (filename: string) => {

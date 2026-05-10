@@ -18,7 +18,9 @@ class UserSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class ClienteSerializer(serializers.ModelSerializer):
-    negocios = NegocioSerializer(many=True, read_only=True)
+    # Usa apenas IDs aqui para evitar dependência circular com NegocioSerializer
+    negocios = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
+
     class Meta:
         model = Cliente
         fields = '__all__'

@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { Plus, X, FileText, CheckCircle, XCircle, ArrowLeft, Save, Download } from 'lucide-react';
 import { handleDownloadPropostaPDF } from '../CRM/handleDownloadPropostaPDF';
@@ -17,7 +16,6 @@ interface EscopoServico {
   servicoId: string;
   titulo: string;
   descricaoServico: string;
-  textosDepois: string[];
   textosDepois: string[];
   colunas: string[];
   linhas: EscopoLinha[];
@@ -66,8 +64,6 @@ const indexToVersaoAlfabetica = (index: number) => {
 export function PropostaView() {
   const { obras, clientes, saveEntity } = useErp();
   const listaClientes = Array.isArray(clientes) ? clientes : [];
-  const { obras, clientes, saveEntity } = useErp();
-  const listaClientes = Array.isArray(clientes) ? clientes : [];
   const [viewMode, setViewMode] = useState<'list' | 'form' | 'historico'>('list');
   const [selectedObra, setSelectedObra] = useState<any>(null);
   const [selectedPropostaVersion, setSelectedPropostaVersion] = useState<number | null>(null);
@@ -81,7 +77,6 @@ export function PropostaView() {
     referencia: '',
     saudacao: '',
     assunto: '',
-    textoAbertura: `Vimos através desta apresentar nossa Proposta Técnica-Comercial, para serviços, conforme escopo e delineamento realizado a bordo, conforme solicitado para vossa avaliação e aprovação.\n\n\nEstamos à disposição para quaisquer esclarecimentos que se façam necessários.\n\n\nAtenciosamente,\n\n\nDiretoria Comercial`,
     textoAbertura: `Vimos através desta apresentar nossa Proposta Técnica-Comercial, para serviços, conforme escopo e delineamento realizado a bordo, conforme solicitado para vossa avaliação e aprovação.\n\n\nEstamos à disposição para quaisquer esclarecimentos que se façam necessários.\n\n\nAtenciosamente,\n\n\nDiretoria Comercial`,
     escopoA: '',
     escopoBasicoServicos: [],
@@ -124,7 +119,6 @@ export function PropostaView() {
         titulo: 'Serviço Geral',
         descricaoServico: '',
         textosDepois: [],
-        textosDepois: [],
         colunas: colunasPadrao,
         linhas: [criarLinhaEscopo(colunasPadrao)]
       }];
@@ -138,7 +132,6 @@ export function PropostaView() {
         titulo: `${idx + 1}. ${servico.tipo || 'Serviço'}${servico.localExecucao ? ` - ${servico.localExecucao}` : ''}`,
         descricaoServico: servico.descricao || '',
         textosDepois: [],
-        textosDepois: [],
         colunas: colunasPadrao,
         linhas: [criarLinhaEscopo(colunasPadrao)]
       };
@@ -150,19 +143,12 @@ export function PropostaView() {
       const cabecalho = escopo.titulo;
       const descricaoServico = escopo.descricaoServico?.trim() || '';
       const textosDepois = Array.isArray(escopo.textosDepois) && escopo.textosDepois.length > 0 ? escopo.textosDepois.join('\n') : '';
-      const cabecalho = escopo.titulo;
-      const descricaoServico = escopo.descricaoServico?.trim() || '';
-      const textosDepois = Array.isArray(escopo.textosDepois) && escopo.textosDepois.length > 0 ? escopo.textosDepois.join('\n') : '';
       const linhasTabela = escopo.linhas
         .map((linha, idx) => {
           const valores = escopo.colunas.map((coluna) => linha.valores[coluna] || '-').join(' | ');
           return `${idx + 1} | ${valores}`;
-          const valores = escopo.colunas.map((coluna) => linha.valores[coluna] || '-').join(' | ');
-          return `${idx + 1} | ${valores}`;
         })
         .join('\n');
-      // Ordem: Título, Descrição (antes da tabela), Tabela, Textos depois
-      return [cabecalho, descricaoServico, linhasTabela || 'Sem itens na planilha', textosDepois || ''].filter(Boolean).join('\n');
       // Ordem: Título, Descrição (antes da tabela), Tabela, Textos depois
       return [cabecalho, descricaoServico, linhasTabela || 'Sem itens na planilha', textosDepois || ''].filter(Boolean).join('\n');
     }).join('\n\n');
@@ -187,63 +173,7 @@ export function PropostaView() {
 
   const adicionarTextoLivre = (escopoId: string, pos: 'depois') => {
     setPropostaForm(prev => ({
-  const adicionarEscopoServico = () => {
-    const novo: EscopoServico = {
-      id: `escopo-adicional-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
-      servicoId: `ad-${Date.now()}`,
-      titulo: `${propostaForm.escopoBasicoServicos.length + 1}. Serviço Adicional`,
-      descricaoServico: '',
-      textosDepois: [],
-      colunas: ['Descrição'],
-      linhas: [criarLinhaEscopo(['Descrição'])]
-    };
-    setPropostaForm(prev => ({ ...prev, escopoBasicoServicos: [...prev.escopoBasicoServicos, novo] }));
-  };
-
-  const removerEscopoServico = (escopoId: string) => {
-    setPropostaForm(prev => ({ ...prev, escopoBasicoServicos: prev.escopoBasicoServicos.filter(e => e.id !== escopoId) }));
-  };
-
-  const adicionarTextoLivre = (escopoId: string, pos: 'depois') => {
-    setPropostaForm(prev => ({
       ...prev,
-      escopoBasicoServicos: prev.escopoBasicoServicos.map(escopo => {
-        if (escopo.id !== escopoId) return escopo;
-        return { ...escopo, textosDepois: [...(escopo.textosDepois || []), ''] };
-      })
-    }));
-  };
-
-  const atualizarTextoLivre = (escopoId: string, pos: 'depois', index: number, valor: string) => {
-    setPropostaForm(prev => ({
-      ...prev,
-      escopoBasicoServicos: prev.escopoBasicoServicos.map(escopo => {
-        if (escopo.id !== escopoId) return escopo;
-        const arr2 = [...(escopo.textosDepois || [])];
-        arr2[index] = valor;
-        return { ...escopo, textosDepois: arr2 };
-      })
-    }));
-  };
-
-  const atualizarDescricaoServico = (escopoId: string, valor: string) => {
-    setPropostaForm(prev => ({
-      ...prev,
-      escopoBasicoServicos: prev.escopoBasicoServicos.map(escopo => (
-        escopo.id === escopoId ? { ...escopo, descricaoServico: valor } : escopo
-      ))
-    }));
-  };
-
-  const removerTextoLivre = (escopoId: string, pos: 'depois', index: number) => {
-    setPropostaForm(prev => ({
-      ...prev,
-      escopoBasicoServicos: prev.escopoBasicoServicos.map(escopo => {
-        if (escopo.id !== escopoId) return escopo;
-        const arr2 = [...(escopo.textosDepois || [])];
-        arr2.splice(index, 1);
-        return { ...escopo, textosDepois: arr2 };
-      })
       escopoBasicoServicos: prev.escopoBasicoServicos.map(escopo => {
         if (escopo.id !== escopoId) return escopo;
         return { ...escopo, textosDepois: [...(escopo.textosDepois || []), ''] };
@@ -432,7 +362,7 @@ export function PropostaView() {
     const anoAtual = new Date().getFullYear().toString().slice(-2);
          
     setPropostaForm(prev => ({
-      ...baseForm,
+      ...getInitialPropostaForm(),
       dataProposta: new Date().toISOString().split('T')[0],
       cliente: cliente?.razaoSocial || '',
       atribuidoA: obra.responsavelComercial || '',
@@ -565,87 +495,6 @@ export function PropostaView() {
     }
   };
 
-  const handleSalvarRascunho = () => {
-    if (!selectedObra) return;
-
-    // Não criar nova versão ao salvar rascunho: armazenar rascunho separado
-    const escopoAConsolidado = propostaForm.escopoBasicoServicos.length > 0
-      ? gerarEscopoBasicoConsolidado(propostaForm.escopoBasicoServicos)
-      : propostaForm.escopoA;
-
-    const novaPropostaRascunho = {
-      dataCriacao: new Date().toISOString().split('T')[0],
-      status: 'rascunho',
-      ...propostaForm,
-      escopoA: escopoAConsolidado
-    };
-
-    const obraAtualizada = {
-      ...selectedObra,
-      propostaRascunho: novaPropostaRascunho // salva rascunho sem alterar lista de propostas/versionamento
-    };
-
-    const obrasAtualizadas = obras?.map((o: any) => o.id === selectedObra.id ? obraAtualizada : o) || [];
-    saveEntity('obras', obrasAtualizadas);
-
-    // Mantém o usuário na mesma tela para continuar edição
-    setSelectedObra(obraAtualizada);
-    alert('Proposta salva como rascunho. (Não alterou versão)');
-  };
-
-  // Gera DOCX a partir de template .docx (deve existir em /public/templates/LINAVE.docx e SERVINAVE.docx)
-  const gerarDocxTemplate = async () => {
-    if (!selectedObra) return alert('Selecione uma obra antes');
-    const rawEmpresa = (() => {
-      const ep = selectedObra.empresaPrestadora || '';
-      if (!ep) return '';
-      if (typeof ep === 'string') return ep;
-      return (ep.nome || ep.razaoSocial || ep.empresaNome || '').toString();
-    })();
-    const cleaned = (rawEmpresa || '').toString().toLowerCase();
-    const isLinave = cleaned.includes('linave');
-
-    try {
-      const templateUrl = isLinave ? '/templates/LINAVE.docx' : '/templates/SERVINAVE.docx';
-      const res = await fetch(templateUrl);
-      if (!res.ok) return alert(`Template ${isLinave ? 'LINAVE.docx' : 'SERVINAVE.docx'} não encontrado em /public/templates/`);
-      const arrayBuffer = await res.arrayBuffer();
-
-      const zip = new PizZip(arrayBuffer);
-      const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
-
-      const escopoConsolidado = gerarEscopoBasicoConsolidado(propostaForm.escopoBasicoServicos);
-      const dataForTemplate: Record<string, any> = {
-        dataProposta: propostaForm.dataProposta,
-        numeroProposta: propostaForm.numeroProposta,
-        cliente: propostaForm.cliente,
-        atribuidoA: propostaForm.atribuidoA,
-        cargoContato: propostaForm.cargoContato,
-        referencia: propostaForm.referencia,
-        saudacao: propostaForm.saudacao,
-        assunto: propostaForm.assunto,
-        textoAbertura: propostaForm.textoAbertura,
-        escopoA: escopoConsolidado,
-        responsabilidadeContratada: propostaForm.responsabilidadeContratada,
-        escopoC: propostaForm.escopoC,
-        preco: propostaForm.preco,
-        condicoesGerais: propostaForm.condicoesGerais,
-        condicoesPagamento: propostaForm.condicoesPagamento,
-        prazo: propostaForm.prazo,
-        encerramento: propostaForm.encerramento
-      };
-
-      doc.render(dataForTemplate);
-      const out = doc.getZip().generate({ type: 'blob' });
-      saveAs(out, `${propostaForm.numeroProposta || selectedObra.nome || 'proposta'}.docx`);
-    } catch (err) {
-      console.error('Erro gerarDocxTemplate:', err);
-      const msg = err?.message ? err.message : String(err);
-      const details = err?.stack ? `\n\nStack:\n${err.stack}` : '';
-      alert(`Erro ao gerar DOCX: ${msg}${details}`);
-    }
-  };
-
   const handleAprovacaoCliente = (obra: any) => {
     const ultimaProposta = obra.propostas?.[obra.propostas.length - 1];
     if (!ultimaProposta) return;
@@ -667,31 +516,6 @@ export function PropostaView() {
     saveEntity('obras', obrasAtualizadas);
 
     alert('Proposta aprovada pelo cliente!');
-  };
-
-  const handlePendenteCliente = (obra: any) => {
-    const ultimaProposta = obra.propostas?.[obra.propostas.length - 1];
-    if (!ultimaProposta) return;
-
-    const propostasAtualizadas = obra.propostas.map((p: any, idx: number) => 
-      idx === obra.propostas.length - 1 ? { ...p, status: 'pendente' as const } : p
-    );
-
-    const obraAtualizada = {
-      ...obra,
-      propostas: propostasAtualizadas,
-      propostaPendenteNovaVersao: true,
-      motivoRecusaProposta: '',
-      houveAlteracaoDocumentosRecusa: false,
-      dataRecusaProposta: '',
-      categoria: 'Negociação',
-      status: 'Aguardando proposta'
-    };
-
-    const obrasAtualizadas = obras?.map((o: any) => o.id === obra.id ? obraAtualizada : o) || [];
-    saveEntity('obras', obrasAtualizadas);
-
-    alert('Proposta marcada como pendente. Negócio retornou para Fazer Proposta.');
   };
 
   const handlePendenteCliente = (obra: any) => {
@@ -819,7 +643,6 @@ export function PropostaView() {
                         <h3 className="text-lg font-black text-white">{obra.nome}</h3>
                         <p className="text-white/70 text-sm mt-1">
                           Cliente: {listaClientes.find(c => c.id === obra.clienteId)?.razaoSocial}
-                          Cliente: {listaClientes.find(c => c.id === obra.clienteId)?.razaoSocial}
                         </p>
                       </div>
                     </div>
@@ -874,7 +697,6 @@ export function PropostaView() {
                       <div>
                         <h3 className="text-lg font-black text-white">{obra.nome}</h3>
                         <p className="text-white/70 text-sm mt-1">
-                          Cliente: {listaClientes.find(c => c.id === obra.clienteId)?.razaoSocial}
                           Cliente: {listaClientes.find(c => c.id === obra.clienteId)?.razaoSocial}
                         </p>
                       </div>
@@ -1199,15 +1021,7 @@ export function PropostaView() {
           {propostaForm.escopoBasicoServicos.map((escopoServico) => (
             <div key={escopoServico.id} className="bg-[#0b1220] border border-white/10 rounded-xl p-4 space-y-4">
 
-
               <div className="flex items-center justify-between gap-3">
-                <input
-                  type="text"
-                  className="flex-1 bg-transparent border border-white/10 rounded-lg px-3 py-2 text-white font-black text-sm uppercase outline-none focus:border-blue-400"
-                  value={escopoServico.titulo}
-                  onChange={(e) => atualizarTituloEscopoServico(escopoServico.id, e.target.value)}
-                  placeholder="Título do serviço (ex: 1. ASASSA - ASSASA)"
-                />
                 <input
                   type="text"
                   className="flex-1 bg-transparent border border-white/10 rounded-lg px-3 py-2 text-white font-black text-sm uppercase outline-none focus:border-blue-400"
@@ -1219,13 +1033,8 @@ export function PropostaView() {
               </div>
               <div className="mt-2">
                 <label className={labelClass}>Descrição do Serviço</label>
-              <div className="mt-2">
-                <label className={labelClass}>Descrição do Serviço</label>
                 <textarea
                   className={`${inputClass} h-20`}
-                  value={escopoServico.descricaoServico || ''}
-                  onChange={(e) => atualizarDescricaoServico(escopoServico.id, e.target.value)}
-                  placeholder="Descrição do serviço"
                   value={escopoServico.descricaoServico || ''}
                   onChange={(e) => atualizarDescricaoServico(escopoServico.id, e.target.value)}
                   placeholder="Descrição do serviço"
@@ -1351,34 +1160,6 @@ export function PropostaView() {
                   </div>
                 ))}
               </div>
-              </button>
-
-              <div className="mt-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className={labelClass}>Textos após a tabela</label>
-                  <button
-                    type="button"
-                    onClick={() => adicionarTextoLivre(escopoServico.id, 'depois')}
-                    className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-black text-xs uppercase tracking-widest transition"
-                  >
-                    <Plus size={12} className="inline mr-1" /> Adicionar Texto
-                  </button>
-                </div>
-
-                {(escopoServico.textosDepois || []).map((txt, i) => (
-                  <div key={`${escopoServico.id}-depois-${i}`} className="flex gap-2">
-                    <textarea
-                      className={`${inputClass} h-20 flex-1`}
-                      value={txt}
-                      onChange={(e) => atualizarTextoLivre(escopoServico.id, 'depois', i, e.target.value)}
-                      placeholder={`Texto depois #${i + 1}`}
-                    />
-                    <button type="button" onClick={() => removerTextoLivre(escopoServico.id, 'depois', i)} className="text-red-300 p-2">
-                      <X size={18} />
-                    </button>
-                  </div>
-                ))}
-              </div>
             </div>
           ))}
 
@@ -1387,22 +1168,6 @@ export function PropostaView() {
               <p className="text-white/40 text-xs font-bold uppercase tracking-widest">Nenhum serviço encontrado para montar escopo</p>
             </div>
           )}
-
-          <div className="flex gap-2 mt-4">
-            <button
-              type="button"
-              onClick={adicionarEscopoServico}
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-black text-xs uppercase tracking-widest transition"
-            >
-              <Plus size={14} className="inline mr-1" /> Adicionar Serviço
-            </button>
-
-            <button
-              type="button"
-              onClick={() => { const exemplo = gerarEscopoBasicoConsolidado(propostaForm.escopoBasicoServicos); window.alert(exemplo || 'Sem conteúdo para visualizar'); }}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-black text-xs uppercase tracking-widest transition"
-            >Visualização de Exemplo</button>
-          </div>
 
           <div className="flex gap-2 mt-4">
             <button
@@ -1462,7 +1227,6 @@ export function PropostaView() {
       </div>
 
       
-      
       {/* SEÇÃO 14: E - CONDIÇÕES GERAIS */}
       <div className={sectionClass}>
         <h3 className="text-base font-black text-white uppercase mb-4">E - Condições Gerais</h3>
@@ -1502,7 +1266,6 @@ export function PropostaView() {
         </div>
       </div>
 
-      
       
       {/* SEÇÃO 18: ENCERRAMENTO */}
       <div className={sectionClass}>
@@ -1547,22 +1310,8 @@ export function PropostaView() {
             className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-3 rounded-lg font-black uppercase text-sm tracking-widest transition-all flex items-center justify-center gap-2"
           >Gerar DOCX</button>
         )}
-        <button 
-          onClick={handleSalvarRascunho}
-          className="flex-1 bg-white/10 text-white py-3 rounded-lg font-black uppercase text-sm hover:bg-white/15 transition flex items-center justify-center gap-2"
-        >
-          <Save size={18} /> Salvar Rascunho
-        </button>
-        {selectedObra && (
-          <button
-            type="button"
-            onClick={gerarDocxTemplate}
-            className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-3 rounded-lg font-black uppercase text-sm tracking-widest transition-all flex items-center justify-center gap-2"
-          >Gerar DOCX</button>
-        )}
       </div>
     </div>
   );
 }
-
 

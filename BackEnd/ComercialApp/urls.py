@@ -2,7 +2,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
     NegocioViewSet, OrcamentoViewSet,
-    cadastrar_negocio_completo, criar_orcamento
+    criar_orcamento
 )
 
 # Optional: Add basic ViewSets for other models if needed
@@ -40,6 +40,5 @@ urlpatterns = [
     path('', include(router.urls)),
     
     # Custom composite endpoints
-    path('negocios/completo/', cadastrar_negocio_completo, name='cadastrar-negocio-completo'),
     path('orcamentos/criar/', criar_orcamento, name='criar-orcamento'),
 ]
