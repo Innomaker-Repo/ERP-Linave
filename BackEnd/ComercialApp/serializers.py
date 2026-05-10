@@ -12,8 +12,7 @@ class ServicoSerializer(serializers.ModelSerializer):
         model = Servico
         fields = '__all__'
 
-class NegocioSerializer(serializers.ModelSerializer):
-    servicos = ServicoSerializer(many=True, read_only=True)
+class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = '__all__'
