@@ -30,7 +30,7 @@ class NegocioSerializer(serializers.ModelSerializer):
     servicos = ServicoSerializer(many=True, read_only=True)
     
     # 'cliente' vai trazer o objeto completo do cliente em vez de só o ID
-    cliente_detalhes = ClienteSerializer(source='cliente', read_only=False)
+    cliente_detalhes = ClienteSerializer(source='cliente', read_only=True)
 
     class Meta:
         model = Negocio
@@ -86,15 +86,59 @@ class LevantamentoSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class OrcamentoSerializer(serializers.ModelSerializer):
+    # --- LEITURA (GET) ---
     levantamento = LevantamentoSerializer(read_only=True)
     resumo = Resumo_orcamentoSerializer(read_only=True)
     
-    # These match the 'related_name' in your models
+    # Listas detalhadas para o frontend
     materiais = MaterialSerializer(many=True, read_only=True)
     mao_de_obra = MDOSerializer(many=True, read_only=True)
     terceirizados = ServicosTerceirizadosSerializer(many=True, read_only=True)
     atividades = Ativ_previstaSerializer(many=True, read_only=True)
 
+    # --- ESCRITA (POST) ---
+    levantamento_id = serializers.PrimaryKeyRelatedField(
+        queryset=Levantamento.objects.all(),
+        source='levantamento',
+        write_only=True
+    )
+    # Permite enviar os dados do resumo dentro deste campo no POST
+    resumo_input = Resumo_orcamentoSerializer(source='resumo', write_only=True)
+
     class Meta:
         model = Orcamento
-        fields = '__all__'
+        fields = [
+            'id', 'levantamento', 'levantamento_id', 
+            'resumo', 'resumo_input', 'Observacoes_setor_orcamento',
+            'materiais', 'mao_de_obra', 'terceirizados', 'atividades'
+        ]
+
+    def create(self, validated_data):
+        # 1. Extrai os dados do resumo (pop remove do dicionário original)
+        resumo_data = validated_data.pop('resumo')
+        
+        # 2. Cria o objeto Resumo primeiro (obrigatório para a FK do Orçamento)
+        resumo_obj = Resumo_orcamento.objects.create(**resumo_data)
+        
+        # 3. Cria o Orçamento vinculando o resumo recém-criado
+        orcamento = Orcamento.objects.create(resumo=resumo_obj, **validated_data)
+        
+        return orcamento
+    
+
+#Código original
+# class OrcamentoSerializer(serializers.ModelSerializer):
+#     levantamento = serializers.PrimaryKeyRelatedField(
+#         queryset=Levantamento.objects.all()
+#     )
+#     resumo = Resumo_orcamentoSerializer(read_only=True)
+    
+#     # These match the 'related_name' in your models
+#     materiais = MaterialSerializer(many=True, read_only=True)
+#     mao_de_obra = MDOSerializer(many=True, read_only=True)
+#     terceirizados = ServicosTerceirizadosSerializer(many=True, read_only=True)
+#     atividades = Ativ_previstaSerializer(many=True, read_only=True)
+
+#     class Meta:
+#         model = Orcamento
+#         fields = '__all__'

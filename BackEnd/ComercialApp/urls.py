@@ -1,32 +1,12 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
-    NegocioViewSet, OrcamentoViewSet,
-    criar_orcamento
+    NegocioViewSet, OrcamentoViewSet, ClienteViewSet, ServicoViewSet, 
+    UserViewSet, LevantamentoViewSet, MDOViewSet, MaterialViewSet,
+    AtividadeViewSet, TerceirizadoViewSet,
+    criar_orcamento, visualizar_orcamento
 )
 
-# Optional: Add basic ViewSets for other models if needed
-from rest_framework import viewsets
-from .models import Cliente, Servico, User, Levantamento
-from .serializers import ClienteSerializer, ServicoSerializer, UserSerializer, LevantamentoSerializer
-
-class ClienteViewSet(viewsets.ModelViewSet):
-    queryset = Cliente.objects.all()
-    serializer_class = ClienteSerializer
-
-class ServicoViewSet(viewsets.ModelViewSet):
-    queryset = Servico.objects.all()
-    serializer_class = ServicoSerializer
-
-class UserViewSet(viewsets.ModelViewSet):
-    queryset = User.objects.all()
-    serializer_class = UserSerializer
-
-class LevantamentoViewSet(viewsets.ModelViewSet):
-    queryset = Levantamento.objects.all()
-    serializer_class = LevantamentoSerializer
-
-# Router registration
 router = DefaultRouter()
 router.register(r'clientes', ClienteViewSet)
 router.register(r'negocios', NegocioViewSet)
@@ -34,11 +14,18 @@ router.register(r'servicos', ServicoViewSet)
 router.register(r'usuarios', UserViewSet)
 router.register(r'levantamentos', LevantamentoViewSet)
 router.register(r'orcamentos', OrcamentoViewSet)
+router.register(r'mdo', MDOViewSet)
+router.register(r'materiais', MaterialViewSet)
+router.register(r'atividades', AtividadeViewSet)
+router.register(r'terceirizados', TerceirizadoViewSet)
 
 urlpatterns = [
-    # Router-based CRUD endpoints
-    path('', include(router.urls)),
-    
-    # Custom composite endpoints
+    # 1. Rota criação de orçamento
     path('orcamentos/criar/', criar_orcamento, name='criar-orcamento'),
+
+    # 2. Rota visualização de PDF
+    path('visualizar/<str:filename>/', visualizar_orcamento, name='visualizar-pdf'),
+
+    # 3. Restante das rotas do router
+    path('', include(router.urls)),
 ]
