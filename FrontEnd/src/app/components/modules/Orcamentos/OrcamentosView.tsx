@@ -2,6 +2,12 @@ import React, { useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { Plus, X, DollarSign, FileText, Trash2, Lock, Eye, Download } from 'lucide-react';
 import jsPDF from 'jspdf';
+import {
+  findOrCreateCliente,
+  findOrCreateNegocio,
+  buildOrcamentoPayload,
+  createOrcamento
+} from '../../../services/comercial';
 
 interface MaoDeObra {
   id: string;
@@ -65,6 +71,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   const listaClientes = Array.isArray(clientes) ? clientes : [];
   const [showForm, setShowForm] = useState(false);
   const [selectedObra, setSelectedObra] = useState<any>(null);
+  const [saving, setSaving] = useState(false);
 
   const indexToVersaoAlfabetica = (index: number) => {
     if (index < 0) return 'A';
@@ -259,78 +266,99 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     setShowForm(true);
   };
 
-  const handleSaveOrcamento = () => {
+  const handleSaveOrcamento = async () => {
     if (!selectedObra) return alert("Nenhum projeto selecionado.");
     if (!isOrcamentoEditavel(selectedObra)) {
       return alert('Não é possível alterar orçamento após Planejamento.');
     }
 
-    const orcamentosExistentes = normalizarOrcamentos(selectedObra);
-    const ultimoOrcamento = orcamentosExistentes.length > 0 ? orcamentosExistentes[orcamentosExistentes.length - 1] : null;
-    const reorcamentoPendente = Boolean(selectedObra.requerReorcamento && ultimoOrcamento?.status === 'pendente_reorcamento');
-    const proximaVersao = reorcamentoPendente
-      ? formatarVersaoOrcamento(ultimoOrcamento?.versao)
-      : proximaVersaoOrcamento(orcamentosExistentes);
+    setSaving(true);
+    try {
+      const clienteOrigem = listaClientes.find((c: any) => c.id === selectedObra.clienteId);
+      const clienteBackend = await findOrCreateCliente(clienteOrigem || {
+        tipoPessoa: 'PJ',
+        razaoSocial: selectedObra.cliente || selectedObra.nome || 'Cliente sem nome',
+        nomeFantasia: selectedObra.cliente || selectedObra.nome || '',
+        cpfCnpj: String(selectedObra.clienteId || selectedObra.id || Date.now()),
+        inscricaoEstadual: '',
+        status: 'Ativo',
+        contato: selectedObra.telefone || '',
+        endereco: selectedObra.endereco || ''
+      });
 
-    // Calcular valores
-    const totalMaoDeObra = orcamentoData.maoDeObra.reduce((sum: number, item: any) => sum + (parseDecimal(item.valorTotal) || 0), 0);
-    const totalMateriais = orcamentoData.materiais.reduce((sum: number, item: any) => sum + (parseDecimal(item.valorTotal) || 0), 0);
-    const totalTerceirizados = orcamentoData.terceirizados.reduce((sum: number, item: any) => sum + (parseDecimal(item.valorTotal) || 0), 0);
-    const totalBruto = totalMaoDeObra + totalMateriais + totalTerceirizados;
-    const margemPercentual = parseDecimal(orcamentoData.margem) || 0;
-    const ohPercentual = parseDecimal(orcamentoData.oh) || 0;
-    const impostosPercentual = parseDecimal(orcamentoData.impostos) || 0;
-    const margemValor = (totalBruto * margemPercentual) / 100;
-    const ohValor = (totalBruto * ohPercentual) / 100;
-    const totalSemImposto = totalBruto + margemValor + ohValor;
-    const impostoValor = (totalSemImposto * impostosPercentual) / 100;
-    const precoFinal = totalSemImposto + impostoValor;
-    const quantidadeItensProduzidos = Number(orcamentoData.quantidadeItensProduzidos) || 0;
-    const valorPorUnidade = quantidadeItensProduzidos > 0 ? precoFinal / quantidadeItensProduzidos : 0;
+      const negocioBackend = await findOrCreateNegocio(selectedObra, clienteBackend.id);
+      const payload = buildOrcamentoPayload(orcamentoData, selectedObra, negocioBackend.id, clienteBackend.id);
+      await createOrcamento(payload);
 
-    // Criar novo orçamento com versão
-    const novoOrcamento = {
-      versao: proximaVersao,
-      dataCriacao: new Date().toISOString().split('T')[0],
-      status: 'pendente' as const,
-      numeroOrcamento: orcamentoData.numeroOrcamento || `BM-${new Date().getFullYear()}-${proximaVersao}`,
-      data: orcamentoData,
-      valores: {
-        totalMaoDeObra,
-        totalMateriais,
-        totalTerceirizados,
-        totalBruto,
-        totalSemImposto,
-        subtotal: totalBruto,
-        margem: margemPercentual,
-        oh: ohPercentual,
-        impostos: impostosPercentual,
-        valorMargem: margemValor,
-        valorOH: ohValor,
-        valorImpostos: impostoValor,
-        precoFinal,
-        quantidadeItensProduzidos,
-        valorPorUnidade
-      }
-    };
+      const orcamentosExistentes = normalizarOrcamentos(selectedObra);
+      const ultimoOrcamento = orcamentosExistentes.length > 0 ? orcamentosExistentes[orcamentosExistentes.length - 1] : null;
+      const reorcamentoPendente = Boolean(selectedObra.requerReorcamento && ultimoOrcamento?.status === 'pendente_reorcamento');
+      const proximaVersao = reorcamentoPendente
+        ? formatarVersaoOrcamento(ultimoOrcamento?.versao)
+        : proximaVersaoOrcamento(orcamentosExistentes);
 
-    // Atualizar a obra com o novo orçamento
-    const obraAtualizada = {
-      ...selectedObra,
-      requerReorcamento: false,
-      orcamentoRealizado: true,
-      orcamentos: reorcamentoPendente
-        ? [...orcamentosExistentes.slice(0, -1), novoOrcamento]
-        : [...orcamentosExistentes, novoOrcamento]
-    };
+      const totalMaoDeObra = orcamentoData.maoDeObra.reduce((sum: number, item: any) => sum + (parseDecimal(item.valorTotal) || 0), 0);
+      const totalMateriais = orcamentoData.materiais.reduce((sum: number, item: any) => sum + (parseDecimal(item.valorTotal) || 0), 0);
+      const totalTerceirizados = orcamentoData.terceirizados.reduce((sum: number, item: any) => sum + (parseDecimal(item.valorTotal) || 0), 0);
+      const totalBruto = totalMaoDeObra + totalMateriais + totalTerceirizados;
+      const margemPercentual = parseDecimal(orcamentoData.margem) || 0;
+      const ohPercentual = parseDecimal(orcamentoData.oh) || 0;
+      const impostosPercentual = parseDecimal(orcamentoData.impostos) || 0;
+      const margemValor = (totalBruto * margemPercentual) / 100;
+      const ohValor = (totalBruto * ohPercentual) / 100;
+      const totalSemImposto = totalBruto + margemValor + ohValor;
+      const impostoValor = (totalSemImposto * impostosPercentual) / 100;
+      const precoFinal = totalSemImposto + impostoValor;
+      const quantidadeItensProduzidos = Number(orcamentoData.quantidadeItensProduzidos) || 0;
+      const valorPorUnidade = quantidadeItensProduzidos > 0 ? precoFinal / quantidadeItensProduzidos : 0;
 
-    const obrasAtualizadas = obras?.map((o: any) => o.id === selectedObra.id ? obraAtualizada : o) || [];
-    saveEntity('obras', obrasAtualizadas);
+      const novoOrcamento = {
+        versao: proximaVersao,
+        dataCriacao: new Date().toISOString().split('T')[0],
+        status: 'pendente' as const,
+        numeroOrcamento: orcamentoData.numeroOrcamento || `BM-${new Date().getFullYear()}-${proximaVersao}`,
+        data: orcamentoData,
+        valores: {
+          totalMaoDeObra,
+          totalMateriais,
+          totalTerceirizados,
+          totalBruto,
+          totalSemImposto,
+          subtotal: totalBruto,
+          margem: margemPercentual,
+          oh: ohPercentual,
+          impostos: impostosPercentual,
+          valorMargem: margemValor,
+          valorOH: ohValor,
+          valorImpostos: impostoValor,
+          precoFinal,
+          quantidadeItensProduzidos,
+          valorPorUnidade
+        }
+      };
 
-    alert("Orçamento salvo com sucesso! Projeto mantido em Planejamento.");
-    setShowForm(false);
-    setSelectedObra(null);
-    setOrcamentoData(getInitialOrcamentoData());
+      const obraAtualizada = {
+        ...selectedObra,
+        requerReorcamento: false,
+        orcamentoRealizado: true,
+        orcamentos: reorcamentoPendente
+          ? [...orcamentosExistentes.slice(0, -1), novoOrcamento]
+          : [...orcamentosExistentes, novoOrcamento]
+      };
+
+      const obrasAtualizadas = obras?.map((o: any) => o.id === selectedObra.id ? obraAtualizada : o) || [];
+      saveEntity('obras', obrasAtualizadas);
+
+      alert("Orçamento salvo com sucesso! Projeto mantido em Planejamento.");
+      setShowForm(false);
+      setSelectedObra(null);
+      setOrcamentoData(getInitialOrcamentoData());
+    } catch (error: any) {
+      console.error(error);
+      alert(`Erro ao salvar orçamento: ${error?.response?.data || error?.message || 'Falha na integração com backend.'}`);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleConcluirOrcamento = () => {
@@ -1690,9 +1718,10 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
           <div className="flex gap-4">
             <button 
               onClick={handleSaveOrcamento}
-              className="flex-1 bg-white/10 hover:bg-white/20 text-white py-3 rounded-lg font-black uppercase text-sm tracking-widest transition border border-white/20"
+              disabled={saving}
+              className="flex-1 bg-white/10 hover:bg-white/20 text-white py-3 rounded-lg font-black uppercase text-sm tracking-widest transition border border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Salvar Orçamento
+              {saving ? 'Salvando...' : 'Salvar Orçamento'}
             </button>
             <button 
               onClick={handleConcluirOrcamento}

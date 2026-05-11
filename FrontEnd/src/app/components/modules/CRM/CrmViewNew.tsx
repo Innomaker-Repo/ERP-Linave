@@ -5,7 +5,9 @@ import { toast } from 'sonner';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable'; // Importação nomeada do plugin
 import { handleDownloadMedicaoPDF } from './handleDownloadMedicaoPDF';
-import { handleDownloadPropostaPDF } from './handleDownloadPropostaPDF'; 
+import { handleDownloadPropostaPDF } from './handleDownloadPropostaPDF';
+import { createNegocio, updateNegocio, deleteNegocio, getNegociosDoCliente } from '../../../services/negocios';
+import { findOrCreateCliente } from '../../../services/clientes';
 
 interface Servico {
   id: string;
@@ -63,16 +65,16 @@ interface DocumentoMediacaoForm {
   tabelaRecursos: LinhaTabelaRecursosMediacao[];
 }
 
-type FaseOS = 
-  | 'Pre-Venda' 
-  | 'PlanoServico' 
-  | 'VendaFechada' 
-  | 'Operacao' 
-  | 'AnteProjeto' 
+type FaseOS =
+  | 'Pre-Venda'
+  | 'PlanoServico'
+  | 'VendaFechada'
+  | 'Operacao'
+  | 'AnteProjeto'
   | 'Projeto'
   | 'Fabricacao'
   | 'Teste'
-  | 'PrestacaoServico' 
+  | 'PrestacaoServico'
   | 'PosVenda';
 
 interface CrmViewProps {
@@ -401,6 +403,67 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       setFormData((prev) => ({ ...prev, empresaPrestadora: empresasDisponiveis[0] }));
     }
   }, [empresasPrestadoras, formData.empresaPrestadora]);
+
+  // Sincronizar negócios do backend
+  useEffect(() => {
+    const sincronizarNegociosBackend = async () => {
+      try {
+        // Para cada cliente, buscar negócios do backend
+        if (clientes && clientes.length > 0) {
+          for (const cliente of clientes) {
+            try {
+              const negociosBackend = await getNegociosDoCliente(cliente.id);
+              
+              // Para cada negócio do backend, verificar se já existe obra correspondente
+              for (const negocio of negociosBackend) {
+                const obraExistente = obras?.find(o => o.negocioBackendId === negocio.id);
+                
+                if (!obraExistente) {
+                  // Criar obra local baseada no negócio do backend
+                  const novaObra = {
+                    id: `PROJ-BACKEND-${negocio.id}`,
+                    nome: negocio.nome,
+                    empresaPrestadora: negocio.empresa_prestadora || 'Linave',
+                    clienteId: cliente.id,
+                    status: 'Planejamento',
+                    categoria: 'Planejamento' as CategoriaObra,
+                    tipo: 'Serviço',
+                    responsavelTecnico: negocio.solicitante,
+                    responsavelComercial: negocio.solicitante,
+                    solicitante: negocio.solicitante,
+                    telefone: negocio.telefone || '',
+                    email: negocio.email || '',
+                    dataCadastro: negocio.created_at ? new Date(negocio.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+                    dataSolicitacao: negocio.created_at ? new Date(negocio.created_at).toISOString().split('T')[0] : '',
+                    dataPrevistaInicio: negocio.data_prevista_inicio,
+                    dataPrevistaFinal: negocio.data_prevista_final,
+                    inicioPrevisto: negocio.data_prevista_inicio,
+                    fimPrevisto: negocio.data_prevista_final,
+                    origemOS: true,
+                    orcamento: 0,
+                    orcamentos: [],
+                    propostas: [],
+                    documentosNegocio: [],
+                    servicos: negocio.servicos || [],
+                    negocioBackendId: negocio.id
+                  };
+
+                  // Adicionar obra ao contexto
+                  saveEntity('obras', [...(obras || []), novaObra]);
+                }
+              }
+            } catch (error) {
+              console.warn(`Erro ao sincronizar negócios do cliente ${cliente.id}:`, error);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Erro ao sincronizar negócios do backend:', error);
+      }
+    };
+
+    sincronizarNegociosBackend();
+  }, [clientes, obras, saveEntity]);
 
   const handleAddServico = () => {
     setFormData({
@@ -1074,7 +1137,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     setShowArquivosModal(true);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!formData.nomeNegocio.trim() || !formData.clienteId || !formData.solicitante || formData.servicos.length === 0) {
       return alert("Nome do Negócio, Cliente, Solicitante e pelo menos um Serviço são obrigatórios.");
     }
@@ -1091,66 +1154,103 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       return alert("Pelo menos um serviço deve ter uma descrição.");
     }
 
-    const novoProjetoId = `PROJ-${Date.now()}`;
-    const nomeObra = formData.nomeNegocio.trim();
-    const primeiroServico = formData.servicos[0];
+    try {
+      // 1. Encontrar ou criar cliente no backend
+      const clienteOrigem = clientes?.find((c: any) => c.id === formData.clienteId);
+      const clienteBackend = await findOrCreateCliente(clienteOrigem || {
+        tipoPessoa: 'PJ',
+        razaoSocial: clienteOrigem?.razaoSocial || clienteOrigem?.nome || 'Cliente não encontrado',
+        nomeFantasia: clienteOrigem?.nomeFantasia || '',
+        cpfCnpj: clienteOrigem?.cpfCnpj || clienteOrigem?.documento || '',
+        inscricaoEstadual: clienteOrigem?.inscricaoEstadual || '',
+        status: clienteOrigem?.status || 'Ativo',
+        contato: clienteOrigem?.contato || '',
+        endereco: clienteOrigem?.endereco || ''
+      });
 
-    const novaObra = {
-      id: novoProjetoId,
-      nome: nomeObra,
-      empresaPrestadora: formData.empresaPrestadora,
-      clienteId: formData.clienteId,
-      status: 'Planejamento',
-      categoria: 'Planejamento' as CategoriaObra,
-      tipo: primeiroServico.tipo || 'Serviço',
-      responsavelTecnico: formData.solicitante,
-      responsavelComercial: formData.solicitante,
-      solicitante: formData.solicitante,
-      telefone: formData.telefone,
-      email: formData.email,
-      dataCadastro: new Date().toISOString().split('T')[0],
-      dataSolicitacao: formData.dataSolicitacao,
-      dataPrevistaInicio: formData.dataPrevistaInicio,
-      dataPrevistaFinal: formData.dataPrevistaFinal,
-      inicioPrevisto: formData.dataPrevistaInicio,
-      fimPrevisto: formData.dataPrevistaFinal,
-      origemOS: true,
-      orcamento: 0,
-      orcamentos: [],
-      propostas: [],
-      documentosNegocio: formData.documentosNegocio,
-      servicos: formData.servicos
-    };
+      // 2. Criar negócio no backend
+      const negocioFrontend = {
+        nome: formData.nomeNegocio.trim(),
+        solicitante: formData.solicitante,
+        cargo: formData.cargo || '',
+        telefone: formData.telefone || '',
+        email: formData.email || '',
+        dataPrevistaInicio: formData.dataPrevistaInicio,
+        dataPrevistaFinal: formData.dataPrevistaFinal,
+        empresaPrestadora: formData.empresaPrestadora,
+        servicos: formData.servicos
+      };
 
-    const novasOS = formData.servicos.map((servico, idx) => ({
-      id: `OS-${Date.now()}-${idx}`,
-      empresaPrestadora: formData.empresaPrestadora,
-      clienteId: formData.clienteId,
-      solicitante: formData.solicitante,
-      email: formData.email,
-      telefone: formData.telefone,
-      tipo: servico.tipo,
-      embarcacao: servico.embarcacao,
-      local: servico.localExecucao,
-      descricao: servico.descricao,
-      observacoes: servico.observacoes,
-      porto: servico.porto,
-      fase: formData.fase,
-      obraId: novoProjetoId,
-      obraNome: nomeObra,
-      dataCriacao: new Date().toISOString().split('T')[0],
-      status: 'Ativo',
-      statusEnvio: 'pendente',
-      docs: formData.docs
-    }));
+      const negocioBackend = await createNegocio(negocioFrontend, clienteBackend.id);
 
-    saveEntity('obras', [...(obras || []), novaObra]);
-    saveEntity('os', [...(os || []), ...novasOS]);
+      // 3. Criar obra local (mantém compatibilidade com frontend)
+      const novoProjetoId = `PROJ-${Date.now()}`;
+      const nomeObra = formData.nomeNegocio.trim();
+      const primeiroServico = formData.servicos[0];
 
-    alert(`${novasOS.length} Serviço(s) criado(s) com sucesso!`);
-    setShowFormNovoNegocio(false);
-    setNovoNegocioTab('dados');
-    setFormData(initialForm);
+      const novaObra = {
+        id: novoProjetoId,
+        nome: nomeObra,
+        empresaPrestadora: formData.empresaPrestadora,
+        clienteId: formData.clienteId,
+        status: 'Planejamento',
+        categoria: 'Planejamento' as CategoriaObra,
+        tipo: primeiroServico.tipo || 'Serviço',
+        responsavelTecnico: formData.solicitante,
+        responsavelComercial: formData.solicitante,
+        solicitante: formData.solicitante,
+        telefone: formData.telefone,
+        email: formData.email,
+        dataCadastro: new Date().toISOString().split('T')[0],
+        dataSolicitacao: formData.dataSolicitacao,
+        dataPrevistaInicio: formData.dataPrevistaInicio,
+        dataPrevistaFinal: formData.dataPrevistaFinal,
+        inicioPrevisto: formData.dataPrevistaInicio,
+        fimPrevisto: formData.dataPrevistaFinal,
+        origemOS: true,
+        orcamento: 0,
+        orcamentos: [],
+        propostas: [],
+        documentosNegocio: formData.documentosNegocio,
+        servicos: formData.servicos,
+        negocioBackendId: negocioBackend.id // Referência para o negócio no backend
+      };
+
+      // 4. Criar OS locais (mantém compatibilidade)
+      const novasOS = formData.servicos.map((servico, idx) => ({
+        id: `OS-${Date.now()}-${idx}`,
+        empresaPrestadora: formData.empresaPrestadora,
+        clienteId: formData.clienteId,
+        solicitante: formData.solicitante,
+        email: formData.email,
+        telefone: formData.telefone,
+        tipo: servico.tipo,
+        embarcacao: servico.embarcacao,
+        local: servico.localExecucao,
+        descricao: servico.descricao,
+        observacoes: servico.observacoes,
+        porto: servico.porto,
+        fase: formData.fase,
+        obraId: novoProjetoId,
+        obraNome: nomeObra,
+        dataCriacao: new Date().toISOString().split('T')[0],
+        status: 'Ativo',
+        statusEnvio: 'pendente',
+        docs: formData.docs
+      }));
+
+      // 5. Salvar no contexto local
+      saveEntity('obras', [...(obras || []), novaObra]);
+      saveEntity('os', [...(os || []), ...novasOS]);
+
+      alert(`${novasOS.length} Serviço(s) criado(s) com sucesso! Negócio sincronizado com backend.`);
+      setShowFormNovoNegocio(false);
+      setNovoNegocioTab('dados');
+      setFormData(initialForm);
+    } catch (error: any) {
+      console.error('Erro ao salvar negócio:', error);
+      alert(`Erro ao salvar negócio: ${error?.response?.data?.detail || error?.message || 'Falha na sincronização com backend'}`);
+    }
   };
 
   const handleShowDetalhes = (obra: any) => {
@@ -1166,7 +1266,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     setShowEditModal(true);
   };
 
-  const handleSaveEditObra = () => {
+  const handleSaveEditObra = async () => {
     if (!editingObra) return;
 
     const dataInicio = editingObra.dataPrevistaInicio || editingObra.inicioPrevisto;
@@ -1175,12 +1275,35 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       return alert('A Data Prevista Final não pode ser anterior à Data Prevista de Início.');
     }
 
-    const obrasAtualizadas = obras?.map((o: any) => o.id === editingObra.id ? editingObra : o) || [];
-    saveEntity('obras', obrasAtualizadas);
+    try {
+      // Se tem referência para backend, atualizar lá também
+      if (editingObra.negocioBackendId) {
+        const negocioFrontend = {
+          nome: editingObra.nome,
+          solicitante: editingObra.solicitante,
+          cargo: editingObra.cargo || '',
+          telefone: editingObra.telefone || '',
+          email: editingObra.email || '',
+          dataPrevistaInicio: editingObra.dataPrevistaInicio || editingObra.inicioPrevisto,
+          dataPrevistaFinal: editingObra.dataPrevistaFinal || editingObra.fimPrevisto,
+          empresaPrestadora: editingObra.empresaPrestadora,
+          servicos: editingObra.servicos || []
+        };
 
-    alert("Negócio atualizado com sucesso!");
-    setShowEditModal(false);
-    setEditingObra(null);
+        await updateNegocio(editingObra.negocioBackendId, negocioFrontend);
+      }
+
+      // Atualizar no contexto local
+      const obrasAtualizadas = obras?.map((o: any) => o.id === editingObra.id ? editingObra : o) || [];
+      saveEntity('obras', obrasAtualizadas);
+
+      alert("Negócio atualizado com sucesso!");
+      setShowEditModal(false);
+      setEditingObra(null);
+    } catch (error: any) {
+      console.error('Erro ao atualizar negócio:', error);
+      alert(`Erro ao atualizar negócio: ${error?.response?.data?.detail || error?.message || 'Falha na sincronização com backend'}`);
+    }
   };
 
   const handleAprovarOrcamento = () => {
