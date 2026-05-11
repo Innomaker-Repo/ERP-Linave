@@ -1,7 +1,95 @@
 import React, { useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
+import { extrairIdProjetoDoNumero } from '../../../context/ErpContext';
 import { Plus, X, Check, Clock, Zap, Download, Eye, FileText } from 'lucide-react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import { toast } from 'sonner';
 
+// ==========================================
+// FUNÇÕES AUXILIARES GERAIS
+// ==========================================
+const getBase64FromUrl = async (url: string): Promise<string> => {
+  try {
+    const data = await fetch(url);
+    const blob = await data.blob();
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.readAsDataURL(blob);
+    });
+  } catch (err) {
+    return '';
+  }
+};
+
+const getPrefixoEmpresa = (empresaPrestadora?: string) => {
+  if (!empresaPrestadora) return 'LN';
+  return empresaPrestadora.toLowerCase().includes('servinave') ? 'SN' : 'LN';
+};
+
+const formatarEscopoBasicoParaTexto = (escopo: any) => {
+  if (!escopo) {
+    return '−';
+  }
+
+  if (typeof escopo === 'string') {
+    return escopo;
+  }
+
+  const formatarItemEscopo = (item: any, index: number) => {
+    if (!item) return '';
+    if (typeof item === 'string') return item;
+
+    const partes = [item.titulo, item.descricaoServico, item.texto].filter(
+      (valor) => typeof valor === 'string' && valor.trim(),
+    );
+
+    if (Array.isArray(item.linhas) && item.linhas.length > 0) {
+      const linhas = item.linhas
+        .map((linha: any) => {
+          if (!linha?.valores || typeof linha.valores !== 'object') {
+            return '';
+          }
+
+          const valores = Object.values(linha.valores)
+            .filter((valor) => typeof valor === 'string' ? valor.trim() : Boolean(valor))
+            .map((valor) => String(valor).trim())
+            .filter(Boolean);
+
+          return valores.length > 0 ? `- ${valores.join(' | ')}` : '';
+        })
+        .filter(Boolean);
+
+      if (linhas.length > 0) {
+        partes.push(linhas.join('\n'));
+      }
+    }
+
+    if (partes.length === 0) {
+      return `Item ${index + 1}`;
+    }
+
+    return partes.join('\n');
+  };
+
+  if (Array.isArray(escopo)) {
+    return escopo
+      .map((item, index) => formatarItemEscopo(item, index))
+      .filter(Boolean)
+      .join('\n\n');
+  }
+
+  if (typeof escopo === 'object') {
+    return formatarItemEscopo(escopo, 0);
+  }
+
+  return String(escopo);
+};
+
+// ==========================================
+// INTERFACES
+// ==========================================
 interface DocumentoAssinatura {
   id: string;
   nome: string;
@@ -446,6 +534,13 @@ export function OsView({ searchQuery }: OSViewProps) {
     const dataInicioNegocio = obra.dataPrevistaInicio || obra.inicioPrevisto || '';
     const dataTerminoNegocio = obra.dataPrevistaFinal || obra.fimPrevisto || '';
 
+    let ordemServicoNumero = `OS-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 999)).padStart(3, '0')}`;
+    if (Array.isArray(obra.propostas) && obra.propostas.length > 0) {
+      const ultimaProposta = obra.propostas[obra.propostas.length - 1];
+      const numeroCompleto = ultimaProposta.numeroProposta || ultimaProposta.numero || '';
+      ordemServicoNumero = extrairIdProjetoDoNumero(numeroCompleto);
+    }
+
     const resumoConsolidado = {
       negocio: {
         nome: obra.nome || '',
@@ -476,6 +571,7 @@ export function OsView({ searchQuery }: OSViewProps) {
       local: cliente?.endereco || '',
       dataInicioPrevisto: dataInicioNegocio,
       dataTerminoPrevisto: dataTerminoNegocio,
+      ordemServicoNumero,
       descricaoGeralServico: gerarDescricaoConsolidada(obra, resumoConsolidado.orcamento, resumoConsolidado.proposta),
       resumoConsolidado
     }));
@@ -529,13 +625,11 @@ export function OsView({ searchQuery }: OSViewProps) {
     saveEntity('os', listaOS.filter((item) => item.id !== osId));
   };
 
-  const handleDownloadOSFromList = (os: OsFormData) => {
-    // Sempre abre os detalhes para garantir que temos os dados completos
-    setSelectedOS(os);
+  const handleDownloadOSFromList = (osParam: OsFormData) => {
+    setSelectedOS(osParam);
     setShowDetalhesOS(true);
-    // Após abrir, o usuário pode clicar em Download TXT
     setTimeout(() => {
-      alert('A OS foi aberta. Clique em "Download TXT" para fazer o download.');
+      alert('A OS foi aberta. Clique em "Download PDF" para fazer o download.');
     }, 500);
   };
 
@@ -544,123 +638,291 @@ export function OsView({ searchQuery }: OSViewProps) {
     setShowDetalhesOS(true);
   };
 
-  const handleDownloadOSTXT = (item: OsFormData) => {
-    if (!item.ordemServicoNumero) {
-      alert('Erro: Dados da OS incompletos. Não é possível fazer o download.');
+  // ==========================================
+  // FUNÇÃO DE DOWNLOAD PDF (IGUAL CRM VIEW)
+  // ==========================================
+  const handleDownloadOSPDF = async (osParam?: any) => {
+    const osPrincipal = osParam || selectedOS;
+    if (!osPrincipal) {
+      toast.error('Nenhuma OS selecionada.');
       return;
     }
 
-    const resumo = item.resumoConsolidado;
-    const itensASerIncluido = listarItensASerIncluido(item.aSerIncluido || A_SER_INCLUIDO_DEFAULT);
-    const itensASerIncluidoTexto = itensASerIncluido.length > 0
-      ? itensASerIncluido.map((opcao) => `- ${opcao}`).join('\n')
-      : '- Nenhum item selecionado';
+    const selectedObraDetalhes = (obras || []).find((o: any) => o.id === osPrincipal.obraId);
+    
+    const orcamentosBase = Array.isArray(osPrincipal?.orcamentos) && osPrincipal.orcamentos.length > 0
+      ? osPrincipal.orcamentos
+      : Array.isArray(selectedObraDetalhes?.orcamentos) && selectedObraDetalhes.orcamentos.length > 0
+        ? selectedObraDetalhes.orcamentos
+        : [];
+        
+    const propostasBase = Array.isArray(osPrincipal?.propostas) && osPrincipal.propostas.length > 0
+      ? osPrincipal.propostas
+      : Array.isArray(selectedObraDetalhes?.propostas) && selectedObraDetalhes.propostas.length > 0
+        ? selectedObraDetalhes.propostas
+        : [];
+        
+    const ultimoOrcamento = orcamentosBase.length > 0 ? orcamentosBase[orcamentosBase.length - 1] : null;
+    const ultimaProposta = propostasBase.length > 0 ? propostasBase[propostasBase.length - 1] : null;
+    const cliente = (clientes || []).find((c: any) => c.id === (selectedObraDetalhes?.clienteId || osPrincipal.clienteId));
+    
+    let logoBase64 = await getBase64FromUrl('/image2.jpg');
 
-    const dadosServicosOrcamentoTexto = (resumo?.orcamento?.dadosServicos || []).map((servico: any) => (
-      `- ${servico.ordem || '-'} | ${servico.tipo || '-'} | Categoria: ${servico.categoria || '-'} | Embarcação: ${servico.embarcacao || '-'} | Local: ${servico.localExecucao || '-'} | Porto: ${servico.porto || '-'} | Prazo: ${servico.prazoDes || '-'} | Descrição: ${servico.descricao || '-'} | Obs.: ${servico.observacoes || '-'}`
-    )).join('\n');
+    const formatDateISO = (dateStr: string) => {
+      if (!dateStr) return '';
+      try {
+        const d = new Date(dateStr);
+        return d.toISOString().split('T')[0];
+      } catch {
+        return dateStr;
+      }
+    };
+    
+    try {
+      const doc = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const margin = 10;
+      let y = margin;
+      
+      doc.setDrawColor(0);
+      doc.setLineWidth(0.3);
+      doc.rect(margin, y, pageWidth - 2 * margin, 35);        
+      doc.line(margin + 50, y, margin + 50, y + 15); 
+      doc.line(margin + 130, y, margin + 130, y + 15); 
+      doc.line(margin, y + 15, pageWidth - margin, y + 15); 
+      
+      if (logoBase64) {
+        const logoFormat = logoBase64.match(/^data:image\/(png|jpe?g)/i)?.[1]?.toLowerCase().includes('png') ? 'PNG' : 'JPEG';
+        doc.addImage(logoBase64, logoFormat, margin + 2, y + 2, 46, 11);
+      } else {
+        doc.setFont('Helvetica', 'bold');
+        doc.setFontSize(12);
+        doc.text('LINAVE', margin + 5, y + 10);
+      }
+      
+      doc.setFontSize(12);
+      doc.setFont('Helvetica', 'bold');
+      doc.text('ORDEM DE SERVIÇO\nDE PRODUÇÃO', margin + 90, y + 6.5, { align: 'center' });
+      
+      doc.setFontSize(7);
+      doc.text('Data Emissão:', margin + 132, y + 5);
+      doc.setFont('Helvetica', 'normal');
+      doc.text(formatDateISO(osPrincipal.dataEmissao) || formatDateISO(new Date().toISOString()), margin + 155, y + 5);
+      
+      doc.setFont('Helvetica', 'bold');
+      doc.text('CC.:', margin + 132, y + 10);
+      doc.setFont('Helvetica', 'normal');
+      doc.text(osPrincipal.cc || 'Não inf.', margin + 142, y + 10);
+      y += 15;
+      
+      const rowH = 5;
+      doc.line(margin, y + rowH, pageWidth - margin, y + rowH);
+      doc.line(margin, y + rowH * 2, pageWidth - margin, y + rowH * 2);
+      doc.line(margin, y + rowH * 3, pageWidth - margin, y + rowH * 3);
+      doc.line(margin + 100, y, margin + 100, y + 20); 
+      
+      doc.setFontSize(8);
+      const printDado = (lbl: string, val: string, vx: number, vy: number) => {
+        doc.setFont('Helvetica', 'bold');
+        doc.text(lbl, vx, vy);
+        doc.setFont('Helvetica', 'normal');
+        doc.text(val || ' ', vx + 25, vy);
+      };
+      
+      const dataInicio = osPrincipal.dataInicioPrevisto || selectedObraDetalhes?.dataPrevistaInicio;
+      const dataTermino = osPrincipal.dataTerminoPrevisto || selectedObraDetalhes?.dataPrevistaFinal;
+      
+      let idProjetoForPrint = '';
+      if (ultimaProposta?.numeroProposta || ultimaProposta?.numero) {
+        idProjetoForPrint = extrairIdProjetoDoNumero(ultimaProposta.numeroProposta || ultimaProposta.numero);
+      } else if (selectedObraDetalhes?.id) {
+        idProjetoForPrint = selectedObraDetalhes.id;
+      }
+      
+      printDado('CLIENTE:', cliente?.razaoSocial || osPrincipal.cliente || '', margin + 2, y + 3.5);
+      printDado('Início Previsto:', dataInicio ? formatDateISO(dataInicio) : '', margin + 102, y + 3.5);
+      y += rowH;
+      
+      printDado('PROJETO:', `${selectedObraDetalhes?.nome || osPrincipal.projeto || ''}${idProjetoForPrint ? ' • ' + idProjetoForPrint : ''}`, margin + 2, y + 3.5);
+      printDado('Térm. Previsto:', dataTermino ? formatDateISO(dataTermino) : '', margin + 102, y + 3.5);
+      y += rowH;
+      
+      printDado('EQUIPAMENTO:', osPrincipal.equipamento || osPrincipal.tipo || '', margin + 2, y + 3.5);
+      printDado('OS Nº:', osPrincipal.ordemServicoNumero || '', margin + 102, y + 3.5);
+      y += rowH;
+      
+      printDado('LOCAL:', osPrincipal.local || osPrincipal.localExecucao || '', margin + 2, y + 3.5);
+      printDado('Encarregado:', osPrincipal.supervisorEncarregado || '', margin + 102, y + 3.5);
+      y += rowH;
+      y += 5; 
+      
+      const leftW = 120;
+      const rightW = (pageWidth - 2 * margin) - leftW;
+      
+      doc.setFont('Helvetica', 'bold');
+      doc.setFillColor(230, 230, 230);
+      doc.rect(margin, y, leftW, 6, 'FD');
+      doc.rect(margin + leftW, y, rightW, 6, 'FD');
+      
+      doc.text('DESCRIÇÃO DO SERVIÇO', margin + leftW/2, y + 4, { align: 'center' });
+      doc.text('A SER INCLUIDO', margin + leftW + rightW/2, y + 4, { align: 'center' });
+      y += 6;
+      
+      const bodyY = y;
+      
+      doc.setFont('Helvetica', 'normal');
+      const descTexto = ultimaProposta ? formatarEscopoBasicoParaTexto(ultimaProposta.escopoBasicoServicos || ultimaProposta.escopoA) : (osPrincipal.descricao || osPrincipal.descricaoGeralServico || '');
+      const descLines = doc.splitTextToSize(descTexto, leftW - 4);
+      
+      let cursorEsq = bodyY + 5;
+      descLines.forEach((l: string) => {
+        doc.text(l, margin + 2, cursorEsq);
+        cursorEsq += 4;
+      });
+      
+      let baseChecks = osPrincipal?.aSerIncluido || selectedObraDetalhes?.aSerIncluido || {};
+      if (typeof baseChecks === 'string') {
+        try { baseChecks = JSON.parse(baseChecks); } catch(e) { baseChecks = {}; }
+      }
 
-    const escopoServicosTexto = (resumo?.proposta?.escopoBasicoServicos || []).map((escopo: any, idx: number) => {
-      const cabecalho = `Escopo ${idx + 1}: ${escopo.titulo || 'Sem título'}`;
-      const descricao = `Descrição: ${escopo.descricaoServico || '-'}`;
-      const texto = `Texto: ${escopo.texto || '-'}`;
-      const colunas = `Colunas: ${(escopo.colunas || []).join(' | ') || '-'}`;
-      const linhas = (escopo.linhas || []).map((linha: any, linhaIdx: number) => {
-        const valores = (escopo.colunas || []).map((coluna: string) => `${coluna}: ${linha.valores?.[coluna] || '-'}`).join(' | ');
-        return `  Item ${linhaIdx + 1}: ${valores}`;
-      }).join('\n');
-      return `${cabecalho}\n${descricao}\n${texto}\n${colunas}${linhas ? `\n${linhas}` : ''}`;
-    }).join('\n\n');
+      const getCheck = (uiLabel: string, dbKey: string) => {
+        let isChecked = false;
+        try {
+          const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+          for (let i = 0; i < checkboxes.length; i++) {
+            const input = checkboxes[i] as HTMLInputElement;
+            if (input.parentElement && input.parentElement.textContent && input.parentElement.textContent.includes(uiLabel)) {
+              if (input.checked) isChecked = true;
+            }
+          }
+        } catch (e) {}
 
-    const conteudo = `
-================================================================================
-                    ORDEM DE SERVIÇO CONSOLIDADA
-================================================================================
+        if (!isChecked && (baseChecks[dbKey] === true || String(baseChecks[dbKey]) === 'true')) {
+          isChecked = true;
+        }
+        return isChecked;
+      };
 
-Número: ${item.ordemServicoNumero}
-Status Envio: ${item.statusEnvio || 'pendente'}
-Status Aprovação: ${item.statusAprovacao || 'pendente'}
+      const chk = (val: boolean) => val ? '[ X ]' : '[   ]';
+      
+      const listChecks = [
+        { lbl: 'CERTIFICADO DE GÁS FREE', v: getCheck('Certificado de Gás', 'certificadoGas') },
+        { lbl: 'VENTILAÇÃO', v: getCheck('Ventilação', 'ventilacao') },
+        { lbl: 'LIMPEZA ANTES', v: getCheck('Limpeza antes', 'limpezaAntes') },
+        { lbl: 'LIMPEZA APÓS CONCLUSÃO', v: getCheck('Limpeza após', 'limpezaApos') },
+        { lbl: 'ANDAIMES', v: getCheck('Andaimes', 'andaimes') },
+        { lbl: 'APOIO DE GUINDASTE', v: getCheck('Apoio de guindaste', 'apoioGuindastes') },
+        { lbl: 'TRANSPORTE EXTERNO', v: getCheck('Transporte externo', 'transporteExterno') },
+        { lbl: 'TESTE DE PRESSÃO', v: getCheck('Testes de pressão', 'testesPressao') },
+        { lbl: 'PINTURA', v: getCheck('Pintura', 'pintura') },
+        { lbl: 'LP / PM', v: getCheck('LP / PM', 'lpPm') },
+        { lbl: 'TESTE DE ULTRASSOM', v: getCheck('Teste de ultrassom', 'testeUltrassom') },
+        { lbl: 'INSPEÇÃO DIMENSIONAL', v: getCheck('Inspeção dimensional', 'inspecaoDimensional') },
+        { lbl: 'VISUAL DE SOLDA', v: getCheck('Visual de solda', 'visualSolda') },
+        { lbl: 'SOLDADOR CERTIFICADO', v: getCheck('Soldador certificado', 'soldadorCertificado') },
+        { lbl: 'PROCEDIMENTO DE SOLDA', v: getCheck('Procedimento de solda', 'procedimentoSolda') },
+        { lbl: 'CERTIFICAÇÃO DO MATERIAL', v: getCheck('Certificação do material', 'certificacaoMaterial') },
+        { lbl: 'VIGIA DE FOGO', v: getCheck('Vigia de fogo', 'vigiaFogo') }
+      ];
+      
+      let cursorDir = bodyY + 5;
+      doc.setFontSize(7);
+      listChecks.forEach(c => {
+        doc.setFont('Helvetica', 'bold');
+        doc.text(chk(c.v), margin + leftW + 2, cursorDir);
+        doc.setFont('Helvetica', 'normal');
+        doc.text(c.lbl, margin + leftW + 10, cursorDir);
+        cursorDir += 4;
+      });
+      
+      const maxH = Math.max(cursorEsq, cursorDir) - bodyY + 5;
+      doc.rect(margin, bodyY, leftW, maxH);
+      doc.rect(margin + leftW, bodyY, rightW, maxH);
+      
+      y = bodyY + maxH + 5;
 
-Projeto: ${item.projeto}
-Cliente: ${item.cliente}
-Data Emissão: ${item.dataEmissao}
-Período Previsto: ${item.dataInicioPrevisto} até ${item.dataTerminoPrevisto}
+      // --- NOVA TABELA DE MÃO DE OBRA ---
+      const maoDeObraOS = ultimoOrcamento?.data?.maoDeObra || [];
+      if (maoDeObraOS.length > 0) {
+        autoTable(doc, {
+          startY: y,
+          head: [['MÃO DE OBRA', 'QTDE', 'DIAS', 'ATIVIDADE', 'OBS.']],
+          body: maoDeObraOS.map((mo: any) => [
+            mo.cargo || mo.funcao || mo.maoDeObra || '',
+            mo.quantidade || mo.qtde || '',
+            mo.dias || '',
+            mo.atividade || '',
+            mo.obs || mo.observacao || '-'
+          ]),
+          theme: 'grid',
+          headStyles: { fillColor: [230, 230, 230], textColor: [0,0,0], fontStyle: 'bold', fontSize: 8 },
+          styles: { fontSize: 7, cellPadding: 2, textColor: [0,0,0] },
+          margin: { left: margin, right: margin }
+        });
+        y = (doc as any).lastAutoTable.finalY + 5;
+      }
+      
+      // --- TABELA DE MATERIAIS ATUALIZADA (SEM VALORES) ---
+      const isConsolidada = osPrincipal.tipoDocumento === 'consolidada';
+      const materiaisOS = isConsolidada && osPrincipal.resumoConsolidado?.orcamento?.materiais?.length > 0
+        ? osPrincipal.resumoConsolidado.orcamento.materiais 
+        : (ultimoOrcamento?.data?.materiais || []);
 
---------------------------------------------------------------------------------
-A SER INCLUÍDO
---------------------------------------------------------------------------------
-${itensASerIncluidoTexto}
-
---------------------------------------------------------------------------------
-DADOS DO NEGÓCIO
---------------------------------------------------------------------------------
-Solicitante: ${resumo?.negocio?.solicitante || '-'}
-Responsável Comercial: ${resumo?.negocio?.responsavelComercial || '-'}
-Responsável Técnico: ${resumo?.negocio?.responsavelTecnico || '-'}
-
-Serviços:
-${(resumo?.negocio?.servicos || []).map((servico: any) => `- ${servico.ordem}. ${servico.tipo || 'Serviço'} | ${servico.localExecucao || '-'} | ${servico.descricao || '-'}`).join('\n') || '-'}
-
---------------------------------------------------------------------------------
-ORÇAMENTO
---------------------------------------------------------------------------------
-Número: ${resumo?.orcamento?.numeroOrcamento || '-'}
-Versão: ${resumo?.orcamento?.versao || '-'}
-Solicitante: ${resumo?.orcamento?.solicitante || '-'}
-Responsável Comercial: ${resumo?.orcamento?.responsavelComercial || '-'}
-Documentos de Referência: ${resumo?.orcamento?.documentosReferencia || '-'}
-Escopo: ${resumo?.orcamento?.escopoOrcamento || '-'}
-
-Dados dos Serviços:
-${dadosServicosOrcamentoTexto || '-'}
-
-Mão de Obra:
-${(resumo?.orcamento?.maoDeObra || []).map((itemMao: any) => `- ${itemMao.funcao || '-'} | Qtde: ${itemMao.quantidade || '-'} | Dias: ${itemMao.dias || '-'}`).join('\n') || '-'}
-
-Materiais:
-${(resumo?.orcamento?.materiais || []).map((mat: any) => `- ${mat.descricao || '-'} | ${mat.quantidade || '-'} ${mat.unidade || ''}`).join('\n') || '-'}
-
-Terceirizados:
-${(resumo?.orcamento?.terceirizados || []).map((ter: any) => `- ${ter.descricao || '-'} | ${ter.quantidade || '-'} ${ter.unidade || ''}`).join('\n') || '-'}
-
-Atividades:
-${(resumo?.orcamento?.atividades || []).map((atividade: any) => `- ${atividade.atividade || '-'} | Dias: ${atividade.dias || '-'}`).join('\n') || '-'}
-
-Observações do Orçamento:
-${resumo?.orcamento?.observacoes || '-'}
-
---------------------------------------------------------------------------------
-PROPOSTA COMERCIAL
---------------------------------------------------------------------------------
-Número: ${resumo?.proposta?.numeroProposta || '-'}
-Versão: ${resumo?.proposta?.versao || '-'}
-Status: ${resumo?.proposta?.status || '-'}
-Assunto: ${resumo?.proposta?.assunto || '-'}
-
-Item A - Escopo Básico Consolidado:
-${resumo?.proposta?.escopoA || '-'}
-
-Escopo Básico (planilha por serviço):
-${escopoServicosTexto || '-'}
-
---------------------------------------------------------------------------------
-Descrição Geral da OS
---------------------------------------------------------------------------------
-${item.descricaoGeralServico || '-'}
-
-================================================================================
-Documento gerado automaticamente pelo Linave ERP
-Geração: ${new Date().toLocaleString('pt-BR')}
-================================================================================
-    `;
-
-    const elemento = document.createElement('a');
-    const arquivo = new Blob([conteudo], { type: 'text/plain' });
-    elemento.href = URL.createObjectURL(arquivo);
-    elemento.download = `OS_Consolidada_${item.ordemServicoNumero}.txt`;
-    document.body.appendChild(elemento);
-    elemento.click();
-    document.body.removeChild(elemento);
+      if (materiaisOS.length > 0) {
+        autoTable(doc, {
+          startY: y,
+          head: [['QUANT', 'UN', 'ESPECIFICAÇÃO DE MATERIAL']],
+          body: materiaisOS.map((m: any) => [
+            m.quantidade || '',
+            m.unidade || '',
+            m.descricao || ''
+          ]),
+          theme: 'grid',
+          headStyles: { fillColor: [230, 230, 230], textColor: [0,0,0], fontStyle: 'bold', fontSize: 8 },
+          styles: { fontSize: 7, cellPadding: 2, textColor: [0,0,0] },
+          margin: { left: margin, right: margin }
+        });
+        y = (doc as any).lastAutoTable.finalY + 5;
+      }
+      
+      // --- TABELA DE TERCEIRIZADOS ATUALIZADA (SEM VALORES) ---
+      const terceirizadosOS = isConsolidada && osPrincipal.resumoConsolidado?.orcamento?.terceirizados?.length > 0
+        ? osPrincipal.resumoConsolidado.orcamento.terceirizados
+        : (ultimoOrcamento?.data?.terceirizados || ultimoOrcamento?.data?.terceiros || []);
+        
+      if (terceirizadosOS.length > 0) {
+        autoTable(doc, {
+          startY: y,
+          head: [['ITEM', 'TERCEIRIZAÇÃO OU SUB-CONTRATAÇÃO']],
+          body: terceirizadosOS.map((t: any, idx: number) => [
+            idx + 1,
+            t.descricao || ''
+          ]),
+          theme: 'grid',
+          headStyles: { fillColor: [230, 230, 230], textColor: [0,0,0], fontStyle: 'bold', fontSize: 8 },
+          styles: { fontSize: 7, cellPadding: 2, textColor: [0,0,0] },
+          margin: { left: margin, right: margin }
+        });
+      }
+      
+      const pageCount = (doc as any).internal.getNumberOfPages();
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFontSize(6);
+        doc.setTextColor(150);
+        doc.text(`Documento gerado pelo Linave ERP em ${new Date().toLocaleString('pt-BR')}`, margin, pageHeight - 5);
+        doc.text(`Pag. ${i} / ${pageCount}`, pageWidth - margin - 15, pageHeight - 5);
+      }
+      
+      const prefixo = getPrefixoEmpresa(selectedObraDetalhes?.empresaPrestadora);
+      doc.save(`${prefixo || 'ERP'}_OS_${osPrincipal.ordemServicoNumero || '001'}_${new Date().getTime()}.pdf`);
+      
+      toast.success('OS baixada em PDF com sucesso!');
+    } catch (error) {
+      console.error('Erro ao gerar PDF:', error);
+      toast.error('Erro ao gerar OS em PDF');
+    }
   };
 
   const obrasOrdenadas = obrasEmAndamento.filter((obra: any) => {
@@ -694,6 +956,9 @@ Geração: ${new Date().toLocaleString('pt-BR')}
           obrasOrdenadas.map((obra: any) => {
             const cliente = (clientes || []).find((item: any) => item.id === obra.clienteId);
             const osExistente = osConsolidadas.find((item) => item.obraId === obra.id);
+            const idProjetoOS = Array.isArray(obra.propostas) && obra.propostas.length > 0
+              ? extrairIdProjetoDoNumero(obra.propostas[obra.propostas.length - 1].numeroProposta || '')
+              : '';
 
             return (
               <div
@@ -702,7 +967,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
               >
                 <div className="flex justify-between items-start gap-4">
                   <div className="flex-1">
-                    <h3 className="text-white font-black text-lg">{obra.nome}</h3>
+                    <h3 className="text-white font-black text-lg">{obra.nome} {idProjetoOS && <span className="text-cyan-400">• {idProjetoOS}</span>}</h3>
                     <p className="text-white/70 text-sm mt-1">{cliente?.razaoSocial}</p>
                     <p className="text-white/50 text-xs mt-2">Previsto: {obra.dataPrevistaInicio || obra.inicioPrevisto || '-'} até {obra.dataPrevistaFinal || obra.fimPrevisto || '-'}</p>
                   </div>
@@ -994,6 +1259,10 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                     <p className="text-white font-bold text-lg">{selectedOS.projeto}</p>
                   </div>
                   <div>
+                    <p className="text-white/50 text-sm mb-1">Supervisor/Encarregado</p>
+                    <p className="text-white font-bold text-lg">{selectedOS.supervisorEncarregado || '-'}</p>
+                  </div>
+                  <div>
                     <p className="text-white/50 text-sm mb-1">Status de Envio</p>
                     <p className="text-emerald-300 font-black uppercase text-base">{selectedOS.statusEnvio || 'pendente'}</p>
                   </div>
@@ -1118,11 +1387,10 @@ Geração: ${new Date().toLocaleString('pt-BR')}
               </div>
 
               <div className="flex gap-4 pt-6 border-t border-white/5">
-                <button
-                  onClick={() => handleDownloadOSTXT(selectedOS)}
+                <button onClick={() => handleDownloadOSPDF(selectedOS)}
                   className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-black uppercase text-sm tracking-widest transition-all flex items-center justify-center gap-2"
                 >
-                  <Download size={18} /> Download TXT
+                  <Download size={18} /> Download PDF
                 </button>
                 <button onClick={() => setShowDetalhesOS(false)} className="flex-1 bg-white/10 text-white py-3 rounded-lg font-black uppercase text-sm hover:bg-white/15 transition">
                   Fechar

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
+import { gerarIdOrcamento, extrairIdProjetoDoNumero, extrairComponentesDoId } from '../../../context/ErpContext';
 import { Plus, X, DollarSign, FileText, Trash2, Lock, Eye, Download } from 'lucide-react';
 import jsPDF from 'jspdf';
 
@@ -121,7 +122,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   };
 
   const getInitialOrcamentoData = () => ({
-    numeroOrcamento: `LN-${new Date().getFullYear()}-A`,
+    numeroOrcamento: `LN-0001A/${new Date().getFullYear().toString().slice(-2)}`,
     solicitante: '',
     responsavelComercial: '',
     escopoOrcamento: '',
@@ -245,11 +246,16 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       ? { ...getInitialOrcamentoData(), ...ultimoOrcamento.data }
       : getInitialOrcamentoData();
 
+    // Extrair componentes do ID do projeto (já tem formato correto: LN-0731/26 ou SN-0001/26)
+    const componentesId = extrairComponentesDoId(obra.id);
+    const prefixo = componentesId?.prefixo || 'LN';
+    const numeroServico = componentesId?.numero || '0001';
+
     setOrcamentoData({
       ...baseData,
       numeroOrcamento: reorcamentoPendente
-        ? (ultimoOrcamento?.numeroOrcamento || `BM-${new Date().getFullYear()}-${proximaVersao}`)
-        : `BM-${new Date().getFullYear()}-${proximaVersao}`,
+        ? (ultimoOrcamento?.numeroOrcamento || gerarIdOrcamento(prefixo, numeroServico, proximaVersao))
+        : gerarIdOrcamento(prefixo, numeroServico, proximaVersao),
       escopoOrcamento: servicosInfo,
       solicitante: obra.solicitante || baseData.solicitante || '',
       responsavelComercial: obra.responsavelComercial || baseData.responsavelComercial || '',
@@ -293,7 +299,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       versao: proximaVersao,
       dataCriacao: new Date().toISOString().split('T')[0],
       status: 'pendente' as const,
-      numeroOrcamento: orcamentoData.numeroOrcamento || `BM-${new Date().getFullYear()}-${proximaVersao}`,
+      numeroOrcamento: orcamentoData.numeroOrcamento,
       data: orcamentoData,
       valores: {
         totalMaoDeObra,
@@ -1027,6 +1033,9 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                   const cliente = listaClientes.find((c: any) => c.id === obra.clienteId);
                   const ultimoOrcamento = obterUltimoOrcamento(obra);
                   const reorcamentoArquivos = obra.requerReorcamento || ultimoOrcamento?.status === 'pendente_reorcamento';
+                  const idProjetoOrc = Array.isArray(obra.propostas) && obra.propostas.length > 0
+                    ? extrairIdProjetoDoNumero(obra.propostas[obra.propostas.length - 1].numeroProposta || '')
+                    : '';
                   
                   return (
                     <div 
@@ -1036,7 +1045,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                       <div className="space-y-4">
                         <div className="flex justify-between items-start gap-3">
                           <div className="flex-1">
-                            <h3 className="text-lg font-black text-white uppercase line-clamp-2">{obra.nome}</h3>
+                            <h3 className="text-lg font-black text-white uppercase line-clamp-2">{obra.nome} {idProjetoOrc && <span className="text-cyan-400">• {idProjetoOrc}</span>}</h3>
                             <p className="text-amber-400 text-sm font-bold mt-1">{cliente?.razaoSocial || 'Cliente Desconhecido'}</p>
                           </div>
                           <span className="px-3 py-1 bg-blue-500/20 text-blue-400 rounded-full text-xs font-black whitespace-nowrap">
@@ -1103,6 +1112,9 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                   const orcamentos = normalizarOrcamentos(obra);
                   const ultimoOrcamento = orcamentos[orcamentos.length - 1];
                   const podeNovoOrcamento = isOrcamentoEditavel(obra);
+                  const idProjetoHistorico = Array.isArray(obra.propostas) && obra.propostas.length > 0
+                    ? extrairIdProjetoDoNumero(obra.propostas[obra.propostas.length - 1].numeroProposta || '')
+                    : '';
                   
                   return (
                     <div 
@@ -1112,7 +1124,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                       <div className="space-y-4">
                         <div className="flex justify-between items-start gap-3">
                           <div className="flex-1">
-                            <h3 className="text-lg font-black text-white uppercase line-clamp-2">{obra.nome}</h3>
+                            <h3 className="text-lg font-black text-white uppercase line-clamp-2">{obra.nome} {idProjetoHistorico && <span className="text-cyan-400">• {idProjetoHistorico}</span>}</h3>
                             <p className="text-amber-400 text-sm font-bold mt-1">{cliente?.razaoSocial || 'Cliente Desconhecido'}</p>
                           </div>
                           <span className="px-3 py-1 bg-emerald-500/20 text-emerald-400 rounded-full text-xs font-black whitespace-nowrap">

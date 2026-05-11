@@ -1,119 +1,72 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { CLIENTES_MOCK } from '../mocks/clientesMock';
 
-const FORNECEDORES_MOCK = [
-  {
-    id: 'FOR-DEMO-1',
-    razaoSocial: 'Aco Forte Naval LTDA',
-    cnpj: '61.234.567/0001-10',
-    contato: '(41) 4000-1001 / comercial@acoforte.com.br',
-    endereco: 'Av. Industrial, 1001, Paranagua - PR',
-    status: 'Ativo'
-  },
-  {
-    id: 'FOR-DEMO-2',
-    razaoSocial: 'Servicos Maritimos Atlantico S.A.',
-    cnpj: '62.345.678/0001-20',
-    contato: '(41) 4000-1002 / contato@atlantico.com.br',
-    endereco: 'Porto Seguro, 220, Paranagua - PR',
-    status: 'Ativo'
-  },
-  {
-    id: 'FOR-DEMO-3',
-    razaoSocial: 'Integra Engenharia e Montagem LTDA',
-    cnpj: '63.456.789/0001-30',
-    contato: '(41) 4000-1003 / vendas@integraeng.com.br',
-    endereco: 'Rua Tecnica, 330, Curitiba - PR',
-    status: 'Ativo'
-  }
-];
-
-const FUNCIONARIOS_MOCK = [
-  {
-    id: 'FUN-DEMO-1',
-    nome: 'Marcos Vieira',
-    cargo: 'Engenheiro de Projetos',
-    departamento: 'Engenharia',
-    status: 'Ativo'
-  },
-  {
-    id: 'FUN-DEMO-2',
-    nome: 'Juliana Alves',
-    cargo: 'Analista Comercial',
-    departamento: 'Comercial',
-    status: 'Ativo'
-  },
-  {
-    id: 'FUN-DEMO-3',
-    nome: 'Rafael Souza',
-    cargo: 'Supervisor de Campo',
-    departamento: 'Operacao',
-    status: 'Ativo'
-  },
-  {
-    id: 'FUN-DEMO-4',
-    nome: 'Camila Rocha',
-    cargo: 'Orcamentista',
-    departamento: 'Orcamentos',
-    status: 'Ativo'
-  }
-];
-
-const MOCK_FINANCEIRO = [
-  {
-    id: 'FIN-SEVEN-001',
-    tipo: 'despesa',
-    descricao: 'Mao de obra direta - LN-0731A/26',
-    valor: 16916,
-    entidadeId: 'CLI-SEVEN-OCEAN',
-    obraId: 'SEVEN-OCEAN-FINALIZACAO',
-    categoria: 'Mao de Obra',
-    dataPrevista: '2026-01-29',
-    dataRealizada: '2026-01-29',
-    status: 'Confirmado'
-  },
-  {
-    id: 'FIN-SEVEN-002',
-    tipo: 'despesa',
-    descricao: 'Materiais e consumiveis - LN-0731A/26',
-    valor: 21597.96,
-    entidadeId: 'CLI-SEVEN-OCEAN',
-    obraId: 'SEVEN-OCEAN-FINALIZACAO',
-    categoria: 'Materiais',
-    dataPrevista: '2026-01-29',
-    dataRealizada: '2026-01-29',
-    status: 'Confirmado'
-  },
-  {
-    id: 'FIN-SEVEN-003',
-    tipo: 'despesa',
-    descricao: 'Terceirizacoes e fretes - LN-0731A/26',
-    valor: 11280,
-    entidadeId: 'CLI-SEVEN-OCEAN',
-    obraId: 'SEVEN-OCEAN-FINALIZACAO',
-    categoria: 'Terceiros',
-    dataPrevista: '2026-02-02',
-    dataRealizada: '2026-02-02',
-    status: 'Confirmado'
-  },
-  {
-    id: 'FIN-SEVEN-004',
-    tipo: 'receita',
-    descricao: 'Valor total do servico - LN-0731A/26',
-    valor: 135333.95,
-    entidadeId: 'CLI-SEVEN-OCEAN',
-    obraId: 'SEVEN-OCEAN-FINALIZACAO',
-    categoria: 'Receita',
-    dataPrevista: '2026-02-01',
-    dataRealizada: '2026-02-01',
-    status: 'Previsto'
-  }
-];
 
 const cloneDeep = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 
 const buildTextDataUrl = (text: string) => `data:text/plain;charset=utf-8,${encodeURIComponent(text)}`;
 const buildHtmlDataUrl = (html: string) => `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+
+// --- FUNÇÕES PARA GERAÇÃO DE IDS PADRONIZADOS ---
+/**
+ * Gera o ID do projeto no formato: PREFIX-NUMERO/ANO
+ * Exemplo: PREFIX='LN', NUMERO='0731' → 'LN-0731/26'
+ */
+export const gerarIdProjeto = (prefixo: string, numeroSequencial: string): string => {
+  const anoAtual = new Date().getFullYear().toString().slice(-2);
+  return `${prefixo}-${numeroSequencial}/${anoAtual}`;
+};
+
+/**
+ * Gera o ID de proposta no formato: PREFIX-NUMERO+VERSAO/ANO
+ * Exemplo: PREFIX='LN', NUMERO='0731', VERSAO='A' → 'LN-0731A/26'
+ */
+export const gerarIdProposta = (prefixo: string, numeroSequencial: string, versionLetra: string): string => {
+  const anoAtual = new Date().getFullYear().toString().slice(-2);
+  return `${prefixo}-${numeroSequencial}${versionLetra}/${anoAtual}`;
+};
+
+/**
+ * Gera o ID de orçamento no formato: PREFIX-NUMERO+VERSAO/ANO
+ * Exemplo: PREFIX='LN', NUMERO='0731', VERSAO='A' → 'LN-0731A/26'
+ */
+export const gerarIdOrcamento = (prefixo: string, numeroSequencial: string, versionLetra?: string): string => {
+  const anoAtual = new Date().getFullYear().toString().slice(-2);
+  const versao = versionLetra ? versionLetra : '';
+  return `${prefixo}-${numeroSequencial}${versao}/${anoAtual}`;
+};
+
+/**
+ * Extrai prefixo, número de sequência e ano do ID do projeto
+ * Exemplo: 'LN-0731/26' → { prefixo: 'LN', numero: '0731', ano: '26' }
+ */
+export const extrairComponentesDoId = (idProjeto: string): { prefixo: string; numero: string; ano: string } | null => {
+  const match = idProjeto.match(/^([A-Z]+)-(\d+)\/(\d+)$/);
+  if (match) {
+    return {
+      prefixo: match[1],
+      numero: match[2],
+      ano: match[3]
+    };
+  }
+  return null;
+};
+
+/**
+ * Extrai o ID do projeto a partir do ID de proposta/orçamento
+ * Exemplo: 'LN-0731A/26' → 'LN-0731/26'
+ */
+export const extrairIdProjetoDoNumero = (numeroCompleto: string): string => {
+  // Remove a versão (letra) se existir
+  // Exemplo: "LN-0731A/26" → "LN-0731/26"
+  const match = numeroCompleto.match(/^([A-Z]+)-(\d+)([A-Z])?\/(\d+)$/);
+  if (match) {
+    return `${match[1]}-${match[2]}/${match[4]}`;
+  }
+  return numeroCompleto;
+};
+// ------------------------------------------
+
 
 const SEVEN_OCEAN_MAO_DE_OBRA = [
   { funcao: 'Encarregado', quantidade: '0,5', dias: '10', valorTotal: '1640.00' },
@@ -287,9 +240,9 @@ const SEVEN_OCEAN_SERVICOS = [
   }
 ];
 
-// Versão HTML da proposta que inclui a logo no topo (usa /image2.jpg e /image1.jpg servidos a partir de /public)
+// Versao HTML da proposta que inclui a logo no topo (usa /image2.jpg e /image1.png servidos a partir de /public)
 const SEVEN_OCEAN_PROPOSTA_PREVIEW_HTML = `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial,Helvetica,sans-serif;white-space:pre-wrap;margin:28px;} .logo{text-align:center;margin-bottom:12px;}</style></head><body><div class="logo"><img src="/image2.jpg" alt="logo" style="max-width:260px;height:auto;"/></div><div>${SEVEN_OCEAN_PROPOSTA_PREVIEW.replace(/</g,'&lt;')}</div></body></html>`;
-const SEVEN_OCEAN_PROPOSTA_PREVIEW_HTML_SERVINAVE = `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial,Helvetica,sans-serif;white-space:pre-wrap;margin:28px;} .logo{text-align:center;margin-bottom:12px;}</style></head><body><div class="logo"><img src="/image1.jpg" alt="logo" style="max-width:260px;height:auto;"/></div><div>${SEVEN_OCEAN_PROPOSTA_PREVIEW.replace(/</g,'&lt;')}</div></body></html>`;
+const SEVEN_OCEAN_PROPOSTA_PREVIEW_HTML_SERVINAVE = `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial,Helvetica,sans-serif;white-space:pre-wrap;margin:28px;} .logo{text-align:center;margin-bottom:12px;}</style></head><body><div class="logo"><img src="/image1.png" alt="logo" style="max-width:260px;height:auto;"/></div><div>${SEVEN_OCEAN_PROPOSTA_PREVIEW.replace(/</g,'&lt;')}</div></body></html>`;
 
 const isLinaveName = (s: string | undefined | null) => {
   if (!s) return false;
