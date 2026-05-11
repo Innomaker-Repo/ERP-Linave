@@ -66,16 +66,16 @@ interface DocumentoMediacaoForm {
   tabelaRecursos: LinhaTabelaRecursosMediacao[];
 }
 
-type FaseOS = 
-  | 'Pre-Venda' 
-  | 'PlanoServico' 
-  | 'VendaFechada' 
-  | 'Operacao' 
-  | 'AnteProjeto' 
+type FaseOS =
+  | 'Pre-Venda'
+  | 'PlanoServico'
+  | 'VendaFechada'
+  | 'Operacao'
+  | 'AnteProjeto'
   | 'Projeto'
   | 'Fabricacao'
   | 'Teste'
-  | 'PrestacaoServico' 
+  | 'PrestacaoServico'
   | 'PosVenda';
 
 interface CrmViewProps {
@@ -417,6 +417,67 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       setFormData((prev) => ({ ...prev, empresaPrestadora: empresasDisponiveis[0] }));
     }
   }, [empresasPrestadoras, formData.empresaPrestadora]);
+
+  // Sincronizar negócios do backend
+  useEffect(() => {
+    const sincronizarNegociosBackend = async () => {
+      try {
+        // Para cada cliente, buscar negócios do backend
+        if (clientes && clientes.length > 0) {
+          for (const cliente of clientes) {
+            try {
+              const negociosBackend = await getNegociosDoCliente(cliente.id);
+              
+              // Para cada negócio do backend, verificar se já existe obra correspondente
+              for (const negocio of negociosBackend) {
+                const obraExistente = obras?.find(o => o.negocioBackendId === negocio.id);
+                
+                if (!obraExistente) {
+                  // Criar obra local baseada no negócio do backend
+                  const novaObra = {
+                    id: `PROJ-BACKEND-${negocio.id}`,
+                    nome: negocio.nome,
+                    empresaPrestadora: negocio.empresa_prestadora || 'Linave',
+                    clienteId: cliente.id,
+                    status: 'Planejamento',
+                    categoria: 'Planejamento' as CategoriaObra,
+                    tipo: 'Serviço',
+                    responsavelTecnico: negocio.solicitante,
+                    responsavelComercial: negocio.solicitante,
+                    solicitante: negocio.solicitante,
+                    telefone: negocio.telefone || '',
+                    email: negocio.email || '',
+                    dataCadastro: negocio.created_at ? new Date(negocio.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+                    dataSolicitacao: negocio.created_at ? new Date(negocio.created_at).toISOString().split('T')[0] : '',
+                    dataPrevistaInicio: negocio.data_prevista_inicio,
+                    dataPrevistaFinal: negocio.data_prevista_final,
+                    inicioPrevisto: negocio.data_prevista_inicio,
+                    fimPrevisto: negocio.data_prevista_final,
+                    origemOS: true,
+                    orcamento: 0,
+                    orcamentos: [],
+                    propostas: [],
+                    documentosNegocio: [],
+                    servicos: negocio.servicos || [],
+                    negocioBackendId: negocio.id
+                  };
+
+                  // Adicionar obra ao contexto
+                  saveEntity('obras', [...(obras || []), novaObra]);
+                }
+              }
+            } catch (error) {
+              console.warn(`Erro ao sincronizar negócios do cliente ${cliente.id}:`, error);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Erro ao sincronizar negócios do backend:', error);
+      }
+    };
+
+    sincronizarNegociosBackend();
+  }, [clientes, obras, saveEntity]);
 
   const handleAddServico = () => {
     setFormData({
@@ -1126,7 +1187,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     setShowArquivosModal(true);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!formData.nomeNegocio.trim() || !formData.clienteId || !formData.solicitante || formData.servicos.length === 0) {
       return alert("Nome do Negócio, Cliente, Solicitante e pelo menos um Serviço são obrigatórios.");
     }
@@ -1223,7 +1284,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     setShowEditModal(true);
   };
 
-  const handleSaveEditObra = () => {
+  const handleSaveEditObra = async () => {
     if (!editingObra) return;
 
     const dataInicio = editingObra.dataPrevistaInicio || editingObra.inicioPrevisto;
