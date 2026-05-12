@@ -86,7 +86,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.mysql',
         'NAME': 'linave_db',
         'USER': 'root',
-        'PASSWORD': 'Ferreira@123',
+        'PASSWORD': 'password123!',
         'HOST': 'localhost',
         'PORT': '3306',
     }
