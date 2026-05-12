@@ -189,14 +189,14 @@ export const handleDownloadPropostaPDF = (
     writeText(`Niteroi, ${dataAtual}`, 11, false, 'right', 0, 1);
     writeText(`Proposta ${propostaForm.numeroProposta || '001/26'}`, 11, true, 'right', 0, 15);
 
-    writeText('A', 11, false, 'left', 0, 2);
+    writeText('À', 11, false, 'left', 0, 2);
     writeText(propostaForm.cliente || cliente?.razaoSocial || 'CLIENTE', 11, true, 'left', 0, 10);
 
     if (propostaForm.contato) writeText(`ATT.: ${propostaForm.contato}`, 11, true, 'left', 0, 2);
     if (propostaForm.referencia) writeText(`Ref.: ${propostaForm.referencia}`, 11, true, 'left', 0, 2);
     if (propostaForm.assunto) writeText(`Subject: ${propostaForm.assunto}`, 11, true, 'left', 0, 10);
     if (propostaForm.saudacao) writeText(propostaForm.saudacao, 11, false, 'left', 0, 4);
-    if (propostaForm.textoAbertura) writeText(propostaForm.textoAbertura, 11, false, 'justify', 0, 10);
+    if (propostaForm.textoAbertura) {writeText(propostaForm.textoAbertura, 11, false, 'justify', 0, 10); doc.addPage(); y = drawHeader();}
 
     if (propostaForm.assinaturaAberturaNome) {
       writeText('Atenciosamente,', 11, false, 'left', 0, 2);

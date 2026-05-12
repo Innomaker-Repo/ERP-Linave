@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { CLIENTES_MOCK } from '../mocks/clientesMock';
-import { loadWorkspace, saveWorkspace, setActiveAdminEmail, getCachedWorkspace, setCachedWorkspace } from '../services/workspaceStorage';
+import { loadWorkspace, saveWorkspace, setActiveAdminEmail } from '../services/workspaceStorage';
 
 
 const cloneDeep = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -965,27 +965,17 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
 
   // Simula salvar - agora realmente salva no estado e localStorage
   const saveEntity = async (collection: string, newData: any) => {
+    // Atualiza estado local com os dados
+    const nextData = { ...data, [collection]: newData };
+    setData(nextData);
     const adminEmail = userSession?.email || 'admin@modo-teste.com';
     setActiveAdminEmail(adminEmail);
-
-    // Merge with latest cached workspace to avoid race conditions
-    const base = getCachedWorkspace(adminEmail) || {};
-    const nextData = { ...base, ...data, [collection]: newData };
-
-    // Update local state and cache immediately so concurrent calls see the change
-    setData(nextData);
-    setCachedWorkspace(adminEmail, nextData);
-
     try {
-      const saved = await saveWorkspace(adminEmail, nextData);
-      // Update cache/state with authoritative saved data
-      setCachedWorkspace(adminEmail, saved);
-      setData(saved);
+      await saveWorkspace(adminEmail, nextData);
     } catch (error) {
       console.error(`Erro ao salvar coleção ${collection} no backend`, error);
     }
-
-    console.log(`${collection} atualizado:`, newData?.length || Object.keys(newData || {}).length, 'itens');
+    console.log(`${collection} atualizado:`, newData.length || Object.keys(newData).length, 'itens');
   };
 
   // Simula upload de arquivo - sem enviar para nenhum lugar

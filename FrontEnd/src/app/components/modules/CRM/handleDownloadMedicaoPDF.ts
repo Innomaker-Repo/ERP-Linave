@@ -100,7 +100,7 @@ export const handleDownloadMedicaoPDF = async (
     const empresaNome = documentoMediacaoForm.empresa || 'Linave';
     const isLinave = String(empresaNome).toLowerCase().includes('linave');
     
-    const nomeHeader = isLinave ? 'BM- LINAVE7.6+9iços Navais & Offshore' : 'BM- SERVINAVE';
+    const nomeHeader = isLinave ? 'BM- LINAVE Serviços Navais & Offshore' : 'BM- SERVINAVE';
     const razaoSocialPrestadora = isLinave ? 'W.L.M LINAVE Serviços Navais e Offshore' : 'SERVINAVE';
     const cnpjPrestadora = isLinave ? '34.282.247/0001-60' : documentoMediacaoForm.cnpj || '';
     
