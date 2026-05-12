@@ -3,8 +3,9 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     NegocioViewSet, OrcamentoViewSet, ClienteViewSet, ServicoViewSet, 
     UserViewSet, LevantamentoViewSet, MDOViewSet, MaterialViewSet,
-    AtividadeViewSet, TerceirizadoViewSet,
-    criar_orcamento, visualizar_orcamento
+    AtividadeViewSet, TerceirizadoViewSet, OrdenServicoViewSet,
+    criar_orcamento, visualizar_orcamento,
+    ordens_servico_por_cliente, ordens_servico_por_negocio, atualizar_status_os
 )
 
 router = DefaultRouter()
@@ -18,6 +19,7 @@ router.register(r'mdo', MDOViewSet)
 router.register(r'materiais', MaterialViewSet)
 router.register(r'atividades', AtividadeViewSet)
 router.register(r'terceirizados', TerceirizadoViewSet)
+router.register(r'ordens-servico', OrdenServicoViewSet, basename='ordem-servico')
 
 urlpatterns = [
     # 1. Rota criação de orçamento

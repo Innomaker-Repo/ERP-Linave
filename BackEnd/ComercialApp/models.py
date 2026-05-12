@@ -218,3 +218,78 @@ class Orcamento(models.Model):
 
     def __str__(self):
         return f'Orçamento {self.id} - Levantamento {self.levantamento.id_orcamento} - Resumo {self.resumo.id}'
+
+
+#--------------------- Ordem de Serviço (OS) ------------------
+
+class OrdenServico(models.Model):
+    STATUS_OS_CHOICES = [
+        ('rascunho', 'Rascunho'),
+        ('emproducao', 'Em Produção'),
+        ('concluida', 'Concluída'),
+    ]
+    
+    STATUS_ENVIO_CHOICES = [
+        ('pendente', 'Pendente'),
+        ('enviada', 'Enviada'),
+    ]
+    
+    STATUS_APROVACAO_CHOICES = [
+        ('pendente', 'Pendente'),
+        ('aprovada', 'Aprovada'),
+    ]
+    
+    id = models.BigAutoField(primary_key=True)
+    cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE, related_name='ordens_servico')
+    negocio = models.ForeignKey(Negocio, on_delete=models.SET_NULL, null=True, blank=True, related_name='ordens_servico')
+    
+    # Identificação
+    numero_os = models.CharField(max_length=50, unique=True)  # Número único da OS
+    data_emissao = models.DateField(auto_now_add=True)
+    
+    # Dados gerais
+    projeto = models.CharField(max_length=200, blank=True)
+    equipamento = models.CharField(max_length=200, blank=True)
+    local = models.CharField(max_length=200)
+    cc = models.CharField(max_length=50, blank=True)  # Centro de Custo
+    
+    # Datas
+    data_inicio_previsto = models.DateField()
+    data_termino_previsto = models.DateField()
+    
+    # Responsáveis
+    supervisor_encarregado = models.CharField(max_length=150)
+    
+    # Descrição
+    descricao_geral_servico = models.TextField()
+    
+    # Itens a serem incluídos (JSONField com booleanos)
+    a_ser_incluido = models.JSONField(default=dict, blank=True)  # ex: {certificado_gas: True, ventilacao: False, ...}
+    
+    # Mão de Obra (JSONField com números)
+    mao_obra = models.JSONField(default=dict, blank=True)  # ex: {estrutura: 10, tubulacao: 5, ...}
+    
+    # Status
+    status_os = models.CharField(max_length=20, choices=STATUS_OS_CHOICES, default='rascunho')
+    status_envio = models.CharField(max_length=20, choices=STATUS_ENVIO_CHOICES, default='pendente')
+    status_aprovacao = models.CharField(max_length=20, choices=STATUS_APROVACAO_CHOICES, default='pendente')
+    
+    # Aprovação
+    data_aprovacao = models.DateField(null=True, blank=True)
+    documento_assinatura_aprovacao = models.FileField(
+        upload_to='documentos_os_assinatura/',
+        null=True,
+        blank=True
+    )
+    
+    # Auditoria
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return f"OS {self.numero_os} - {self.cliente.razao_social} - {self.get_status_os_display()}"
+    
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = "Ordem de Serviço"
+        verbose_name_plural = "Ordens de Serviço"
