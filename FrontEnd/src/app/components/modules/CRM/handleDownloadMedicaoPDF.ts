@@ -1,9 +1,19 @@
 import jsPDF from 'jspdf';
 
-export const handleDownloadMedicaoPDF = (
+// Função auxiliar para carregar a imagem da pasta public antes de gerar o PDF
+const loadImage = (url: string): Promise<HTMLImageElement> => {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.src = url;
+    img.onload = () => resolve(img);
+    img.onerror = (err) => reject(err);
+  });
+};
+
+export const handleDownloadMedicaoPDF = async (
   documentoMediacaoForm: any,
-  cliente: any,
-  obra: any,
+  cliente: any, 
+  obra: any,    
 ) => {
   if (!documentoMediacaoForm) return;
 
@@ -15,7 +25,7 @@ export const handleDownloadMedicaoPDF = (
     const usableWidth = pageWidth - margin * 2;
     let y = 15;
 
-    // --- FUNÇÕES UTILITÁRIAS SEGURAS ---
+    // --- FUNÇÕES UTILITÁRIAS ---
     const parseBrFloat = (val: any) => {
       if (typeof val === 'number') return val;
       const str = String(val || '').replace(/\./g, '').replace(',', '.');
@@ -86,96 +96,92 @@ export const handleDownloadMedicaoPDF = (
       });
     };
 
-    // ===== 1. LÓGICA DE EMPRESA E LOGO =====
+    // ===== 1. LÓGICA DE EMPRESA E CARREGAMENTO DA LOGO =====
     const empresaNome = documentoMediacaoForm.empresa || 'Linave';
     const isLinave = String(empresaNome).toLowerCase().includes('linave');
     
-    // Títulos dinâmicos baseados na empresa[cite: 1, 4]
-    const nomeHeader = isLinave ? 'LINAVE Enga. Serviços Navais & Offshore' : 'SERVINAVE';
-    // const logoBase64 = isLinave ? base64LogoLinave : base64LogoServinave;
+    const nomeHeader = isLinave ? 'BM- LINAVE7.6+9iços Navais & Offshore' : 'BM- SERVINAVE';
+    const razaoSocialPrestadora = isLinave ? 'W.L.M LINAVE Serviços Navais e Offshore' : 'SERVINAVE';
+    const cnpjPrestadora = isLinave ? '34.282.247/0001-60' : documentoMediacaoForm.cnpj || '';
+    
+    const logoUrl = isLinave ? '/image2.jpg' : '/image1.png';
+    let logoImg: HTMLImageElement | null = null;
+    
+    try {
+      logoImg = await loadImage(logoUrl);
+    } catch (error) {
+      console.warn('Aviso: Não foi possível carregar a logo do diretório public:', error);
+    }
 
-    // ===== 2. CABEÇALHO (TIPO TABELA) =====
-    const logoWidth = 50;
-    const rowHeightInfo = 7;
+    // ===== 2. CABEÇALHO FORMATO DE TABELA =====
     let x = margin;
-
     doc.setDrawColor(0, 0, 0);
     doc.setLineWidth(0.2);
 
-    // Bloco da Logo (mescla 4 linhas virtuais)[cite: 4]
-    doc.rect(x, y, logoWidth, rowHeightInfo * 4);
-    doc.setFont('Arial', 'bold');
-    doc.setFontSize(10);
-    doc.text('LOGO DA EMPRESA', x + logoWidth / 2, y + (rowHeightInfo * 4) / 2, { align: 'center' });
-    // Se você tiver as imagens em base64, substitua a linha acima por:
-    // doc.addImage(logoBase64, 'JPEG', x + 2, y + 2, logoWidth - 4, (rowHeightInfo * 4) - 4);
+    const colLogoW = 55;
+    const colTitleW = usableWidth - colLogoW; 
+    const row0Height = 15; 
 
-    // Linha 1: Título BM[cite: 4]
-    doc.rect(x + logoWidth, y, usableWidth - logoWidth, rowHeightInfo);
+    doc.rect(x, y, colLogoW, row0Height);
+    if (logoImg) {
+      doc.addImage(logoImg, isLinave ? 'JPEG' : 'PNG', x + 5, y + 2, colLogoW - 10, row0Height - 4);
+    }
+
+    doc.rect(x + colLogoW, y, colTitleW, row0Height);
+    doc.setFont('Arial', 'bold');
     doc.setFontSize(11);
-    doc.text(`BM - ${nomeHeader}`, x + logoWidth + 2, y + 5);
-    y += rowHeightInfo;
+    doc.text(nomeHeader, x + colLogoW + (colTitleW / 2), y + 9, { align: 'center' });
 
-    // Linha 2: Empresa[cite: 4]
-    doc.rect(x + logoWidth, y, usableWidth - logoWidth, rowHeightInfo);
-    doc.setFontSize(9);
-    doc.setFont('Arial', 'bold');
-    doc.text('Empresa:', x + logoWidth + 2, y + 5);
-    doc.setFont('Arial', 'normal');
-    doc.text(empresaNome.toUpperCase(), x + logoWidth + 20, y + 5);
-    y += rowHeightInfo;
+    y += row0Height;
 
-    // Linha 3: CNPJ[cite: 4]
-    doc.rect(x + logoWidth, y, usableWidth - logoWidth, rowHeightInfo);
-    doc.setFont('Arial', 'bold');
-    doc.text('CNPJ:', x + logoWidth + 2, y + 5);
-    doc.setFont('Arial', 'normal');
-    doc.text(documentoMediacaoForm.cnpj || '', x + logoWidth + 15, y + 5);
-    y += rowHeightInfo;
+    const rowHeight = 6;
+    const col1W = 28; 
+    const col2W = 67; 
+    const col3W = 28; 
+    const col4W = 67; 
 
-    // Linha 4: Data Emissão[cite: 4]
-    doc.rect(x + logoWidth, y, usableWidth - logoWidth, rowHeightInfo);
-    doc.setFont('Arial', 'bold');
-    doc.text('Data emissao:', x + logoWidth + 2, y + 5);
-    doc.setFont('Arial', 'normal');
-    doc.text(formatarDataParaBr(documentoMediacaoForm.dataEmissao) || '', x + logoWidth + 27, y + 5);
-    y += rowHeightInfo;
+    const drawRowFields = (
+      labelEsq: string, valorEsq: string, 
+      labelDir: string, valorDir: string, 
+      isLabelBoldEsq = true, isValueBoldEsq = true
+    ) => {
+      doc.rect(x, y, col1W, rowHeight);
+      doc.setFont('Arial', isLabelBoldEsq ? 'bold' : 'normal');
+      doc.setFontSize(9);
+      doc.text(labelEsq, x + 2, y + 4.2);
+      
+      doc.rect(x + col1W, y, col2W, rowHeight);
+      doc.setFont('Arial', isValueBoldEsq ? 'bold' : 'normal');
+      let splitEsq = doc.splitTextToSize(String(valorEsq || ''), col2W - 4);
+      doc.text(splitEsq, x + col1W + 2, y + (splitEsq.length > 1 ? 2.6 : 4.2));
 
-    // Linha 5: Nr. BM e Período (Abaixo da logo e das informações)[cite: 4]
-    const wBm = 90;
-    doc.rect(x, y, wBm, rowHeightInfo);
-    doc.setFont('Arial', 'bold');
-    doc.text('Nr. BM:', x + 2, y + 5);
-    doc.setFont('Arial', 'normal');
-    doc.text(documentoMediacaoForm.numeroBM || '', x + 16, y + 5);
+      doc.rect(x + col1W + col2W, y, col3W, rowHeight);
+      doc.setFont('Arial', 'bold');
+      doc.text(labelDir, x + col1W + col2W + 2, y + 4.2);
 
-    doc.rect(x + wBm, y, usableWidth - wBm, rowHeightInfo);
-    doc.setFont('Arial', 'bold');
-    doc.text('Periodo:', x + wBm + 2, y + 5);
-    doc.setFont('Arial', 'normal');
-    doc.text(documentoMediacaoForm.periodo || '', x + wBm + 18, y + 5);
-    
-    y += rowHeightInfo + 8; // Espaço antes da tabela
+      doc.rect(x + col1W + col2W + col3W, y, col4W, rowHeight);
+      doc.setFont('Arial', 'normal');
+      let splitDir = doc.splitTextToSize(String(valorDir || ''), col4W - 4);
+      doc.text(splitDir, x + col1W + col2W + col3W + 2, y + (splitDir.length > 1 ? 2.6 : 4.2));
 
-    // ===== 3. TABELA DE MEDIÇÃO - CABEÇALHOS =====
-    const colWidths = [12, 78, 20, 15, 30, 35]; // Total = 190 (usableWidth)
+      y += rowHeight;
+    };
+
+    drawRowFields('Empresa:', razaoSocialPrestadora, 'Cliente:', documentoMediacaoForm.cliente || '', true, true);
+    drawRowFields('CNPJ:', cnpjPrestadora, 'CNPJ:', documentoMediacaoForm.clienteCnpj || '12.345.678/0001-90', true, false);
+    drawRowFields('Data emissao:', formatarDataParaBr(documentoMediacaoForm.dataEmissao) || '', 'Embarcaçao:', documentoMediacaoForm.embarcacao || '', true, false);
+    drawRowFields('Nr. BM:', documentoMediacaoForm.numeroBM || '', 'Periodo:', documentoMediacaoForm.periodo || '', true, false);
+
+    y += 8;
+
+    // ===== 3. TABELA DE ITENS =====
+    const colWidths = [12, 78, 20, 15, 30, 35];
     const headerHeight = 8;
     x = margin;
-    
     doc.setFont('Arial', 'bold');
     doc.setFontSize(9);
     
-    // Nomes exatos do Modelo[cite: 4]
-    const headers = [
-      'Ítem', 
-      'Descrição dos Serviços', 
-      'Quantid.', 
-      'Unid.', 
-      'Valor unit. R$', 
-      'Valor total (R$)'
-    ];
-
-    headers.forEach((header, i) => {
+    ['Ítem', 'Descrição dos Serviços', 'Quantid.', 'Unid.', 'Valor unit. R$', 'Valor total (R$)'].forEach((header, i) => {
       doc.rect(x, y, colWidths[i], headerHeight);
       doc.text(header, x + colWidths[i] / 2, y + 5.5, { align: 'center' });
       x += colWidths[i];
@@ -183,128 +189,88 @@ export const handleDownloadMedicaoPDF = (
 
     y += headerHeight;
 
-    // ===== 4. TABELA DE MEDIÇÃO - DADOS =====
     let totalGeral = 0;
-    
-    documentoMediacaoForm.tabelaItens.forEach((linha: any, index: number) => {
-      doc.setFont('Arial', 'normal');
-      doc.setFontSize(8);
-      
-      const textWidth = colWidths[1] - 4;
-      const lines = doc.splitTextToSize(linha.descricao || '', textWidth);
-      const rowHeight = Math.max(8, lines.length * 4 + 4);
+    if (documentoMediacaoForm.tabelaItens && Array.isArray(documentoMediacaoForm.tabelaItens)) {
+      documentoMediacaoForm.tabelaItens.forEach((linha: any, index: number) => {
+        doc.setFont('Arial', 'normal');
+        doc.setFontSize(8);
+        const lines = doc.splitTextToSize(linha.descricao || '', colWidths[1] - 4);
+        const itemRowHeight = Math.max(8, lines.length * 4 + 4);
 
-      if (y + rowHeight > pageHeight - 60) {
-        doc.addPage();
-        y = margin;
-      }
+        if (y + itemRowHeight > pageHeight - 60) {
+          doc.addPage();
+          y = margin;
+        }
 
-      x = margin;
-      
-      const itemText = linha.item ? String(linha.item) : String(index + 1);
-      const valorUnitStr = linha.valorUnitario ? formatCurrency(linha.valorUnitario) : '';
-      const qtdStr = linha.quantidadeProduzida ? formatNumber(linha.quantidadeProduzida) : '';
-      
-      const total = parseBrFloat(linha.total);
-      totalGeral += total;
-      const totalStr = formatCurrency(total);
+        x = margin;
+        const total = parseBrFloat(linha.total);
+        totalGeral += total;
 
-      drawCellWithAutoWrap(x, y, colWidths[0], rowHeight, itemText, 'center', false);
-      x += colWidths[0];
-      
-      drawCellWithAutoWrap(x, y, colWidths[1], rowHeight, linha.descricao || '', 'left', false);
-      x += colWidths[1];
-      
-      drawCellWithAutoWrap(x, y, colWidths[2], rowHeight, qtdStr, 'center', false);
-      x += colWidths[2];
+        drawCellWithAutoWrap(x, y, colWidths[0], itemRowHeight, String(linha.item || index + 1), 'center');
+        drawCellWithAutoWrap(x + colWidths[0], y, colWidths[1], itemRowHeight, linha.descricao || '');
+        drawCellWithAutoWrap(x + colWidths[0] + colWidths[1], y, colWidths[2], itemRowHeight, formatNumber(linha.quantidadeProduzida), 'center');
+        drawCellWithAutoWrap(x + 110, y, colWidths[3], itemRowHeight, linha.unidade || '', 'center');
+        drawCellWithAutoWrap(x + 125, y, colWidths[4], itemRowHeight, formatCurrency(linha.valorUnitario), 'right');
+        drawCellWithAutoWrap(x + 155, y, colWidths[5], itemRowHeight, formatCurrency(total), 'right');
 
-      drawCellWithAutoWrap(x, y, colWidths[3], rowHeight, linha.unidade || '', 'center', false);
-      x += colWidths[3];
+        y += itemRowHeight;
+      });
+    }
 
-      drawCellWithAutoWrap(x, y, colWidths[4], rowHeight, valorUnitStr, 'right', false);
-      x += colWidths[4];
-
-      drawCellWithAutoWrap(x, y, colWidths[5], rowHeight, totalStr, 'right', false);
-
-      y += rowHeight;
-    });
-
-    // ===== 5. RODAPÉ DE INFORMAÇÕES DO CLIENTE =====
+    // ===== 4. RODAPÉ E ASSINATURAS =====
     y += 10;
-    
     if (y + 50 > pageHeight - margin) {
       doc.addPage();
       y = margin + 10;
     }
 
-    doc.setFontSize(10);
     x = margin;
-
-    // Informações do Cliente[cite: 4]
-    doc.setFont('Arial', 'bold');
-    doc.text('Cliente:', x, y);
-    doc.setFont('Arial', 'normal');
-    doc.text(documentoMediacaoForm.cliente || '', x + 15, y);
-    y += 6;
-
-    doc.setFont('Arial', 'bold');
-    doc.text('CNPJ:', x, y);
-    doc.setFont('Arial', 'normal');
-    doc.text(documentoMediacaoForm.clienteCnpj || '', x + 12, y);
-    y += 6;
-
-    doc.setFont('Arial', 'bold');
-    doc.text('Embarcaçao:', x, y);
-    doc.setFont('Arial', 'normal');
-    doc.text(documentoMediacaoForm.embarcacao || '', x + 25, y);
-    y += 12;
-
-    // Valor Total[cite: 4]
     doc.setFont('Arial', 'bold');
     doc.setFontSize(11);
     doc.text(`Valor total desta medição: R$ ${formatCurrency(totalGeral)}`, x, y);
-    y += 25;
-
-    // ===== 6. ASSINATURAS =====
-    const sigWidth = 75;
-    const spacing = 35;
     
+    y += 25;
     doc.setFont('Arial', 'normal');
     doc.setFontSize(10);
-    
-    // Título acima das linhas[cite: 4]
     doc.text('Aprovado por:', x, y);
-    y += 15;
     
-    // Linhas de Assinatura
-    doc.setLineWidth(0.3);
-    doc.line(x, y, x + sigWidth, y); // Linha Cliente
-    doc.line(x + sigWidth + spacing, y, x + sigWidth + spacing + sigWidth, y); // Linha Linave/Servinave
-    
-    y += 5;
-    
-    // Títulos abaixo das linhas[cite: 4]
-    doc.text('Representante do Cliente', x + sigWidth / 2, y, { align: 'center' });
-    
-    const repTexto = isLinave ? 'Representante Linave Enga. Serviços' : 'Representante Servinave';
-    doc.text(repTexto, x + sigWidth + spacing + sigWidth / 2, y, { align: 'center' });
+    y += 15; // Coordenada da linha
 
-    // ===== 7. SALVAR ARQUIVO =====
+    const sigWidth = 75;
+    const spacing = 35;
+    const lineY = y;
+
+    // --- NOMES DO INPUT (ACIMA DA LINHA) ---
+    doc.setFontSize(9);
+    const nomeRepCliente = documentoMediacaoForm.representanteCliente || '';
+    const nomeRepPrestadora = documentoMediacaoForm.representanteLinave || documentoMediacaoForm.representantePrestadora || '';
+
+    doc.text(nomeRepCliente, x + sigWidth / 2, lineY - 2, { align: 'center' });
+    doc.text(nomeRepPrestadora, x + sigWidth + spacing + sigWidth / 2, lineY - 2, { align: 'center' });
+
+    // --- DESENHO DAS LINHAS ---
+    doc.setLineWidth(0.3);
+    doc.line(x, lineY, x + sigWidth, lineY); 
+    doc.line(x + sigWidth + spacing, lineY, x + sigWidth + spacing + sigWidth, lineY); 
+    
+    // --- TÍTULOS FIXOS (ABAIXO DA LINHA) ---
+    doc.setFont('Arial', 'bold');
+    doc.setFontSize(8);
+    doc.text('Representante do Cliente', x + sigWidth / 2, lineY + 4, { align: 'center' });
+    
+    const tituloFixoPrestadora = isLinave ? 'Representante Linave Enga. Serviços' : 'Representante Servinave';
+    doc.text(tituloFixoPrestadora, x + sigWidth + spacing + sigWidth / 2, lineY + 4, { align: 'center' });
+
+    // ===== 5. SALVAR =====
     const prefixo = isLinave ? 'LN' : 'SN';
-    // Sanitizar numeroBM para nome de arquivo (remover caracteres inválidos como /)
     const numeroBMSanitizado = (documentoMediacaoForm.numeroBM || '001').replace(/[/\\]/g, '-');
     const nomeArquivo = `${prefixo}_Medicao_${numeroBMSanitizado}_${Date.now()}.pdf`;
     
-    const conteudoDataUrl = doc.output('datauristring');
     doc.save(nomeArquivo);
 
-    return {
-      nomeArquivo,
-      conteudoDataUrl,
-      tamanho: conteudoDataUrl.length,
-    };
+    return { nomeArquivo, conteudoDataUrl: doc.output('datauristring') };
   } catch (error) {
-    console.error('Erro ao gerar PDF de medição:', error);
+    console.error('Erro ao gerar o PDF:', error);
     throw error;
   }
 };
