@@ -1,16 +1,37 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import { ensureWorkspaceShape, getActiveAdminEmail, loadWorkspace, saveWorkspace, setActiveAdminEmail } from "../../../services/workspaceStorage";
 
 export function ApproveUsersView() {
-  const [pending, setPending] = useState(
-    JSON.parse(localStorage.getItem("pendingUsers") || "[]")
-  );
+  const [pending, setPending] = useState<any[]>([]);
 
-  function approve(email: string) {
+  useEffect(() => {
+    let mounted = true;
+
+    const hydrate = async () => {
+      const adminEmail = getActiveAdminEmail();
+      setActiveAdminEmail(adminEmail);
+      const workspace = ensureWorkspaceShape(await loadWorkspace(adminEmail));
+      if (mounted) {
+        setPending(workspace.pendingUsers || []);
+      }
+    };
+
+    void hydrate();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  async function approve(email: string) {
+    const adminEmail = getActiveAdminEmail();
+    const workspace = ensureWorkspaceShape(await loadWorkspace(adminEmail));
     const updated = pending.map((p: any) =>
       p.email === email ? { ...p, approved: true } : p
     );
 
-    localStorage.setItem("pendingUsers", JSON.stringify(updated));
+    workspace.pendingUsers = updated;
+    await saveWorkspace(adminEmail, workspace);
     setPending(updated);
   }
 

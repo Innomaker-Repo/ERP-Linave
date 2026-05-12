@@ -5,7 +5,8 @@ from .views import (
     UserViewSet, LevantamentoViewSet, MDOViewSet, MaterialViewSet,
     AtividadeViewSet, TerceirizadoViewSet, OrdenServicoViewSet,
     criar_orcamento, visualizar_orcamento,
-    ordens_servico_por_cliente, ordens_servico_por_negocio, atualizar_status_os
+    ordens_servico_por_cliente, ordens_servico_por_negocio, atualizar_status_os,
+    workspace_data
 )
 
 router = DefaultRouter()
@@ -22,6 +23,8 @@ router.register(r'terceirizados', TerceirizadoViewSet)
 router.register(r'ordens-servico', OrdenServicoViewSet, basename='ordem-servico')
 
 urlpatterns = [
+    path('workspaces/<str:admin_email>/', workspace_data, name='workspace-data'),
+
     # 1. Rota criação de orçamento
     path('orcamentos/criar/', criar_orcamento, name='criar-orcamento'),
 

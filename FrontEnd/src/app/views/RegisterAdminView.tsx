@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { loadWorkspace, saveWorkspace, setActiveAdminEmail, ensureWorkspaceShape } from "../services/workspaceStorage";
 
 interface RegisterAdminViewProps {
   onRegister: () => void;
@@ -9,12 +10,13 @@ export function RegisterAdminView({ onRegister }: RegisterAdminViewProps) {
   const [password, setPassword] = useState("");
   const [empresa, setEmpresa] = useState("");
 
-  function handleRegister(e: React.FormEvent) {
+  async function handleRegister(e: React.FormEvent) {
     e.preventDefault();
 
-    const users = JSON.parse(localStorage.getItem("users") || "[]");
+    setActiveAdminEmail(email);
+    const workspace = ensureWorkspaceShape(await loadWorkspace(email));
 
-    if (users.find((u: any) => u.email === email)) {
+    if (workspace.users.find((u: any) => u.email === email)) {
       alert("Usuário já existe");
       return;
     }
@@ -26,30 +28,14 @@ export function RegisterAdminView({ onRegister }: RegisterAdminViewProps) {
       adminEmail: email,
     };
 
-    users.push(adminUser);
-    localStorage.setItem("users", JSON.stringify(users));
-
-    const database = {
-      empresa: {
-        nome: empresa,
-        email,
-      },
-      usuarios: [],
-      clientes: [],
-      funcionarios: [],
-      equipes: [],
-      obras: [],
-      os: [],
-      alocacoes: [],
-      registrosHoras: [],
-      folhaPagamento: [],
-      financeiro: [],
-      fornecedores: [],
+    workspace.users.push(adminUser);
+    workspace.empresa = {
+      nome: empresa,
+      email,
     };
 
-    localStorage.setItem(`db_${email}`, JSON.stringify(database));
-    localStorage.setItem("currentUser", email);
-    localStorage.setItem("currentAdmin", email);
+    await saveWorkspace(email, workspace);
+    setActiveAdminEmail(email);
 
     onRegister();
   }

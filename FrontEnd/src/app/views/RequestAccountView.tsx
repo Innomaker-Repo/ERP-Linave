@@ -1,21 +1,26 @@
 import React, { useState } from "react";
+import { ensureWorkspaceShape, getActiveAdminEmail, loadWorkspace, saveWorkspace, setActiveAdminEmail } from "../services/workspaceStorage";
 
 export function RequestAccountView({ onRequested }: { onRequested: () => void }) {
   const [email, setEmail] = useState("");
 
-  function handleRequest(e: React.FormEvent) {
+  async function handleRequest(e: React.FormEvent) {
     e.preventDefault();
 
     const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const adminEmail = getActiveAdminEmail();
+    setActiveAdminEmail(adminEmail);
+    const workspace = ensureWorkspaceShape(await loadWorkspace(adminEmail));
 
-    const pending = JSON.parse(localStorage.getItem("pendingUsers") || "[]");
+    const pending = workspace.pendingUsers || [];
     pending.push({
       email,
       code,
       approved: false,
     });
 
-    localStorage.setItem("pendingUsers", JSON.stringify(pending));
+    workspace.pendingUsers = pending;
+    await saveWorkspace(adminEmail, workspace);
 
     alert(
       `Solicitação enviada!\n\nCódigo gerado: ${code}\n\nEste código deve ser validado pelo admin (admin@linave.com.br).`

@@ -5,13 +5,13 @@ from django.db import transaction
 from .models import (
     Cliente, Negocio, Servico, User,
     Levantamento, MDO, Material, Servico_terceirizado, Orcamento, Ativ_prevista, Resumo_orcamento,
-    OrdenServico
+    OrdenServico, Workspace, normalize_workspace_data
 )
 from .serializers import (
     ClienteSerializer, NegocioSerializer, ServicoSerializer, UserSerializer,
     OrcamentoSerializer, LevantamentoSerializer, Resumo_orcamentoSerializer,
     MDOSerializer, MaterialSerializer, Ativ_previstaSerializer, ServicosTerceirizadosSerializer,
-    OrdenServicoSerializer
+    OrdenServicoSerializer, WorkspaceSerializer
 )
 from django.http import FileResponse
 from django.conf import settings
@@ -235,6 +235,35 @@ class OrdenServicoViewSet(viewsets.ModelViewSet):
             {"message": f"Ordem de Servico {numero_os} deletada com sucesso!"},
             status=status.HTTP_204_NO_CONTENT
         )
+
+
+@api_view(['GET', 'POST', 'PUT', 'PATCH'])
+@transaction.atomic
+def workspace_data(request, admin_email):
+    workspace, created = Workspace.objects.get_or_create(
+        admin_email=admin_email,
+        defaults={'data': normalize_workspace_data({})}
+    )
+
+    if request.method == 'GET':
+        return Response(WorkspaceSerializer(workspace).data, status=status.HTTP_200_OK)
+
+    payload = request.data
+    if isinstance(payload, dict) and set(payload.keys()) == {'data'}:
+        payload = payload.get('data')
+
+    serializer = WorkspaceSerializer(
+        workspace,
+        data={
+            'admin_email': admin_email,
+            'data': normalize_workspace_data(payload if isinstance(payload, dict) else {}),
+        },
+        partial=request.method == 'PATCH'
+    )
+    serializer.is_valid(raise_exception=True)
+    serializer.save()
+
+    return Response(serializer.data, status=status.HTTP_201_CREATED if created and request.method == 'POST' else status.HTTP_200_OK)
 
 
 @api_view(['GET'])

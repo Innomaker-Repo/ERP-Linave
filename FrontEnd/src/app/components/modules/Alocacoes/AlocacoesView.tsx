@@ -1,11 +1,12 @@
 import React from "react";
-import { loadDatabase, saveDatabase } from "@/app/utils/db";
 import { generateAlocacaoId } from "@/app/utils/idGenerator";
+import { useErp } from "../../../context/ErpContext";
 
 export function AlocacoesView() {
-  const db = loadDatabase();
+  const { funcionarios, obras, os, alocacoes, saveEntity } = useErp();
+  const listaAlocacoes = Array.isArray(alocacoes) ? alocacoes : [];
 
-  function handleSave(e: React.FormEvent) {
+  async function handleSave(e: React.FormEvent) {
     e.preventDefault();
 
     const form = e.target as HTMLFormElement;
@@ -24,8 +25,7 @@ export function AlocacoesView() {
       return;
     }
 
-    const dbNow = loadDatabase();
-    const alocacaoId = generateAlocacaoId(dbNow);
+    const alocacaoId = generateAlocacaoId({ _counters: { alocacao: listaAlocacoes.length } });
 
     const alocacao = {
       id: alocacaoId,
@@ -38,8 +38,7 @@ export function AlocacoesView() {
       criadoEm: new Date().toISOString(),
     };
 
-    dbNow.alocacoes.push(alocacao);
-    saveDatabase(dbNow);
+    await saveEntity("alocacoes", [...listaAlocacoes, alocacao]);
 
     alert(`Alocação criada: ${alocacaoId}`);
     form.reset();
@@ -60,7 +59,7 @@ export function AlocacoesView() {
             <label className="label">Funcionário *</label>
             <select name="funcionarioId" className="input" required>
               <option value="">Selecione</option>
-              {db.funcionarios.map((f: any) => (
+              {funcionarios.map((f: any) => (
                 <option key={f.matricula || f.cpf || f.nome} value={f.matricula || f.cpf || f.nome}>
                   {(f.matricula ? `${f.matricula} — ` : "")}{f.nome}
                 </option>
@@ -72,7 +71,7 @@ export function AlocacoesView() {
             <label className="label">Obra / Serviço (opcional)</label>
             <select name="obraId" className="input">
               <option value="">Selecione</option>
-              {db.obras.map((o: any) => (
+              {obras.map((o: any) => (
                 <option key={o.id || o.nome} value={o.id || o.nome}>
                   {(o.id ? `${o.id} — ` : "")}{o.nome || o.titulo || "Obra"}
                 </option>
@@ -84,7 +83,7 @@ export function AlocacoesView() {
             <label className="label">OS (opcional)</label>
             <select name="osId" className="input">
               <option value="">Selecione</option>
-              {db.os.map((o: any) => (
+              {os.map((o: any) => (
                 <option key={o.id} value={o.id}>
                   {o.id}
                 </option>

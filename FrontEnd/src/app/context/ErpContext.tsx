@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { CLIENTES_MOCK } from '../mocks/clientesMock';
+import { loadWorkspace, saveWorkspace, setActiveAdminEmail, getCachedWorkspace, setCachedWorkspace } from '../services/workspaceStorage';
 
 
 const cloneDeep = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -762,12 +763,18 @@ const mergeRecordsById = (base: any[] = [], demo: any[] = []) => {
 
 const createInitialData = (savedData: any) => {
   const baseData = {
+    empresa: null,
+    users: [],
+    pendingUsers: [],
     clientes: CLIENTES_MOCK,
     funcionarios: [],
     obras: [],
     financeiro: [],
     compras: [],
     os: [],
+    alocacoes: [],
+    registrosHoras: [],
+    folhaPagamento: [],
     usuarios: [],
     equipes: [],
     fornecedores: [],
@@ -901,38 +908,38 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     nome: 'Administrador (Teste)',
     permissoes: {}
   });
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   
-  const [data, setData] = useState(() => {
-    // Tentar carregar do localStorage na inicialização
-    try {
-      const saved = localStorage.getItem('@ERP:data');
-      if (saved) {
-        const loadedData = JSON.parse(saved);
-        // Migrar OS para adicionar statusEnvio se não existir
-        if (loadedData.os && Array.isArray(loadedData.os)) {
-          loadedData.os = loadedData.os.map((o: any) => ({
-            ...o,
-            statusEnvio: o.statusEnvio || 'pendente'
-          }));
-        }
-        return createInitialData(loadedData);
-      }
-    } catch (e) {
-      console.error('Erro ao carregar dados do localStorage', e);
-    }
-    // Se não conseguir, usar dados padrão
-    return createInitialData(null);
-  });
+  const [data, setData] = useState(() => createInitialData(null));
 
-  // Salvar dados no localStorage sempre que mudam
   useEffect(() => {
-    try {
-      localStorage.setItem('@ERP:data', JSON.stringify(data));
-    } catch (e) {
-      console.error('Erro ao salvar dados no localStorage', e);
-    }
-  }, [data]);
+    let mounted = true;
+
+    const hydrateWorkspace = async () => {
+      const adminEmail = userSession?.email || 'admin@modo-teste.com';
+      setActiveAdminEmail(adminEmail);
+
+      try {
+        const saved = await loadWorkspace(adminEmail);
+        if (!mounted) return;
+        setData(createInitialData(saved));
+      } catch (error) {
+        if (!mounted) return;
+        console.error('Erro ao carregar workspace do backend', error);
+        setData(createInitialData(null));
+      } finally {
+        if (mounted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void hydrateWorkspace();
+
+    return () => {
+      mounted = false;
+    };
+  }, [userSession?.email]);
 
   const showTestAlert = (operacao: string) => {
     alert(`VERSÃO DE TESTE\n\nOperação "${operacao}" requer conexão com backend.\n\nEsta é uma versão demonstrativa apenas com frontend.`);
@@ -953,14 +960,32 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
   const loginDireto = (user: any) => {
     const session = { ...user, token: null };
     setUserSession(session);
-    // localStorage.setItem('@Linave:session', JSON.stringify(session));  // COMENTADO PARA DEBUG
+    setActiveAdminEmail(session.email || 'admin@modo-teste.com');
   };
 
   // Simula salvar - agora realmente salva no estado e localStorage
   const saveEntity = async (collection: string, newData: any) => {
-    // Atualiza estado local com os dados
-    setData(prev => ({ ...prev, [collection]: newData }));
-    console.log(`${collection} atualizado:`, newData.length || Object.keys(newData).length, 'itens');
+    const adminEmail = userSession?.email || 'admin@modo-teste.com';
+    setActiveAdminEmail(adminEmail);
+
+    // Merge with latest cached workspace to avoid race conditions
+    const base = getCachedWorkspace(adminEmail) || {};
+    const nextData = { ...base, ...data, [collection]: newData };
+
+    // Update local state and cache immediately so concurrent calls see the change
+    setData(nextData);
+    setCachedWorkspace(adminEmail, nextData);
+
+    try {
+      const saved = await saveWorkspace(adminEmail, nextData);
+      // Update cache/state with authoritative saved data
+      setCachedWorkspace(adminEmail, saved);
+      setData(saved);
+    } catch (error) {
+      console.error(`Erro ao salvar coleção ${collection} no backend`, error);
+    }
+
+    console.log(`${collection} atualizado:`, newData?.length || Object.keys(newData || {}).length, 'itens');
   };
 
   // Simula upload de arquivo - sem enviar para nenhum lugar
@@ -974,7 +999,6 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
 
   const logout = () => {
     setUserSession(null);
-    // localStorage.removeItem('@Linave:session');  // COMENTADO PARA DEBUG
     window.location.href = '/';
   };
 

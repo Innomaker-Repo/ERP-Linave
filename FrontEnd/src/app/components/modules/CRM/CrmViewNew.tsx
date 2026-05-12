@@ -1165,13 +1165,19 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       docs: formData.docs
     }));
 
-    saveEntity('obras', [...(obras || []), novaObra]);
-    saveEntity('os', [...(os || []), ...novasOS]);
-
-    alert(`${novasOS.length} Serviço(s) criado(s) com sucesso!`);
-    setShowFormNovoNegocio(false);
-    setNovoNegocioTab('dados');
-    setFormData(initialForm);
+    // Aguarda ambas as operações de sincronização completarem
+    Promise.all([
+      saveEntity('obras', [...(obras || []), novaObra]),
+      saveEntity('os', [...(os || []), ...novasOS])
+    ]).then(() => {
+      alert(`${novasOS.length} Serviço(s) criado(s) com sucesso!`);
+      setShowFormNovoNegocio(false);
+      setNovoNegocioTab('dados');
+      setFormData(initialForm);
+    }).catch((error) => {
+      console.error('Erro ao criar negócio:', error);
+      alert('Erro ao salvar negócio. Tente novamente.');
+    });
   };
 
   const handleShowDetalhes = (obra: any) => {
@@ -1197,11 +1203,15 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     }
 
     const obrasAtualizadas = obras?.map((o: any) => o.id === editingObra.id ? editingObra : o) || [];
-    saveEntity('obras', obrasAtualizadas);
-
-    alert("Negócio atualizado com sucesso!");
-    setShowEditModal(false);
-    setEditingObra(null);
+    
+    saveEntity('obras', obrasAtualizadas).then(() => {
+      alert("Negócio atualizado com sucesso!");
+      setShowEditModal(false);
+      setEditingObra(null);
+    }).catch((error) => {
+      console.error('Erro ao atualizar negócio:', error);
+      alert('Erro ao salvar negócio. Tente novamente.');
+    });
   };
 
   const handleAprovarOrcamento = () => {
@@ -1242,11 +1252,15 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     };
 
     const obrasAtualizadas = obras?.map((o: any) => o.id === selectedObraDetalhes.id ? obraAtualizada : o) || [];
-    saveEntity('obras', obrasAtualizadas);
-
-    alert(mensagem);
-    setShowDetalhesObraModal(false);
-    setSelectedObraDetalhes(null);
+    
+    saveEntity('obras', obrasAtualizadas).then(() => {
+      alert(mensagem);
+      setShowDetalhesObraModal(false);
+      setSelectedObraDetalhes(null);
+    }).catch((error) => {
+      console.error('Erro ao atualizar orçamento:', error);
+      alert('Erro ao salvar mudanças. Tente novamente.');
+    });
   };
 
   const handleRecusarOrcamento = () => {
@@ -1289,11 +1303,15 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       obraAtualizada,
       ...((obras || []).filter((o: any) => o.id !== selectedObraDetalhes.id))
     ];
-    saveEntity('obras', obrasAtualizadas);
-
-    alert("Orçamento recusado. Negócio retornou para Aguardando orçamento.");
-    setShowDetalhesObraModal(false);
-    setSelectedObraDetalhes(null);
+    
+    saveEntity('obras', obrasAtualizadas).then(() => {
+      alert("Orçamento recusado. Negócio retornou para Aguardando orçamento.");
+      setShowDetalhesObraModal(false);
+      setSelectedObraDetalhes(null);
+    }).catch((error) => {
+      console.error('Erro ao recusar orçamento:', error);
+      alert('Erro ao salvar mudanças. Tente novamente.');
+    });
   };
 
   const handleDownloadOSPDF = async () => {
