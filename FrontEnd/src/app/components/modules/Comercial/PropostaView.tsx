@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useErp } from '../../../context/ErpContext';
+import { useErp, extrairComponentesDoId, gerarIdProposta } from '../../../context/ErpContext';
 import { Plus, X, FileText, CheckCircle, XCircle, ArrowLeft, Save, Download } from 'lucide-react';
 import { handleDownloadPropostaPDF } from '../CRM/handleDownloadPropostaPDF';
 import PizZip from 'pizzip';
@@ -42,12 +42,6 @@ interface PropostaFormData {
   encerramento: string;
 }
 
-// --- FUNÇÕES AUXILIARES ---
-const getPrefixoEmpresa = (empresaPrestadora?: string) => {
-  if (!empresaPrestadora) return 'LN';
-  return empresaPrestadora.toLowerCase().includes('servinave') ? 'SN' : 'LN';
-};
-
 const indexToVersaoAlfabetica = (index: number) => {
   if (index < 0) return 'A';
   let value = index;
@@ -57,6 +51,28 @@ const indexToVersaoAlfabetica = (index: number) => {
     value = Math.floor(value / 26) - 1;
   }
   return output;
+};
+
+
+const getBase64FromUrl = async (url: string): Promise<string | undefined> => {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return undefined;
+    
+    const blob = await response.blob();
+    if (blob.size === 0) return undefined;
+    
+    return new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => resolve('' as any);
+      reader.onabort = () => resolve('' as any);
+      reader.readAsDataURL(blob);
+    });
+  } catch (error) {
+    console.warn('[Proposta] Erro ao carregar logo:', url, error);
+    return undefined;
+  }
 };
 // --------------------------
 
@@ -329,24 +345,10 @@ export function PropostaView() {
     const rawEmpresa = obra.empresaPrestadora || '';
     const cleaned = (typeof rawEmpresa === 'string' ? rawEmpresa : (rawEmpresa.nome || '')).toLowerCase();
     const isLinave = !cleaned.includes('servi');
-    
-    let logoBase64: string | undefined;
-    if (isLinave) {
-      try {
-        const response = await fetch('/image1.png');
-        const blob = await response.blob();
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          logoBase64 = reader.result as string;
-          handleDownloadPropostaPDF(proposta, cliente, obra, logoBase64, isLinave);
-        };
-        reader.readAsDataURL(blob);
-      } catch (e) {
-        handleDownloadPropostaPDF(proposta, cliente, obra, undefined, isLinave);
-      }
-    } else {
-      handleDownloadPropostaPDF(proposta, cliente, obra, undefined, isLinave);
-    }
+    const logoUrl = isLinave ? '/image2.jpg' : '/image1.png';
+
+    const logoBase64 = await getBase64FromUrl(logoUrl);
+    handleDownloadPropostaPDF(proposta, cliente, obra, logoBase64, isLinave);
   };
 
  const handleSelectObra = (obra: any) => {
@@ -355,10 +357,13 @@ export function PropostaView() {
     // Pré-preencher dados
     const cliente = listaClientes.find(c => c.id === obra.clienteId);
     
-    // Descobrir a versão alfabética e o prefixo (Ex: A, B, C...)
+    // Descobrir a versão alfabética (Ex: A, B, C...)
     const indexVersao = obra.propostas?.length || 0;
     const proximaVersaoLetra = indexToVersaoAlfabetica(indexVersao);
-    const prefixo = getPrefixoEmpresa(obra.empresaPrestadora);
+    
+    // Extrair número de sequência do ID do projeto (ex: de "LN-0731/26" extrair "0731")
+    const componentesId = extrairComponentesDoId(obra.id);
+    const numeroSequencial = componentesId?.numero || '0001';
     const anoAtual = new Date().getFullYear().toString().slice(-2);
          
     setPropostaForm(prev => ({
@@ -367,8 +372,8 @@ export function PropostaView() {
       cliente: cliente?.razaoSocial || '',
       atribuidoA: obra.responsavelComercial || '',
       cargoContato: obra.tipo || '',
-      // Aplica a letra no número da proposta gerado na tela
-      numeroProposta: `${prefixo}-${proximaVersaoLetra}/${anoAtual}`,
+      // Gera ID no formato: LN-0731A/26 (numero + versão + ano)
+      numeroProposta: gerarIdProposta(componentesId?.prefixo || 'LN', numeroSequencial, proximaVersaoLetra),
       escopoBasicoServicos: criarEscopoBasicoServicos(obra)
     }));
     setNovaColunaPorEscopo({});

@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, HardHat, Anchor, ClipboardList, 
   ShoppingCart, DollarSign, BarChart3, Settings, Factory, 
   HeartHandshake, List, Clock, ChevronDown, ChevronRight, 
-  Briefcase, Wrench, Activity, FileText, Zap, Building2
+  Briefcase, Wrench, Activity, FileText, Zap, Building2, CheckCircle2
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -63,6 +63,9 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
         
         // Fazer Ordem de Serviço
         { id: 'fazerOs', label: 'Fazer OS', icon: Zap },
+
+        // Histórico local de negócios com medição concluída
+        { id: 'finalizadosComercial', label: 'Finalizados', icon: CheckCircle2 },
         
         // Base de Clientes
         { id: 'clientes', label: 'Base de Clientes', icon: Users },

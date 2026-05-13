@@ -7,15 +7,11 @@ import { ClientesView } from "./modules/Clientes/ClientesView";
 import { FuncionariosView } from "./modules/Funcionarios/FuncionariosView";
 import { ObrasView } from "./modules/Obras/ObrasView";
 import { OsView } from "./modules/OS/OsView";
-import { ServicosView } from "./modules/Servicos/ServicosView"; // Visão ClickUp
 import { AtividadesView } from "./modules/Atividades/AtividadesView"; // Diário de Bordo
-import { EquipesView } from "./modules/Equipes/EquipesView";
-import { HorasView } from "./modules/Horas/HorasView";
 import { ComprasView } from "./modules/Compras/ComprasView";
 import { FornecedoresView } from "./modules/Fornecedores/FornecedoresView";
 import { FinanceiroView } from "./modules/Financeiro/FinanceiroView";
 import { CrmViewNew } from "./modules/CRM/CrmViewNew";
-import { RelatoriosView } from "./modules/Relatorios/RelatoriosView";
 import { UsuariosView } from "./modules/Usuarios/UsuariosView";
 import { ListasAuxiliaresView } from "./modules/Configuracoes/ListasAuxiliaresView";
 import { EstoqueView } from "./modules/Almoxerifado/EstoqueView";
@@ -55,17 +51,13 @@ export function ModuleView({ section, searchQuery }: ModuleViewProps) {
   switch (section) {
     case "dashboard": return <DashboardView />;
     case "crm": return <CrmViewNew searchQuery={searchQuery} />;
-    case "relatorios": return <RelatoriosView />;
     
     case "obras": return <ObrasView searchQuery={searchQuery} />;
     case "os": return <OsView searchQuery={searchQuery} />;
-    case "servicos": return <ServicosView searchQuery={searchQuery} />;
     case "atividades": return <AtividadesView searchQuery={searchQuery} />;
     case "clientes": return <ClientesView searchQuery={searchQuery} />;
     
     case "funcionarios": return <FuncionariosView searchQuery={searchQuery} />;
-    case "equipe": return <EquipesView />;
-    case "horas": return <HorasView />;
     
     case "financeiro": return <FinanceiroView />;
     case "compras": return <ComprasView searchQuery={searchQuery} />;

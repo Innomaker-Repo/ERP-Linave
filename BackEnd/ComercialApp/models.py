@@ -1,6 +1,106 @@
 from django.db import models
 from decimal import Decimal
 
+
+def build_default_workspace_data():
+    return {
+        'empresa': None,
+        'users': [],
+        'pendingUsers': [],
+        'clientes': [],
+        'funcionarios': [],
+        'equipes': [],
+        'obras': [],
+        'os': [],
+        'alocacoes': [],
+        'registrosHoras': [],
+        'folhaPagamento': [],
+        'financeiro': [],
+        'compras': [],
+        'fornecedores': [],
+        'horas': [],
+        'usuarios': [],
+        'config': {
+            'empresaNome': 'Linave ERP Demo',
+            'empresasPrestadoras': [
+                {
+                    'id': 'EMP-LINAVE',
+                    'nome': 'Linave',
+                    'cnpj': '',
+                    'endereco': '',
+                    'contato': '',
+                    'email': '',
+                    'ativa': True,
+                },
+                {
+                    'id': 'EMP-SERVINAVE',
+                    'nome': 'Servinave',
+                    'cnpj': '',
+                    'endereco': 'Rua Miguel de Lemos, 44 Fundos - Ponta D\'areia',
+                    'contato': '+55 (21) 2620-1850',
+                    'email': 'comercial@servinave.com.br',
+                    'ativa': True,
+                },
+            ],
+        },
+        'listas': {
+            'departamentos': [],
+            'categorias': [],
+            'prioridades': [],
+        },
+        '_counters': {},
+        '_osCounters': {},
+    }
+
+
+def normalize_workspace_data(data):
+    defaults = build_default_workspace_data()
+
+    if not isinstance(data, dict):
+        return defaults
+
+    normalized = {**defaults, **data}
+
+    for key in (
+        'users',
+        'pendingUsers',
+        'clientes',
+        'funcionarios',
+        'equipes',
+        'obras',
+        'os',
+        'alocacoes',
+        'registrosHoras',
+        'folhaPagamento',
+        'financeiro',
+        'compras',
+        'fornecedores',
+        'horas',
+        'usuarios',
+    ):
+        normalized[key] = data.get(key, defaults[key]) if isinstance(data.get(key, defaults[key]), list) else []
+
+    for key in ('config', 'listas', '_counters', '_osCounters'):
+        source = data.get(key, {}) if isinstance(data.get(key, {}), dict) else {}
+        normalized[key] = {**defaults[key], **source}
+
+    normalized_os = []
+    for item in normalized.get('os', []):
+        if not isinstance(item, dict):
+            continue
+        horas = item.get('horasTrabalhadasPorServico', [])
+        if not isinstance(horas, list):
+            horas = []
+        normalized_os.append({
+            **item,
+            'horasTrabalhadasPorServico': horas,
+        })
+    normalized['os'] = normalized_os
+
+    normalized['empresa'] = data.get('empresa', defaults['empresa'])
+
+    return normalized
+
 class Cliente(models.Model):
     TIPO_CHOICES = [('Fisica', 'Pessoa Física'), ('Juridica', 'Pessoa Jurídica')]
     STATUS_CHOICES = [('Ativo', 'Ativo'), ('Inativo', 'Inativo')]
@@ -268,6 +368,9 @@ class OrdenServico(models.Model):
     
     # Mão de Obra (JSONField com números)
     mao_obra = models.JSONField(default=dict, blank=True)  # ex: {estrutura: 10, tubulacao: 5, ...}
+
+    # Horas trabalhadas por serviço (lista de pares Serviço/Hora)
+    horas_trabalhadas_servico = models.JSONField(default=list, blank=True)
     
     # Status
     status_os = models.CharField(max_length=20, choices=STATUS_OS_CHOICES, default='rascunho')
@@ -293,3 +396,13 @@ class OrdenServico(models.Model):
         ordering = ['-created_at']
         verbose_name = "Ordem de Serviço"
         verbose_name_plural = "Ordens de Serviço"
+
+
+class Workspace(models.Model):
+    admin_email = models.CharField(max_length=150, unique=True)
+    data = models.JSONField(default=build_default_workspace_data, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Workspace {self.admin_email}"

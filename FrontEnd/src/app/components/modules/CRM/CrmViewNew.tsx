@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useErp } from '../../../context/ErpContext';
+import { extrairIdProjetoDoNumero } from '../../../context/ErpContext';
 import { Plus, X, FileText, DollarSign, CheckCircle, Clock, ArrowRight, Edit2, ChevronDown, Zap, AlertCircle, Download, Eye } from 'lucide-react';
 import { toast } from 'sonner';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable'; // Importação nomeada do plugin
 import { handleDownloadMedicaoPDF } from './handleDownloadMedicaoPDF';
-import { handleDownloadPropostaPDF } from './handleDownloadPropostaPDF';
-import { createNegocio, updateNegocio, deleteNegocio, getNegociosDoCliente } from '../../../services/negocios';
-import { findOrCreateCliente } from '../../../services/clientes';
+import { handleDownloadPropostaPDF } from './handleDownloadPropostaPDF'; 
+import { getCachedWorkspace } from '../../../services/workspaceStorage';
+import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
 
 interface Servico {
   id: string;
@@ -125,6 +126,15 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   const [documentoMediacaoForm, setDocumentoMediacaoForm] = useState<DocumentoMediacaoForm | null>(null);
   const [showDocumentoPreviewModal, setShowDocumentoPreviewModal] = useState(false);
   const [documentoVisualizado, setDocumentoVisualizado] = useState<any>(null);
+
+  const obraTemDocumentoMediacao = (obra: any) => {
+    const docs = Array.isArray(obra?.documentosNegocio) ? obra.documentosNegocio : [];
+    return docs.some((doc: any) => {
+      const id = String(doc?.id || '').toLowerCase();
+      const nome = String(doc?.nome || '').toLowerCase();
+      return id.includes('mediacao') || nome.includes('medi') || nome.includes('medição');
+    }) || Boolean(obra?.finalizadoComMediacao);
+  };
 
 
   const indexToVersaoAlfabetica = (index: number) => {
@@ -516,19 +526,25 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : 0;
   };
-  const getBase64FromUrl = async (url: string): Promise<string> => {
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Falha ao carregar arquivo: ${url}`);
+  const getBase64FromUrl = async (url: string): Promise<string | undefined> => {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) return undefined;
+      
+      const blob = await response.blob();
+      if (blob.size === 0) return undefined;
+      
+      return new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => resolve('' as any);
+        reader.onabort = () => resolve('' as any);
+        reader.readAsDataURL(blob);
+      });
+    } catch (error) {
+      console.warn('[CRM] Erro ao carregar logo:', url, error);
+      return undefined;
     }
-
-    const blob = await response.blob();
-    return await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(String(reader.result || ''));
-      reader.onerror = () => reject(new Error(`Falha ao converter arquivo: ${url}`));
-      reader.readAsDataURL(blob);
-    });
   };
 
   const gerarIdLinha = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -579,6 +595,9 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     const obraAtual = (obras || []).find((item: any) => item.id === obra.id) || obra;
     const cliente = (clientes || []).find((item: any) => item.id === obraAtual.clienteId);
 
+    // Usar o ID do projeto diretamente (já tem formato correto: LN-0731/26)
+    const idProjetoFormatado = obraAtual.id || 'LN-0001/26';
+
     setSelectedObraDetalhes(obraAtual);
     setDocumentoMediacaoForm({
       obraId: obraAtual.id,
@@ -587,7 +606,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       cnpj: obterCnpjCliente(cliente),
       dataEmissao: new Date().toISOString().split('T')[0],
       embarcacao: '',
-      numeroBM: '',
+      numeroBM: idProjetoFormatado,
       periodo: montarPeriodoMediacao(obraAtual),
       representanteCliente: cliente?.razaoSocial || '', // Sugestão inicial
       representanteLinave: 'Linave', // Sugestão inicial
@@ -682,7 +701,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     });
   };
 
-  const handleGerarDocumentoMediacao = () => {
+  const handleGerarDocumentoMediacao = async () => {
     if (!documentoMediacaoForm) return;
 
     // 1. Verificação mais clara para a embarcação
@@ -699,14 +718,22 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       console.log("Iniciando geração de PDF de medição...", { documentoMediacaoForm });
 
       // 2. Chama a função EXTERNA para gerar o PDF (Não tenta desenhar o PDF aqui dentro)
-      const resultadoPdf = handleDownloadMedicaoPDF(
+      const resultadoPdf = await handleDownloadMedicaoPDF(
         documentoMediacaoForm,
         clienteAtual,
         obraAtual
       );
 
-      if (!resultadoPdf) {
+      if (!resultadoPdf || typeof resultadoPdf !== 'object') {
         throw new Error('A função de PDF não retornou os dados esperados.');
+      }
+
+      const nomeArquivo = String((resultadoPdf as any).nomeArquivo || '').trim();
+      const conteudoDataUrl = String((resultadoPdf as any).conteudoDataUrl || '').trim();
+      const tamanhoPdf = Number((resultadoPdf as any).tamanho || conteudoDataUrl.length || 0);
+
+      if (!nomeArquivo || !conteudoDataUrl.startsWith('data:application/pdf')) {
+        throw new Error('PDF gerado inválido. Tente novamente.');
       }
 
       // 3. Salvar documento na obra
@@ -715,16 +742,19 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
         
         const novoDocumento: DocumentoNegocio = {
           id: `doc-mediacao-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          nome: resultadoPdf.nomeArquivo,
+          nome: nomeArquivo,
           tipo: 'application/pdf',
-          tamanho: resultadoPdf.tamanho,
+          tamanho: tamanhoPdf,
           dataUpload: new Date().toISOString(),
-          conteudo: resultadoPdf.conteudoDataUrl
+          conteudo: conteudoDataUrl
         };
-        
+
         persistirObraAtualizada({
           ...obraAtual,
-          documentosNegocio: [...documentosAtuais, novoDocumento]
+          documentosNegocio: [...documentosAtuais, novoDocumento],
+          finalizadoComMediacao: true,
+          dataFinalizacaoLocal: new Date().toISOString().split('T')[0],
+          status: 'Finalizado (Medição)'
         });
       }
 
@@ -739,7 +769,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   };
   
   const handleVerDocumentoNegocio = (doc: any) => {
-    const href = doc?.conteudo || doc?.url;
+    const href = getDocumentHref(doc);
     if (!href) {
       toast.error('Documento indisponível para visualização.');
       return;
@@ -749,18 +779,12 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   };
 
   const handleDownloadDocumento = (doc: any) => {
-    const href = doc?.conteudo || doc?.url;
-    if (!href) {
-      toast.error('Documento indisponível para download.');
-      return;
-    }
-
-    const elemento = document.createElement('a');
-    elemento.href = href;
-    elemento.download = doc?.nome || 'documento';
-    document.body.appendChild(elemento);
-    elemento.click();
-    document.body.removeChild(elemento);
+    downloadDocument(doc, {
+      fallbackName: 'documento',
+      onInvalid: () => {
+        toast.error('Documento indisponível para download.');
+      }
+    });
   };
 
   const handleGerarPropostaPDF = async () => {
@@ -778,18 +802,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       const isLinave = empresaPrestadora.includes('linave');
       const logoUrl = isLinave ? '/image2.jpg' : '/image1.png';
 
-      try {
-        logoBase64 = await getBase64FromUrl(logoUrl);
-      } catch (logoError) {
-        console.warn(`Logo da proposta nao encontrada em ${logoUrl}.`, logoError);
-        if (empresaPrestadora === 'linave') {
-          try {
-            logoBase64 = await getBase64FromUrl('/image1.png');
-          } catch (fallbackError) {
-            console.warn('Fallback para logo original nao encontrou a imagem.', fallbackError);
-          }
-        }
-      }
+      logoBase64 = await getBase64FromUrl(logoUrl);
 
       const resultadoPdf = handleDownloadPropostaPDF(
         ultimaProposta,
@@ -1154,103 +1167,105 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       return alert("Pelo menos um serviço deve ter uma descrição.");
     }
 
-    try {
-      // 1. Encontrar ou criar cliente no backend
-      const clienteOrigem = clientes?.find((c: any) => c.id === formData.clienteId);
-      const clienteBackend = await findOrCreateCliente(clienteOrigem || {
-        tipoPessoa: 'PJ',
-        razaoSocial: clienteOrigem?.razaoSocial || clienteOrigem?.nome || 'Cliente não encontrado',
-        nomeFantasia: clienteOrigem?.nomeFantasia || '',
-        cpfCnpj: clienteOrigem?.cpfCnpj || clienteOrigem?.documento || '',
-        inscricaoEstadual: clienteOrigem?.inscricaoEstadual || '',
-        status: clienteOrigem?.status || 'Ativo',
-        contato: clienteOrigem?.contato || '',
-        endereco: clienteOrigem?.endereco || ''
-      });
+    const prefixo = formData.empresaPrestadora === 'Linave' ? 'LN' : 'SN';
+    const anoAtual = new Date().getFullYear().toString().slice(-2); // Ex: '24' ou '26'
+    
+    // Procura todos os negócios deste ano e prefixo para pegar o maior número
+    const obrasDoAno = (obras || []).filter((o: any) => o.id?.startsWith(`${prefixo}-`) && o.id?.endsWith(`/${anoAtual}`));
+    let maiorNumero = 0;
+    
+    obrasDoAno.forEach((o: any) => {
+      // Extrai os 4 dígitos do ID. Ex: de "LN-0731/26", pega "0731"
+      const match = o.id.match(/-(\d+)\//);
+      if (match) {
+        const numero = parseInt(match[1], 10);
+        if (numero > maiorNumero) maiorNumero = numero;
+      }
+    });
+    
+    // Incrementa 1 e formata com zeros à esquerda (Ex: 1 vira "0001", 731 vira "0731")
+    const proximoNumero = (maiorNumero + 1).toString().padStart(4, '0');
+    
+    // NASCE O ID DEFINITIVO DO PROJETO! Ex: LN-0731/26 ou SN-0001/26
+    const novoProjetoId = `${prefixo}-${proximoNumero}/${anoAtual}`;
+    // ====================================================================
 
-      // 2. Criar negócio no backend
-      const negocioFrontend = {
-        nome: formData.nomeNegocio.trim(),
-        solicitante: formData.solicitante,
-        cargo: formData.cargo || '',
-        telefone: formData.telefone || '',
-        email: formData.email || '',
-        dataPrevistaInicio: formData.dataPrevistaInicio,
-        dataPrevistaFinal: formData.dataPrevistaFinal,
-        empresaPrestadora: formData.empresaPrestadora,
-        servicos: formData.servicos
-      };
+    const nomeObra = formData.nomeNegocio.trim();
+    const primeiroServico = formData.servicos[0];
 
-      const negocioBackend = await createNegocio(negocioFrontend, clienteBackend.id);
+    const novaObra = {
+      id: novoProjetoId, // O id agora já é o correto
+      nome: nomeObra,
+      empresaPrestadora: formData.empresaPrestadora,
+      clienteId: formData.clienteId,
+      status: 'Planejamento',
+      categoria: 'Planejamento' as CategoriaObra,
+      tipo: primeiroServico.tipo || 'Serviço',
+      responsavelTecnico: formData.solicitante,
+      responsavelComercial: formData.solicitante,
+      solicitante: formData.solicitante,
+      telefone: formData.telefone,
+      email: formData.email,
+      dataCadastro: new Date().toISOString().split('T')[0],
+      dataSolicitacao: formData.dataSolicitacao,
+      dataPrevistaInicio: formData.dataPrevistaInicio,
+      dataPrevistaFinal: formData.dataPrevistaFinal,
+      inicioPrevisto: formData.dataPrevistaInicio,
+      fimPrevisto: formData.dataPrevistaFinal,
+      origemOS: true,
+      orcamento: 0,
+      orcamentos: [],
+      propostas: [],
+      documentosNegocio: formData.documentosNegocio,
+      servicos: formData.servicos
+    };
 
-      // 3. Criar obra local (mantém compatibilidade com frontend)
-      const novoProjetoId = `PROJ-${Date.now()}`;
-      const nomeObra = formData.nomeNegocio.trim();
-      const primeiroServico = formData.servicos[0];
+    const novasOS = formData.servicos.map((servico, idx) => ({
+      id: `OS-${Date.now()}-${idx}`,
+      empresaPrestadora: formData.empresaPrestadora,
+      clienteId: formData.clienteId,
+      solicitante: formData.solicitante,
+      email: formData.email,
+      telefone: formData.telefone,
+      tipo: servico.tipo,
+      embarcacao: servico.embarcacao,
+      local: servico.localExecucao,
+      descricao: servico.descricao,
+      observacoes: servico.observacoes,
+      porto: servico.porto,
+      fase: formData.fase,
+      obraId: novoProjetoId,
+      obraNome: nomeObra,
+      dataCriacao: new Date().toISOString().split('T')[0],
+      status: 'Ativo',
+      statusEnvio: 'pendente',
+      horasTrabalhadasPorServico: [
+        {
+          id: `hora-servico-${Date.now()}-${idx}`,
+          servico: servico.tipo || servico.descricao || `Serviço ${idx + 1}`,
+          hora: 0
+        }
+      ],
+      docs: formData.docs
+    }));
 
-      const novaObra = {
-        id: novoProjetoId,
-        nome: nomeObra,
-        empresaPrestadora: formData.empresaPrestadora,
-        clienteId: formData.clienteId,
-        status: 'Planejamento',
-        categoria: 'Planejamento' as CategoriaObra,
-        tipo: primeiroServico.tipo || 'Serviço',
-        responsavelTecnico: formData.solicitante,
-        responsavelComercial: formData.solicitante,
-        solicitante: formData.solicitante,
-        telefone: formData.telefone,
-        email: formData.email,
-        dataCadastro: new Date().toISOString().split('T')[0],
-        dataSolicitacao: formData.dataSolicitacao,
-        dataPrevistaInicio: formData.dataPrevistaInicio,
-        dataPrevistaFinal: formData.dataPrevistaFinal,
-        inicioPrevisto: formData.dataPrevistaInicio,
-        fimPrevisto: formData.dataPrevistaFinal,
-        origemOS: true,
-        orcamento: 0,
-        orcamentos: [],
-        propostas: [],
-        documentosNegocio: formData.documentosNegocio,
-        servicos: formData.servicos,
-        negocioBackendId: negocioBackend.id // Referência para o negócio no backend
-      };
+    // Aguarda ambas as operações de sincronização completarem
+    const workspaceAtual = getCachedWorkspace(userSession?.email || 'admin@modo-teste.com');
+    const obrasAtuais = Array.isArray(workspaceAtual.obras) ? workspaceAtual.obras : [];
+    const osAtuais = Array.isArray(workspaceAtual.os) ? workspaceAtual.os : [];
 
-      // 4. Criar OS locais (mantém compatibilidade)
-      const novasOS = formData.servicos.map((servico, idx) => ({
-        id: `OS-${Date.now()}-${idx}`,
-        empresaPrestadora: formData.empresaPrestadora,
-        clienteId: formData.clienteId,
-        solicitante: formData.solicitante,
-        email: formData.email,
-        telefone: formData.telefone,
-        tipo: servico.tipo,
-        embarcacao: servico.embarcacao,
-        local: servico.localExecucao,
-        descricao: servico.descricao,
-        observacoes: servico.observacoes,
-        porto: servico.porto,
-        fase: formData.fase,
-        obraId: novoProjetoId,
-        obraNome: nomeObra,
-        dataCriacao: new Date().toISOString().split('T')[0],
-        status: 'Ativo',
-        statusEnvio: 'pendente',
-        docs: formData.docs
-      }));
-
-      // 5. Salvar no contexto local
-      saveEntity('obras', [...(obras || []), novaObra]);
-      saveEntity('os', [...(os || []), ...novasOS]);
-
-      alert(`${novasOS.length} Serviço(s) criado(s) com sucesso! Negócio sincronizado com backend.`);
+    Promise.all([
+      saveEntity('obras', [...obrasAtuais, novaObra]),
+      saveEntity('os', [...osAtuais, ...novasOS])
+    ]).then(() => {
+      alert(`${novasOS.length} Serviço(s) criado(s) com sucesso!`);
       setShowFormNovoNegocio(false);
       setNovoNegocioTab('dados');
       setFormData(initialForm);
-    } catch (error: any) {
-      console.error('Erro ao salvar negócio:', error);
-      alert(`Erro ao salvar negócio: ${error?.response?.data?.detail || error?.message || 'Falha na sincronização com backend'}`);
-    }
+    }).catch((error) => {
+      console.error('Erro ao criar negócio:', error);
+      alert('Erro ao salvar negócio. Tente novamente.');
+    });
   };
 
   const handleShowDetalhes = (obra: any) => {
@@ -1275,35 +1290,16 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       return alert('A Data Prevista Final não pode ser anterior à Data Prevista de Início.');
     }
 
-    try {
-      // Se tem referência para backend, atualizar lá também
-      if (editingObra.negocioBackendId) {
-        const negocioFrontend = {
-          nome: editingObra.nome,
-          solicitante: editingObra.solicitante,
-          cargo: editingObra.cargo || '',
-          telefone: editingObra.telefone || '',
-          email: editingObra.email || '',
-          dataPrevistaInicio: editingObra.dataPrevistaInicio || editingObra.inicioPrevisto,
-          dataPrevistaFinal: editingObra.dataPrevistaFinal || editingObra.fimPrevisto,
-          empresaPrestadora: editingObra.empresaPrestadora,
-          servicos: editingObra.servicos || []
-        };
-
-        await updateNegocio(editingObra.negocioBackendId, negocioFrontend);
-      }
-
-      // Atualizar no contexto local
-      const obrasAtualizadas = obras?.map((o: any) => o.id === editingObra.id ? editingObra : o) || [];
-      saveEntity('obras', obrasAtualizadas);
-
+    const obrasAtualizadas = obras?.map((o: any) => o.id === editingObra.id ? editingObra : o) || [];
+    
+    saveEntity('obras', obrasAtualizadas).then(() => {
       alert("Negócio atualizado com sucesso!");
       setShowEditModal(false);
       setEditingObra(null);
-    } catch (error: any) {
+    }).catch((error) => {
       console.error('Erro ao atualizar negócio:', error);
-      alert(`Erro ao atualizar negócio: ${error?.response?.data?.detail || error?.message || 'Falha na sincronização com backend'}`);
-    }
+      alert('Erro ao salvar negócio. Tente novamente.');
+    });
   };
 
   const handleAprovarOrcamento = () => {
@@ -1344,11 +1340,15 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     };
 
     const obrasAtualizadas = obras?.map((o: any) => o.id === selectedObraDetalhes.id ? obraAtualizada : o) || [];
-    saveEntity('obras', obrasAtualizadas);
-
-    alert(mensagem);
-    setShowDetalhesObraModal(false);
-    setSelectedObraDetalhes(null);
+    
+    saveEntity('obras', obrasAtualizadas).then(() => {
+      alert(mensagem);
+      setShowDetalhesObraModal(false);
+      setSelectedObraDetalhes(null);
+    }).catch((error) => {
+      console.error('Erro ao atualizar orçamento:', error);
+      alert('Erro ao salvar mudanças. Tente novamente.');
+    });
   };
 
   const handleRecusarOrcamento = () => {
@@ -1391,43 +1391,44 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       obraAtualizada,
       ...((obras || []).filter((o: any) => o.id !== selectedObraDetalhes.id))
     ];
-    saveEntity('obras', obrasAtualizadas);
-
-    alert("Orçamento recusado. Negócio retornou para Aguardando orçamento.");
-    setShowDetalhesObraModal(false);
-    setSelectedObraDetalhes(null);
+    
+    saveEntity('obras', obrasAtualizadas).then(() => {
+      alert("Orçamento recusado. Negócio retornou para Aguardando orçamento.");
+      setShowDetalhesObraModal(false);
+      setSelectedObraDetalhes(null);
+    }).catch((error) => {
+      console.error('Erro ao recusar orçamento:', error);
+      alert('Erro ao salvar mudanças. Tente novamente.');
+    });
   };
 
   const handleDownloadOSPDF = async () => {
-  const osDoNegocio = (os || []).filter((o: any) => o.obraId === selectedObraDetalhes.id);
-  if (osDoNegocio.length === 0) {
+  const osDoNegocio = (os || []).filter((o: any) => o.obraId === selectedObraDetalhes?.id);
+  if (osDoNegocio.length === 0 && !selectedObraDetalhes) {
     toast.error('Nenhuma OS vinculada a este negócio.');
     return;
   }
-  const osPrincipal = osDoNegocio[0];
+  
+  // Pega a OS Consolidada mais recente, ou a primeira do array, ou usa o próprio selectedObraDetalhes como fallback
+  const osPrincipal = [...osDoNegocio].reverse().find((o: any) => o.tipoDocumento === 'consolidada' || (o.aSerIncluido && Object.keys(o.aSerIncluido).length > 0)) || osDoNegocio[0] || selectedObraDetalhes;
   
   const orcamentosBase = Array.isArray(osPrincipal?.orcamentos) && osPrincipal.orcamentos.length > 0
     ? osPrincipal.orcamentos
-    : Array.isArray(selectedObraDetalhes.orcamentos) && selectedObraDetalhes.orcamentos.length > 0
+    : Array.isArray(selectedObraDetalhes?.orcamentos) && selectedObraDetalhes.orcamentos.length > 0
       ? selectedObraDetalhes.orcamentos
       : [];
       
   const propostasBase = Array.isArray(osPrincipal?.propostas) && osPrincipal.propostas.length > 0
     ? osPrincipal.propostas
-    : Array.isArray(selectedObraDetalhes.propostas) && selectedObraDetalhes.propostas.length > 0
+    : Array.isArray(selectedObraDetalhes?.propostas) && selectedObraDetalhes.propostas.length > 0
       ? selectedObraDetalhes.propostas
       : [];
       
   const ultimoOrcamento = orcamentosBase.length > 0 ? orcamentosBase[orcamentosBase.length - 1] : null;
   const ultimaProposta = propostasBase.length > 0 ? propostasBase[propostasBase.length - 1] : null;
-  const cliente = (clientes || []).find((c: any) => c.id === selectedObraDetalhes.clienteId);
+  const cliente = (clientes || []).find((c: any) => c.id === selectedObraDetalhes?.clienteId);
   
-  let logoBase64 = undefined;
-  try {
-    logoBase64 = await getBase64FromUrl('/image2.jpg');
-  } catch (err) {
-    console.warn('Logo não encontrada.');
-  }
+  let logoBase64 = await getBase64FromUrl('/image2.jpg');
   
   try {
     const doc = new jsPDF('p', 'mm', 'a4');
@@ -1444,7 +1445,8 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     doc.line(margin, y + 15, pageWidth - margin, y + 15); 
     
     if (logoBase64) {
-      doc.addImage(logoBase64, 'PNG', margin + 2, y + 2, 46, 11);
+      const logoFormat = logoBase64.match(/^data:image\/(png|jpe?g)/i)?.[1]?.toLowerCase().includes('png') ? 'PNG' : 'JPEG';
+      doc.addImage(logoBase64, logoFormat, margin + 2, y + 2, 46, 11);
     } else {
       doc.setFont('Helvetica', 'bold');
       doc.setFontSize(12);
@@ -1480,14 +1482,15 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       doc.text(val || ' ', vx + 25, vy);
     };
     
-    const dataInicio = osPrincipal.dataInicioPrevisto || selectedObraDetalhes.dataPrevistaInicio;
-    const dataTermino = osPrincipal.dataTerminoPrevisto || selectedObraDetalhes.dataPrevistaFinal;
+    const dataInicio = osPrincipal.dataInicioPrevisto || selectedObraDetalhes?.dataPrevistaInicio;
+    const dataTermino = osPrincipal.dataTerminoPrevisto || selectedObraDetalhes?.dataPrevistaFinal;
+    const idProjetoForPrint = selectedObraDetalhes?.id || '';
     
     printDado('CLIENTE:', cliente?.razaoSocial || '', margin + 2, y + 3.5);
     printDado('Início Previsto:', dataInicio ? new Date(dataInicio).toLocaleDateString('pt-BR') : '', margin + 102, y + 3.5);
     y += rowH;
     
-    printDado('PROJETO:', selectedObraDetalhes.nome || '', margin + 2, y + 3.5);
+    printDado('PROJETO:', `${selectedObraDetalhes?.nome || ''}${idProjetoForPrint ? ' • ' + idProjetoForPrint : ''}`, margin + 2, y + 3.5);
     printDado('Térm. Previsto:', dataTermino ? new Date(dataTermino).toLocaleDateString('pt-BR') : '', margin + 102, y + 3.5);
     y += rowH;
     
@@ -1524,28 +1527,56 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       cursorEsq += 4;
     });
     
-    const checks = osPrincipal.aSerIncluido || {};
-    const chk = (val: any) => val ? '[ X ]' : '[   ]';
+    // ==========================================
+    // CORREÇÃO DOS X (A SER INCLUIDO)
+    // ==========================================
+    let baseChecks = osPrincipal?.aSerIncluido || selectedObraDetalhes?.aSerIncluido || {};
+    if (typeof baseChecks === 'string') {
+      try { baseChecks = JSON.parse(baseChecks); } catch(e) { baseChecks = {}; }
+    }
+
+    const getCheck = (uiLabel: string, dbKey: string) => {
+      let isChecked = false;
+      // 1. Lê os clicks da tela
+      try {
+        const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+        for (let i = 0; i < checkboxes.length; i++) {
+          const input = checkboxes[i] as HTMLInputElement;
+          if (input.parentElement && input.parentElement.textContent && input.parentElement.textContent.includes(uiLabel)) {
+            if (input.checked) isChecked = true;
+          }
+        }
+      } catch (e) {}
+
+      // 2. Lê do banco de dados/estado se não achou na tela
+      if (!isChecked && (baseChecks[dbKey] === true || String(baseChecks[dbKey]) === 'true')) {
+        isChecked = true;
+      }
+      return isChecked;
+    };
+
+    const chk = (val: boolean) => val ? '[ X ]' : '[   ]';
     
     const listChecks = [
-      { lbl: 'CERTIFICADO DE GAS', v: checks.certificadoGas },
-      { lbl: 'VENTILAÇÃO', v: checks.ventilacao },
-      { lbl: 'LIMPEZA ANTES', v: checks.limpezaAntes },
-      { lbl: 'LIMPEZA APÓS CONCLUSÃO', v: checks.limpezaApos },
-      { lbl: 'ANDAIMES', v: checks.andaimes },
-      { lbl: 'APOIO DE GUINDASTE', v: checks.apoioGuindastes },
-      { lbl: 'TRANSPORTE EXTERNO', v: checks.transporteExterno },
-      { lbl: 'TESTE DE PRESSÃO', v: checks.testePressao || checks.testesPressao },
-      { lbl: 'PINTURA', v: checks.pintura },
-      { lbl: 'LP / PM', v: checks.lpPm },
-      { lbl: 'TESTE DE ULTRASON', v: checks.testeUltrassom },
-      { lbl: 'INSPEÇÃO DIMENSIONAL', v: checks.inspecaoDimensional },
-      { lbl: 'VISUAL DE SOLDA', v: checks.visualSolda },
-      { lbl: 'SOLDADOR CERTIFICADO', v: checks.soldadorCertificado },
-      { lbl: 'PROCEDIMENTO DE SOLDA', v: checks.procedimentoSolda },
-      { lbl: 'CERTIFICAÇÃO DO MATERIAL', v: checks.certificacaoMaterial },
-      { lbl: 'VIGIA DE FOGO', v: checks.vigiaFogo }
+      { lbl: 'CERTIFICADO DE GÁS FREE', v: getCheck('Certificado de Gás', 'certificadoGas') },
+      { lbl: 'VENTILAÇÃO', v: getCheck('Ventilação', 'ventilacao') },
+      { lbl: 'LIMPEZA ANTES', v: getCheck('Limpeza antes', 'limpezaAntes') },
+      { lbl: 'LIMPEZA APÓS CONCLUSÃO', v: getCheck('Limpeza após', 'limpezaApos') },
+      { lbl: 'ANDAIMES', v: getCheck('Andaimes', 'andaimes') },
+      { lbl: 'APOIO DE GUINDASTE', v: getCheck('Apoio de guindaste', 'apoioGuindastes') },
+      { lbl: 'TRANSPORTE EXTERNO', v: getCheck('Transporte externo', 'transporteExterno') },
+      { lbl: 'TESTE DE PRESSÃO', v: getCheck('Testes de pressão', 'testesPressao') },
+      { lbl: 'PINTURA', v: getCheck('Pintura', 'pintura') },
+      { lbl: 'LP / PM', v: getCheck('LP / PM', 'lpPm') },
+      { lbl: 'TESTE DE ULTRASSOM', v: getCheck('Teste de ultrassom', 'testeUltrassom') },
+      { lbl: 'INSPEÇÃO DIMENSIONAL', v: getCheck('Inspeção dimensional', 'inspecaoDimensional') },
+      { lbl: 'VISUAL DE SOLDA', v: getCheck('Visual de solda', 'visualSolda') },
+      { lbl: 'SOLDADOR CERTIFICADO', v: getCheck('Soldador certificado', 'soldadorCertificado') },
+      { lbl: 'PROCEDIMENTO DE SOLDA', v: getCheck('Procedimento de solda', 'procedimentoSolda') },
+      { lbl: 'CERTIFICAÇÃO DO MATERIAL', v: getCheck('Certificação do material', 'certificacaoMaterial') },
+      { lbl: 'VIGIA DE FOGO', v: getCheck('Vigia de fogo', 'vigiaFogo') }
     ];
+    // ==========================================
     
     let cursorDir = bodyY + 5;
     doc.setFontSize(7);
@@ -1562,19 +1593,64 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     doc.rect(margin + leftW, bodyY, rightW, maxH);
     
     y = bodyY + maxH + 5;
-    const formatCurrency = (val: any) => val ? parseFloat(val).toLocaleString('pt-BR', {style: 'currency', currency: 'BRL'}) : 'R$ 0,00';
+
+    // --- NOVA TABELA DE MÃO DE OBRA ---
+    const maoDeObraOS = ultimoOrcamento?.data?.maoDeObra || [];
+    if (maoDeObraOS.length > 0) {
+      autoTable(doc, {
+        startY: y,
+        head: [['MÃO DE OBRA', 'QTDE', 'DIAS', 'ATIVIDADE', 'OBS.']],
+        body: maoDeObraOS.map((mo: any) => [
+          mo.cargo || mo.funcao || mo.maoDeObra || '',
+          mo.quantidade || mo.qtde || '',
+          mo.dias || '',
+          mo.atividade || '',
+          mo.obs || mo.observacao || '-'
+        ]),
+        theme: 'grid',
+        headStyles: { fillColor: [230, 230, 230], textColor: [0,0,0], fontStyle: 'bold', fontSize: 8 },
+        styles: { fontSize: 7, cellPadding: 2, textColor: [0,0,0] },
+        margin: { left: margin, right: margin }
+      });
+      y = (doc as any).lastAutoTable.finalY + 5;
+    }
+
+    const horasServicoOS = Array.isArray(osPrincipal?.horasTrabalhadasPorServico)
+      ? osPrincipal.horasTrabalhadasPorServico
+          .map((item: any, idx: number) => ({
+            id: String(item?.id || `hora-servico-${idx}`),
+            servico: String(item?.servico || '').trim(),
+            hora: Number(item?.hora || 0)
+          }))
+          .filter((item: any) => item.servico || item.hora > 0)
+      : [];
+    if (horasServicoOS.length > 0) {
+      const totalHorasServico = horasServicoOS.reduce((acc: number, item: any) => acc + (Number.isFinite(item.hora) ? item.hora : 0), 0);
+      autoTable(doc, {
+        startY: y,
+        head: [['SERVIÇO', 'HORA (H/H)']],
+        body: [
+          ...horasServicoOS.map((item: any) => [item.servico, String(item.hora)]),
+          ['HH TOTAL', String(totalHorasServico)]
+        ],
+        theme: 'grid',
+        headStyles: { fillColor: [230, 230, 230], textColor: [0,0,0], fontStyle: 'bold', fontSize: 8 },
+        styles: { fontSize: 7, cellPadding: 2, textColor: [0,0,0] },
+        margin: { left: margin, right: margin }
+      });
+      y = (doc as any).lastAutoTable.finalY + 5;
+    }
     
+    // --- TABELA DE MATERIAIS ATUALIZADA (SEM VALORES) ---
     const materiaisOS = ultimoOrcamento?.data?.materiais || [];
     if (materiaisOS.length > 0) {
       autoTable(doc, {
         startY: y,
-        head: [['QUANT', 'UN', 'ESPECIFICAÇÃO DE MATERIAL', 'R$ / UNID', 'VALOR TOTAL']],
+        head: [['QUANT', 'UN', 'ESPECIFICAÇÃO DE MATERIAL']],
         body: materiaisOS.map((m: any) => [
           m.quantidade || '',
           m.unidade || '',
-          m.descricao || '',
-          formatCurrency(m.custoUnit),
-          formatCurrency(m.valorTotal)
+          m.descricao || ''
         ]),
         theme: 'grid',
         headStyles: { fillColor: [230, 230, 230], textColor: [0,0,0], fontStyle: 'bold', fontSize: 8 },
@@ -1584,15 +1660,15 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       y = (doc as any).lastAutoTable.finalY + 5;
     }
     
+    // --- TABELA DE TERCEIRIZADOS ATUALIZADA (SEM VALORES) ---
     const terceirizadosOS = ultimoOrcamento?.data?.terceirizados || [];
     if (terceirizadosOS.length > 0) {
       autoTable(doc, {
         startY: y,
-        head: [['ITEM', 'TERCEIRIZAÇÃO OU SUB-CONTRATAÇÃO', 'VALOR TOTAL']],
+        head: [['ITEM', 'TERCEIRIZAÇÃO OU SUB-CONTRATAÇÃO']],
         body: terceirizadosOS.map((t: any, idx: number) => [
           idx + 1,
-          t.descricao || '',
-          formatCurrency(t.valorTotal)
+          t.descricao || ''
         ]),
         theme: 'grid',
         headStyles: { fillColor: [230, 230, 230], textColor: [0,0,0], fontStyle: 'bold', fontSize: 8 },
@@ -1610,8 +1686,36 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       doc.text(`Pag. ${i} / ${pageCount}`, pageWidth - margin - 15, pageHeight - 5);
     }
     
-    const prefixo = getPrefixoEmpresa(selectedObraDetalhes.empresaPrestadora);
-    doc.save(`${prefixo}_OS_${osPrincipal.ordemServicoNumero || '001'}_${new Date().getTime()}.pdf`);
+    const prefixo = getPrefixoEmpresa(selectedObraDetalhes?.empresaPrestadora);
+    const nomeArquivo = `${prefixo || 'ERP'}_OS_${osPrincipal.ordemServicoNumero || '001'}_${new Date().getTime()}.pdf`;
+    const conteudoDataUrl = doc.output('datauristring');
+    doc.save(nomeArquivo);
+
+    if (selectedObraDetalhes && conteudoDataUrl) {
+      const documentosAtuais = Array.isArray(selectedObraDetalhes.documentosNegocio)
+        ? selectedObraDetalhes.documentosNegocio
+        : [];
+      const documentosSemOs = documentosAtuais.filter((docItem: any) => {
+        const id = String(docItem?.id || '').toLowerCase();
+        const nome = String(docItem?.nome || '').toLowerCase();
+        return !(id.includes('doc-os') || nome.includes('_os_') || nome.includes('ordem de serviço') || nome.includes('ordem de servico'));
+      });
+
+      persistirObraAtualizada({
+        ...selectedObraDetalhes,
+        documentosNegocio: [
+          ...documentosSemOs,
+          {
+            id: `doc-os-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            nome: nomeArquivo,
+            tipo: 'application/pdf',
+            tamanho: Math.max(0, Math.round((conteudoDataUrl.length * 3) / 4)),
+            dataUpload: new Date().toISOString(),
+            conteudo: conteudoDataUrl,
+          },
+        ],
+      });
+    }
     
     toast.success('OS baixada em PDF com sucesso!');
   } catch (error) {
@@ -1621,546 +1725,506 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
 };
 
   const handleDownloadOrcamentoPDF = () => {
-  if (!selectedObraDetalhes?.orcamentos || selectedObraDetalhes.orcamentos.length === 0) return;
-  
-  const ultimoOrcamento = selectedObraDetalhes.orcamentos[selectedObraDetalhes.orcamentos.length - 1];
-  const cliente = (clientes || []).find(c => c.id === selectedObraDetalhes.clienteId);
-  
-  try {
-    const doc = new jsPDF('p', 'mm', 'a4');
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const lineHeight = 5;
-    const cellHeight = lineHeight;
-    let y = 10;
-    const margin = 8;
-    const baseColWidth = (pageWidth - margin * 2) / 10;
-    
-    const drawCellWithAutoWrap = (x: number, y: number, width: number, height: number, text: string, bold = false, red = false) => {
-      doc.setFont('Arial', bold ? 'bold' : 'normal');
-      
-      if (red) {
-        doc.setTextColor(255, 0, 0);
-      } else {
-        doc.setTextColor(0, 0, 0);
-      }
-      
-      const lines = doc.splitTextToSize(text || '', width - 2);
-      
-      let fontSize = 8;
-      let displayLines = lines.slice(0, 2);
-      
-      if (lines.length > 2) {
-        fontSize = 6;
-        doc.setFontSize(fontSize);
-        const newLines = doc.splitTextToSize(text || '', width - 2);
-        displayLines = newLines.slice(0, 3);
-      } else {
-        doc.setFontSize(fontSize);
-      }
-      
-      doc.rect(x, y, width, height);
-      
-      const lineHeightText = fontSize * 0.35;
-      const totalTextHeight = displayLines.length * lineHeightText;
-      let textY = y + (height - totalTextHeight) / 2 + lineHeightText * 0.7;
-      
-      displayLines.forEach((line: string) => {
-        doc.text(line, x + 1, textY, { maxWidth: width - 2 });
-        textY += lineHeightText;
-      });
-      
-      doc.setTextColor(0, 0, 0);
-    };
+    if (!selectedObraDetalhes?.orcamentos || selectedObraDetalhes.orcamentos.length === 0) return;
 
-    const drawCell = (x: number, y: number, width: number, height: number, text: string, bold = false, red = false) => {
-      doc.rect(x, y, width, height);
-      doc.setFont('Arial', bold ? 'bold' : 'normal');
-      doc.setFontSize(9);
-      if (red) {
-        doc.setTextColor(255, 0, 0);
-      } else {
-        doc.setTextColor(0, 0, 0);
-      }
-      const maxChars = Math.floor(width / 1.5);
-      const wrappedText = text.length > maxChars ? text.substring(0, maxChars - 3) + '...' : text;
-      doc.text(wrappedText, x + 1, y + 3.5, { maxWidth: width - 2 });
-      doc.setTextColor(0, 0, 0);
-    };
+    const ultimoOrcamento = selectedObraDetalhes.orcamentos[selectedObraDetalhes.orcamentos.length - 1];
+    const cliente = (clientes || []).find(c => c.id === selectedObraDetalhes.clienteId);
+    const obraParam = selectedObraDetalhes;
 
-    const splitText = (text: string, maxWidth: number, fontSize: number = 7): string[] => {
-      if (!text) return [''];
-      const charsPerLine = Math.floor(maxWidth / 1.8);
-      const lines = [];
-      let currentText = text;
-      
-      while (currentText.length > 0) {
-        if (currentText.length <= charsPerLine) {
-          lines.push(currentText);
-          break;
+    try {
+      const doc = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const lineHeight = 5;
+      const cellHeight = lineHeight;
+      let y = 10;
+      const margin = 8;
+      const baseColWidth = (pageWidth - margin * 2) / 10;
+      const laborColWidths = [
+        baseColWidth,
+        baseColWidth * 2.7,
+        baseColWidth,
+        baseColWidth,
+        baseColWidth * 1.4,
+        baseColWidth * 1.6,
+        baseColWidth * 1.3
+      ];
+      const materialsColWidths = [
+        baseColWidth,
+        baseColWidth * 3.3,
+        baseColWidth * 0.8,
+        baseColWidth * 0.9,
+        baseColWidth * 1.3,
+        baseColWidth * 1.4,
+        baseColWidth * 1.3
+      ];
+      const activitiesColWidths = [
+        baseColWidth,
+        baseColWidth * 3,
+        baseColWidth,
+        baseColWidth * 5
+      ];
+      const sumWidths = (widths: number[]) => widths.reduce((sum, width) => sum + width, 0);
+
+      const drawCellWithAutoWrap = (x: number, y: number, width: number, height: number, text: string, bold = false, red = false) => {
+        doc.setFont('Arial', bold ? 'bold' : 'normal');
+
+        if (red) {
+          doc.setTextColor(255, 0, 0);
+        } else {
+          doc.setTextColor(0, 0, 0);
         }
-        lines.push(currentText.substring(0, charsPerLine));
-        currentText = currentText.substring(charsPerLine);
-      }
-      return lines;
-    };
 
-    const base = (ultimoOrcamento.valores.totalBruto ?? ultimoOrcamento.valores.subtotal) || 0;
-    const margemPercent = ultimoOrcamento.valores.margem || 0;
-    const ohPercent = ultimoOrcamento.valores.oh || 0;
-    const impostosPercent = ultimoOrcamento.valores.impostos || 0;
-    const valorMargem = ultimoOrcamento.valores.valorMargem ?? ((base * margemPercent) / 100);
-    const valorOH = ultimoOrcamento.valores.valorOH ?? ((base * ohPercent) / 100);
-    const semImposto = ultimoOrcamento.valores.totalSemImposto ?? (base + valorMargem + valorOH);
-    const valorImposto = ultimoOrcamento.valores.valorImpostos ?? ((semImposto * impostosPercent) / 100);
+        const lines = doc.splitTextToSize(text || '', width - 2);
 
-    const maoDeObraData = (ultimoOrcamento.data.maoDeObra || []).filter((item: any) => item.funcao);
-    const totalMaoDeObra = maoDeObraData.reduce((sum: number, item: any) => sum + parseFloat(item.valorTotal || 0), 0);
-    
-    const materiaisData = (ultimoOrcamento.data.materiais || []).filter((item: any) => item.descricao);
-    const totalMateriais = materiaisData.reduce((sum: number, item: any) => sum + parseFloat(item.valorTotal || 0), 0);
-    
-    const terceirizadosData = (ultimoOrcamento.data.terceirizados || []).filter((item: any) => item.descricao);
-    const totalTerceiros = terceirizadosData.reduce((sum: number, item: any) => sum + parseFloat(item.valorTotal || 0), 0);
-    
-    const atividadesData = (ultimoOrcamento.data.atividades || []).filter((item: any) => item.atividade);
-    const totalDias = atividadesData.reduce((sum: number, item: any) => sum + parseFloat(item.dias || 0), 0);
-    
-    const totalItens = maoDeObraData.length + materiaisData.length + terceirizadosData.length;
-    const precoFinal = ultimoOrcamento.valores.precoFinal || 0;
-    const precoPorItem = totalItens > 0 ? precoFinal / totalItens : 0;
+        let fontSize = 8;
+        let displayLines = lines.slice(0, 2);
 
-    let x = margin;
-    drawCell(x, y, baseColWidth, cellHeight, 'Cliente:', true);
-    x += baseColWidth;
-    drawCell(x, y, baseColWidth * 3, cellHeight, cliente?.razaoSocial || '');
-    x += baseColWidth * 3;
-    drawCell(x, y, baseColWidth, cellHeight, '');
-    x += baseColWidth;
-    drawCell(x, y, baseColWidth * 5, cellHeight, `Data: ${new Date().toLocaleDateString('pt-BR')}`);
-    y += cellHeight;
+        if (lines.length > 2) {
+          fontSize = 6;
+          doc.setFontSize(fontSize);
+          const newLines = doc.splitTextToSize(text || '', width - 2);
+          displayLines = newLines.slice(0, 3);
+        } else {
+          doc.setFontSize(fontSize);
+        }
 
-    x = margin;
-    drawCell(x, y, baseColWidth, cellHeight, 'Ship:', true);
-    x += baseColWidth;
-    drawCell(x, y, baseColWidth * 9, cellHeight, selectedObraDetalhes.nome);
-    y += cellHeight;
+        doc.rect(x, y, width, height);
 
-    x = margin;
-    drawCell(x, y, baseColWidth, cellHeight, 'Escopo:', true);
-    x += baseColWidth;
-    drawCell(x, y, baseColWidth * 9, cellHeight, 'Serviços conforme descrito abaixo');
-    y += cellHeight + 2;
+        const lineHeightText = fontSize * 0.35;
+        const totalTextHeight = displayLines.length * lineHeightText;
+        let textY = y + (height - totalTextHeight) / 2 + lineHeightText * 0.7;
 
-    x = margin;
-    doc.setFont('Arial', 'bold');
-    doc.setFontSize(9);
-    doc.text('A', x + 2, y + 3);
-    doc.rect(x, y, baseColWidth, cellHeight);
-    x += baseColWidth;
-    doc.setTextColor(255, 0, 0);
-    doc.text('MÃO DE OBRA', x + 2, y + 3);
-    doc.rect(x, y, baseColWidth * 9, cellHeight);
-    doc.setTextColor(0, 0, 0);
-    y += cellHeight;
+        displayLines.forEach((line: string) => {
+          doc.text(line, x + 1, textY, { maxWidth: width - 2 });
+          textY += lineHeightText;
+        });
 
-    x = margin;
-    const headersMaoDeObra = ['Item', 'Função', 'Qtd', 'Dias', 'Custo/Dia', 'Obs', '', '', '', 'Valor Total'];
-    headersMaoDeObra.forEach((h) => {
-      doc.setFont('Arial', 'bold');
-      doc.setFontSize(7);
-      doc.text(h, x + 0.5, y + 2.5, { maxWidth: baseColWidth - 1 });
-      doc.rect(x, y, baseColWidth, cellHeight);
+        doc.setTextColor(0, 0, 0);
+      };
+
+      const drawCell = (x: number, y: number, width: number, height: number, text: string, bold = false, red = false) => {
+        doc.rect(x, y, width, height);
+        doc.setFont('Arial', bold ? 'bold' : 'normal');
+        doc.setFontSize(9);
+        if (red) {
+          doc.setTextColor(255, 0, 0);
+        } else {
+          doc.setTextColor(0, 0, 0);
+        }
+        const maxChars = Math.floor(width / 1.5);
+        const wrappedText = text.length > maxChars ? text.substring(0, maxChars - 3) + '...' : text;
+        doc.text(wrappedText, x + 1, y + 3.5, { maxWidth: width - 2 });
+        doc.setTextColor(0, 0, 0);
+      };
+
+      let x = margin;
+      drawCell(x, y, baseColWidth, cellHeight, 'Cliente:', true);
       x += baseColWidth;
-    });
-    y += cellHeight;
+      drawCell(x, y, baseColWidth * 3, cellHeight, cliente?.razaoSocial || '');
+      x += baseColWidth * 3;
+      drawCell(x, y, baseColWidth, cellHeight, '');
+      x += baseColWidth;
+      drawCell(x, y, baseColWidth * 5, cellHeight, `Data: ${new Date().toLocaleDateString('pt-BR')}`);
+      y += cellHeight;
 
-    maoDeObraData.forEach((item: any, idx: number) => {
       x = margin;
-      doc.setFont('Arial', 'normal');
-      doc.setFontSize(7);
-      
-      doc.text(String(idx + 1), x + 0.5, y + 2.5);
+      drawCell(x, y, baseColWidth, cellHeight, 'Ship:', true);
+      x += baseColWidth;
+      drawCell(x, y, baseColWidth * 9, cellHeight, obraParam?.nome || '');
+      y += cellHeight;
+
+      x = margin;
+      drawCell(x, y, baseColWidth, cellHeight, 'Escopo:', true);
+      x += baseColWidth;
+      drawCell(x, y, baseColWidth * 9, cellHeight, 'Serviços conforme descrito abaixo');
+      y += cellHeight + 2;
+
+      const base = safeNumber(ultimoOrcamento.valores.totalBruto ?? ultimoOrcamento.valores.subtotal);
+      const margemPercent = safeNumber(ultimoOrcamento.valores.margem);
+      const ohPercent = safeNumber(ultimoOrcamento.valores.oh);
+      const impostosPercent = safeNumber(ultimoOrcamento.valores.impostos);
+      const valorMargem = safeNumber(ultimoOrcamento.valores.valorMargem ?? ((base * margemPercent) / 100));
+      const valorOH = safeNumber(ultimoOrcamento.valores.valorOH ?? ((base * ohPercent) / 100));
+      const semImposto = safeNumber(ultimoOrcamento.valores.totalSemImposto ?? (base + valorMargem + valorOH));
+      const valorImposto = safeNumber(ultimoOrcamento.valores.valorImpostos ?? ((semImposto * impostosPercent) / 100));
+      const precoFinal = safeNumber(ultimoOrcamento.valores.precoFinal);
+
+      const maoDeObraData = (ultimoOrcamento.data.maoDeObra || []).filter((item: any) => item.funcao);
+      const totalMaoDeObra = maoDeObraData.reduce((sum: number, item: any) => sum + parseDecimal(item.valorTotal || '0'), 0);
+      const materiaisData = (ultimoOrcamento.data.materiais || []).filter((item: any) => item.descricao);
+      const totalMateriais = materiaisData.reduce((sum: number, item: any) => sum + parseDecimal(item.valorTotal || '0'), 0);
+      const terceirizadosData = (ultimoOrcamento.data.terceirizados || []).filter((item: any) => item.descricao);
+      const totalTerceiros = terceirizadosData.reduce((sum: number, item: any) => sum + parseDecimal(item.valorTotal || '0'), 0);
+      const atividadesData = (ultimoOrcamento.data.atividades || []).filter((item: any) => item.atividade);
+      const totalDias = atividadesData.reduce((sum: number, item: any) => sum + parseDecimal(item.dias || '0'), 0);
+
+      const totalItens = maoDeObraData.length + materiaisData.length + terceirizadosData.length;
+      const precoPorItem = totalItens > 0 ? precoFinal / totalItens : 0;
+
+      x = margin;
+      doc.setFont('Arial', 'bold');
+      doc.setFontSize(9);
+      doc.text('A', x + 2, y + 3);
       doc.rect(x, y, baseColWidth, cellHeight);
       x += baseColWidth;
-      
-      drawCellWithAutoWrap(x, y, baseColWidth, cellHeight, item.funcao || '');
-      x += baseColWidth;
-      
-      doc.text(String(item.quantidade || ''), x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-      
-      doc.text(String(item.dias || ''), x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-      
-      doc.text(String(item.custoUnitDia ? parseFloat(item.custoUnitDia).toFixed(2) : ''), x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-      
-      drawCellWithAutoWrap(x, y, baseColWidth, cellHeight, item.observacoes || '');
-      x += baseColWidth;
-      
-      for (let i = 0; i < 3; i++) {
+      doc.setTextColor(255, 0, 0);
+      doc.text('MÃO DE OBRA', x + 2, y + 3);
+      doc.rect(x, y, baseColWidth * 9, cellHeight);
+      doc.setTextColor(0, 0, 0);
+      y += cellHeight;
+
+      x = margin;
+      const headersMaoDeObra = ['Item', 'Função', 'Qtd', 'Dias', 'Custo/Dia', 'Obs', 'Valor Total'];
+      headersMaoDeObra.forEach((h, index) => {
+        const colWidth = laborColWidths[index];
+        doc.setFont('Arial', 'bold');
+        doc.setFontSize(7);
+        doc.text(h, x + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
+        doc.rect(x, y, colWidth, cellHeight);
+        x += colWidth;
+      });
+      y += cellHeight;
+
+      maoDeObraData.forEach((item: any, idx: number) => {
+        x = margin;
+        doc.setFont('Arial', 'normal');
+        doc.setFontSize(7);
+
+        doc.text(String(idx + 1), x + 0.5, y + 2.5);
+        doc.rect(x, y, laborColWidths[0], cellHeight);
+        x += laborColWidths[0];
+
+        drawCellWithAutoWrap(x, y, laborColWidths[1], cellHeight, item.funcao || '');
+        x += laborColWidths[1];
+
+        doc.text(String(item.quantidade || ''), x + 0.5, y + 2.5);
+        doc.rect(x, y, laborColWidths[2], cellHeight);
+        x += laborColWidths[2];
+
+        doc.text(String(item.dias || ''), x + 0.5, y + 2.5);
+        doc.rect(x, y, laborColWidths[3], cellHeight);
+        x += laborColWidths[3];
+
+        doc.text(String(item.custoUnitDia ? parseFloat(item.custoUnitDia).toFixed(2) : ''), x + 0.5, y + 2.5);
+        doc.rect(x, y, laborColWidths[4], cellHeight);
+        x += laborColWidths[4];
+
+        drawCellWithAutoWrap(x, y, laborColWidths[5], cellHeight, item.observacoes || '');
+        x += laborColWidths[5];
+
+        doc.setFont('Arial', 'bold');
+        doc.setTextColor(255, 0, 0);
+        doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
+        doc.setTextColor(0, 0, 0);
+        doc.setFont('Arial', 'normal');
+        doc.rect(x, y, laborColWidths[6], cellHeight);
+        x += laborColWidths[6];
+
+        y += cellHeight;
+      });
+
+      x = margin;
+      doc.setFont('Arial', 'bold');
+      doc.setFontSize(8);
+      doc.setTextColor(255, 0, 0);
+      doc.text('Sub-total', x + 0.5, y + 2.5);
+      doc.setTextColor(0, 0, 0);
+      doc.rect(x, y, sumWidths(laborColWidths.slice(0, -1)), cellHeight);
+      x += sumWidths(laborColWidths.slice(0, -1));
+      doc.setTextColor(255, 0, 0);
+      doc.text(totalMaoDeObra.toFixed(2), x + 0.5, y + 2.5);
+      doc.setTextColor(0, 0, 0);
+      doc.rect(x, y, laborColWidths[6], cellHeight);
+      y += cellHeight + 2;
+
+      if (materiaisData && materiaisData.length > 0) {
+        const headersMateriais = ['Item', 'Descrição', 'Un', 'Qtd', 'Peso/Fat', 'Custo Un', 'Total'];
+
+        x = margin;
+        doc.setFont('Arial', 'bold');
+        doc.setFontSize(9);
+        doc.text('B', x + 2, y + 3);
         doc.rect(x, y, baseColWidth, cellHeight);
         x += baseColWidth;
+        doc.setTextColor(255, 0, 0);
+        doc.text('CONSUMÍVEIS E MATERIAIS', x + 2, y + 3);
+        doc.rect(x, y, baseColWidth * 9, cellHeight);
+        doc.setTextColor(0, 0, 0);
+        y += cellHeight;
+
+        x = margin;
+        headersMateriais.forEach((h, index) => {
+          const colWidth = materialsColWidths[index];
+          doc.setFont('Arial', 'bold');
+          doc.setFontSize(7);
+          doc.text(h, x + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
+          doc.rect(x, y, colWidth, cellHeight);
+          x += colWidth;
+        });
+        y += cellHeight;
+
+        materiaisData.forEach((item: any, idx: number) => {
+          x = margin;
+          doc.setFont('Arial', 'normal');
+          doc.setFontSize(7);
+
+          doc.text(String(idx + 1), x + 0.5, y + 2.5);
+          doc.rect(x, y, materialsColWidths[0], cellHeight);
+          x += materialsColWidths[0];
+
+          drawCellWithAutoWrap(x, y, materialsColWidths[1], cellHeight, item.descricao || '');
+          x += materialsColWidths[1];
+
+          doc.text(item.unidade || '', x + 0.5, y + 2.5);
+          doc.rect(x, y, materialsColWidths[2], cellHeight);
+          x += materialsColWidths[2];
+
+          doc.text(String(item.quantidade || ''), x + 0.5, y + 2.5);
+          doc.rect(x, y, materialsColWidths[3], cellHeight);
+          x += materialsColWidths[3];
+
+          doc.text(String(item.pesoFator || ''), x + 0.5, y + 2.5);
+          doc.rect(x, y, materialsColWidths[4], cellHeight);
+          x += materialsColWidths[4];
+
+          doc.text(String(item.custoUnit ? parseFloat(item.custoUnit).toFixed(2) : ''), x + 0.5, y + 2.5);
+          doc.rect(x, y, materialsColWidths[5], cellHeight);
+          x += materialsColWidths[5];
+
+          doc.setFont('Arial', 'bold');
+          doc.setTextColor(255, 0, 0);
+          doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
+          doc.setTextColor(0, 0, 0);
+          doc.setFont('Arial', 'normal');
+          doc.rect(x, y, materialsColWidths[6], cellHeight);
+          x += materialsColWidths[6];
+
+          y += cellHeight;
+        });
+
+        x = margin;
+        doc.setFont('Arial', 'bold');
+        doc.setFontSize(8);
+        doc.setTextColor(255, 0, 0);
+        doc.text('Valor total', x + 0.5, y + 2.5);
+        doc.setTextColor(0, 0, 0);
+        doc.rect(x, y, sumWidths(materialsColWidths.slice(0, -1)), cellHeight);
+        x += sumWidths(materialsColWidths.slice(0, -1));
+        doc.setTextColor(255, 0, 0);
+        doc.text(totalMateriais.toFixed(2), x + 0.5, y + 2.5);
+        doc.setTextColor(0, 0, 0);
+        doc.rect(x, y, materialsColWidths[6], cellHeight);
+        y += cellHeight + 2;
       }
-      
-      doc.setFont('Arial', 'bold');
-      doc.setTextColor(255, 0, 0);
-      doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
-      doc.setTextColor(0, 0, 0);
-      doc.setFont('Arial', 'normal');
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-      y += cellHeight;
-    });
 
-    x = margin;
-    doc.setFont('Arial', 'bold');
-    doc.setFontSize(8);
-    doc.setTextColor(255, 0, 0);
-    doc.text('Sub-total', x + 0.5, y + 2.5);
-    doc.setTextColor(0, 0, 0);
-    doc.rect(x, y, baseColWidth * 9, cellHeight);
-    x += baseColWidth * 9;
-    doc.setTextColor(255, 0, 0);
-    doc.text(totalMaoDeObra.toFixed(2), x + 0.5, y + 2.5);
-    doc.setTextColor(0, 0, 0);
-    doc.rect(x, y, baseColWidth, cellHeight);
-    y += cellHeight + 2;
+      if (terceirizadosData && terceirizadosData.length > 0) {
+        const headersTerceiros = ['Item', 'Descrição', 'Un', 'Qtd', 'Peso/Fat', 'Custo Un', 'Total'];
 
-    x = margin;
-    doc.setFont('Arial', 'bold');
-    doc.setFontSize(9);
-    doc.text('B', x + 2, y + 3);
-    doc.rect(x, y, baseColWidth, cellHeight);
-    x += baseColWidth;
-    doc.setTextColor(255, 0, 0);
-    doc.text('CONSUMÍVEIS E MATERIAIS', x + 2, y + 3);
-    doc.rect(x, y, baseColWidth * 9, cellHeight);
-    doc.setTextColor(0, 0, 0);
-    y += cellHeight;
-
-    x = margin;
-    const headersMateriais = ['Item', 'Descrição', 'Un', 'Qtd', 'Peso/Fat', 'Custo Un', '3º', 'Obs', '', 'Total'];
-    headersMateriais.forEach((h) => {
-      doc.setFont('Arial', 'bold');
-      doc.setFontSize(7);
-      doc.text(h, x + 0.5, y + 2.5, { maxWidth: baseColWidth - 1 });
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-    });
-    y += cellHeight;
-
-    materiaisData.forEach((item: any, idx: number) => {
-      x = margin;
-      doc.setFont('Arial', 'normal');
-      doc.setFontSize(7);
-      
-      doc.text(String(idx + 1), x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-      
-      drawCellWithAutoWrap(x, y, baseColWidth, cellHeight, item.descricao || '');
-      x += baseColWidth;
-      
-      doc.text(item.unidade || '', x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-      
-      doc.text(String(item.quantidade || ''), x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-      
-      doc.text(String(item.pesoFator || ''), x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-      
-      doc.text(String(item.custoUnit ? parseFloat(item.custoUnit).toFixed(2) : ''), x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-      
-      doc.text(item.terceiros ? 'S' : 'N', x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-      
-      drawCellWithAutoWrap(x, y, baseColWidth, cellHeight, item.observacoes || '');
-      x += baseColWidth;
-      
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-      
-      doc.setFont('Arial', 'bold');
-      doc.setTextColor(255, 0, 0);
-      doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
-      doc.setTextColor(0, 0, 0);
-      doc.setFont('Arial', 'normal');
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-      y += cellHeight;
-    });
-
-    x = margin;
-    doc.setFont('Arial', 'bold');
-    doc.setFontSize(8);
-    doc.setTextColor(255, 0, 0);
-    doc.text('Valor total', x + 0.5, y + 2.5);
-    doc.setTextColor(0, 0, 0);
-    doc.rect(x, y, baseColWidth * 9, cellHeight);
-    x += baseColWidth * 9;
-    doc.setTextColor(255, 0, 0);
-    doc.text(totalMateriais.toFixed(2), x + 0.5, y + 2.5);
-    doc.setTextColor(0, 0, 0);
-    doc.rect(x, y, baseColWidth, cellHeight);
-    y += cellHeight + 2;
-
-    x = margin;
-    doc.setFont('Arial', 'bold');
-    doc.setFontSize(9);
-    doc.text('C', x + 2, y + 3);
-    doc.rect(x, y, baseColWidth, cellHeight);
-    x += baseColWidth;
-    doc.setTextColor(255, 0, 0);
-    doc.text('SERVIÇOS TERCEIRIZADOS', x + 2, y + 3);
-    doc.rect(x, y, baseColWidth * 9, cellHeight);
-    doc.setTextColor(0, 0, 0);
-    y += cellHeight;
-
-    x = margin;
-    const headersTerceiros = ['Item', 'Descrição', 'Un', 'Qtd', 'Peso/Fat', 'Custo Un', 'Obs', '', '', 'Total'];
-    headersTerceiros.forEach((h) => {
-      doc.setFont('Arial', 'bold');
-      doc.setFontSize(7);
-      doc.text(h, x + 0.5, y + 2.5, { maxWidth: baseColWidth - 1 });
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-    });
-    y += cellHeight;
-
-    terceirizadosData.forEach((item: any, idx: number) => {
-      x = margin;
-      doc.setFont('Arial', 'normal');
-      doc.setFontSize(7);
-      
-      doc.text(String(idx + 1), x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-      
-      drawCellWithAutoWrap(x, y, baseColWidth, cellHeight, item.descricao || '');
-      x += baseColWidth;
-      
-      doc.text(item.unidade || '', x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-      
-      doc.text(String(item.quantidade || ''), x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-      
-      doc.text(String(item.pesoFator || ''), x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-      
-      doc.text(String(item.custoUnit ? parseFloat(item.custoUnit).toFixed(2) : ''), x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-      
-      drawCellWithAutoWrap(x, y, baseColWidth, cellHeight, item.observacoes || '');
-      x += baseColWidth;
-      
-      for (let i = 0; i < 2; i++) {
+        x = margin;
+        doc.setFont('Arial', 'bold');
+        doc.setFontSize(9);
+        doc.text('C', x + 2, y + 3);
         doc.rect(x, y, baseColWidth, cellHeight);
         x += baseColWidth;
+        doc.setTextColor(255, 0, 0);
+        doc.text('SERVIÇOS TERCEIRIZADOS', x + 2, y + 3);
+        doc.rect(x, y, baseColWidth * 9, cellHeight);
+        doc.setTextColor(0, 0, 0);
+        y += cellHeight;
+
+        x = margin;
+        headersTerceiros.forEach((h, index) => {
+          const colWidth = materialsColWidths[index];
+          doc.setFont('Arial', 'bold');
+          doc.setFontSize(7);
+          doc.text(h, x + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
+          doc.rect(x, y, colWidth, cellHeight);
+          x += colWidth;
+        });
+        y += cellHeight;
+
+        terceirizadosData.forEach((item: any, idx: number) => {
+          x = margin;
+          doc.setFont('Arial', 'normal');
+          doc.setFontSize(7);
+
+          doc.text(String(idx + 1), x + 0.5, y + 2.5);
+          doc.rect(x, y, materialsColWidths[0], cellHeight);
+          x += materialsColWidths[0];
+
+          drawCellWithAutoWrap(x, y, materialsColWidths[1], cellHeight, item.descricao || '');
+          x += materialsColWidths[1];
+
+          doc.text(item.unidade || '', x + 0.5, y + 2.5);
+          doc.rect(x, y, materialsColWidths[2], cellHeight);
+          x += materialsColWidths[2];
+
+          doc.text(String(item.quantidade || ''), x + 0.5, y + 2.5);
+          doc.rect(x, y, materialsColWidths[3], cellHeight);
+          x += materialsColWidths[3];
+
+          doc.text(String(item.pesoFator || ''), x + 0.5, y + 2.5);
+          doc.rect(x, y, materialsColWidths[4], cellHeight);
+          x += materialsColWidths[4];
+
+          doc.text(String(item.custoUnit ? parseFloat(item.custoUnit).toFixed(2) : ''), x + 0.5, y + 2.5);
+          doc.rect(x, y, materialsColWidths[5], cellHeight);
+          x += materialsColWidths[5];
+
+          doc.setFont('Arial', 'bold');
+          doc.setTextColor(255, 0, 0);
+          doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
+          doc.setTextColor(0, 0, 0);
+          doc.setFont('Arial', 'normal');
+          doc.rect(x, y, materialsColWidths[6], cellHeight);
+          x += materialsColWidths[6];
+
+          y += cellHeight;
+        });
+
+        x = margin;
+        doc.setFont('Arial', 'bold');
+        doc.setFontSize(8);
+        doc.setTextColor(255, 0, 0);
+        doc.text('Sub-total', x + 0.5, y + 2.5);
+        doc.setTextColor(0, 0, 0);
+        doc.rect(x, y, sumWidths(materialsColWidths.slice(0, -1)), cellHeight);
+        x += sumWidths(materialsColWidths.slice(0, -1));
+        doc.setTextColor(255, 0, 0);
+        doc.text(totalTerceiros.toFixed(2), x + 0.5, y + 2.5);
+        doc.setTextColor(0, 0, 0);
+        doc.rect(x, y, materialsColWidths[6], cellHeight);
+        y += cellHeight + 2;
       }
-      
+
+      x = margin;
       doc.setFont('Arial', 'bold');
-      doc.setTextColor(255, 0, 0);
-      doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
-      doc.setTextColor(0, 0, 0);
-      doc.setFont('Arial', 'normal');
+      doc.setFontSize(9);
+      doc.text('E', x + 2, y + 3);
       doc.rect(x, y, baseColWidth, cellHeight);
       x += baseColWidth;
+      doc.text('Cálculos Finais', x + 2, y + 3);
+      doc.rect(x, y, baseColWidth * 9, cellHeight);
       y += cellHeight;
-    });
 
-    x = margin;
-    doc.setFont('Arial', 'bold');
-    doc.setFontSize(8);
-    doc.setTextColor(255, 0, 0);
-    doc.text('Sub-total', x + 0.5, y + 2.5);
-    doc.setTextColor(0, 0, 0);
-    doc.rect(x, y, baseColWidth * 9, cellHeight);
-    x += baseColWidth * 9;
-    doc.setTextColor(255, 0, 0);
-    doc.text(totalTerceiros.toFixed(2), x + 0.5, y + 2.5);
-    doc.setTextColor(0, 0, 0);
-    doc.rect(x, y, baseColWidth, cellHeight);
-    y += cellHeight + 2;
+      const calculos = [
+        ['1', 'Valor mão de obra', totalMaoDeObra.toFixed(2)],
+        ['2', 'Valor consumível e material', totalMateriais.toFixed(2)],
+        ['3', 'Valor terceirizados', totalTerceiros.toFixed(2)],
+        ['4', 'Total', base.toFixed(2)],
+        ['5', `O.H (${ohPercent}%)`, valorOH.toFixed(2)],
+        ['6', `Margem (${margemPercent}%)`, valorMargem.toFixed(2)],
+        ['7', 'PV S/ imposto', semImposto.toFixed(2)],
+        ['8', `Imposto S/ NF (${impostosPercent}%)`, valorImposto.toFixed(2)],
+        ['9', 'PV FINAL R$', precoFinal.toFixed(2)]
+      ];
 
-    x = margin;
-    doc.setFont('Arial', 'bold');
-    doc.setFontSize(9);
-    doc.text('D', x + 2, y + 3);
-    doc.rect(x, y, baseColWidth, cellHeight);
-    x += baseColWidth;
-    doc.text('Cálculos Finais', x + 2, y + 3);
-    doc.rect(x, y, baseColWidth * 9, cellHeight);
-    y += cellHeight;
+      calculos.forEach((row, idx) => {
+        const isLastRow = idx === calculos.length - 1;
+        x = margin;
+        doc.setFont('Arial', 'normal');
+        doc.setFontSize(8);
 
-    const calculos = [
-      ['1', 'Valor mão de obra', totalMaoDeObra.toFixed(2)],
-      ['2', 'Valor consumível e material', totalMateriais.toFixed(2)],
-      ['3', 'Valor terceirizados', totalTerceiros.toFixed(2)],
-      ['4', 'Total', base.toFixed(2)],
-      ['5', `O.H (${ohPercent}%)`, valorOH.toFixed(2)],
-      ['6', `Margem (${margemPercent}%)`, valorMargem.toFixed(2)],
-      ['7', 'PV S/ imposto', semImposto.toFixed(2)],
-      ['8', `Imposto S/ NF (${impostosPercent}%)`, valorImposto.toFixed(2)],
-      ['9', 'PV FINAL R$', ultimoOrcamento.valores.precoFinal.toFixed(2)]
-    ];
+        if (isLastRow) {
+          doc.setFont('Arial', 'bold');
+          doc.setTextColor(255, 0, 0);
+        }
 
-    calculos.forEach((row, idx) => {
-      const isLastRow = idx === calculos.length - 1;
+        doc.text(row[0], x + 0.5, y + 2.5);
+        doc.rect(x, y, baseColWidth, cellHeight);
+        x += baseColWidth;
+
+        doc.text(row[1], x + 0.5, y + 2.5, { maxWidth: baseColWidth * 8 - 2 });
+        doc.rect(x, y, baseColWidth * 8, cellHeight);
+        x += baseColWidth * 8;
+
+        doc.text(row[2], x + 0.5, y + 2.5);
+        doc.rect(x, y, baseColWidth, cellHeight);
+
+        if (isLastRow) {
+          doc.setTextColor(0, 0, 0);
+        }
+        y += cellHeight;
+      });
+
+      x = margin;
+      doc.setFont('Arial', 'bold');
+      doc.setFontSize(8);
+      doc.text('RESUMO:', x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth * 10, cellHeight);
+      y += cellHeight;
+
       x = margin;
       doc.setFont('Arial', 'normal');
       doc.setFontSize(8);
-      
-      if (isLastRow) {
-        doc.setFont('Arial', 'bold');
-        doc.setTextColor(255, 0, 0);
-      }
-      
-      doc.text(row[0], x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-      
-      doc.text(row[1], x + 0.5, y + 2.5, { maxWidth: baseColWidth * 8 - 2 });
-      doc.rect(x, y, baseColWidth * 8, cellHeight);
-      x += baseColWidth * 8;
-      
-      doc.text(row[2], x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth, cellHeight);
-      if (isLastRow) {
-        doc.setTextColor(0, 0, 0);
-      }
-      y += cellHeight;
-    });
-
-    y += 1;
-    x = margin;
-    doc.setFont('Arial', 'bold');
-    doc.setFontSize(9);
-    doc.text('E', x + 2, y + 3);
-    doc.rect(x, y, baseColWidth, cellHeight);
-    x += baseColWidth;
-    doc.setTextColor(255, 0, 0);
-    doc.text('ATIVIDADES PREVISTAS', x + 2, y + 3);
-    doc.rect(x, y, baseColWidth * 9, cellHeight);
-    doc.setTextColor(0, 0, 0);
-    y += cellHeight;
-
-    x = margin;
-    const headersAtividades = ['Item', 'Atividade', 'Dias', 'Observações', '', '', '', '', '', ''];
-    headersAtividades.forEach((h) => {
+      doc.text('Qtd. de Itens:', x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth * 5, cellHeight);
+      x += baseColWidth * 5;
       doc.setFont('Arial', 'bold');
-      doc.setFontSize(7);
-      doc.text(h, x + 0.5, y + 2.5, { maxWidth: baseColWidth - 1 });
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-    });
-    y += cellHeight;
+      doc.text(String(totalItens), x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth * 5, cellHeight);
+      y += cellHeight;
 
-    atividadesData.forEach((item: any, idx: number) => {
       x = margin;
       doc.setFont('Arial', 'normal');
-      doc.setFontSize(7);
-      
-      doc.text(String(idx + 1), x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-      
-      drawCellWithAutoWrap(x, y, baseColWidth, cellHeight, item.atividade || '');
-      x += baseColWidth;
-      
-      doc.text(String(item.dias || ''), x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-      
-      drawCellWithAutoWrap(x, y, baseColWidth, cellHeight, item.observacoes || '');
-      x += baseColWidth;
-      doc.rect(x, y, baseColWidth * 6, cellHeight);
-      x += baseColWidth * 6;
+      doc.setFontSize(8);
+      doc.text('Preço por Item:', x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth * 5, cellHeight);
+      x += baseColWidth * 5;
+      doc.setFont('Arial', 'bold');
+      doc.text(`R$ ${precoPorItem.toFixed(2)}`, x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth * 5, cellHeight);
       y += cellHeight;
-    });
 
-    x = margin;
-    doc.setFont('Arial', 'bold');
-    doc.setFontSize(8);
-    doc.setTextColor(255, 0, 0);
-    doc.text('Total dias', x + 0.5, y + 2.5);
-    doc.setTextColor(0, 0, 0);
-    doc.rect(x, y, baseColWidth * 2, cellHeight);
-    x += baseColWidth * 2;
-    doc.setTextColor(255, 0, 0);
-    doc.text(String(totalDias), x + 0.5, y + 2.5);
-    doc.setTextColor(0, 0, 0);
-    doc.rect(x, y, baseColWidth * 8, cellHeight);
-    y += cellHeight + 2;
+      x = margin;
+      doc.setFont('Arial', 'normal');
+      doc.setFontSize(8);
+      doc.text('Valor Total:', x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth * 5, cellHeight);
+      x += baseColWidth * 5;
+      doc.setFont('Arial', 'bold');
+      doc.setTextColor(255, 0, 0);
+      doc.text(`R$ ${precoFinal.toFixed(2)}`, x + 0.5, y + 2.5);
+      doc.setTextColor(0, 0, 0);
+      doc.rect(x, y, baseColWidth * 5, cellHeight);
 
-    x = margin;
-    doc.setFont('Arial', 'bold');
-    doc.setFontSize(8);
-    doc.text('RESUMO:', x + 0.5, y + 2.5);
-    doc.rect(x, y, baseColWidth * 10, cellHeight);
-    y += cellHeight;
+      const nomeArquivo = `Orcamento_${ultimoOrcamento.numeroOrcamento}_v${formatarVersaoOrcamento(ultimoOrcamento.versao)}.pdf`;
+      const conteudoDataUrl = doc.output('datauristring');
+      doc.save(nomeArquivo);
 
-    x = margin;
-    doc.setFont('Arial', 'normal');
-    doc.setFontSize(8);
-    doc.text('Qtd. de Itens:', x + 0.5, y + 2.5);
-    doc.rect(x, y, baseColWidth * 5, cellHeight);
-    x += baseColWidth * 5;
-    doc.setFont('Arial', 'bold');
-    doc.text(String(totalItens), x + 0.5, y + 2.5);
-    doc.rect(x, y, baseColWidth * 5, cellHeight);
-    y += cellHeight;
+      if (selectedObraDetalhes && conteudoDataUrl) {
+        const documentosAtuais = Array.isArray(selectedObraDetalhes.documentosNegocio)
+          ? selectedObraDetalhes.documentosNegocio
+          : [];
+        const documentosSemOrcamento = documentosAtuais.filter((docItem: any) => {
+          const id = String(docItem?.id || '').toLowerCase();
+          const nome = String(docItem?.nome || '').toLowerCase();
+          return !(id.includes('doc-orcamento') || nome.includes('orcamento') || nome.includes('orçamento'));
+        });
 
-    x = margin;
-    doc.setFont('Arial', 'normal');
-    doc.setFontSize(8);
-    doc.text('Preço por Item:', x + 0.5, y + 2.5);
-    doc.rect(x, y, baseColWidth * 5, cellHeight);
-    x += baseColWidth * 5;
-    doc.setFont('Arial', 'bold');
-    doc.text(`R$ ${precoPorItem.toFixed(2)}`, x + 0.5, y + 2.5);
-    doc.rect(x, y, baseColWidth * 5, cellHeight);
-    y += cellHeight;
+        persistirObraAtualizada({
+          ...selectedObraDetalhes,
+          documentosNegocio: [
+            ...documentosSemOrcamento,
+            {
+              id: `doc-orcamento-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              nome: nomeArquivo,
+              tipo: 'application/pdf',
+              tamanho: Math.max(0, Math.round((conteudoDataUrl.length * 3) / 4)),
+              dataUpload: new Date().toISOString(),
+              conteudo: conteudoDataUrl,
+            },
+          ],
+        });
+      }
 
-    x = margin;
-    doc.setFont('Arial', 'normal');
-    doc.setFontSize(8);
-    doc.text('Valor Total:', x + 0.5, y + 2.5);
-    doc.rect(x, y, baseColWidth * 5, cellHeight);
-    x += baseColWidth * 5;
-    doc.setFont('Arial', 'bold');
-    doc.setTextColor(255, 0, 0);
-    doc.text(`R$ ${precoFinal.toFixed(2)}`, x + 0.5, y + 2.5);
-    doc.setTextColor(0, 0, 0);
-    doc.rect(x, y, baseColWidth * 5, cellHeight);
-
-    // Fazer download com Prefixo
-    const prefixo = getPrefixoEmpresa(selectedObraDetalhes.empresaPrestadora);
-    const numeroSemPrefixoAntigo = ultimoOrcamento.numeroOrcamento ? ultimoOrcamento.numeroOrcamento.replace(/^(BM|LN|SN)-/, '') : 'SemNumero';
-    
-    doc.save(`${prefixo}_Orcamento_${numeroSemPrefixoAntigo}_v${formatarVersaoOrcamento(ultimoOrcamento.versao)}.pdf`);
-    
-    toast.success('Orçamento baixado em PDF com sucesso!');
-  } catch (error) {
-    console.error('Erro ao gerar PDF:', error);
-    toast.error('Erro ao gerar PDF do orçamento');
-  }
-};
+      toast.success('Orçamento baixado em PDF com sucesso!');
+    } catch (error) {
+      console.error('Erro ao gerar PDF:', error);
+      toast.error('Erro ao gerar PDF do orçamento');
+    }
+  };
 
   const handleEnviarOS = () => {
     if (!selectedObraDetalhes) return;
@@ -2264,11 +2328,14 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     toast.success('Negócio movido para Finalização.');
   };
 
-  const obrasOrdenadas = (obras || []).filter((obra: any) => 
-    !searchQuery || 
-    obra.nome.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (clientes || []).find(c => c.id === obra.clienteId)?.razaoSocial.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const obrasOrdenadas = (obras || []).filter((obra: any) => {
+    if (obraTemDocumentoMediacao(obra)) return false;
+
+    if (!searchQuery) return true;
+    const termo = searchQuery.toLowerCase();
+    const clienteNome = (clientes || []).find(c => c.id === obra.clienteId)?.razaoSocial?.toLowerCase() || '';
+    return obra.nome.toLowerCase().includes(termo) || clienteNome.includes(termo);
+  });
 
   const inputClass = "w-full bg-[#0b1220] border border-white/10 p-3 rounded-lg text-white text-sm outline-none focus:border-amber-500 transition-all placeholder:text-white/20";
   const labelClass = "text-[9px] font-black text-white/40 uppercase tracking-widest ml-1 mb-1.5 block";
@@ -2371,6 +2438,9 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                     const podAprovar = obra.categoria === 'Negociação' && temOrcamentoAtivo;
                     const osDoNegocio = (os || []).filter((o: any) => o.obraId === obra.id);
 
+                    // Usar ID do projeto diretamente (já tem formato correto: LN-0731/26)
+                    const idProjeto = obra.id || ''; 
+
                     return (
                       <div 
                         key={obra.id}
@@ -2383,10 +2453,10 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                         }`}
                       >
                         {/* Header com Nome e Badge de Status + Editar */}
-                        <div className="mb-2 space-y-2">
-                          <h4 className="font-black text-white text-sm leading-tight line-clamp-2 break-words">
-                            {obra.nome}
-                          </h4>
+                                              <div className="mb-2 space-y-2">
+                        <h4 className="font-black text-white text-sm leading-tight line-clamp-2 break-words">
+                          {obra.nome}{idProjeto && !idProjeto.startsWith('PROJ-') ? <span className="text-cyan-400"> • {idProjeto}</span> : null}
+                        </h4>
                           {/* Badge + Botão Editar na Direita */}
                           <div className="flex flex-wrap items-center gap-1 sm:gap-1.5">
                             {/* Badge Orçado/Pendente em Planejamento */}
@@ -3019,14 +3089,18 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       )}
 
       {/* MODAL - DETALHES DA OBRA */}
-      {showDetalhesObraModal && selectedObraDetalhes && (
+      {showDetalhesObraModal && selectedObraDetalhes && (() => {
+        // Usar ID do projeto diretamente
+        const idProjetoDetalhes = selectedObraDetalhes.id || '';
+
+        return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-[#101f3d] rounded-2xl border border-white/10 shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
             
             <div className="sticky top-0 z-40 bg-gradient-to-r from-cyan-500/40 to-blue-500/40 backdrop-blur-md p-8 border-b border-white/10 flex justify-between items-center">
               <div>
                 <h2 className="text-2xl font-black text-white">Detalhes do Negócio</h2>
-                <p className="text-white/50 text-sm mt-2">{selectedObraDetalhes.nome}</p>
+                <p className="text-white/50 text-sm mt-2">{selectedObraDetalhes.nome} {idProjetoDetalhes && <span className="text-cyan-400">• {idProjetoDetalhes}</span>}</p>
               </div>
               <button 
                 onClick={() => setShowDetalhesObraModal(false)}
@@ -3098,13 +3172,12 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                           >
                             Ver
                           </button>
-                          <a
-                            href={doc.conteudo || doc.url}
-                            download={doc.nome}
+                          <button
+                            onClick={() => handleDownloadDocumento(doc)}
                             className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 text-xs font-black uppercase transition"
                           >
                             Download
-                          </a>
+                          </button>
                         </div>
                       </div>
                     ))}
@@ -3626,7 +3699,8 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* MODAL - DOCUMENTO DE MEDIÇÃO */}
       {showDocumentoMediacaoModal && documentoMediacaoForm && (
@@ -3883,6 +3957,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       {showPropostaFullModal && selectedObraDetalhes?.propostas && selectedObraDetalhes.propostas.length > 0 && (() => {
         const ultimaProposta = selectedObraDetalhes.propostas[selectedObraDetalhes.propostas.length - 1];
         const cliente = (clientes || []).find(c => c.id === selectedObraDetalhes.clienteId);
+        const idProjetoModal = extrairIdProjetoDoNumero(ultimaProposta.numeroProposta || '');
         return (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
             <div className="bg-[#101f3d] rounded-2xl border border-white/10 shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
@@ -3912,7 +3987,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                     </div>
                     <div>
                       <p className="text-white/50 text-xs mb-1">Negócio</p>
-                      <p className="text-white font-bold">{selectedObraDetalhes.nome}</p>
+                      <p className="text-white font-bold">{selectedObraDetalhes.nome} {idProjetoModal && <span className="text-cyan-400">• {idProjetoModal}</span>}</p>
                     </div>
                     <div>
                       <p className="text-white/50 text-xs mb-1">Status</p>
@@ -4137,6 +4212,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
         const materiaisOS = Array.isArray(ultimoOrcamento?.data?.materiais) ? ultimoOrcamento.data.materiais : [];
         const terceirizadosOS = Array.isArray(ultimoOrcamento?.data?.terceirizados) ? ultimoOrcamento.data.terceirizados : [];
         const escopoBasicoProposta = formatarEscopoBasicoParaTexto(ultimaProposta?.escopoBasicoServicos || ultimaProposta?.escopoA || '−');
+        const idProjetoOS = selectedObraDetalhes.id || '';
         return (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
             <div className="bg-[#101f3d] rounded-2xl border border-white/10 shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
@@ -4166,7 +4242,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                     </div>
                     <div>
                       <p className="text-white/50 text-xs mb-1">Projeto</p>
-                      <p className="text-white font-bold">{selectedObraDetalhes.nome}</p>
+                      <p className="text-white font-bold">{selectedObraDetalhes.nome} {idProjetoOS && <span className="text-cyan-400">• {idProjetoOS}</span>}</p>
                     </div>
                     <div>
                       <p className="text-white/50 text-xs mb-1">Responsável</p>
@@ -4199,6 +4275,38 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                       <p className="text-white font-bold">{osPrincipal?.dataTerminoPrevisto || '24/02/2026'}</p>
                     </div>
                   </div>
+                </div>
+
+                <div className="bg-white/5 border border-white/10 rounded-xl p-6 space-y-3">
+                  <h3 className="text-white font-black text-lg">HORAS TRABALHADAS POR SERVIÇO</h3>
+                  {Array.isArray(osPrincipal?.horasTrabalhadasPorServico) && osPrincipal.horasTrabalhadasPorServico.length > 0 ? (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs border border-white/10">
+                        <thead className="bg-white/5 text-white/60">
+                          <tr>
+                            <th className="px-3 py-2 border border-white/10 text-left">Serviço</th>
+                            <th className="px-3 py-2 border border-white/10 text-left">Hora (H/H)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {osPrincipal.horasTrabalhadasPorServico.map((item: any, idx: number) => (
+                            <tr key={item?.id || idx} className="text-white/80">
+                              <td className="px-3 py-2 border border-white/10">{item?.servico || '-'}</td>
+                              <td className="px-3 py-2 border border-white/10">{Number(item?.hora || 0)}</td>
+                            </tr>
+                          ))}
+                          <tr className="bg-white/5 text-white font-black">
+                            <td className="px-3 py-2 border border-white/10 uppercase">HH Total</td>
+                            <td className="px-3 py-2 border border-white/10">
+                              {osPrincipal.horasTrabalhadasPorServico.reduce((acc: number, item: any) => acc + Number(item?.hora || 0), 0)}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="text-white/50 text-sm">Nenhuma hora trabalhada cadastrada para esta OS.</p>
+                  )}
                 </div>
 
                 {/* Orçamento */}
@@ -4480,6 +4588,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       {showOrcamentoFullModal && selectedObraDetalhes?.orcamentos && selectedObraDetalhes.orcamentos.length > 0 && (() => {
         const ultimoOrcamento = selectedObraDetalhes.orcamentos[selectedObraDetalhes.orcamentos.length - 1];
         const cliente = (clientes || []).find(c => c.id === selectedObraDetalhes.clienteId);
+        const idProjetoOrc = selectedObraDetalhes.id || '';
         return (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
             <div className="bg-[#101f3d] rounded-2xl border border-white/10 shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
@@ -4513,7 +4622,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                     </div>
                     <div>
                       <p className="text-white/50 text-xs mb-1">Negócio</p>
-                      <p className="text-white font-bold">{selectedObraDetalhes.nome}</p>
+                      <p className="text-white font-bold">{selectedObraDetalhes.nome} {idProjetoOrc && <span className="text-cyan-400">• {idProjetoOrc}</span>}</p>
                     </div>
                     <div>
                       <p className="text-white/50 text-xs mb-1">Data</p>
@@ -4771,14 +4880,16 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       )}
 
       {/* MODAL - EDITAR NEGÓCIO (apenas em Planejamento) */}
-      {showEditModal && editingObra && (
+      {showEditModal && editingObra && (() => {
+        const idProjetoEdit = editingObra.id || '';
+        return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-[#101f3d] rounded-2xl border border-white/10 shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
             
             <div className="sticky top-0 z-40 bg-gradient-to-r from-blue-500/40 to-cyan-500/40 backdrop-blur-md p-8 border-b border-white/10 flex justify-between items-center">
               <div>
                 <h2 className="text-2xl font-black text-white">Editar Negócio</h2>
-                <p className="text-white/50 text-sm mt-2">{editingObra.nome}</p>
+                <p className="text-white/50 text-sm mt-2">{editingObra.nome} {idProjetoEdit && <span className="text-cyan-400">• {idProjetoEdit}</span>}</p>
               </div>
               <button 
                 onClick={() => setShowEditModal(false)}
@@ -4946,7 +5057,8 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
             </div>
           </div>
         </div>
-      )}
+        );
+      })}
     </div>
   );
 }

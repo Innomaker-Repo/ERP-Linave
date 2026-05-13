@@ -2,6 +2,7 @@ import React from 'react';
 import { CrmViewNew } from '../../components/modules/CRM/CrmViewNew';
 import { ClientesView } from '../../components/modules/Clientes/ClientesView';
 import { PropostaView } from '../../components/modules/Comercial/PropostaView';
+import { FinalizadosComercialView } from '../../components/modules/Comercial/FinalizadosComercialView';
 import { OsView } from '../../components/modules/OS/OsView';
 import { OrcamentosView } from '../../components/modules/Orcamentos/OrcamentosView';
 
@@ -22,6 +23,8 @@ export function ComercialModule({ activeItem, searchQuery }: ComercialModuleProp
       return <OsView searchQuery={searchQuery} />;
     case 'orcamentos':
       return <OrcamentosView searchQuery={searchQuery} />;
+    case 'finalizadosComercial':
+      return <FinalizadosComercialView searchQuery={searchQuery} />;
     default:
       return <CrmViewNew searchQuery={searchQuery} />;
   }

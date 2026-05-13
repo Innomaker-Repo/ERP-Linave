@@ -1,6 +1,15 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
+const getLogoFormat = (logoBase64?: string): 'PNG' | 'JPEG' => {
+  if (!logoBase64) return 'PNG';
+  const match = logoBase64.match(/^data:image\/(png|jpe?g)/i);
+  if (match && match[1]) {
+    return match[1].toLowerCase().includes('png') ? 'PNG' : 'JPEG';
+  }
+  return 'PNG';
+};
+
 const normalizarEscopoBasico = (escopo: any) => {
   if (!escopo) return [];
 
@@ -89,7 +98,8 @@ export const handleDownloadPropostaPDF = (
       let currentY = 15;
 
       if (logoBase64) {
-        doc.addImage(logoBase64, 'PNG', margin, currentY, 45, 20);
+        const logoFormat = getLogoFormat(logoBase64);
+        doc.addImage(logoBase64, logoFormat, margin, currentY, 45, 20);
       }
 
       doc.setFont('Arial', 'bold');
@@ -179,14 +189,14 @@ export const handleDownloadPropostaPDF = (
     writeText(`Niteroi, ${dataAtual}`, 11, false, 'right', 0, 1);
     writeText(`Proposta ${propostaForm.numeroProposta || '001/26'}`, 11, true, 'right', 0, 15);
 
-    writeText('A', 11, false, 'left', 0, 2);
+    writeText('À', 11, false, 'left', 0, 2);
     writeText(propostaForm.cliente || cliente?.razaoSocial || 'CLIENTE', 11, true, 'left', 0, 10);
 
     if (propostaForm.contato) writeText(`ATT.: ${propostaForm.contato}`, 11, true, 'left', 0, 2);
     if (propostaForm.referencia) writeText(`Ref.: ${propostaForm.referencia}`, 11, true, 'left', 0, 2);
     if (propostaForm.assunto) writeText(`Subject: ${propostaForm.assunto}`, 11, true, 'left', 0, 10);
     if (propostaForm.saudacao) writeText(propostaForm.saudacao, 11, false, 'left', 0, 4);
-    if (propostaForm.textoAbertura) writeText(propostaForm.textoAbertura, 11, false, 'justify', 0, 10);
+    if (propostaForm.textoAbertura) {writeText(propostaForm.textoAbertura, 11, false, 'justify', 0, 10); doc.addPage(); y = drawHeader();}
 
     if (propostaForm.assinaturaAberturaNome) {
       writeText('Atenciosamente,', 11, false, 'left', 0, 2);
@@ -272,7 +282,7 @@ export const handleDownloadPropostaPDF = (
     writeText(propostaForm.assinaturaNome || 'Servinave Eng. e Rep. Navais', 11, true, 'left', 0, 1);
     writeText(propostaForm.assinaturaCargo || 'Setor Comercial', 11, false, 'left', 0, 10);
 
-    const nomeArquivo = `Proposta_${propostaForm.numeroProposta || '001'}_${Date.now()}.pdf`;
+    const nomeArquivo = `${propostaForm.numeroProposta || 'Proposta'}.pdf`;
     const conteudoDataUrl = doc.output('datauristring');
     doc.save(nomeArquivo);
 

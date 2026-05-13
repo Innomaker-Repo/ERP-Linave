@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
+import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
 import { 
   Anchor, Plus, Calendar, DollarSign, Users, User, Save, X, Edit2, Trash2, 
   FileText, Briefcase, Activity, Hash, FolderOpen, Download, Link as LinkIcon, CheckCircle2, ChevronDown, ChevronRight, Eye
@@ -329,7 +330,7 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
   };
 
   const handleVerDocumento = (doc: any) => {
-    const href = doc?.conteudo || doc?.url;
+    const href = getDocumentHref(doc);
     if (!href) {
       alert('Documento indisponível para visualização.');
       return;
@@ -349,6 +350,15 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
     }
 
     window.open(href, '_blank', 'noopener,noreferrer');
+  };
+
+  const handleDownloadDocumento = (doc: any) => {
+    downloadDocument(doc, {
+      fallbackName: 'documento',
+      onInvalid: () => {
+        alert('Documento indisponível para download.');
+      },
+    });
   };
 
   const handleVisualizarOSConsolidada = (item: any) => {
@@ -550,13 +560,12 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
                             >
                               Ver
                             </button>
-                            <a
-                              href={doc.conteudo || doc.url}
-                              download={doc.nome}
+                            <button
+                              onClick={() => handleDownloadDocumento(doc)}
                               className="px-2 py-1 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-black uppercase"
                             >
                               Download
-                            </a>
+                            </button>
                           </div>
                         </div>
                       ))}

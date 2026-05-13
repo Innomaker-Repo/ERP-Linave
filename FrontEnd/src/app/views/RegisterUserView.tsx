@@ -1,14 +1,18 @@
 import React, { useState } from "react";
+import { ensureWorkspaceShape, getActiveAdminEmail, loadWorkspace, saveWorkspace, setActiveAdminEmail } from "../services/workspaceStorage";
 
 export function RegisterUserView({ onFinish }: { onFinish: () => void }) {
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
 
-  function handleRegister(e: React.FormEvent) {
+  async function handleRegister(e: React.FormEvent) {
     e.preventDefault();
 
-    const pending = JSON.parse(localStorage.getItem("pendingUsers") || "[]");
+    const adminEmail = getActiveAdminEmail();
+    setActiveAdminEmail(adminEmail);
+    const workspace = ensureWorkspaceShape(await loadWorkspace(adminEmail));
+    const pending = workspace.pendingUsers || [];
     const match = pending.find(
       (p: any) => p.email === email && p.code === code && p.approved
     );
@@ -18,15 +22,16 @@ export function RegisterUserView({ onFinish }: { onFinish: () => void }) {
       return;
     }
 
-    const users = JSON.parse(localStorage.getItem("users") || "[]");
+    const users = workspace.users || [];
     users.push({
       email,
       password,
       role: "user",
-      adminEmail: "admin@linave.com.br",
+      adminEmail,
     });
 
-    localStorage.setItem("users", JSON.stringify(users));
+    workspace.users = users;
+    await saveWorkspace(adminEmail, workspace);
     onFinish();
   }
 

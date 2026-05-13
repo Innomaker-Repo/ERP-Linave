@@ -1,119 +1,73 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { CLIENTES_MOCK } from '../mocks/clientesMock';
+import { getCachedWorkspace, loadWorkspace, saveWorkspace, setActiveAdminEmail, setCachedWorkspace } from '../services/workspaceStorage';
 
-const FORNECEDORES_MOCK = [
-  {
-    id: 'FOR-DEMO-1',
-    razaoSocial: 'Aco Forte Naval LTDA',
-    cnpj: '61.234.567/0001-10',
-    contato: '(41) 4000-1001 / comercial@acoforte.com.br',
-    endereco: 'Av. Industrial, 1001, Paranagua - PR',
-    status: 'Ativo'
-  },
-  {
-    id: 'FOR-DEMO-2',
-    razaoSocial: 'Servicos Maritimos Atlantico S.A.',
-    cnpj: '62.345.678/0001-20',
-    contato: '(41) 4000-1002 / contato@atlantico.com.br',
-    endereco: 'Porto Seguro, 220, Paranagua - PR',
-    status: 'Ativo'
-  },
-  {
-    id: 'FOR-DEMO-3',
-    razaoSocial: 'Integra Engenharia e Montagem LTDA',
-    cnpj: '63.456.789/0001-30',
-    contato: '(41) 4000-1003 / vendas@integraeng.com.br',
-    endereco: 'Rua Tecnica, 330, Curitiba - PR',
-    status: 'Ativo'
-  }
-];
-
-const FUNCIONARIOS_MOCK = [
-  {
-    id: 'FUN-DEMO-1',
-    nome: 'Marcos Vieira',
-    cargo: 'Engenheiro de Projetos',
-    departamento: 'Engenharia',
-    status: 'Ativo'
-  },
-  {
-    id: 'FUN-DEMO-2',
-    nome: 'Juliana Alves',
-    cargo: 'Analista Comercial',
-    departamento: 'Comercial',
-    status: 'Ativo'
-  },
-  {
-    id: 'FUN-DEMO-3',
-    nome: 'Rafael Souza',
-    cargo: 'Supervisor de Campo',
-    departamento: 'Operacao',
-    status: 'Ativo'
-  },
-  {
-    id: 'FUN-DEMO-4',
-    nome: 'Camila Rocha',
-    cargo: 'Orcamentista',
-    departamento: 'Orcamentos',
-    status: 'Ativo'
-  }
-];
-
-const MOCK_FINANCEIRO = [
-  {
-    id: 'FIN-SEVEN-001',
-    tipo: 'despesa',
-    descricao: 'Mao de obra direta - LN-0731A/26',
-    valor: 16916,
-    entidadeId: 'CLI-SEVEN-OCEAN',
-    obraId: 'SEVEN-OCEAN-FINALIZACAO',
-    categoria: 'Mao de Obra',
-    dataPrevista: '2026-01-29',
-    dataRealizada: '2026-01-29',
-    status: 'Confirmado'
-  },
-  {
-    id: 'FIN-SEVEN-002',
-    tipo: 'despesa',
-    descricao: 'Materiais e consumiveis - LN-0731A/26',
-    valor: 21597.96,
-    entidadeId: 'CLI-SEVEN-OCEAN',
-    obraId: 'SEVEN-OCEAN-FINALIZACAO',
-    categoria: 'Materiais',
-    dataPrevista: '2026-01-29',
-    dataRealizada: '2026-01-29',
-    status: 'Confirmado'
-  },
-  {
-    id: 'FIN-SEVEN-003',
-    tipo: 'despesa',
-    descricao: 'Terceirizacoes e fretes - LN-0731A/26',
-    valor: 11280,
-    entidadeId: 'CLI-SEVEN-OCEAN',
-    obraId: 'SEVEN-OCEAN-FINALIZACAO',
-    categoria: 'Terceiros',
-    dataPrevista: '2026-02-02',
-    dataRealizada: '2026-02-02',
-    status: 'Confirmado'
-  },
-  {
-    id: 'FIN-SEVEN-004',
-    tipo: 'receita',
-    descricao: 'Valor total do servico - LN-0731A/26',
-    valor: 135333.95,
-    entidadeId: 'CLI-SEVEN-OCEAN',
-    obraId: 'SEVEN-OCEAN-FINALIZACAO',
-    categoria: 'Receita',
-    dataPrevista: '2026-02-01',
-    dataRealizada: '2026-02-01',
-    status: 'Previsto'
-  }
-];
 
 const cloneDeep = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 
 const buildTextDataUrl = (text: string) => `data:text/plain;charset=utf-8,${encodeURIComponent(text)}`;
 const buildHtmlDataUrl = (html: string) => `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+
+// --- FUNÇÕES PARA GERAÇÃO DE IDS PADRONIZADOS ---
+/**
+ * Gera o ID do projeto no formato: PREFIX-NUMERO/ANO
+ * Exemplo: PREFIX='LN', NUMERO='0731' → 'LN-0731/26'
+ */
+export const gerarIdProjeto = (prefixo: string, numeroSequencial: string): string => {
+  const anoAtual = new Date().getFullYear().toString().slice(-2);
+  return `${prefixo}-${numeroSequencial}/${anoAtual}`;
+};
+
+/**
+ * Gera o ID de proposta no formato: PREFIX-NUMERO+VERSAO/ANO
+ * Exemplo: PREFIX='LN', NUMERO='0731', VERSAO='A' → 'LN-0731A/26'
+ */
+export const gerarIdProposta = (prefixo: string, numeroSequencial: string, versionLetra: string): string => {
+  const anoAtual = new Date().getFullYear().toString().slice(-2);
+  return `${prefixo}-${numeroSequencial}${versionLetra}/${anoAtual}`;
+};
+
+/**
+ * Gera o ID de orçamento no formato: PREFIX-NUMERO+VERSAO/ANO
+ * Exemplo: PREFIX='LN', NUMERO='0731', VERSAO='A' → 'LN-0731A/26'
+ */
+export const gerarIdOrcamento = (prefixo: string, numeroSequencial: string, versionLetra?: string): string => {
+  const anoAtual = new Date().getFullYear().toString().slice(-2);
+  const versao = versionLetra ? versionLetra : '';
+  return `${prefixo}-${numeroSequencial}${versao}/${anoAtual}`;
+};
+
+/**
+ * Extrai prefixo, número de sequência e ano do ID do projeto
+ * Exemplo: 'LN-0731/26' → { prefixo: 'LN', numero: '0731', ano: '26' }
+ */
+export const extrairComponentesDoId = (idProjeto: string): { prefixo: string; numero: string; ano: string } | null => {
+  const match = idProjeto.match(/^([A-Z]+)-(\d+)\/(\d+)$/);
+  if (match) {
+    return {
+      prefixo: match[1],
+      numero: match[2],
+      ano: match[3]
+    };
+  }
+  return null;
+};
+
+/**
+ * Extrai o ID do projeto a partir do ID de proposta/orçamento
+ * Exemplo: 'LN-0731A/26' → 'LN-0731/26'
+ */
+export const extrairIdProjetoDoNumero = (numeroCompleto: string): string => {
+  // Remove a versão (letra) se existir
+  // Exemplo: "LN-0731A/26" → "LN-0731/26"
+  const match = numeroCompleto.match(/^([A-Z]+)-(\d+)([A-Z])?\/(\d+)$/);
+  if (match) {
+    return `${match[1]}-${match[2]}/${match[4]}`;
+  }
+  return numeroCompleto;
+};
+// ------------------------------------------
+
 
 const SEVEN_OCEAN_MAO_DE_OBRA = [
   { funcao: 'Encarregado', quantidade: '0,5', dias: '10', valorTotal: '1640.00' },
@@ -287,9 +241,9 @@ const SEVEN_OCEAN_SERVICOS = [
   }
 ];
 
-// Versão HTML da proposta que inclui a logo no topo (usa /image2.jpg e /image1.jpg servidos a partir de /public)
+// Versao HTML da proposta que inclui a logo no topo (usa /image2.jpg e /image1.png servidos a partir de /public)
 const SEVEN_OCEAN_PROPOSTA_PREVIEW_HTML = `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial,Helvetica,sans-serif;white-space:pre-wrap;margin:28px;} .logo{text-align:center;margin-bottom:12px;}</style></head><body><div class="logo"><img src="/image2.jpg" alt="logo" style="max-width:260px;height:auto;"/></div><div>${SEVEN_OCEAN_PROPOSTA_PREVIEW.replace(/</g,'&lt;')}</div></body></html>`;
-const SEVEN_OCEAN_PROPOSTA_PREVIEW_HTML_SERVINAVE = `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial,Helvetica,sans-serif;white-space:pre-wrap;margin:28px;} .logo{text-align:center;margin-bottom:12px;}</style></head><body><div class="logo"><img src="/image1.jpg" alt="logo" style="max-width:260px;height:auto;"/></div><div>${SEVEN_OCEAN_PROPOSTA_PREVIEW.replace(/</g,'&lt;')}</div></body></html>`;
+const SEVEN_OCEAN_PROPOSTA_PREVIEW_HTML_SERVINAVE = `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial,Helvetica,sans-serif;white-space:pre-wrap;margin:28px;} .logo{text-align:center;margin-bottom:12px;}</style></head><body><div class="logo"><img src="/image1.png" alt="logo" style="max-width:260px;height:auto;"/></div><div>${SEVEN_OCEAN_PROPOSTA_PREVIEW.replace(/</g,'&lt;')}</div></body></html>`;
 
 const isLinaveName = (s: string | undefined | null) => {
   if (!s) return false;
@@ -551,6 +505,12 @@ const buildDemoObra = (
         vigiaFogo: true
       },
       maoObra: { estrutura: 0, tubulacao: 570, andaimes: 0, mecanica: 0, pintura: 36, eletrica: 0, cq: 9, sms: 9 },
+      horasTrabalhadasPorServico: [
+        { id: `${id}-hh-tub`, servico: 'Tubulação', hora: 570 },
+        { id: `${id}-hh-pint`, servico: 'Pintura', hora: 36 },
+        { id: `${id}-hh-cq`, servico: 'C.Q', hora: 9 },
+        { id: `${id}-hh-sms`, servico: 'SMS', hora: 9 }
+      ],
       statusOs: osAprovada ? 'concluida' : 'emproducao',
       tipoDocumento: 'consolidada',
       statusEnvio: 'enviada',
@@ -704,6 +664,12 @@ const SEVEN_OCEAN_OS_BASE = {
     vigiaFogo: true
   },
   maoObra: { estrutura: 0, tubulacao: 570, andaimes: 0, mecanica: 0, pintura: 36, eletrica: 0, cq: 9, sms: 9 },
+  horasTrabalhadasPorServico: [
+    { id: 'hh-tub', servico: 'Tubulação', hora: 570 },
+    { id: 'hh-pint', servico: 'Pintura', hora: 36 },
+    { id: 'hh-cq', servico: 'C.Q', hora: 9 },
+    { id: 'hh-sms', servico: 'SMS', hora: 9 }
+  ],
   statusEnvio: 'enviada',
   tipoDocumento: 'consolidada',
   resumoConsolidado: 'OS do projeto Seven Ocean / LN-0731A/26'
@@ -809,12 +775,18 @@ const mergeRecordsById = (base: any[] = [], demo: any[] = []) => {
 
 const createInitialData = (savedData: any) => {
   const baseData = {
+    empresa: null,
+    users: [],
+    pendingUsers: [],
     clientes: CLIENTES_MOCK,
     funcionarios: [],
     obras: [],
     financeiro: [],
     compras: [],
     os: [],
+    alocacoes: [],
+    registrosHoras: [],
+    folhaPagamento: [],
     usuarios: [],
     equipes: [],
     fornecedores: [],
@@ -948,38 +920,39 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     nome: 'Administrador (Teste)',
     permissoes: {}
   });
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   
-  const [data, setData] = useState(() => {
-    // Tentar carregar do localStorage na inicialização
-    try {
-      const saved = localStorage.getItem('@ERP:data');
-      if (saved) {
-        const loadedData = JSON.parse(saved);
-        // Migrar OS para adicionar statusEnvio se não existir
-        if (loadedData.os && Array.isArray(loadedData.os)) {
-          loadedData.os = loadedData.os.map((o: any) => ({
-            ...o,
-            statusEnvio: o.statusEnvio || 'pendente'
-          }));
-        }
-        return createInitialData(loadedData);
-      }
-    } catch (e) {
-      console.error('Erro ao carregar dados do localStorage', e);
-    }
-    // Se não conseguir, usar dados padrão
-    return createInitialData(null);
-  });
+  const [data, setData] = useState(() => createInitialData(null));
+  const saveQueueRef = useRef(Promise.resolve());
 
-  // Salvar dados no localStorage sempre que mudam
   useEffect(() => {
-    try {
-      localStorage.setItem('@ERP:data', JSON.stringify(data));
-    } catch (e) {
-      console.error('Erro ao salvar dados no localStorage', e);
-    }
-  }, [data]);
+    let mounted = true;
+
+    const hydrateWorkspace = async () => {
+      const adminEmail = userSession?.email || 'admin@modo-teste.com';
+      setActiveAdminEmail(adminEmail);
+
+      try {
+        const saved = await loadWorkspace(adminEmail);
+        if (!mounted) return;
+        setData(createInitialData(saved));
+      } catch (error) {
+        if (!mounted) return;
+        console.error('Erro ao carregar workspace do backend', error);
+        setData(createInitialData(null));
+      } finally {
+        if (mounted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void hydrateWorkspace();
+
+    return () => {
+      mounted = false;
+    };
+  }, [userSession?.email]);
 
   const showTestAlert = (operacao: string) => {
     alert(`VERSÃO DE TESTE\n\nOperação "${operacao}" requer conexão com backend.\n\nEsta é uma versão demonstrativa apenas com frontend.`);
@@ -1000,14 +973,37 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
   const loginDireto = (user: any) => {
     const session = { ...user, token: null };
     setUserSession(session);
-    // localStorage.setItem('@Linave:session', JSON.stringify(session));  // COMENTADO PARA DEBUG
+    setActiveAdminEmail(session.email || 'admin@modo-teste.com');
   };
 
   // Simula salvar - agora realmente salva no estado e localStorage
   const saveEntity = async (collection: string, newData: any) => {
-    // Atualiza estado local com os dados
-    setData(prev => ({ ...prev, [collection]: newData }));
-    console.log(`${collection} atualizado:`, newData.length || Object.keys(newData).length, 'itens');
+    const adminEmail = userSession?.email || 'admin@modo-teste.com';
+    setActiveAdminEmail(adminEmail);
+
+    const executeSave = async () => {
+      const currentWorkspace = getCachedWorkspace(adminEmail);
+      const nextWorkspace = { ...currentWorkspace, [collection]: newData };
+
+      setCachedWorkspace(adminEmail, nextWorkspace);
+      setData(nextWorkspace);
+
+      try {
+        const savedWorkspace = await saveWorkspace(adminEmail, nextWorkspace);
+        setData(savedWorkspace);
+        return savedWorkspace;
+      } catch (error) {
+        console.error(`Erro ao salvar coleção ${collection} no backend`, error);
+        return nextWorkspace;
+      }
+    };
+
+    const queuedSave = saveQueueRef.current.then(executeSave, executeSave);
+    saveQueueRef.current = queuedSave.then(() => undefined, () => undefined);
+
+    const result = await queuedSave;
+    console.log(`${collection} atualizado:`, Array.isArray(newData) ? newData.length : Object.keys(newData || {}).length, 'itens');
+    return result;
   };
 
   // Simula upload de arquivo - sem enviar para nenhum lugar
@@ -1021,7 +1017,6 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
 
   const logout = () => {
     setUserSession(null);
-    // localStorage.removeItem('@Linave:session');  // COMENTADO PARA DEBUG
     window.location.href = '/';
   };
 

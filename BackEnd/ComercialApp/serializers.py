@@ -3,7 +3,7 @@ from .models import (
     Cliente, Negocio, Servico, User,
     Levantamento, MDO, Ativ_prevista, Material, 
     Servico_terceirizado, Orcamento, Resumo_orcamento,
-    OrdenServico
+    OrdenServico, Workspace, normalize_workspace_data
 )
 
 # ----------------- Core (These are perfect) ------------------
@@ -175,7 +175,7 @@ class OrdenServicoSerializer(serializers.ModelSerializer):
             'projeto', 'equipamento', 'local', 'cc',
             'data_inicio_previsto', 'data_termino_previsto',
             'supervisor_encarregado', 'descricao_geral_servico',
-            'a_ser_incluido', 'mao_obra',
+            'a_ser_incluido', 'mao_obra', 'horas_trabalhadas_servico',
             'status_os', 'status_envio', 'status_aprovacao',
             'data_aprovacao', 'documento_assinatura_aprovacao',
             'created_at', 'updated_at'
@@ -198,3 +198,23 @@ class OrdenServicoSerializer(serializers.ModelSerializer):
         
         validated_data['numero_os'] = numero_os
         return super().create(validated_data)
+
+
+class WorkspaceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Workspace
+        fields = '__all__'
+        read_only_fields = ('created_at', 'updated_at')
+
+    def validate_data(self, value):
+        return normalize_workspace_data(value)
+
+    def create(self, validated_data):
+        validated_data['data'] = normalize_workspace_data(validated_data.get('data', {}))
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        if 'data' in validated_data:
+            instance.data = normalize_workspace_data(validated_data['data'])
+            validated_data.pop('data', None)
+        return super().update(instance, validated_data)

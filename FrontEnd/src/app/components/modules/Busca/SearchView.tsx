@@ -1,4 +1,5 @@
 import React, { useMemo } from "react";
+import { useErp } from "../../../context/ErpContext";
 import { Section } from "../../../App";
 
 interface SearchViewProps {
@@ -6,14 +7,20 @@ interface SearchViewProps {
 }
 
 export function SearchView({ query }: SearchViewProps) {
-  const currentUser = localStorage.getItem("currentUser");
-  const admin = localStorage.getItem("currentAdmin");
+  const { userSession, clientes, funcionarios, obras, os, financeiro, usuarios } = useErp();
+  const db = {
+    clientes,
+    funcionarios,
+    obras,
+    os,
+    financeiro,
+    usuarios,
+  };
 
-  if (!currentUser || !admin) return null;
+  if (!userSession) return null;
 
-  const db = JSON.parse(localStorage.getItem(`db_${admin}`) || "{}");
-
-  const isAdmin = currentUser === admin;
+  const isAdmin = userSession.role?.toUpperCase() === "ADMIN";
+  const currentUserEmail = userSession.email;
 
   const permissoes: Record<Section, boolean> = isAdmin
     ? {
@@ -30,7 +37,7 @@ export function SearchView({ query }: SearchViewProps) {
         relatorios: true,
         busca: true,
       }
-    : db.usuarios?.find((u: any) => u.email === currentUser)
+    : db.usuarios?.find((u: any) => u.email === currentUserEmail)
         ?.permissoes || {};
 
   const results = useMemo(() => {
