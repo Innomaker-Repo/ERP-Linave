@@ -1111,6 +1111,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                   const cliente = listaClientes.find((c: any) => c.id === obra.clienteId);
                   const orcamentos = normalizarOrcamentos(obra);
                   const ultimoOrcamento = orcamentos[orcamentos.length - 1];
+                  const precoFinalHistorico = Number(ultimoOrcamento?.valores?.precoFinal ?? 0);
                   const podeNovoOrcamento = isOrcamentoEditavel(obra);
                   const idProjetoHistorico = Array.isArray(obra.propostas) && obra.propostas.length > 0
                     ? extrairIdProjetoDoNumero(obra.propostas[obra.propostas.length - 1].numeroProposta || '')
@@ -1139,7 +1140,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                           </div>
                           <div className="flex justify-between">
                             <span className="text-white/50">Preço Final:</span>
-                            <span className="text-white font-bold">R$ {ultimoOrcamento.valores.precoFinal.toFixed(2)}</span>
+                            <span className="text-white font-bold">R$ {precoFinalHistorico.toFixed(2)}</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-white/50">Criado em:</span>

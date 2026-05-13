@@ -1,6 +1,6 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { CLIENTES_MOCK } from '../mocks/clientesMock';
-import { loadWorkspace, saveWorkspace, setActiveAdminEmail } from '../services/workspaceStorage';
+import { getCachedWorkspace, loadWorkspace, saveWorkspace, setActiveAdminEmail, setCachedWorkspace } from '../services/workspaceStorage';
 
 
 const cloneDeep = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -505,6 +505,12 @@ const buildDemoObra = (
         vigiaFogo: true
       },
       maoObra: { estrutura: 0, tubulacao: 570, andaimes: 0, mecanica: 0, pintura: 36, eletrica: 0, cq: 9, sms: 9 },
+      horasTrabalhadasPorServico: [
+        { id: `${id}-hh-tub`, servico: 'Tubulação', hora: 570 },
+        { id: `${id}-hh-pint`, servico: 'Pintura', hora: 36 },
+        { id: `${id}-hh-cq`, servico: 'C.Q', hora: 9 },
+        { id: `${id}-hh-sms`, servico: 'SMS', hora: 9 }
+      ],
       statusOs: osAprovada ? 'concluida' : 'emproducao',
       tipoDocumento: 'consolidada',
       statusEnvio: 'enviada',
@@ -658,6 +664,12 @@ const SEVEN_OCEAN_OS_BASE = {
     vigiaFogo: true
   },
   maoObra: { estrutura: 0, tubulacao: 570, andaimes: 0, mecanica: 0, pintura: 36, eletrica: 0, cq: 9, sms: 9 },
+  horasTrabalhadasPorServico: [
+    { id: 'hh-tub', servico: 'Tubulação', hora: 570 },
+    { id: 'hh-pint', servico: 'Pintura', hora: 36 },
+    { id: 'hh-cq', servico: 'C.Q', hora: 9 },
+    { id: 'hh-sms', servico: 'SMS', hora: 9 }
+  ],
   statusEnvio: 'enviada',
   tipoDocumento: 'consolidada',
   resumoConsolidado: 'OS do projeto Seven Ocean / LN-0731A/26'
@@ -911,6 +923,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   
   const [data, setData] = useState(() => createInitialData(null));
+  const saveQueueRef = useRef(Promise.resolve());
 
   useEffect(() => {
     let mounted = true;
@@ -965,17 +978,32 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
 
   // Simula salvar - agora realmente salva no estado e localStorage
   const saveEntity = async (collection: string, newData: any) => {
-    // Atualiza estado local com os dados
-    const nextData = { ...data, [collection]: newData };
-    setData(nextData);
     const adminEmail = userSession?.email || 'admin@modo-teste.com';
     setActiveAdminEmail(adminEmail);
-    try {
-      await saveWorkspace(adminEmail, nextData);
-    } catch (error) {
-      console.error(`Erro ao salvar coleção ${collection} no backend`, error);
-    }
-    console.log(`${collection} atualizado:`, newData.length || Object.keys(newData).length, 'itens');
+
+    const executeSave = async () => {
+      const currentWorkspace = getCachedWorkspace(adminEmail);
+      const nextWorkspace = { ...currentWorkspace, [collection]: newData };
+
+      setCachedWorkspace(adminEmail, nextWorkspace);
+      setData(nextWorkspace);
+
+      try {
+        const savedWorkspace = await saveWorkspace(adminEmail, nextWorkspace);
+        setData(savedWorkspace);
+        return savedWorkspace;
+      } catch (error) {
+        console.error(`Erro ao salvar coleção ${collection} no backend`, error);
+        return nextWorkspace;
+      }
+    };
+
+    const queuedSave = saveQueueRef.current.then(executeSave, executeSave);
+    saveQueueRef.current = queuedSave.then(() => undefined, () => undefined);
+
+    const result = await queuedSave;
+    console.log(`${collection} atualizado:`, Array.isArray(newData) ? newData.length : Object.keys(newData || {}).length, 'itens');
+    return result;
   };
 
   // Simula upload de arquivo - sem enviar para nenhum lugar

@@ -265,10 +265,22 @@ export const handleDownloadMedicaoPDF = async (
     const prefixo = isLinave ? 'LN' : 'SN';
     const numeroBMSanitizado = (documentoMediacaoForm.numeroBM || '001').replace(/[/\\]/g, '-');
     const nomeArquivo = `${prefixo}_Medicao_${numeroBMSanitizado}_${Date.now()}.pdf`;
-    
+
+    const blob = doc.output('blob');
+    const conteudoDataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Falha ao converter PDF para DataURL.'));
+      reader.readAsDataURL(blob);
+    });
+
     doc.save(nomeArquivo);
 
-    return { nomeArquivo, conteudoDataUrl: doc.output('datauristring') };
+    return {
+      nomeArquivo,
+      conteudoDataUrl,
+      tamanho: blob.size,
+    };
   } catch (error) {
     console.error('Erro ao gerar o PDF:', error);
     throw error;

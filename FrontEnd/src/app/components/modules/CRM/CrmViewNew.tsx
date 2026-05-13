@@ -7,6 +7,8 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable'; // Importação nomeada do plugin
 import { handleDownloadMedicaoPDF } from './handleDownloadMedicaoPDF';
 import { handleDownloadPropostaPDF } from './handleDownloadPropostaPDF'; 
+import { getCachedWorkspace } from '../../../services/workspaceStorage';
+import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
 
 interface Servico {
   id: string;
@@ -124,6 +126,15 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   const [documentoMediacaoForm, setDocumentoMediacaoForm] = useState<DocumentoMediacaoForm | null>(null);
   const [showDocumentoPreviewModal, setShowDocumentoPreviewModal] = useState(false);
   const [documentoVisualizado, setDocumentoVisualizado] = useState<any>(null);
+
+  const obraTemDocumentoMediacao = (obra: any) => {
+    const docs = Array.isArray(obra?.documentosNegocio) ? obra.documentosNegocio : [];
+    return docs.some((doc: any) => {
+      const id = String(doc?.id || '').toLowerCase();
+      const nome = String(doc?.nome || '').toLowerCase();
+      return id.includes('mediacao') || nome.includes('medi') || nome.includes('medição');
+    }) || Boolean(obra?.finalizadoComMediacao);
+  };
 
 
   const indexToVersaoAlfabetica = (index: number) => {
@@ -629,7 +640,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     });
   };
 
-  const handleGerarDocumentoMediacao = () => {
+  const handleGerarDocumentoMediacao = async () => {
     if (!documentoMediacaoForm) return;
 
     // 1. Verificação mais clara para a embarcação
@@ -646,14 +657,22 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       console.log("Iniciando geração de PDF de medição...", { documentoMediacaoForm });
 
       // 2. Chama a função EXTERNA para gerar o PDF (Não tenta desenhar o PDF aqui dentro)
-      const resultadoPdf = handleDownloadMedicaoPDF(
+      const resultadoPdf = await handleDownloadMedicaoPDF(
         documentoMediacaoForm,
         clienteAtual,
         obraAtual
       );
 
-      if (!resultadoPdf) {
+      if (!resultadoPdf || typeof resultadoPdf !== 'object') {
         throw new Error('A função de PDF não retornou os dados esperados.');
+      }
+
+      const nomeArquivo = String((resultadoPdf as any).nomeArquivo || '').trim();
+      const conteudoDataUrl = String((resultadoPdf as any).conteudoDataUrl || '').trim();
+      const tamanhoPdf = Number((resultadoPdf as any).tamanho || conteudoDataUrl.length || 0);
+
+      if (!nomeArquivo || !conteudoDataUrl.startsWith('data:application/pdf')) {
+        throw new Error('PDF gerado inválido. Tente novamente.');
       }
 
       // 3. Salvar documento na obra
@@ -662,16 +681,19 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
         
         const novoDocumento: DocumentoNegocio = {
           id: `doc-mediacao-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          nome: resultadoPdf.nomeArquivo,
+          nome: nomeArquivo,
           tipo: 'application/pdf',
-          tamanho: resultadoPdf.tamanho,
+          tamanho: tamanhoPdf,
           dataUpload: new Date().toISOString(),
-          conteudo: resultadoPdf.conteudoDataUrl
+          conteudo: conteudoDataUrl
         };
-        
+
         persistirObraAtualizada({
           ...obraAtual,
-          documentosNegocio: [...documentosAtuais, novoDocumento]
+          documentosNegocio: [...documentosAtuais, novoDocumento],
+          finalizadoComMediacao: true,
+          dataFinalizacaoLocal: new Date().toISOString().split('T')[0],
+          status: 'Finalizado (Medição)'
         });
       }
 
@@ -686,7 +708,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   };
   
   const handleVerDocumentoNegocio = (doc: any) => {
-    const href = doc?.conteudo || doc?.url;
+    const href = getDocumentHref(doc);
     if (!href) {
       toast.error('Documento indisponível para visualização.');
       return;
@@ -696,18 +718,12 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   };
 
   const handleDownloadDocumento = (doc: any) => {
-    const href = doc?.conteudo || doc?.url;
-    if (!href) {
-      toast.error('Documento indisponível para download.');
-      return;
-    }
-
-    const elemento = document.createElement('a');
-    elemento.href = href;
-    elemento.download = doc?.nome || 'documento';
-    document.body.appendChild(elemento);
-    elemento.click();
-    document.body.removeChild(elemento);
+    downloadDocument(doc, {
+      fallbackName: 'documento',
+      onInvalid: () => {
+        toast.error('Documento indisponível para download.');
+      }
+    });
   };
 
   const handleGerarPropostaPDF = async () => {
@@ -1162,13 +1178,24 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       dataCriacao: new Date().toISOString().split('T')[0],
       status: 'Ativo',
       statusEnvio: 'pendente',
+      horasTrabalhadasPorServico: [
+        {
+          id: `hora-servico-${Date.now()}-${idx}`,
+          servico: servico.tipo || servico.descricao || `Serviço ${idx + 1}`,
+          hora: 0
+        }
+      ],
       docs: formData.docs
     }));
 
     // Aguarda ambas as operações de sincronização completarem
+    const workspaceAtual = getCachedWorkspace(userSession?.email || 'admin@modo-teste.com');
+    const obrasAtuais = Array.isArray(workspaceAtual.obras) ? workspaceAtual.obras : [];
+    const osAtuais = Array.isArray(workspaceAtual.os) ? workspaceAtual.os : [];
+
     Promise.all([
-      saveEntity('obras', [...(obras || []), novaObra]),
-      saveEntity('os', [...(os || []), ...novasOS])
+      saveEntity('obras', [...obrasAtuais, novaObra]),
+      saveEntity('os', [...osAtuais, ...novasOS])
     ]).then(() => {
       alert(`${novasOS.length} Serviço(s) criado(s) com sucesso!`);
       setShowFormNovoNegocio(false);
@@ -1526,6 +1553,32 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       });
       y = (doc as any).lastAutoTable.finalY + 5;
     }
+
+    const horasServicoOS = Array.isArray(osPrincipal?.horasTrabalhadasPorServico)
+      ? osPrincipal.horasTrabalhadasPorServico
+          .map((item: any, idx: number) => ({
+            id: String(item?.id || `hora-servico-${idx}`),
+            servico: String(item?.servico || '').trim(),
+            hora: Number(item?.hora || 0)
+          }))
+          .filter((item: any) => item.servico || item.hora > 0)
+      : [];
+    if (horasServicoOS.length > 0) {
+      const totalHorasServico = horasServicoOS.reduce((acc: number, item: any) => acc + (Number.isFinite(item.hora) ? item.hora : 0), 0);
+      autoTable(doc, {
+        startY: y,
+        head: [['SERVIÇO', 'HORA (H/H)']],
+        body: [
+          ...horasServicoOS.map((item: any) => [item.servico, String(item.hora)]),
+          ['HH TOTAL', String(totalHorasServico)]
+        ],
+        theme: 'grid',
+        headStyles: { fillColor: [230, 230, 230], textColor: [0,0,0], fontStyle: 'bold', fontSize: 8 },
+        styles: { fontSize: 7, cellPadding: 2, textColor: [0,0,0] },
+        margin: { left: margin, right: margin }
+      });
+      y = (doc as any).lastAutoTable.finalY + 5;
+    }
     
     // --- TABELA DE MATERIAIS ATUALIZADA (SEM VALORES) ---
     const materiaisOS = ultimoOrcamento?.data?.materiais || [];
@@ -1573,7 +1626,35 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     }
     
     const prefixo = getPrefixoEmpresa(selectedObraDetalhes?.empresaPrestadora);
-    doc.save(`${prefixo || 'ERP'}_OS_${osPrincipal.ordemServicoNumero || '001'}_${new Date().getTime()}.pdf`);
+    const nomeArquivo = `${prefixo || 'ERP'}_OS_${osPrincipal.ordemServicoNumero || '001'}_${new Date().getTime()}.pdf`;
+    const conteudoDataUrl = doc.output('datauristring');
+    doc.save(nomeArquivo);
+
+    if (selectedObraDetalhes && conteudoDataUrl) {
+      const documentosAtuais = Array.isArray(selectedObraDetalhes.documentosNegocio)
+        ? selectedObraDetalhes.documentosNegocio
+        : [];
+      const documentosSemOs = documentosAtuais.filter((docItem: any) => {
+        const id = String(docItem?.id || '').toLowerCase();
+        const nome = String(docItem?.nome || '').toLowerCase();
+        return !(id.includes('doc-os') || nome.includes('_os_') || nome.includes('ordem de serviço') || nome.includes('ordem de servico'));
+      });
+
+      persistirObraAtualizada({
+        ...selectedObraDetalhes,
+        documentosNegocio: [
+          ...documentosSemOs,
+          {
+            id: `doc-os-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            nome: nomeArquivo,
+            tipo: 'application/pdf',
+            tamanho: Math.max(0, Math.round((conteudoDataUrl.length * 3) / 4)),
+            dataUpload: new Date().toISOString(),
+            conteudo: conteudoDataUrl,
+          },
+        ],
+      });
+    }
     
     toast.success('OS baixada em PDF com sucesso!');
   } catch (error) {
@@ -2047,7 +2128,35 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       doc.setTextColor(0, 0, 0);
       doc.rect(x, y, baseColWidth * 5, cellHeight);
 
-      doc.save(`Orcamento_${ultimoOrcamento.numeroOrcamento}_v${formatarVersaoOrcamento(ultimoOrcamento.versao)}.pdf`);
+      const nomeArquivo = `Orcamento_${ultimoOrcamento.numeroOrcamento}_v${formatarVersaoOrcamento(ultimoOrcamento.versao)}.pdf`;
+      const conteudoDataUrl = doc.output('datauristring');
+      doc.save(nomeArquivo);
+
+      if (selectedObraDetalhes && conteudoDataUrl) {
+        const documentosAtuais = Array.isArray(selectedObraDetalhes.documentosNegocio)
+          ? selectedObraDetalhes.documentosNegocio
+          : [];
+        const documentosSemOrcamento = documentosAtuais.filter((docItem: any) => {
+          const id = String(docItem?.id || '').toLowerCase();
+          const nome = String(docItem?.nome || '').toLowerCase();
+          return !(id.includes('doc-orcamento') || nome.includes('orcamento') || nome.includes('orçamento'));
+        });
+
+        persistirObraAtualizada({
+          ...selectedObraDetalhes,
+          documentosNegocio: [
+            ...documentosSemOrcamento,
+            {
+              id: `doc-orcamento-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              nome: nomeArquivo,
+              tipo: 'application/pdf',
+              tamanho: Math.max(0, Math.round((conteudoDataUrl.length * 3) / 4)),
+              dataUpload: new Date().toISOString(),
+              conteudo: conteudoDataUrl,
+            },
+          ],
+        });
+      }
 
       toast.success('Orçamento baixado em PDF com sucesso!');
     } catch (error) {
@@ -2158,11 +2267,14 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     toast.success('Negócio movido para Finalização.');
   };
 
-  const obrasOrdenadas = (obras || []).filter((obra: any) => 
-    !searchQuery || 
-    obra.nome.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (clientes || []).find(c => c.id === obra.clienteId)?.razaoSocial.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const obrasOrdenadas = (obras || []).filter((obra: any) => {
+    if (obraTemDocumentoMediacao(obra)) return false;
+
+    if (!searchQuery) return true;
+    const termo = searchQuery.toLowerCase();
+    const clienteNome = (clientes || []).find(c => c.id === obra.clienteId)?.razaoSocial?.toLowerCase() || '';
+    return obra.nome.toLowerCase().includes(termo) || clienteNome.includes(termo);
+  });
 
   const inputClass = "w-full bg-[#0b1220] border border-white/10 p-3 rounded-lg text-white text-sm outline-none focus:border-amber-500 transition-all placeholder:text-white/20";
   const labelClass = "text-[9px] font-black text-white/40 uppercase tracking-widest ml-1 mb-1.5 block";
@@ -2999,13 +3111,12 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                           >
                             Ver
                           </button>
-                          <a
-                            href={doc.conteudo || doc.url}
-                            download={doc.nome}
+                          <button
+                            onClick={() => handleDownloadDocumento(doc)}
                             className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 text-xs font-black uppercase transition"
                           >
                             Download
-                          </a>
+                          </button>
                         </div>
                       </div>
                     ))}
@@ -4103,6 +4214,38 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                       <p className="text-white font-bold">{osPrincipal?.dataTerminoPrevisto || '24/02/2026'}</p>
                     </div>
                   </div>
+                </div>
+
+                <div className="bg-white/5 border border-white/10 rounded-xl p-6 space-y-3">
+                  <h3 className="text-white font-black text-lg">HORAS TRABALHADAS POR SERVIÇO</h3>
+                  {Array.isArray(osPrincipal?.horasTrabalhadasPorServico) && osPrincipal.horasTrabalhadasPorServico.length > 0 ? (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs border border-white/10">
+                        <thead className="bg-white/5 text-white/60">
+                          <tr>
+                            <th className="px-3 py-2 border border-white/10 text-left">Serviço</th>
+                            <th className="px-3 py-2 border border-white/10 text-left">Hora (H/H)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {osPrincipal.horasTrabalhadasPorServico.map((item: any, idx: number) => (
+                            <tr key={item?.id || idx} className="text-white/80">
+                              <td className="px-3 py-2 border border-white/10">{item?.servico || '-'}</td>
+                              <td className="px-3 py-2 border border-white/10">{Number(item?.hora || 0)}</td>
+                            </tr>
+                          ))}
+                          <tr className="bg-white/5 text-white font-black">
+                            <td className="px-3 py-2 border border-white/10 uppercase">HH Total</td>
+                            <td className="px-3 py-2 border border-white/10">
+                              {osPrincipal.horasTrabalhadasPorServico.reduce((acc: number, item: any) => acc + Number(item?.hora || 0), 0)}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="text-white/50 text-sm">Nenhuma hora trabalhada cadastrada para esta OS.</p>
+                  )}
                 </div>
 
                 {/* Orçamento */}

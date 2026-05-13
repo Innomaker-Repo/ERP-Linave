@@ -99,6 +99,12 @@ interface DocumentoAssinatura {
   conteudo: string;
 }
 
+interface HoraServicoLinha {
+  id: string;
+  servico: string;
+  hora: number;
+}
+
 interface OsResumoConsolidado {
   negocio: {
     nome: string;
@@ -234,6 +240,7 @@ interface OsFormData {
     cq: number;
     sms: number;
   };
+  horasTrabalhadasPorServico: HoraServicoLinha[];
   statusOs: 'rascunho' | 'emproducao' | 'concluida';
   tipoDocumento?: 'consolidada';
   statusEnvio?: 'pendente' | 'enviada';
@@ -320,6 +327,7 @@ const criarInitialOsData = (): OsFormData => ({
     cq: 0,
     sms: 0
   },
+  horasTrabalhadasPorServico: [],
   statusOs: 'rascunho',
   tipoDocumento: 'consolidada',
   statusEnvio: 'pendente',
@@ -385,6 +393,52 @@ export function OsView({ searchQuery }: OSViewProps) {
   const obrasEmAndamento = (Array.isArray(obras) ? obras : []).filter((o: any) => o.categoria === 'Em Andamento');
   const osConsolidadas = listaOS.filter((item: any) => item.tipoDocumento === 'consolidada');
   const obrasSemOsConsolidada = obrasEmAndamento.filter((obra: any) => !osConsolidadas.some((registro) => registro.obraId === obra.id));
+
+  const normalizarHorasTrabalhadas = (linhas: any): HoraServicoLinha[] => {
+    if (!Array.isArray(linhas)) return [];
+    return linhas
+      .map((linha: any, idx: number) => ({
+        id: String(linha?.id || `hora-servico-${Date.now()}-${idx}`),
+        servico: String(linha?.servico || '').trim(),
+        hora: Number(linha?.hora || 0)
+      }))
+      .filter((linha: HoraServicoLinha) => linha.servico || linha.hora > 0);
+  };
+
+  const calcularTotalHoras = (linhas: HoraServicoLinha[]) => (
+    normalizarHorasTrabalhadas(linhas).reduce((acc, item) => acc + (Number.isFinite(item.hora) ? item.hora : 0), 0)
+  );
+
+  const atualizarHoraServico = (id: string, campo: 'servico' | 'hora', valor: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      horasTrabalhadasPorServico: (prev.horasTrabalhadasPorServico || []).map((linha) => {
+        if (linha.id !== id) return linha;
+        if (campo === 'hora') {
+          const hora = Number(valor);
+          return { ...linha, hora: Number.isFinite(hora) ? hora : 0 };
+        }
+        return { ...linha, servico: valor };
+      })
+    }));
+  };
+
+  const adicionarLinhaHoraServico = () => {
+    setFormData((prev) => ({
+      ...prev,
+      horasTrabalhadasPorServico: [
+        ...(prev.horasTrabalhadasPorServico || []),
+        { id: `hora-servico-${Date.now()}`, servico: '', hora: 0 }
+      ]
+    }));
+  };
+
+  const removerLinhaHoraServico = (id: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      horasTrabalhadasPorServico: (prev.horasTrabalhadasPorServico || []).filter((linha) => linha.id !== id)
+    }));
+  };
 
   const extrairResumoOrcamentoSemValores = (obra: any) => {
     const ultimoOrcamento = Array.isArray(obra?.orcamentos) && obra.orcamentos.length > 0
@@ -573,6 +627,11 @@ export function OsView({ searchQuery }: OSViewProps) {
       dataTerminoPrevisto: dataTerminoNegocio,
       ordemServicoNumero,
       descricaoGeralServico: gerarDescricaoConsolidada(obra, resumoConsolidado.orcamento, resumoConsolidado.proposta),
+      horasTrabalhadasPorServico: (Array.isArray(obra.servicos) ? obra.servicos : []).map((servico: any, index: number) => ({
+        id: `hora-servico-${Date.now()}-${index}`,
+        servico: servico.tipo || servico.descricao || `Serviço ${index + 1}`,
+        hora: 0
+      })),
       resumoConsolidado
     }));
   };
@@ -591,15 +650,32 @@ export function OsView({ searchQuery }: OSViewProps) {
       return alert('Já existe uma OS consolidada para este negócio.');
     }
 
-    const hhTotal =
-      formData.maoObra.estrutura +
-      formData.maoObra.tubulacao +
-      formData.maoObra.andaimes +
-      formData.maoObra.mecanica +
-      formData.maoObra.pintura +
-      formData.maoObra.eletrica +
-      formData.maoObra.cq +
-      formData.maoObra.sms;
+    const mao = formData.maoObra || {};
+    const hhTotal = (
+      Number(mao.estrutura || 0) +
+      Number(mao.tubulacao || 0) +
+      Number(mao.andaimes || 0) +
+      Number(mao.mecanica || 0) +
+      Number(mao.pintura || 0) +
+      Number(mao.eletrica || 0) +
+      Number(mao.cq || 0) +
+      Number(mao.sms || 0)
+    );
+
+    if (hhTotal === 0) {
+      return alert('Adicione pelo menos um valor em MÃO OBRA (H/H) antes de criar a OS.');
+    }
+
+    const horasTrabalhadasPorServico = [
+      { id: `hora-estrutura-${Date.now()}`, servico: 'Estrutura', hora: Number(mao.estrutura || 0) },
+      { id: `hora-tubulacao-${Date.now()}`, servico: 'Tubulação', hora: Number(mao.tubulacao || 0) },
+      { id: `hora-andaimes-${Date.now()}`, servico: 'Andaimes', hora: Number(mao.andaimes || 0) },
+      { id: `hora-mecanica-${Date.now()}`, servico: 'Mecânica', hora: Number(mao.mecanica || 0) },
+      { id: `hora-pintura-${Date.now()}`, servico: 'Pintura', hora: Number(mao.pintura || 0) },
+      { id: `hora-eletrica-${Date.now()}`, servico: 'Elétrica', hora: Number(mao.eletrica || 0) },
+      { id: `hora-cq-${Date.now()}`, servico: 'C.Q', hora: Number(mao.cq || 0) },
+      { id: `hora-sms-${Date.now()}`, servico: 'SMS', hora: Number(mao.sms || 0) }
+    ].filter((r) => Number(r.hora) > 0);
 
     const novaOS: OsFormData = {
       ...formData,
@@ -608,9 +684,9 @@ export function OsView({ searchQuery }: OSViewProps) {
       statusEnvio: 'enviada',
       statusAprovacao: 'pendente',
       documentoAssinaturaAprovacao: null,
+      horasTrabalhadasPorServico,
       maoObra: {
-        ...formData.maoObra,
-        cq: hhTotal
+        ...formData.maoObra
       }
     };
 
@@ -862,6 +938,36 @@ export function OsView({ searchQuery }: OSViewProps) {
         });
         y = (doc as any).lastAutoTable.finalY + 5;
       }
+
+      const mao = osPrincipal?.maoObra || selectedObraDetalhes?.maoObra || {};
+      const maoRows = [
+        ['Estrutura', String(mao.estrutura || 0)],
+        ['Tubulação', String(mao.tubulacao || 0)],
+        ['Andaimes', String(mao.andaimes || 0)],
+        ['Mecânica', String(mao.mecanica || 0)],
+        ['Pintura', String(mao.pintura || 0)],
+        ['Elétrica', String(mao.eletrica || 0)],
+        ['C.Q', String(mao.cq || 0)],
+        ['SMS', String(mao.sms || 0)]
+      ];
+
+      const totalMao = maoRows.reduce((acc, r) => acc + (Number(r[1]) || 0), 0);
+
+      // Render MÃO OBRA table with header and total
+      autoTable(doc, {
+        startY: y,
+        head: [['MÃO OBRA ( H/H )', '']],
+        body: [
+          ...maoRows,
+          ['HH TOTAL', String(totalMao)]
+        ],
+        theme: 'grid',
+        headStyles: { fillColor: [230, 230, 230], textColor: [0, 0, 0], fontStyle: 'bold', fontSize: 9 },
+        styles: { fontSize: 8, cellPadding: 2, textColor: [0, 0, 0] },
+        columnStyles: { 0: { cellWidth: 120 }, 1: { halign: 'right', cellWidth: 30 } },
+        margin: { left: margin, right: margin }
+      });
+      y = (doc as any).lastAutoTable.finalY + 5;
       
       // --- TABELA DE MATERIAIS ATUALIZADA (SEM VALORES) ---
       const isConsolidada = osPrincipal.tipoDocumento === 'consolidada';
@@ -1105,6 +1211,124 @@ export function OsView({ searchQuery }: OSViewProps) {
                     onChange={(e) => setFormData({ ...formData, descricaoGeralServico: e.target.value })}
                   />
                 </div>
+
+                <div className="bg-[#0b1220] border border-white/10 rounded-xl p-4 space-y-3">
+                  <h4 className="text-white font-black text-sm uppercase">MÃO OBRA ( H/H )</h4>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className={labelClass}>Estrutura</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        className={inputClass}
+                        value={formData.maoObra.estrutura}
+                        onChange={(e) => setFormData({ ...formData, maoObra: { ...formData.maoObra, estrutura: Number(e.target.value || 0) } })}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className={labelClass}>Tubulação</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        className={inputClass}
+                        value={formData.maoObra.tubulacao}
+                        onChange={(e) => setFormData({ ...formData, maoObra: { ...formData.maoObra, tubulacao: Number(e.target.value || 0) } })}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className={labelClass}>Andaimes</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        className={inputClass}
+                        value={formData.maoObra.andaimes}
+                        onChange={(e) => setFormData({ ...formData, maoObra: { ...formData.maoObra, andaimes: Number(e.target.value || 0) } })}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className={labelClass}>Mecânica</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        className={inputClass}
+                        value={formData.maoObra.mecanica}
+                        onChange={(e) => setFormData({ ...formData, maoObra: { ...formData.maoObra, mecanica: Number(e.target.value || 0) } })}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className={labelClass}>Pintura</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        className={inputClass}
+                        value={formData.maoObra.pintura}
+                        onChange={(e) => setFormData({ ...formData, maoObra: { ...formData.maoObra, pintura: Number(e.target.value || 0) } })}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className={labelClass}>Elétrica</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        className={inputClass}
+                        value={formData.maoObra.eletrica}
+                        onChange={(e) => setFormData({ ...formData, maoObra: { ...formData.maoObra, eletrica: Number(e.target.value || 0) } })}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className={labelClass}>C.Q</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        className={inputClass}
+                        value={formData.maoObra.cq}
+                        onChange={(e) => setFormData({ ...formData, maoObra: { ...formData.maoObra, cq: Number(e.target.value || 0) } })}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className={labelClass}>SMS</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        className={inputClass}
+                        value={formData.maoObra.sms}
+                        onChange={(e) => setFormData({ ...formData, maoObra: { ...formData.maoObra, sms: Number(e.target.value || 0) } })}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="pt-4">
+                    <div className="bg-white/5 p-3 rounded-lg inline-block">
+                      <div className="text-white/60 text-xs">HH TOTAL</div>
+                      <div className="text-white font-black text-xl">{(
+                        Number(formData.maoObra.estrutura || 0) +
+                        Number(formData.maoObra.tubulacao || 0) +
+                        Number(formData.maoObra.andaimes || 0) +
+                        Number(formData.maoObra.mecanica || 0) +
+                        Number(formData.maoObra.pintura || 0) +
+                        Number(formData.maoObra.eletrica || 0) +
+                        Number(formData.maoObra.cq || 0) +
+                        Number(formData.maoObra.sms || 0)
+                      ).toString()}</div>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               <div className="bg-gradient-to-r from-cyan-500/10 to-blue-500/10 rounded-2xl border border-cyan-500/20 p-6 space-y-4">
@@ -1343,6 +1567,36 @@ export function OsView({ searchQuery }: OSViewProps) {
                     <p className="text-white font-bold text-base mb-1">Observações do Orçamento</p>
                     <p className="text-white/75 text-sm whitespace-pre-wrap">{selectedOS.resumoConsolidado?.orcamento.observacoes}</p>
                   </div>
+                )}
+              </div>
+
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-4">
+                <h3 className="text-white font-black text-lg">HORAS TRABALHADAS POR SERVIÇO</h3>
+                {normalizarHorasTrabalhadas(selectedOS.horasTrabalhadasPorServico || []).length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm border border-white/10">
+                      <thead className="bg-white/5 text-white/70">
+                        <tr>
+                          <th className="px-3 py-2 border border-white/10 text-left">Serviço</th>
+                          <th className="px-3 py-2 border border-white/10 text-left">Hora (H/H)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {normalizarHorasTrabalhadas(selectedOS.horasTrabalhadasPorServico || []).map((item) => (
+                          <tr key={item.id} className="text-white/85">
+                            <td className="px-3 py-2 border border-white/10">{item.servico}</td>
+                            <td className="px-3 py-2 border border-white/10">{item.hora}</td>
+                          </tr>
+                        ))}
+                        <tr className="bg-white/5 text-white font-black">
+                          <td className="px-3 py-2 border border-white/10 uppercase">HH Total</td>
+                          <td className="px-3 py-2 border border-white/10">{calcularTotalHoras(selectedOS.horasTrabalhadasPorServico || [])}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-white/50 text-sm">Nenhuma hora trabalhada cadastrada para esta OS.</p>
                 )}
               </div>
 

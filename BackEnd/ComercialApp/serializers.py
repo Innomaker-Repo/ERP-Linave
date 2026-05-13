@@ -175,7 +175,7 @@ class OrdenServicoSerializer(serializers.ModelSerializer):
             'projeto', 'equipamento', 'local', 'cc',
             'data_inicio_previsto', 'data_termino_previsto',
             'supervisor_encarregado', 'descricao_geral_servico',
-            'a_ser_incluido', 'mao_obra',
+            'a_ser_incluido', 'mao_obra', 'horas_trabalhadas_servico',
             'status_os', 'status_envio', 'status_aprovacao',
             'data_aprovacao', 'documento_assinatura_aprovacao',
             'created_at', 'updated_at'

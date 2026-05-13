@@ -30,6 +30,7 @@ function getAbaForSection(section: string): { aba: string; item: string } {
     'proposta': { aba: 'comercial', item: 'proposta' },
     'fazerOs': { aba: 'comercial', item: 'fazerOs' },
     'orcamentos': { aba: 'comercial', item: 'orcamentos' },
+    'finalizadosComercial': { aba: 'comercial', item: 'finalizadosComercial' },
     
     // Financeiro
     'financeiro': { aba: 'financeiro', item: 'financeiro' },

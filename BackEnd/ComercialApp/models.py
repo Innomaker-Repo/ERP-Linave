@@ -84,6 +84,19 @@ def normalize_workspace_data(data):
         source = data.get(key, {}) if isinstance(data.get(key, {}), dict) else {}
         normalized[key] = {**defaults[key], **source}
 
+    normalized_os = []
+    for item in normalized.get('os', []):
+        if not isinstance(item, dict):
+            continue
+        horas = item.get('horasTrabalhadasPorServico', [])
+        if not isinstance(horas, list):
+            horas = []
+        normalized_os.append({
+            **item,
+            'horasTrabalhadasPorServico': horas,
+        })
+    normalized['os'] = normalized_os
+
     normalized['empresa'] = data.get('empresa', defaults['empresa'])
 
     return normalized
@@ -355,6 +368,9 @@ class OrdenServico(models.Model):
     
     # Mão de Obra (JSONField com números)
     mao_obra = models.JSONField(default=dict, blank=True)  # ex: {estrutura: 10, tubulacao: 5, ...}
+
+    # Horas trabalhadas por serviço (lista de pares Serviço/Hora)
+    horas_trabalhadas_servico = models.JSONField(default=list, blank=True)
     
     # Status
     status_os = models.CharField(max_length=20, choices=STATUS_OS_CHOICES, default='rascunho')
