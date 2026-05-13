@@ -406,3 +406,45 @@ class Workspace(models.Model):
 
     def __str__(self):
         return f"Workspace {self.admin_email}"
+    
+#--------------------- Proposta Comercial ------------------
+class Planilhas(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    escopo_link = models.ForeignKey('Escopo', on_delete=models.SET_NULL, null=True, blank=True, related_name='escopo_planilhas')
+    colunas = models.CharField(max_length=255) # field to specify the columns or headers of the spreadsheet, can be a comma-separated string or a JSON string depending on how you want to structure it
+    linhas = models.JSONField(default=list, blank=True)
+
+    def __str__(self):
+        return f"Planilha {self.id}"
+
+class Escopo(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    proposta_link = models.ForeignKey('PropostaComercial', on_delete=models.SET_NULL, null=True, blank=True, related_name='proposta_escopo')
+    tipo = models.ForeignKey(Servico, on_delete=models.CASCADE, related_name='escopo_servico') # link to the Servico entry that this scope of services is about, to be selected from a dropdown list of existing Servico entries
+    descricao = models.TextField() # free text field to specify the description of the scope of services
+    
+
+    def __str__(self):
+        return f"Escopo {self.id} - Descrição: {self.descricao[:50]}..."  # Show first 50 chars of description
+
+class PropostaComercial(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    data_criacao = models.DateField(auto_now_add=True)
+    cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE, related_name='cliente_propostas')
+    negocio = models.ForeignKey(Negocio, on_delete=models.SET_NULL, null=True, blank=True, related_name='negocio_propostas')
+    referencia = models.CharField(max_length=200) # free text field to specify the reference or title of the commercial proposal
+    saudacao = models.CharField(max_length=200) # free text field for the greeting or introduction of the proposal
+    assunto = models.CharField(max_length=200) # free text field for the subject or main topic of the proposal
+    texto_de_abertura = models.TextField() # free text field for the opening text or executive summary of the proposal
+    responsabilidade_contratada = models.CharField(max_length=150) # free text field to specify the person responsible for the proposal
+    responsabilidade_contratante = models.CharField(max_length=150) # free text field to specify the person responsible on the client's side
+    preco = models.DecimalField(max_digits=10, decimal_places=2) # field to specify the total price or value of the proposal
+    condicoes_gerais = models.TextField() # free text field for the general terms and conditions of the proposal
+    condicoes_pagamento = models.TextField() # free text field for the payment terms and conditions of the proposal
+    prazo = models.CharField(max_length=100) # free text field to specify the delivery time or deadline for the proposal
+    encerramento = models.TextField() # free text field for the closing remarks or conclusion of the proposal
+   
+    def __str__(self):
+        return f"Proposta Comercial {self.id} - {self.cliente.razao_social} - Valor: {self.preco}"
+    
+#--------------------- Fim Proposta Comercial ------------------
