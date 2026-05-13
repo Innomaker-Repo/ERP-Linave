@@ -3,7 +3,7 @@ from .models import (
     Cliente, Negocio, Servico, User,
     Levantamento, MDO, Ativ_prevista, Material, 
     Servico_terceirizado, Resumo_orcamento, Orcamento,
-    OrdenServico, Workspace
+    OrdenServico, Workspace, PropostaComercial, Escopo, Planilhas
 )
 
 # 1. Define the Child Tables (The "N" items)
@@ -22,6 +22,15 @@ class ServicoTerceirizadoInline(admin.TabularInline):
 class AtivPrevistaInline(admin.TabularInline):
     model = Ativ_prevista
     extra = 1
+
+class PlanilhasInline(admin.TabularInline):
+    model = Planilhas
+    extra = 1
+
+class EscopoInline(admin.StackedInline):
+    model = Escopo
+    extra = 1
+    inlines = [PlanilhasInline]
 
 # 2. Define the Parent Admin
 @admin.register(Orcamento)
@@ -56,3 +65,36 @@ admin.site.register(User)
 admin.site.register(Levantamento)
 admin.site.register(OrdenServico)
 admin.site.register(Workspace)
+
+@admin.register(PropostaComercial)
+class PropostaComercialAdmin(admin.ModelAdmin):
+    list_display = ('id', 'referencia', 'get_cliente', 'data_criacao', 'preco')
+    list_filter = ('data_criacao', 'cliente')
+    search_fields = ('referencia', 'cliente__razao_social')
+    inlines = [EscopoInline]
+    readonly_fields = ('data_criacao',)
+    
+    def get_cliente(self, obj):
+        return obj.cliente.razao_social
+    get_cliente.short_description = 'Cliente'
+
+@admin.register(Escopo)
+class EscopoAdmin(admin.ModelAdmin):
+    list_display = ('id', 'get_proposta', 'tipo', 'descricao_preview')
+    inlines = [PlanilhasInline]
+    
+    def get_proposta(self, obj):
+        return obj.proposta_link.referencia if obj.proposta_link else 'N/A'
+    get_proposta.short_description = 'Proposta'
+    
+    def descricao_preview(self, obj):
+        return obj.descricao[:50] + '...' if len(obj.descricao) > 50 else obj.descricao
+    descricao_preview.short_description = 'Descrição'
+
+@admin.register(Planilhas)
+class PlanilhasAdmin(admin.ModelAdmin):
+    list_display = ('id', 'get_escopo', 'colunas')
+    
+    def get_escopo(self, obj):
+        return obj.escopo_link.id if obj.escopo_link else 'N/A'
+    get_escopo.short_description = 'Escopo'

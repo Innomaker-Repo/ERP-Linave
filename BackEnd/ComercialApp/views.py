@@ -5,13 +5,13 @@ from django.db import transaction
 from .models import (
     Cliente, Negocio, Servico, User,
     Levantamento, MDO, Material, Servico_terceirizado, Orcamento, Ativ_prevista, Resumo_orcamento,
-    OrdenServico, Workspace, normalize_workspace_data
+    OrdenServico,Planilhas, PropostaComercial, Escopo, Workspace, normalize_workspace_data
 )
 from .serializers import (
     ClienteSerializer, NegocioSerializer, ServicoSerializer, UserSerializer,
     OrcamentoSerializer, LevantamentoSerializer, Resumo_orcamentoSerializer,
     MDOSerializer, MaterialSerializer, Ativ_previstaSerializer, ServicosTerceirizadosSerializer,
-    OrdenServicoSerializer, WorkspaceSerializer
+    OrdenServicoSerializer, WorkspaceSerializer, PlanilhasSerializer, EscopoSerializer, PropostaComercialSerializer
 )
 from django.http import FileResponse
 from django.conf import settings
@@ -358,3 +358,65 @@ def atualizar_status_os(request, pk):
             {"error": "Ordem de Servico não encontrada"},
             status=status.HTTP_404_NOT_FOUND
         )
+
+class PlanilhasViewSet(viewsets.ModelViewSet):
+    queryset = Planilhas.objects.all()
+    serializer_class = PlanilhasSerializer
+
+class EscopoViewSet(viewsets.ModelViewSet):
+    queryset = Escopo.objects.select_related('proposta_link', 'tipo').all()
+    serializer_class = EscopoSerializer
+
+class PropostaComercialViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gerenciar Propostas Comerciais
+    """
+    queryset = PropostaComercial.objects.select_related('cliente', 'negocio').prefetch_related('proposta_escopo').all()
+    serializer_class = PropostaComercialSerializer
+    
+    def list(self, request, *args, **kwargs):
+        """
+        Listar propostas com filtros opcionais
+        Filtros: cliente_id, negocio_id
+        """
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        cliente_id = request.query_params.get('cliente')
+        negocio_id = request.query_params.get('negocio')
+        
+        if cliente_id:
+            queryset = queryset.filter(cliente_id=cliente_id)
+        if negocio_id:
+            queryset = queryset.filter(negocio_id=negocio_id)
+        
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+    
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+        """
+        Criar nova proposta comercial com escopos opcionais
+        """
+        escopos_data = request.data.pop('proposta_escopo', [])
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        proposta = serializer.save()
+        
+        escopos_objs = []
+        for escopo in escopos_data:
+            escopo['proposta_link'] = proposta.id
+            e_serializer = EscopoSerializer(data=escopo)
+            e_serializer.is_valid(raise_exception=True)
+            e_serializer.save()
+            escopos_objs.append(e_serializer.data)
+        
+        return Response({
+            "message": "Proposta Comercial criada com sucesso!",
+            "proposta": serializer.data,
+            "escopos": escopos_objs
+        }, status=status.HTTP_201_CREATED)

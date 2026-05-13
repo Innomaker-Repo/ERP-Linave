@@ -6,7 +6,8 @@ from .views import (
     AtividadeViewSet, TerceirizadoViewSet, OrdenServicoViewSet,
     criar_orcamento, visualizar_orcamento,
     ordens_servico_por_cliente, ordens_servico_por_negocio, atualizar_status_os,
-    workspace_data
+    workspace_data,
+    PlanilhasViewSet, EscopoViewSet, PropostaComercialViewSet
 )
 
 router = DefaultRouter()
@@ -21,6 +22,9 @@ router.register(r'materiais', MaterialViewSet)
 router.register(r'atividades', AtividadeViewSet)
 router.register(r'terceirizados', TerceirizadoViewSet)
 router.register(r'ordens-servico', OrdenServicoViewSet, basename='ordem-servico')
+router.register(r'planilhas', PlanilhasViewSet)
+router.register(r'escopos', EscopoViewSet)
+router.register(r'propostas-comerciais', PropostaComercialViewSet, basename='proposta-comercial')
 
 urlpatterns = [
     path('workspaces/<str:admin_email>/', workspace_data, name='workspace-data'),
