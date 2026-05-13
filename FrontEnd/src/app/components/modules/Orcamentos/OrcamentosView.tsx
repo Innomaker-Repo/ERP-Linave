@@ -274,6 +274,26 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     setShowForm(true);
   };
 
+  const formatApiErrorMessage = (error: any) => {
+    if (!error) return 'Falha na integração com backend.';
+    const responseData = error?.response?.data;
+
+    if (responseData) {
+      if (typeof responseData === 'string') return responseData;
+      if (responseData.detail) return String(responseData.detail);
+      if (responseData.error) return String(responseData.error);
+      if (typeof responseData === 'object') {
+        try {
+          return JSON.stringify(responseData);
+        } catch {
+          return String(responseData);
+        }
+      }
+    }
+
+    return error?.message || 'Falha na integração com backend.';
+  };
+
   const handleSaveOrcamento = async () => {
     if (!selectedObra) return alert("Nenhum projeto selecionado.");
     if (!isOrcamentoEditavel(selectedObra)) {
