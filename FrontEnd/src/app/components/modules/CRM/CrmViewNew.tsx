@@ -8,6 +8,8 @@ import autoTable from 'jspdf-autotable'; // Importação nomeada do plugin
 import { handleDownloadMedicaoPDF } from './handleDownloadMedicaoPDF';
 import { handleDownloadPropostaPDF } from './handleDownloadPropostaPDF'; 
 import { getCachedWorkspace } from '../../../services/workspaceStorage';
+import { getClientes } from '../../../services/clientes';
+import { getNegocios } from '../../../services/negocios';
 import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
 
 interface Servico {
@@ -126,6 +128,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   const [documentoMediacaoForm, setDocumentoMediacaoForm] = useState<DocumentoMediacaoForm | null>(null);
   const [showDocumentoPreviewModal, setShowDocumentoPreviewModal] = useState(false);
   const [documentoVisualizado, setDocumentoVisualizado] = useState<any>(null);
+  const [clientesLoading, setClientesLoading] = useState(false);
 
   const obraTemDocumentoMediacao = (obra: any) => {
     const docs = Array.isArray(obra?.documentosNegocio) ? obra.documentosNegocio : [];
@@ -418,54 +421,72 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   useEffect(() => {
     const sincronizarNegociosBackend = async () => {
       try {
-        // Para cada cliente, buscar negócios do backend
-        if (clientes && clientes.length > 0) {
-          for (const cliente of clientes) {
-            try {
-              const negociosBackend = await getNegociosDoCliente(cliente.id);
-              
-              // Para cada negócio do backend, verificar se já existe obra correspondente
-              for (const negocio of negociosBackend) {
-                const obraExistente = obras?.find(o => o.negocioBackendId === negocio.id);
-                
-                if (!obraExistente) {
-                  // Criar obra local baseada no negócio do backend
-                  const novaObra = {
-                    id: `PROJ-BACKEND-${negocio.id}`,
-                    nome: negocio.nome,
-                    empresaPrestadora: negocio.empresa_prestadora || 'Linave',
-                    clienteId: cliente.id,
-                    status: 'Planejamento',
-                    categoria: 'Planejamento' as CategoriaObra,
-                    tipo: 'Serviço',
-                    responsavelTecnico: negocio.solicitante,
-                    responsavelComercial: negocio.solicitante,
-                    solicitante: negocio.solicitante,
-                    telefone: negocio.telefone || '',
-                    email: negocio.email || '',
-                    dataCadastro: negocio.created_at ? new Date(negocio.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-                    dataSolicitacao: negocio.created_at ? new Date(negocio.created_at).toISOString().split('T')[0] : '',
-                    dataPrevistaInicio: negocio.data_prevista_inicio,
-                    dataPrevistaFinal: negocio.data_prevista_final,
-                    inicioPrevisto: negocio.data_prevista_inicio,
-                    fimPrevisto: negocio.data_prevista_final,
-                    origemOS: true,
-                    orcamento: 0,
-                    orcamentos: [],
-                    propostas: [],
-                    documentosNegocio: [],
-                    servicos: negocio.servicos || [],
-                    negocioBackendId: negocio.id
-                  };
+        let clientesBackend = Array.isArray(clientes) ? clientes : [];
 
-                  // Adicionar obra ao contexto
-                  saveEntity('obras', [...(obras || []), novaObra]);
-                }
-              }
-            } catch (error) {
-              console.warn(`Erro ao sincronizar negócios do cliente ${cliente.id}:`, error);
+        if (clientesBackend.length === 0) {
+          setClientesLoading(true);
+          try {
+            clientesBackend = await getClientes();
+            if (clientesBackend && clientesBackend.length > 0) {
+              await saveEntity('clientes', clientesBackend);
             }
+          } finally {
+            setClientesLoading(false);
           }
+        }
+
+        if (!clientesBackend || clientesBackend.length === 0) return;
+
+        const negociosBackend = await getNegocios();
+        if (!Array.isArray(negociosBackend) || negociosBackend.length === 0) return;
+
+        const novasObras: any[] = [...(obras || [])];
+        let atualizou = false;
+
+        for (const negocio of negociosBackend) {
+          const obraExistente = novasObras.find((o) => o.negocioBackendId === negocio.id);
+          if (obraExistente) continue;
+
+          const cliente = clientesBackend.find((c: any) => String(c.id) === String(negocio.clienteId));
+          if (!cliente) {
+            console.warn(`Cliente não encontrado para negócio ${negocio.id}: clienteId=${negocio.clienteId}`);
+            continue;
+          }
+
+          const novaObra = {
+            id: `PROJ-BACKEND-${negocio.id}`,
+            nome: negocio.nome,
+            empresaPrestadora: negocio.empresaPrestadora || 'Linave',
+            clienteId: cliente.id,
+            status: 'Planejamento',
+            categoria: 'Planejamento' as CategoriaObra,
+            tipo: 'Serviço',
+            responsavelTecnico: negocio.solicitante,
+            responsavelComercial: negocio.solicitante,
+            solicitante: negocio.solicitante,
+            telefone: negocio.telefone || '',
+            email: negocio.email || '',
+            dataCadastro: negocio.dataSolicitacao || new Date().toISOString().split('T')[0],
+            dataSolicitacao: negocio.dataSolicitacao || '',
+            dataPrevistaInicio: negocio.dataPrevistaInicio || '',
+            dataPrevistaFinal: negocio.dataPrevistaFinal || '',
+            inicioPrevisto: negocio.dataPrevistaInicio || '',
+            fimPrevisto: negocio.dataPrevistaFinal || '',
+            origemOS: true,
+            orcamento: 0,
+            orcamentos: [],
+            propostas: [],
+            documentosNegocio: [],
+            servicos: negocio.servicos || [],
+            negocioBackendId: negocio.id
+          };
+
+          novasObras.push(novaObra);
+          atualizou = true;
+        }
+
+        if (atualizou) {
+          await saveEntity('obras', novasObras);
         }
       } catch (error) {
         console.error('Erro ao sincronizar negócios do backend:', error);
@@ -506,6 +527,25 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       cnpj: cliente?.cpfCnpj || ''
     });
   };
+
+  useEffect(() => {
+    const carregarClientesCRM = async () => {
+      if (Array.isArray(clientes) && clientes.length > 0) return;
+      setClientesLoading(true);
+      try {
+        const clientesBackend = await getClientes();
+        if (clientesBackend && clientesBackend.length > 0) {
+          await saveEntity('clientes', clientesBackend);
+        }
+      } catch (error) {
+        console.error('Erro ao carregar clientes no CRM:', error);
+      } finally {
+        setClientesLoading(false);
+      }
+    };
+
+    carregarClientesCRM();
+  }, [clientes, saveEntity]);
 
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`;
@@ -2798,7 +2838,9 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                       value={formData.clienteId}
                       onChange={e => handleClienteChange(e.target.value)}
                     >
-                      <option value="">Selecione um cliente</option>
+                      <option value="" disabled>
+                        {clientesLoading ? 'Carregando clientes...' : 'Selecione um cliente'}
+                      </option>
                       {(clientes || []).map(c => (
                         <option key={c.id} value={c.id}>{c.razaoSocial}</option>
                       ))}

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { UserPlus, Save, X, Edit2, Trash2, Building2, User, MapPin, Phone, Calendar, UserCheck, History, Eye } from 'lucide-react';
 import { useErp } from '../../../context/ErpContext';
-import { getClientes, createCliente, updateCliente, deleteCliente } from '../../../services/clientes';
+import { getClientes, createCliente, updateCliente, deleteCliente } from '../../../../services/clientes';
 
 export function ClientesView({ searchQuery }: { searchQuery: string }) {
   const { clientes, obras, saveEntity, userSession } = useErp();

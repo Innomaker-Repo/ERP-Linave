@@ -1,5 +1,4 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { CLIENTES_MOCK } from '../mocks/clientesMock';
 import { getCachedWorkspace, loadWorkspace, saveWorkspace, setActiveAdminEmail, setCachedWorkspace } from '../services/workspaceStorage';
 
 
@@ -778,7 +777,7 @@ const createInitialData = (savedData: any) => {
     empresa: null,
     users: [],
     pendingUsers: [],
-    clientes: CLIENTES_MOCK,
+    clientes: [],
     funcionarios: [],
     obras: [],
     financeiro: [],
