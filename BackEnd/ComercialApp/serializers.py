@@ -3,7 +3,8 @@ from .models import (
     Cliente, Negocio, Servico, User,
     Levantamento, MDO, Ativ_prevista, Material, 
     Servico_terceirizado, Orcamento, Resumo_orcamento,
-    OrdenServico, Workspace, normalize_workspace_data
+    OrdenServico, Workspace, normalize_workspace_data,
+    Escopo, PropostaComercial
 )
 
 # ----------------- Core (These are perfect) ------------------
@@ -62,6 +63,30 @@ class ServicosTerceirizadosSerializer(serializers.ModelSerializer):
     class Meta:
         model = Servico_terceirizado
         fields = '__all__'
+
+class EscopoSerializer(serializers.ModelSerializer):
+    tipo_detalhes = ServicoSerializer(source='tipo', read_only=True)
+
+    class Meta:
+        model = Escopo
+        fields = '__all__'
+
+class PropostaComercialSerializer(serializers.ModelSerializer):
+    cliente_detalhes = ClienteSerializer(source='cliente', read_only=True)
+    negocio_detalhes = NegocioSerializer(source='negocio', read_only=True)
+    proposta_escopo = EscopoSerializer(many=True, read_only=True)
+    proposta_escopo_input = EscopoSerializer(source='proposta_escopo', many=True, write_only=True, required=False)
+
+    class Meta:
+        model = PropostaComercial
+        fields = [
+            'id', 'data_criacao', 'cliente', 'cliente_detalhes',
+            'negocio', 'negocio_detalhes', 'referencia', 'saudacao',
+            'assunto', 'texto_de_abertura', 'responsabilidade_contratada',
+            'responsabilidade_contratante', 'preco', 'condicoes_gerais',
+            'condicoes_pagamento', 'prazo', 'encerramento',
+            'proposta_escopo', 'proposta_escopo_input'
+        ]
 
 # ------------------  The Summary & Container  -------------------
 

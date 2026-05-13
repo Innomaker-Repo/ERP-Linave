@@ -5,13 +5,13 @@ from django.db import transaction
 from .models import (
     Cliente, Negocio, Servico, User,
     Levantamento, MDO, Material, Servico_terceirizado, Orcamento, Ativ_prevista, Resumo_orcamento,
-    OrdenServico, Workspace, normalize_workspace_data
+    OrdenServico, Workspace, normalize_workspace_data, Escopo, PropostaComercial
 )
 from .serializers import (
     ClienteSerializer, NegocioSerializer, ServicoSerializer, UserSerializer,
     OrcamentoSerializer, LevantamentoSerializer, Resumo_orcamentoSerializer,
     MDOSerializer, MaterialSerializer, Ativ_previstaSerializer, ServicosTerceirizadosSerializer,
-    OrdenServicoSerializer, WorkspaceSerializer
+    OrdenServicoSerializer, WorkspaceSerializer, EscopoSerializer, PropostaComercialSerializer
 )
 from django.http import FileResponse
 from django.conf import settings
@@ -104,12 +104,24 @@ def visualizar_orcamento(request, filename):
         return Response({'error': 'Arquivo não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
     return FileResponse(open(file_path, 'rb'), content_type='application/pdf')
 
-@api_view(['POST']) 
+@api_view(['POST'])
 def criar_orcamento(request):
     with transaction.atomic():
         # 1. Levantamento
         lev_data = request.data.get('levantamento')
+        if not isinstance(lev_data, dict):
+            return Response(
+                {'error': 'Dados de levantamento ausentes ou inválidos.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         negocio_id = lev_data.get('negocio')
+        if not negocio_id:
+            return Response(
+                {'error': 'O campo "negocio" é obrigatório no levantamento.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         levantamento_instance = Levantamento.objects.filter(negocio_id=negocio_id).first()
         
         if not levantamento_instance:
@@ -118,29 +130,61 @@ def criar_orcamento(request):
             levantamento_instance = lev_serializer.save()
 
         # 2. Resumo
-        res_serializer = Resumo_orcamentoSerializer(data=request.data.get('resumo'))
-        res_serializer.is_valid(raise_exception=True)
-        resumo_instance = res_serializer.save()
+        resumo_data = request.data.get('resumo')
+        if not isinstance(resumo_data, dict):
+            return Response(
+                {'error': 'Dados de resumo ausentes ou inválidos.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-        # 3. Orçamento Pai
-        orcamento_instance = Orcamento.objects.create(
-            levantamento=levantamento_instance,
-            resumo=resumo_instance,
-            Observacoes_setor_orcamento=request.data.get('observacoes', '')
-        )
-        
-        # 4. Itens (Looping para salvar cada lista)
+        orcamento_instance = Orcamento.objects.filter(levantamento=levantamento_instance).first()
+
+        if orcamento_instance:
+            res_serializer = Resumo_orcamentoSerializer(
+                instance=orcamento_instance.resumo,
+                data=resumo_data
+            )
+            res_serializer.is_valid(raise_exception=True)
+            resumo_instance = res_serializer.save()
+
+            orcamento_instance.Observacoes_setor_orcamento = request.data.get('observacoes', '')
+            orcamento_instance.resumo = resumo_instance
+            orcamento_instance.save()
+            action_message = 'Orçamento existente atualizado com sucesso!'
+            response_status = status.HTTP_200_OK
+
+            # Limpa itens antigos antes de recriar
+            orcamento_instance.mao_de_obra.all().delete()
+            orcamento_instance.materiais.all().delete()
+            orcamento_instance.terceirizados.all().delete()
+            orcamento_instance.atividades.all().delete()
+        else:
+            res_serializer = Resumo_orcamentoSerializer(data=resumo_data)
+            res_serializer.is_valid(raise_exception=True)
+            resumo_instance = res_serializer.save()
+
+            orcamento_instance = Orcamento.objects.create(
+                levantamento=levantamento_instance,
+                resumo=resumo_instance,
+                Observacoes_setor_orcamento=request.data.get('observacoes', '')
+            )
+            action_message = 'Orçamento completo criado com sucesso!'
+            response_status = status.HTTP_201_CREATED
+
+        # 3. Itens (Looping para salvar cada lista)
         for item in request.data.get('mao_de_obra', []):
             MDO.objects.create(orcamento=orcamento_instance, **item)
         for item in request.data.get('materiais', []):
             Material.objects.create(orcamento=orcamento_instance, **item)
         for item in request.data.get('terceirizados', []):
             Servico_terceirizado.objects.create(orcamento=orcamento_instance, **item)
+        for item in request.data.get('atividades', []):
+            Ativ_prevista.objects.create(orcamento=orcamento_instance, **item)
 
         return Response({
-            "message": "Orçamento completo criado com sucesso!",
+            "message": action_message,
             "orcamento_id": orcamento_instance.id
-        }, status=status.HTTP_201_CREATED)
+        }, status=response_status)
 
 
 # --------------------- Ordem de Servico (OS) ---------------------
@@ -358,3 +402,58 @@ def atualizar_status_os(request, pk):
             {"error": "Ordem de Servico não encontrada"},
             status=status.HTTP_404_NOT_FOUND
         )
+
+
+class PropostaComercialViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gerenciar Propostas Comerciais
+    """
+    queryset = PropostaComercial.objects.select_related('cliente', 'negocio').prefetch_related('proposta_escopo').all()
+    serializer_class = PropostaComercialSerializer
+    
+    def list(self, request, *args, **kwargs):
+        """
+        Listar propostas com filtros opcionais
+        Filtros: cliente_id, negocio_id
+        """
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        cliente_id = request.query_params.get('cliente')
+        negocio_id = request.query_params.get('negocio')
+        
+        if cliente_id:
+            queryset = queryset.filter(cliente_id=cliente_id)
+        if negocio_id:
+            queryset = queryset.filter(negocio_id=negocio_id)
+        
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+    
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+        """
+        Criar nova proposta comercial com escopos opcionais
+        """
+        escopos_data = request.data.pop('proposta_escopo', [])
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        proposta = serializer.save()
+        
+        escopos_objs = []
+        for escopo in escopos_data:
+            escopo['proposta_link'] = proposta.id
+            e_serializer = EscopoSerializer(data=escopo)
+            e_serializer.is_valid(raise_exception=True)
+            e_serializer.save()
+            escopos_objs.append(e_serializer.data)
+        
+        return Response({
+            "message": "Proposta Comercial criada com sucesso!",
+            "proposta": serializer.data,
+            "escopos": escopos_objs
+        }, status=status.HTTP_201_CREATED)

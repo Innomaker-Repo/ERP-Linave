@@ -4,6 +4,7 @@ from .views import (
     NegocioViewSet, OrcamentoViewSet, ClienteViewSet, ServicoViewSet, 
     UserViewSet, LevantamentoViewSet, MDOViewSet, MaterialViewSet,
     AtividadeViewSet, TerceirizadoViewSet, OrdenServicoViewSet,
+    PropostaComercialViewSet,
     criar_orcamento, visualizar_orcamento,
     ordens_servico_por_cliente, ordens_servico_por_negocio, atualizar_status_os,
     workspace_data
@@ -21,6 +22,7 @@ router.register(r'materiais', MaterialViewSet)
 router.register(r'atividades', AtividadeViewSet)
 router.register(r'terceirizados', TerceirizadoViewSet)
 router.register(r'ordens-servico', OrdenServicoViewSet, basename='ordem-servico')
+router.register(r'propostas-comerciais', PropostaComercialViewSet, basename='proposta-comercial')
 
 urlpatterns = [
     path('workspaces/<str:admin_email>/', workspace_data, name='workspace-data'),
@@ -30,6 +32,9 @@ urlpatterns = [
 
     # 2. Rota visualização de PDF
     path('visualizar/<str:filename>/', visualizar_orcamento, name='visualizar-pdf'),
+    path('os-por-cliente/<int:cliente_id>/', ordens_servico_por_cliente, name='os-por-cliente'),
+    path('os-por-negocio/<int:negocio_id>/', ordens_servico_por_negocio, name='os-por-negocio'),
+    path('ordens-servico/<int:pk>/atualizar-status/', atualizar_status_os, name='atualizar-status-os'),
 
     # 3. Restante das rotas do router
     path('', include(router.urls)),
