@@ -1,5 +1,4 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { CLIENTES_MOCK } from '../mocks/clientesMock';
 import { getCachedWorkspace, loadWorkspace, saveWorkspace, setActiveAdminEmail, setCachedWorkspace } from '../services/workspaceStorage';
 
 
@@ -778,7 +777,7 @@ const createInitialData = (savedData: any) => {
     empresa: null,
     users: [],
     pendingUsers: [],
-    clientes: CLIENTES_MOCK,
+    clientes: [],
     funcionarios: [],
     obras: [],
     financeiro: [],
@@ -791,6 +790,7 @@ const createInitialData = (savedData: any) => {
     equipes: [],
     fornecedores: [],
     horas: [],
+    almoxerifado: null,
     config: {
       empresaNome: 'Linave ERP Demo',
       empresasPrestadoras: [
@@ -861,6 +861,14 @@ const createInitialData = (savedData: any) => {
     equipes: Array.isArray(savedData.equipes) ? savedData.equipes : [],
     fornecedores: sanitizeCollection('fornecedores', savedData.fornecedores),
     horas: Array.isArray(savedData.horas) ? savedData.horas : [],
+    almoxerifado: savedData.almoxerifado && typeof savedData.almoxerifado === 'object'
+      ? {
+          version: 1,
+          tables: Array.isArray(savedData.almoxerifado.tables) ? savedData.almoxerifado.tables : [],
+          gasTypes: Array.isArray(savedData.almoxerifado.gasTypes) ? savedData.almoxerifado.gasTypes : [],
+          allocations: Array.isArray(savedData.almoxerifado.allocations) ? savedData.almoxerifado.allocations : []
+        }
+      : baseData.almoxerifado,
     config: savedData.config ? { ...baseData.config, ...savedData.config } : baseData.config,
     listas: savedData.listas ? { ...baseData.listas, ...savedData.listas } : baseData.listas
   };
@@ -878,7 +886,9 @@ const createInitialData = (savedData: any) => {
     sanitizedData.horas
   ].some((collection) => collection.length > 0);
 
-  if (!hasUserData && (!sanitizedData.config?.empresaNome || sanitizedData.config.empresaNome === 'Linave ERP' || sanitizedData.config.empresaNome === 'Nova Empresa')) {
+  const hasAlmoxerifadoData = Boolean(savedData?.almoxerifado && typeof savedData.almoxerifado === 'object');
+
+  if (!hasUserData && !hasAlmoxerifadoData && (!sanitizedData.config?.empresaNome || sanitizedData.config.empresaNome === 'Linave ERP' || sanitizedData.config.empresaNome === 'Nova Empresa')) {
     return baseData;
   }
 
@@ -899,6 +909,7 @@ interface ErpContextData {
   equipes: any[];
   fornecedores: any[];
   horas: any[];
+  almoxerifado: any;
   config: any;
   listas: any;
   loginComGoogle: (token: string, email: string) => Promise<void>;

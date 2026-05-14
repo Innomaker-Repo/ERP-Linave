@@ -1,10 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Anchor, Cable, CheckCircle2, ChevronDown, ChevronUp, ClipboardList, Gauge, Hammer, Layers3, MapPin, Microscope, Package, Plus, Search, Table2, TrendingUp, X, Zap } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, Anchor, Cable, CheckCircle2, ChevronDown, ChevronUp, ClipboardList, Gauge, Hammer, Layers3, MapPin, Microscope, Package, Plus, Search, Table2, TrendingUp, Trash2, X, Zap } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Badge } from '../../../modules/shared/ui/badge';
 import { Input } from '../../../modules/shared/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../modules/shared/ui/select';
 import { useErp } from '../../../context/ErpContext';
+import { getOrdensServico, getOsOptionLabel, getOsOptionValue, type OrdemServicoResumo } from '../../../../services/ordensServico';
 
 interface StockColumn {
   key: string;
@@ -356,11 +357,9 @@ const createRegisterValues = (table?: StockTable, baseValues: Record<string, str
 };
 
 export function EstoqueView({ searchQuery }: StockViewProps) {
-  const { os } = useErp();
-
-  const availableOS = useMemo(() => {
-    return os?.filter((o: any) => o.statusEnvio === 'enviada' || o.statusOs === 'emproducao' || o.statusAprovacao === 'aprovada') || [];
-  }, [os]);
+  const { os, almoxerifado, saveEntity, loading } = useErp();
+  const hasHydratedPersistedState = useRef(false);
+  const [ordensServicoBackend, setOrdensServicoBackend] = useState<OrdemServicoResumo[]>([]);
 
   const [tables, setTables] = useState<StockTable[]>(() => STOCK_TABLES.map((table) => ({
     ...table,
@@ -371,6 +370,7 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
   const [selectedCategory, setSelectedCategory] = useState<'Materiais' | 'Equipamentos' | 'Alugados'>('Materiais');
   const [selectedType, setSelectedType] = useState<string>('');
   const [filtro, setFiltro] = useState<string>(searchQuery || '');
+  const [selectedOsFilter, setSelectedOsFilter] = useState<string>('');
   
   // Modais de Criação/Edição
   const [isRegisterOpen, setIsRegisterOpen] = useState(false);
@@ -404,6 +404,77 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
     local: '',
     osId: ''
   });
+
+  useEffect(() => {
+    let mounted = true;
+
+    const carregarOrdensServico = async () => {
+      try {
+        const ordens = await getOrdensServico();
+        if (mounted) {
+          setOrdensServicoBackend(ordens);
+        }
+      } catch (error) {
+        console.error('Erro ao carregar ordens de servico do backend:', error);
+        if (mounted) {
+          setOrdensServicoBackend([]);
+        }
+      }
+    };
+
+    void carregarOrdensServico();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const availableOS = useMemo(() => {
+    const source = ordensServicoBackend.length > 0 ? ordensServicoBackend : (Array.isArray(os) ? os : []);
+    return source.filter((item: any) => {
+      const statusEnvio = item.statusEnvio || item.status_envio || '';
+      const statusOs = item.statusOs || item.status_os || '';
+      const statusAprovacao = item.statusAprovacao || item.status_aprovacao || '';
+      return statusEnvio === 'enviada' || statusOs === 'emproducao' || statusAprovacao === 'aprovada';
+    });
+  }, [ordensServicoBackend, os]);
+
+  useEffect(() => {
+    if (loading || hasHydratedPersistedState.current) return;
+
+    if (almoxerifado?.version === 1) {
+      if (Array.isArray(almoxerifado.tables)) {
+        setTables(
+          almoxerifado.tables.map((table: StockTable) => ({
+            ...table,
+            columns: Array.isArray(table.columns) ? [...table.columns] : [],
+            rows: Array.isArray(table.rows)
+              ? table.rows.map((row) => ({ ...row, values: { ...(row.values || {}) } }))
+              : []
+          }))
+        );
+      }
+
+      if (Array.isArray(almoxerifado.gasTypes)) {
+        setGasTypes(almoxerifado.gasTypes);
+      }
+
+      if (Array.isArray(almoxerifado.allocations)) {
+        setAllocations(almoxerifado.allocations);
+      }
+
+      hasHydratedPersistedState.current = true;
+      return;
+    }
+
+    hasHydratedPersistedState.current = true;
+    void saveEntity('almoxerifado', { version: 1, tables, gasTypes, allocations });
+  }, [loading, almoxerifado, saveEntity, tables, gasTypes, allocations]);
+
+  useEffect(() => {
+    if (!hasHydratedPersistedState.current) return;
+    void saveEntity('almoxerifado', { version: 1, tables, gasTypes, allocations });
+  }, [tables, gasTypes, allocations, saveEntity]);
 
   const handleRemoveGas = (gasToRemove: string) => {
     setGasTypes((prev) => prev.filter((g) => g !== gasToRemove));
@@ -510,21 +581,51 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
   
   const visibleColumns = useMemo(() => {
     const cols = [...selectedTable.columns];
-    if (selectedCategory === 'Equipamentos' && !cols.some(c => c.key === 'actions')) {
+    if (!cols.some(c => c.key === 'actions')) {
       cols.push({ key: 'actions', label: '', align: 'right' });
     }
     return cols;
-  }, [selectedTable, selectedCategory]);
+  }, [selectedTable]);
 
   const visibleRows = useMemo(() => {
     const query = filtro.toLowerCase().trim();
-    if (!query) return selectedTable.rows;
-
     return selectedTable.rows.filter((row) => {
+      const matchesOsFilter = !selectedOsFilter || (() => {
+        const rowServiceOs = cleanValue(row.values.serviceOS);
+        const selectedOs = availableOS.find((item: any) => getOsOptionValue(item) === selectedOsFilter);
+
+        if (!selectedOs) {
+          return normalizeKey(rowServiceOs).includes(normalizeKey(selectedOsFilter));
+        }
+
+        const selectedLabels = [
+          getOsOptionValue(selectedOs),
+          selectedOs.numeroOs,
+          selectedOs.cc,
+          selectedOs.projeto
+        ].filter(Boolean).map((value) => normalizeKey(String(value)));
+
+        if (selectedLabels.some((value) => value && normalizeKey(rowServiceOs).includes(value))) {
+          return true;
+        }
+
+        if (row.tableName === 'Alugados - Gases') {
+          return allocations.some((allocation) =>
+            allocation.supplierRowId === row.id && selectedLabels.some((value) => value && normalizeKey(allocation.serviceOS).includes(value))
+          );
+        }
+
+        return false;
+      })();
+
+      const matchesQuery = !query || (() => {
       const matchesColumns = visibleColumns.some((column) => (row.values[column.key] || '').toLowerCase().includes(query));
       return matchesColumns || row.searchText.includes(query);
+      })();
+
+      return matchesQuery && matchesOsFilter;
     });
-  }, [filtro, selectedTable.rows, visibleColumns]);
+  }, [allocations, availableOS, filtro, selectedOsFilter, selectedTable.rows, visibleColumns]);
 
   const stats = useMemo(() => {
     const criticalItems = visibleRows.filter((row) => normalizeKey(row.values.status || '').includes('crit')).length;
@@ -566,6 +667,46 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
 
   const closeRowDetails = () => {
     setActiveRowTarget(null);
+  };
+
+  const handleDarBaixa = (row: StockRow) => {
+    const itemName = row.values.material || row.values.fornecedor || row.values.equipamento || row.values.item || 'item';
+    const shouldDelete = window.confirm(
+      `Dar baixa no item "${itemName}"?\n\nEsta ação remove o item do sistema e não pode ser desfeita.`
+    );
+
+    if (!shouldDelete) return;
+
+    setTables((previous) => previous.map((table) => {
+      if (table.name !== row.tableName) return table;
+      return {
+        ...table,
+        rows: table.rows.filter((currentRow) => currentRow.id !== row.id)
+      };
+    }));
+
+    if (row.tableName === 'Alugados - Gases') {
+      setAllocations((previous) => previous.filter((allocation) => allocation.supplierRowId !== row.id));
+      setExpandedGasRows((previous) => {
+        const next = new Set(previous);
+        next.delete(row.id);
+        return next;
+      });
+    }
+
+    if (activeRowTarget?.tableName === row.tableName && activeRowTarget?.rowId === row.id) {
+      setActiveRowTarget(null);
+    }
+
+    if (editingRowTarget?.tableName === row.tableName && editingRowTarget?.rowId === row.id) {
+      setEditingRowTarget(null);
+      setIsRegisterOpen(false);
+    }
+
+    if (equipAllocateForm.tableName === row.tableName && equipAllocateForm.rowId === row.id) {
+      setEquipAllocateForm({ rowId: '', tableName: '', equipName: '', local: '', osId: '' });
+      setIsEquipAllocateModalOpen(false);
+    }
   };
 
   const openEditFromRow = () => {
@@ -668,7 +809,7 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
     const { supplierRowId, gasName, quantity, local, serviceOS } = allocateForm;
 
     if (!supplierRowId || !gasName || !quantity || !local || !serviceOS) {
-      alert("Por favor, preencha todos os campos da alocação.");
+      alert('Por favor, preencha todos os campos da alocação e selecione uma OS.');
       return;
     }
 
@@ -713,7 +854,7 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
 
   const handleSaveEquipAllocation = () => {
     if (!equipAllocateForm.local || !equipAllocateForm.osId) {
-      alert("Por favor, preencha o local e selecione a OS.");
+      alert('Por favor, preencha o local e selecione a OS.');
       return;
     }
 
@@ -748,49 +889,66 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
 
   const renderCell = (row: StockRow, column: StockColumn) => {
     if (column.key === 'actions') {
-      if (row.tableName === 'Alugados - Gases') {
-        const isExpanded = expandedGasRows.has(row.id);
-        return (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              const next = new Set(expandedGasRows);
-              if (isExpanded) next.delete(row.id);
-              else next.add(row.id);
-              setExpandedGasRows(next);
-            }}
-            className="inline-flex items-center gap-1 rounded-full bg-red-500/15 border border-red-500/30 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-red-300 transition hover:bg-red-500/25 hover:text-white"
-          >
-            Alocados {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-          </button>
-        );
-      } 
-      else if (selectedCategory === 'Equipamentos') {
-        const isAlocado = normalizeKey(row.values.status || '') === 'alocado';
-        return (
+      const isGasTable = row.tableName === 'Alugados - Gases';
+      const isEquipamentosCategory = selectedCategory === 'Equipamentos';
+      const isAlocado = normalizeKey(row.values.status || '') === 'alocado';
+      const isExpanded = expandedGasRows.has(row.id);
+
+      return (
+        <div className="inline-flex items-center justify-end gap-2">
+          {isGasTable && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                const next = new Set(expandedGasRows);
+                if (isExpanded) next.delete(row.id);
+                else next.add(row.id);
+                setExpandedGasRows(next);
+              }}
+              className="inline-flex items-center gap-1 rounded-full bg-red-500/15 border border-red-500/30 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-red-300 transition hover:bg-red-500/25 hover:text-white"
+            >
+              Alocados {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            </button>
+          )}
+
+          {isEquipamentosCategory && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (isAlocado) return;
+
+                setEquipAllocateForm({
+                  rowId: row.id,
+                  tableName: row.tableName,
+                  equipName: row.values.material || row.values.modelo || row.values.item || 'Equipamento',
+                  local: '',
+                  osId: ''
+                });
+                setIsEquipAllocateModalOpen(true);
+              }}
+              disabled={isAlocado}
+              className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-widest transition ${isAlocado ? 'bg-white/5 text-white/20 cursor-not-allowed border border-white/5' : 'bg-red-500/15 border border-red-500/30 text-red-300 hover:bg-red-500/25 hover:text-white'}`}
+            >
+              <MapPin size={14} />
+              {isAlocado ? 'Alocado' : 'Alocar'}
+            </button>
+          )}
+
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              if (isAlocado) return;
-              
-              setEquipAllocateForm({
-                rowId: row.id,
-                tableName: row.tableName,
-                equipName: row.values.material || row.values.modelo || row.values.item || 'Equipamento',
-                local: '',
-                osId: ''
-              });
-              setIsEquipAllocateModalOpen(true);
+              handleDarBaixa(row);
             }}
-            disabled={isAlocado}
-            className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-widest transition ${isAlocado ? 'bg-white/5 text-white/20 cursor-not-allowed border border-white/5' : 'bg-red-500/15 border border-red-500/30 text-red-300 hover:bg-red-500/25 hover:text-white'}`}
+            className="inline-flex items-center gap-1 rounded-full bg-red-500/15 border border-red-500/30 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-red-300 transition hover:bg-red-500/25 hover:text-white"
           >
-            <MapPin size={14} />
-            {isAlocado ? 'Alocado' : 'Alocar'}
+            <Trash2 size={14} />
+            Dar baixa
           </button>
-        );
-      }
+        </div>
+      );
     }
 
     const value = row.values[column.key] || '—';
@@ -804,6 +962,7 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
         </Badge>
       );
     }
+
 
     return (
       <span className={`block whitespace-pre-wrap text-xs leading-relaxed ${textTone} ${column.align === 'center' ? 'text-center' : ''} ${column.align === 'right' ? 'text-right' : ''}`}>
@@ -990,14 +1149,36 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
 
         <div className="space-y-2">
           <label className="ml-1 block text-[10px] font-black uppercase tracking-widest text-white/40">Busca</label>
-          <div className="relative">
-            <Search size={18} className="pointer-events-none absolute left-4 top-3.5 text-white/40" />
-            <Input
-              placeholder="Buscar por nome, categoria, fornecedor..."
-              value={filtro}
-              onChange={(event) => setFiltro(event.target.value)}
-              className="h-14 border-white/10 bg-white/5 pl-12 text-white placeholder:text-white/40"
-            />
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_240px]">
+            <div className="relative">
+              <Search size={18} className="pointer-events-none absolute left-4 top-3.5 text-white/40" />
+              <Input
+                placeholder="Buscar por nome, categoria, fornecedor..."
+                value={filtro}
+                onChange={(event) => setFiltro(event.target.value)}
+                className="h-14 border-white/10 bg-white/5 pl-12 text-white placeholder:text-white/40"
+              />
+            </div>
+
+            <Select value={selectedOsFilter || '__all__'} onValueChange={(value) => setSelectedOsFilter(value === '__all__' ? '' : value)}>
+              <SelectTrigger className="h-14 border-white/10 bg-white/5 text-white">
+                <SelectValue placeholder="Filtrar por OS" />
+              </SelectTrigger>
+              <SelectContent className="border border-white/10 bg-[#0b1220] text-white shadow-2xl">
+                <SelectItem value="__all__" className="cursor-pointer rounded-xl px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
+                  Todas as OS
+                </SelectItem>
+                {availableOS.map((ordemServico: any) => (
+                  <SelectItem
+                    key={getOsOptionValue(ordemServico)}
+                    value={getOsOptionValue(ordemServico)}
+                    className="cursor-pointer rounded-xl px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white"
+                  >
+                    {getOsOptionLabel(ordemServico)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
 
@@ -1449,12 +1630,27 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
                 <div className="space-y-2">
                   <label className="ml-1 block text-[10px] font-black uppercase tracking-widest text-white/40">Serviço (OS)</label>
-                  <Input 
-                    placeholder="Ex: Mauá"
+                  <Select
                     value={allocateForm.serviceOS}
-                    onChange={(e) => setAllocateForm(prev => ({ ...prev, serviceOS: e.target.value }))}
-                    className="w-full rounded-2xl border border-white/10 bg-[#0b1220] h-12 text-white"
-                  />
+                    onValueChange={(val) => setAllocateForm((prev) => ({ ...prev, serviceOS: val }))}
+                  >
+                    <SelectTrigger className="w-full rounded-2xl border border-white/10 bg-[#0b1220] h-12 text-white">
+                      <SelectValue placeholder="Selecione a OS..." />
+                    </SelectTrigger>
+                    <SelectContent className="border border-white/10 bg-[#0b1220] text-white">
+                      {availableOS.length === 0 ? (
+                        <SelectItem value="none" disabled>
+                          Nenhuma OS elegível encontrada
+                        </SelectItem>
+                      ) : (
+                        availableOS.map((ordemServico: any) => (
+                          <SelectItem key={getOsOptionValue(ordemServico)} value={getOsOptionValue(ordemServico)}>
+                            {getOsOptionLabel(ordemServico)}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-2">
                   <label className="ml-1 block text-[10px] font-black uppercase tracking-widest text-white/40">Local</label>
@@ -1526,9 +1722,9 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
                     {availableOS.length === 0 ? (
                       <SelectItem value="none" disabled>Nenhuma OS em produção</SelectItem>
                     ) : (
-                      availableOS.map((o: any) => (
-                        <SelectItem key={o.id} value={o.cc || o.ordemServicoNumero || o.id} className="cursor-pointer">
-                          {o.cc || o.ordemServicoNumero} - {o.projeto || o.cliente}
+                      availableOS.map((ordemServico: any) => (
+                        <SelectItem key={getOsOptionValue(ordemServico)} value={getOsOptionValue(ordemServico)} className="cursor-pointer">
+                          {getOsOptionLabel(ordemServico)}
                         </SelectItem>
                       ))
                     )}
@@ -1634,6 +1830,14 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
                 className="inline-flex items-center gap-2 rounded-2xl border border-emerald-500/30 bg-emerald-500/15 px-5 py-3 text-xs font-black uppercase tracking-widest text-emerald-200 transition hover:bg-emerald-500/25 hover:text-white"
               >
                 Editar item
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDarBaixa(activeRow.row)}
+                className="inline-flex items-center gap-2 rounded-2xl border border-red-500/30 bg-red-500/15 px-5 py-3 text-xs font-black uppercase tracking-widest text-red-300 transition hover:bg-red-500/25 hover:text-white"
+              >
+                <Trash2 size={14} />
+                Dar baixa
               </button>
             </div>
           </aside>

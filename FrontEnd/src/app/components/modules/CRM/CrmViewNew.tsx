@@ -1159,45 +1159,11 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       servicos: formData.servicos
     };
 
-    const novasOS = formData.servicos.map((servico, idx) => ({
-      id: `OS-${Date.now()}-${idx}`,
-      empresaPrestadora: formData.empresaPrestadora,
-      clienteId: formData.clienteId,
-      solicitante: formData.solicitante,
-      email: formData.email,
-      telefone: formData.telefone,
-      tipo: servico.tipo,
-      embarcacao: servico.embarcacao,
-      local: servico.localExecucao,
-      descricao: servico.descricao,
-      observacoes: servico.observacoes,
-      porto: servico.porto,
-      fase: formData.fase,
-      obraId: novoProjetoId,
-      obraNome: nomeObra,
-      dataCriacao: new Date().toISOString().split('T')[0],
-      status: 'Ativo',
-      statusEnvio: 'pendente',
-      horasTrabalhadasPorServico: [
-        {
-          id: `hora-servico-${Date.now()}-${idx}`,
-          servico: servico.tipo || servico.descricao || `Serviço ${idx + 1}`,
-          hora: 0
-        }
-      ],
-      docs: formData.docs
-    }));
-
-    // Aguarda ambas as operações de sincronização completarem
     const workspaceAtual = getCachedWorkspace(userSession?.email || 'admin@modo-teste.com');
     const obrasAtuais = Array.isArray(workspaceAtual.obras) ? workspaceAtual.obras : [];
-    const osAtuais = Array.isArray(workspaceAtual.os) ? workspaceAtual.os : [];
 
-    Promise.all([
-      saveEntity('obras', [...obrasAtuais, novaObra]),
-      saveEntity('os', [...osAtuais, ...novasOS])
-    ]).then(() => {
-      alert(`${novasOS.length} Serviço(s) criado(s) com sucesso!`);
+    saveEntity('obras', [...obrasAtuais, novaObra]).then(() => {
+      alert('Negócio criado com sucesso. As OS deverão ser criadas manualmente na aba de OS.');
       setShowFormNovoNegocio(false);
       setNovoNegocioTab('dados');
       setFormData(initialForm);
