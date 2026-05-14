@@ -11,6 +11,17 @@ import { getCachedWorkspace } from '../../../services/workspaceStorage';
 import { getClientes } from '../../../services/clientes';
 import { getNegocios } from '../../../services/negocios';
 import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
+// Substitua as importações antigas por esta única:
+import { 
+    getNegocios, 
+    getClientes, 
+    getNegociosDoCliente,
+    criarNegocio,        
+    atualizarNegocio,
+    excluirNegocio // Adicionado aqui!
+} from '../../../../services/comercialService';
+
+
 
 interface Servico {
   id: string;
@@ -118,7 +129,6 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingObra, setEditingObra] = useState<any>(null);
   const [expandedOrcamentoSummary, setExpandedOrcamentoSummary] = useState(false);
-  const [expandedPropostaDetalhes, setExpandedPropostaDetalhes] = useState(false);
   const [showPropostaFullModal, setShowPropostaFullModal] = useState(false);
   const [showOSFullModal, setShowOSFullModal] = useState(false);
   const [showOrcamentoFullModal, setShowOrcamentoFullModal] = useState(false);
@@ -128,7 +138,165 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   const [documentoMediacaoForm, setDocumentoMediacaoForm] = useState<DocumentoMediacaoForm | null>(null);
   const [showDocumentoPreviewModal, setShowDocumentoPreviewModal] = useState(false);
   const [documentoVisualizado, setDocumentoVisualizado] = useState<any>(null);
-  const [clientesLoading, setClientesLoading] = useState(false);
+
+    const empresasPrestadoras = useMemo(() => {
+    const empresasCadastradas = Array.isArray(config?.empresasPrestadoras)
+      ? config.empresasPrestadoras
+      : [];
+
+    const empresasPadrao = [
+      { id: 'EMP-LINAVE', nome: 'Linave', cnpj: '' },
+      { id: 'EMP-SERVINAVE', nome: 'Servinave', cnpj: '' }
+    ];
+
+    const fallbackNome = config?.empresaNome && config.empresaNome !== 'Linave ERP Demo'
+      ? config.empresaNome
+      : 'Linave';
+
+    const origem = empresasCadastradas.length > 0
+      ? [...empresasCadastradas]
+      : [{ id: 'EMP-LINAVE', nome: fallbackNome }];
+
+    empresasPadrao.forEach((empresaPadrao) => {
+      const jaExiste = origem.some((empresa: any) => {
+        const nomeBase = typeof empresa === 'string'
+          ? empresa
+          : empresa?.nome || empresa?.razaoSocial || empresa?.empresaNome || '';
+
+        return String(nomeBase).trim().toLowerCase() === empresaPadrao.nome.toLowerCase();
+      });
+
+      if (!jaExiste) {
+        origem.push(empresaPadrao);
+      }
+    });
+
+    const empresasUnicas = new Map<string, { id: string; nome: string; cnpj: string }>();
+
+    origem.forEach((empresa: any, index: number) => {
+      const nomeBase = typeof empresa === 'string'
+        ? empresa
+        : empresa?.nome || empresa?.razaoSocial || empresa?.empresaNome || '';
+      const nome = String(nomeBase).trim();
+
+      if (!nome) return;
+
+      const chave = nome.toLowerCase();
+      if (empresasUnicas.has(chave)) return;
+
+      empresasUnicas.set(chave, {
+        id: typeof empresa === 'object' && empresa?.id ? empresa.id : `empresa-${index}`,
+        nome,
+        cnpj: typeof empresa === 'object' ? empresa?.cnpj || empresa?.empresaCnpj || '' : ''
+      });
+    });
+
+    const empresasNormalizadas = Array.from(empresasUnicas.values());
+
+    return empresasNormalizadas.length > 0
+      ? empresasNormalizadas
+      : [{ id: 'EMP-LINAVE', nome: fallbackNome || 'Linave', cnpj: '' }];
+  }, [config?.empresasPrestadoras, config?.empresaNome]);
+
+  const empresaPrestadoraPadrao = empresasPrestadoras[0]?.nome || 'Linave';
+  
+const initialServico: Servico = {
+    id: '',
+    tipo: '',
+    categoria: '',
+    embarcacao: '',
+    localExecucao: '',
+    porto: '',
+    prazoDes: '',
+    descricao: '',
+    observacoes: ''
+  };
+
+  const initialForm = {
+    empresaPrestadora: empresaPrestadoraPadrao,
+    nomeNegocio: '',
+    clienteId: '',
+    cnpj: '',
+    origemLead: '',
+    solicitante: '',
+    cargo: '',
+    telefone: '',
+    email: '',
+    dataSolicitacao: new Date().toISOString().split('T')[0],
+    dataPrevistaInicio: '',
+    dataPrevistaFinal: '',
+    servicos: [{ ...initialServico, id: `servico-${Date.now()}` }],
+    fase: 'Pre-Venda' as FaseOS,
+    docs: {
+      requisitos: false,
+      proposta: false,
+      orcamento: false
+    },
+    documentosNegocio: [] as DocumentoNegocio[]
+  };
+
+  // --- FORMULÁRIO DE NOVO NEGÓCIO ---
+  const [formData, setFormData] = useState(initialForm);
+
+  // --- FUNÇÕES DE MANIPULAÇÃO DE SERVIÇOS (Corrigindo o ReferenceError) ---
+  const handleAddServico = () => {
+    setFormData(prev => ({
+      ...prev,
+      servicos: [...prev.servicos, { ...initialServico, id: `servico-${Date.now()}` }]
+    }));
+  };
+
+  const handleRemoveServico = (idx: number) => {
+    if (formData.servicos.length === 1) {
+      return alert("Você precisa manter pelo menos um serviço.");
+    }
+    setFormData(prev => ({
+      ...prev,
+      servicos: prev.servicos.filter((_, i) => i !== idx)
+    }));
+  };
+
+  const handleUpdateServico = (idx: number, field: string, value: any) => {
+    setFormData(prev => {
+      const updatedServicos = [...prev.servicos];
+      updatedServicos[idx] = { ...updatedServicos[idx], [field]: value };
+      return { ...prev, servicos: updatedServicos };
+    });
+  };
+
+  // --- EFEITO DE CARREGAMENTO SQL PURO ---
+  useEffect(() => {
+    const carregarDadosExclusivosSQL = async () => {
+      setIsLoading(true);
+      try {
+        const dados = await getNegocios();
+        if (Array.isArray(dados)) {
+         const formatados = dados.map((n: any) => ({
+            id: `ID ${n.id}`, 
+            nome: n.nome_negocio,
+            clienteId: n.cliente,
+            empresaPrestadora: n.empresa_prestadora || 'Linave',
+            categoria: n.categoria || 'Planejamento',
+            status: n.status || 'Aguardando orçamento', // 🟢 LÊ O STATUS REAL OU FORÇA O PADRÃO
+            solicitante: n.solicitante,
+            servicos: n.servicos || [],
+            negocioBackendId: n.id,
+            orcamentos: [], 
+            propostas: [],
+            documentosNegocio: []
+          }));
+          setNegociosBackend(formatados);
+        }
+      } catch (error) {
+        console.error("Erro ao carregar dados do SQL:", error);
+        toast.error("Erro ao conectar com o banco de dados.");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    carregarDadosExclusivosSQL();
+  }, []);
 
   const obraTemDocumentoMediacao = (obra: any) => {
     const docs = Array.isArray(obra?.documentosNegocio) ? obra.documentosNegocio : [];
@@ -298,78 +466,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     return [{ titulo: '', textosAntes: [String(escopo)], tabela: [], textosDepois: [] }];
   };
 
-  const initialServico: Servico = {
-    id: '',
-    tipo: '',
-    categoria: '',
-    embarcacao: '',
-    localExecucao: '',
-    porto: '',
-    prazoDes: '',
-    descricao: '',
-    observacoes: ''
-  };
 
-  const empresasPrestadoras = useMemo(() => {
-    const empresasCadastradas = Array.isArray(config?.empresasPrestadoras)
-      ? config.empresasPrestadoras
-      : [];
-
-    const empresasPadrao = [
-      { id: 'EMP-LINAVE', nome: 'Linave', cnpj: '' },
-      { id: 'EMP-SERVINAVE', nome: 'Servinave', cnpj: '' }
-    ];
-
-    const fallbackNome = config?.empresaNome && config.empresaNome !== 'Linave ERP Demo'
-      ? config.empresaNome
-      : 'Linave';
-
-    const origem = empresasCadastradas.length > 0
-      ? [...empresasCadastradas]
-      : [{ id: 'EMP-LINAVE', nome: fallbackNome }];
-
-    empresasPadrao.forEach((empresaPadrao) => {
-      const jaExiste = origem.some((empresa: any) => {
-        const nomeBase = typeof empresa === 'string'
-          ? empresa
-          : empresa?.nome || empresa?.razaoSocial || empresa?.empresaNome || '';
-
-        return String(nomeBase).trim().toLowerCase() === empresaPadrao.nome.toLowerCase();
-      });
-
-      if (!jaExiste) {
-        origem.push(empresaPadrao);
-      }
-    });
-
-    const empresasUnicas = new Map<string, { id: string; nome: string; cnpj: string }>();
-
-    origem.forEach((empresa: any, index: number) => {
-      const nomeBase = typeof empresa === 'string'
-        ? empresa
-        : empresa?.nome || empresa?.razaoSocial || empresa?.empresaNome || '';
-      const nome = String(nomeBase).trim();
-
-      if (!nome) return;
-
-      const chave = nome.toLowerCase();
-      if (empresasUnicas.has(chave)) return;
-
-      empresasUnicas.set(chave, {
-        id: typeof empresa === 'object' && empresa?.id ? empresa.id : `empresa-${index}`,
-        nome,
-        cnpj: typeof empresa === 'object' ? empresa?.cnpj || empresa?.empresaCnpj || '' : ''
-      });
-    });
-
-    const empresasNormalizadas = Array.from(empresasUnicas.values());
-
-    return empresasNormalizadas.length > 0
-      ? empresasNormalizadas
-      : [{ id: 'EMP-LINAVE', nome: fallbackNome || 'Linave', cnpj: '' }];
-  }, [config?.empresasPrestadoras, config?.empresaNome]);
-
-  const empresaPrestadoraPadrao = empresasPrestadoras[0]?.nome || 'Linave';
 
   const getEmpresaPrestadoraNome = (nome?: string) => {
     const valor = String(nome || '').trim();
@@ -385,146 +482,18 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
 
     
 
-  const initialForm = {
-    empresaPrestadora: empresaPrestadoraPadrao,
-    nomeNegocio: '',
-    clienteId: '',
-    cnpj: '',
-    origemLead: '',
-    solicitante: '',
-    cargo: '',
-    telefone: '',
-    email: '',
-    dataSolicitacao: new Date().toISOString().split('T')[0],
-    dataPrevistaInicio: '',
-    dataPrevistaFinal: '',
-    servicos: [{ ...initialServico, id: `servico-${Date.now()}` }],
-    fase: 'Pre-Venda' as FaseOS,
-    docs: {
-      requisitos: false,
-      proposta: false,
-      orcamento: false
-    },
-    documentosNegocio: [] as DocumentoNegocio[]
-  };
 
-  const [formData, setFormData] = useState(initialForm);
+ useEffect(() => {
+  const empresasDisponiveis = empresasPrestadoras.map((empresa) => empresa.nome);
+  // Só alteramos o estado se houver empresas E o campo atual estiver vazio ou for inválido
+  if (empresasDisponiveis.length > 0 && !empresasDisponiveis.includes(formData.empresaPrestadora)) {
+    setFormData((prev) => ({ ...prev, empresaPrestadora: empresasDisponiveis[0] }));
+  }
+}, [empresasPrestadoras, formData.empresaPrestadora]); // Adicione a dependência para validação segura
 
-  useEffect(() => {
-    const empresasDisponiveis = empresasPrestadoras.map((empresa) => empresa.nome);
-
-    if (
-      empresasDisponiveis.length > 0 &&
-      (!formData.empresaPrestadora || !empresasDisponiveis.includes(formData.empresaPrestadora))
-    ) {
-      setFormData((prev) => ({ ...prev, empresaPrestadora: empresasDisponiveis[0] }));
-    }
-  }, [empresasPrestadoras, formData.empresaPrestadora]);
-
-  // Sincronizar negócios do backend
-  useEffect(() => {
-    const sincronizarNegociosBackend = async () => {
-      try {
-        let clientesBackend = Array.isArray(clientes) ? clientes : [];
-
-        if (clientesBackend.length === 0) {
-          setClientesLoading(true);
-          try {
-            clientesBackend = await getClientes();
-            if (clientesBackend && clientesBackend.length > 0) {
-              await saveEntity('clientes', clientesBackend);
-            }
-          } finally {
-            setClientesLoading(false);
-          }
-        }
-
-        if (!clientesBackend || clientesBackend.length === 0) return;
-
-        const negociosBackend = await getNegocios();
-        if (!Array.isArray(negociosBackend) || negociosBackend.length === 0) return;
-
-        const novasObras: any[] = [...(obras || [])];
-        let atualizou = false;
-
-        for (const negocio of negociosBackend) {
-          const obraExistente = novasObras.find((o) => o.negocioBackendId === negocio.id);
-          if (obraExistente) continue;
-
-          const cliente = clientesBackend.find((c: any) => String(c.id) === String(negocio.clienteId));
-          if (!cliente) {
-            console.warn(`Cliente não encontrado para negócio ${negocio.id}: clienteId=${negocio.clienteId}`);
-            continue;
-          }
-
-          const novaObra = {
-            id: `PROJ-BACKEND-${negocio.id}`,
-            nome: negocio.nome,
-            empresaPrestadora: negocio.empresaPrestadora || 'Linave',
-            clienteId: cliente.id,
-            status: 'Planejamento',
-            categoria: 'Planejamento' as CategoriaObra,
-            tipo: 'Serviço',
-            responsavelTecnico: negocio.solicitante,
-            responsavelComercial: negocio.solicitante,
-            solicitante: negocio.solicitante,
-            telefone: negocio.telefone || '',
-            email: negocio.email || '',
-            dataCadastro: negocio.dataSolicitacao || new Date().toISOString().split('T')[0],
-            dataSolicitacao: negocio.dataSolicitacao || '',
-            dataPrevistaInicio: negocio.dataPrevistaInicio || '',
-            dataPrevistaFinal: negocio.dataPrevistaFinal || '',
-            inicioPrevisto: negocio.dataPrevistaInicio || '',
-            fimPrevisto: negocio.dataPrevistaFinal || '',
-            origemOS: true,
-            orcamento: 0,
-            orcamentos: [],
-            propostas: [],
-            documentosNegocio: [],
-            servicos: negocio.servicos || [],
-            negocioBackendId: negocio.id
-          };
-
-          novasObras.push(novaObra);
-          atualizou = true;
-        }
-
-        if (atualizou) {
-          await saveEntity('obras', novasObras);
-        }
-      } catch (error) {
-        console.error('Erro ao sincronizar negócios do backend:', error);
-      }
-    };
-
-    sincronizarNegociosBackend();
-  }, [clientes, obras, saveEntity]);
-
-  const handleAddServico = () => {
-    setFormData({
-      ...formData,
-      servicos: [...formData.servicos, { ...initialServico, id: `servico-${Date.now()}` }]
-    });
-  };
-
-  const handleRemoveServico = (idx: number) => {
-    if (formData.servicos.length === 1) {
-      return alert("Você precisa manter pelo menos um serviço.");
-    }
-    setFormData({
-      ...formData,
-      servicos: formData.servicos.filter((_, i) => i !== idx)
-    });
-  };
-
-  const handleUpdateServico = (idx: number, field: string, value: any) => {
-    const updatedServicos = [...formData.servicos];
-    updatedServicos[idx] = { ...updatedServicos[idx], [field]: value };
-    setFormData({ ...formData, servicos: updatedServicos });
-  };
-
+  
   const handleClienteChange = (clienteId: string) => {
-    const cliente = (clientes || []).find(c => c.id === clienteId);
+    const cliente = (clientes || []).find(c => String(c.id) === String(clienteId));
     setFormData({
       ...formData,
       clienteId,
@@ -570,6 +539,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : 0;
   };
+  
   const getBase64FromUrl = async (url: string): Promise<string | undefined> => {
     try {
       const response = await fetch(url);
@@ -636,7 +606,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   const obterCnpjCliente = (cliente: any) => cliente?.cpfCnpj || cliente?.cnpj || '';
 
   const handleAbrirDocumentoMediacao = (obra: any) => {
-    const obraAtual = (obras || []).find((item: any) => item.id === obra.id) || obra;
+    const obraAtual = (negociosBackend || []).find((item: any) => item.id === obra.id) || obra;
     const cliente = (clientes || []).find((item: any) => item.id === obraAtual.clienteId);
     const ultimaProposta = Array.isArray(obraAtual.propostas) && obraAtual.propostas.length > 0
       ? obraAtual.propostas[obraAtual.propostas.length - 1]
@@ -994,25 +964,40 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     return [];
   };
 
-  const persistirObraAtualizada = (obraAtualizada: any, moverParaTopo = false) => {
-    const listaBase = obras || [];
-    const obrasAtualizadas = moverParaTopo
-      ? [obraAtualizada, ...listaBase.filter((o: any) => o.id !== obraAtualizada.id)]
-      : listaBase.map((o: any) => (o.id === obraAtualizada.id ? obraAtualizada : o));
+  const persistirObraAtualizada = async (obraAtualizada: any, moverParaTopo = false) => {
+    try {
+      // 1. Monta o payload para o Django
+      const payloadUpdate = {
+        categoria: obraAtualizada.categoria,
+        status: obraAtualizada.status,
+      };
 
-    saveEntity('obras', obrasAtualizadas);
+      // 2. Chama a API do Django passando a Chave Primária (negocioBackendId)
+      if (obraAtualizada.negocioBackendId) {
+        await atualizarNegocio(obraAtualizada.negocioBackendId, payloadUpdate);
+      }
 
-    if (selectedObraDetalhes?.id === obraAtualizada.id) {
-      setSelectedObraDetalhes(obraAtualizada);
-    }
-    if (editingObra?.id === obraAtualizada.id) {
-      setEditingObra(obraAtualizada);
-    }
-    if (selectedObraArquivos?.id === obraAtualizada.id) {
-      setSelectedObraArquivos(obraAtualizada);
+      // 3. Atualiza a tela localmente
+     setNegociosBackend(prev => {
+        const listaBase = prev.filter(o => o.id !== obraAtualizada.id);
+        return moverParaTopo 
+          ? [obraAtualizada, ...listaBase]
+          : prev.map(o => (o.id === obraAtualizada.id ? obraAtualizada : o));
+      });
+
+      //  Sincroniza qualquer edição/movimentação com as outras telas
+      saveEntity('obras', (obras || []).map(o => o.id === obraAtualizada.id ? obraAtualizada : o));
+
+      if (selectedObraDetalhes?.id === obraAtualizada.id) setSelectedObraDetalhes(obraAtualizada);
+      if (editingObra?.id === obraAtualizada.id) setEditingObra(obraAtualizada);
+      if (selectedObraArquivos?.id === obraAtualizada.id) setSelectedObraArquivos(obraAtualizada);
+
+    } catch (error) {
+      console.error('Erro ao atualizar no banco de dados:', error);
+      toast.error('Erro ao salvar alteração no banco de dados.');
     }
   };
-
+  
   const criarReorcamentoPorAlteracaoArquivos = (obra: any) => {
   const hoje = new Date().toISOString().split('T')[0];
   const orcamentos = normalizarOrcamentosDaObra(obra);
@@ -1232,11 +1217,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       return alert("Nome do Negócio, Cliente, Solicitante e pelo menos um Serviço são obrigatórios.");
     }
 
-    if (
-      formData.dataPrevistaInicio &&
-      formData.dataPrevistaFinal &&
-      formData.dataPrevistaFinal < formData.dataPrevistaInicio
-    ) {
+    if (formData.dataPrevistaInicio && formData.dataPrevistaFinal && formData.dataPrevistaFinal < formData.dataPrevistaInicio) {
       return alert('A Data Prevista Final não pode ser anterior à Data Prevista de Início.');
     }
 
@@ -1326,32 +1307,43 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
 
   const handleSaveEditObra = async () => {
     if (!editingObra) return;
-
     const dataInicio = editingObra.dataPrevistaInicio || editingObra.inicioPrevisto;
     const dataFinal = editingObra.dataPrevistaFinal || editingObra.fimPrevisto;
     if (dataInicio && dataFinal && dataFinal < dataInicio) {
       return alert('A Data Prevista Final não pode ser anterior à Data Prevista de Início.');
     }
 
-    const obrasAtualizadas = obras?.map((o: any) => o.id === editingObra.id ? editingObra : o) || [];
-    
-    saveEntity('obras', obrasAtualizadas).then(() => {
-      alert("Negócio atualizado com sucesso!");
-      setShowEditModal(false);
-      setEditingObra(null);
-    }).catch((error) => {
-      console.error('Erro ao atualizar negócio:', error);
-      alert('Erro ao salvar negócio. Tente novamente.');
-    });
+    // Chama a função da API e fecha o modal
+    await persistirObraAtualizada(editingObra);
+    alert("Negócio atualizado com sucesso!");
+    setShowEditModal(false);
+    setEditingObra(null);
   };
 
-  const handleAprovarOrcamento = () => {
+  const handleDeleteNegocio = async (idBackend: number) => {
+    const confirmacao = window.confirm("ATENÇÃO: Tem certeza que deseja excluir permanentemente este negócio? Esta ação não pode ser desfeita.");
+    if (!confirmacao) return;
+
+    try {
+      await excluirNegocio(idBackend);
+      
+      // Remove o negócio da tela instantaneamente sem precisar dar F5
+      setNegociosBackend(prev => prev.filter(n => n.negocioBackendId !== idBackend));
+      
+      toast.success('Negócio excluído com sucesso!');
+      setShowEditModal(false);
+      setEditingObra(null);
+    } catch (error) {
+      toast.error('Erro ao excluir negócio. Verifique o console.');
+    }
+  };
+
+   const handleAprovarOrcamento = async () => {
     if (!selectedObraDetalhes) return;
 
     let proximaCategoria: CategoriaObra = 'Negociação';
     let mensagem = '';
 
-    // Determinar próxima categoria baseado na categoria atual
     if (selectedObraDetalhes.categoria === 'Planejamento') {
       proximaCategoria = 'Negociação';
       mensagem = "Orçamento aprovado! Negócio movido para Negociação.";
@@ -1369,7 +1361,6 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       mensagem = "Orçamento aprovado! Negócio movido para Em Andamento.";
     }
 
-    // Marcar última versão de orçamento como aceita
     const orcamentosAtualizados = selectedObraDetalhes.orcamentos?.map((o: any, idx: number) => 
       idx === selectedObraDetalhes.orcamentos.length - 1 ? { ...o, status: 'aceito' as const } : o
     ) || [];
@@ -1382,19 +1373,14 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       status: proximaCategoria
     };
 
-    const obrasAtualizadas = obras?.map((o: any) => o.id === selectedObraDetalhes.id ? obraAtualizada : o) || [];
-    
-    saveEntity('obras', obrasAtualizadas).then(() => {
-      alert(mensagem);
-      setShowDetalhesObraModal(false);
-      setSelectedObraDetalhes(null);
-    }).catch((error) => {
-      console.error('Erro ao atualizar orçamento:', error);
-      alert('Erro ao salvar mudanças. Tente novamente.');
-    });
+    // Usando await e fechando a função corretamente
+    await persistirObraAtualizada(obraAtualizada);
+    alert(mensagem);
+    setShowDetalhesObraModal(false);
+    setSelectedObraDetalhes(null);
   };
 
-  const handleRecusarOrcamento = () => {
+  const handleRecusarOrcamento = async () => {
     if (!selectedObraDetalhes) return;
 
     const confirmacao = window.confirm("Tem certeza que deseja recusar este orçamento? O negócio voltará para Aguardando orçamento.");
@@ -1416,7 +1402,6 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
 
     if (orcamentosBase.length === 0) return;
     
-    // Marcar última versão como recusada
     const orcamentosAtualizados = orcamentosBase.map((o: any, idx: number, lista: any[]) => 
       idx === lista.length - 1 ? { ...o, status: 'recusado' as const, dataRecusa } : o
     );
@@ -1430,19 +1415,11 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       status: 'Aguardando orçamento'
     };
 
-    const obrasAtualizadas = [
-      obraAtualizada,
-      ...((obras || []).filter((o: any) => o.id !== selectedObraDetalhes.id))
-    ];
-    
-    saveEntity('obras', obrasAtualizadas).then(() => {
-      alert("Orçamento recusado. Negócio retornou para Aguardando orçamento.");
-      setShowDetalhesObraModal(false);
-      setSelectedObraDetalhes(null);
-    }).catch((error) => {
-      console.error('Erro ao recusar orçamento:', error);
-      alert('Erro ao salvar mudanças. Tente novamente.');
-    });
+    // Usando await e fechando a função corretamente
+    await persistirObraAtualizada(obraAtualizada, true);
+    alert("Orçamento recusado. Negócio retornou para Aguardando orçamento.");
+    setShowDetalhesObraModal(false);
+    setSelectedObraDetalhes(null);
   };
 
   const handleDownloadOSPDF = async () => {
@@ -1451,6 +1428,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     toast.error('Nenhuma OS vinculada a este negócio.');
     return;
   }
+
   
   // Pega a OS Consolidada mais recente, ou a primeira do array, ou usa o próprio selectedObraDetalhes como fallback
   const osPrincipal = [...osDoNegocio].reverse().find((o: any) => o.tipoDocumento === 'consolidada' || (o.aSerIncluido && Object.keys(o.aSerIncluido).length > 0)) || osDoNegocio[0] || selectedObraDetalhes;
@@ -1734,38 +1712,40 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     const conteudoDataUrl = doc.output('datauristring');
     doc.save(nomeArquivo);
 
-    if (selectedObraDetalhes && conteudoDataUrl) {
-      const documentosAtuais = Array.isArray(selectedObraDetalhes.documentosNegocio)
-        ? selectedObraDetalhes.documentosNegocio
-        : [];
-      const documentosSemOs = documentosAtuais.filter((docItem: any) => {
-        const id = String(docItem?.id || '').toLowerCase();
-        const nome = String(docItem?.nome || '').toLowerCase();
-        return !(id.includes('doc-os') || nome.includes('_os_') || nome.includes('ordem de serviço') || nome.includes('ordem de servico'));
-      });
+if (selectedObraDetalhes && conteudoDataUrl) {
+        const documentosAtuais = Array.isArray(selectedObraDetalhes.documentosNegocio)
+          ? selectedObraDetalhes.documentosNegocio
+          : [];
+          
+        const documentosSemOs = documentosAtuais.filter((docItem: any) => {
+          const id = String(docItem?.id || '').toLowerCase();
+          const nome = String(docItem?.nome || '').toLowerCase();
+          return !(id.includes('doc-os') || nome.includes('_os_') || nome.includes('ordem de serviço') || nome.includes('ordem de servico'));
+        });
 
-      persistirObraAtualizada({
-        ...selectedObraDetalhes,
-        documentosNegocio: [
-          ...documentosSemOs,
-          {
-            id: `doc-os-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            nome: nomeArquivo,
-            tipo: 'application/pdf',
-            tamanho: Math.max(0, Math.round((conteudoDataUrl.length * 3) / 4)),
-            dataUpload: new Date().toISOString(),
-            conteudo: conteudoDataUrl,
-          },
-        ],
-      });
+        // CHAMADA CORRETA PARA SALVAR O ANEXO NO BANCO
+        await persistirObraAtualizada({
+          ...selectedObraDetalhes,
+          documentosNegocio: [
+            ...documentosSemOs,
+            {
+              id: `doc-os-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              nome: nomeArquivo,
+              tipo: 'application/pdf',
+              tamanho: Math.max(0, Math.round((conteudoDataUrl.length * 3) / 4)),
+              dataUpload: new Date().toISOString(),
+              conteudo: conteudoDataUrl,
+            },
+          ],
+        });
+      }
+      
+      toast.success('OS baixada em PDF com sucesso!');
+    } catch (error) {
+      console.error('Erro ao gerar PDF:', error);
+      toast.error('Erro ao gerar OS em PDF');
     }
-    
-    toast.success('OS baixada em PDF com sucesso!');
-  } catch (error) {
-    console.error('Erro ao gerar PDF:', error);
-    toast.error('Erro ao gerar OS em PDF');
-  }
-};
+  };
 
   const handleDownloadOrcamentoPDF = () => {
     if (!selectedObraDetalhes?.orcamentos || selectedObraDetalhes.orcamentos.length === 0) return;
@@ -2352,37 +2332,23 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     ));
   };
 
-  const handleAvancarParaFinalizacao = () => {
-    if (!selectedObraDetalhes) return;
 
-    const podeFinalizar = possuiOSAprovadaParaFinalizacao(selectedObraDetalhes.id);
-    if (!podeFinalizar) {
-      return alert('Para avançar para Finalização é obrigatório ter OS enviada e aprovada.');
-    }
+const obrasOrdenadas = useMemo(() => {
+    return negociosBackend.filter((obra: any) => {
+      if (obraTemDocumentoMediacao(obra)) return false;
+      if (!searchQuery) return true;
 
-    const obraAtualizada = {
-      ...selectedObraDetalhes,
-      categoria: 'Finalização' as CategoriaObra,
-      status: 'Finalização'
-    };
-
-    const obrasAtualizadas = (obras || []).map((item: any) => (
-      item.id === selectedObraDetalhes.id ? obraAtualizada : item
-    ));
-
-    saveEntity('obras', obrasAtualizadas);
-    setSelectedObraDetalhes(obraAtualizada);
-    toast.success('Negócio movido para Finalização.');
-  };
-
-  const obrasOrdenadas = (obras || []).filter((obra: any) => {
-    if (obraTemDocumentoMediacao(obra)) return false;
-
-    if (!searchQuery) return true;
-    const termo = searchQuery.toLowerCase();
-    const clienteNome = (clientes || []).find(c => c.id === obra.clienteId)?.razaoSocial?.toLowerCase() || '';
-    return obra.nome.toLowerCase().includes(termo) || clienteNome.includes(termo);
-  });
+      const termo = searchQuery.toLowerCase();
+      // Adicionada proteção opcional ?. para o caso de clientes ser undefined
+      const cliente = (clientes || []).find(c => String(c.id) === String(obra.clienteId));
+      
+      return (
+        obra.nome?.toLowerCase().includes(termo) || 
+        obra.id?.toLowerCase().includes(termo) ||
+        cliente?.razaoSocial?.toLowerCase().includes(termo)
+      );
+    });
+}, [negociosBackend, searchQuery, clientes]);
 
   const inputClass = "w-full bg-[#0b1220] border border-white/10 p-3 rounded-lg text-white text-sm outline-none focus:border-amber-500 transition-all placeholder:text-white/20";
   const labelClass = "text-[9px] font-black text-white/40 uppercase tracking-widest ml-1 mb-1.5 block";
@@ -2501,10 +2467,11 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                       >
                         {/* Header com Nome e Badge de Status + Editar */}
                                               <div className="mb-2 space-y-2">
-                        <h4 className="font-black text-white text-sm leading-tight line-clamp-2 break-words">
-                          {obra.nome}{idProjeto && !idProjeto.startsWith('PROJ-') ? <span className="text-cyan-400"> • {idProjeto}</span> : null}
+                        <h4 className="font-black text-white text-sm leading-tight line-clamp-2 break-words uppercase">
+                          {obra.nome} 
+                          {obra.id && <span className="text-cyan-400 ml-1">• {String(obra.id).toUpperCase()}</span>}
                         </h4>
-                          {/* Badge + Botão Editar na Direita */}
+                         {/* Badge + Botão Editar na Direita */}
                           <div className="flex flex-wrap items-center gap-1 sm:gap-1.5">
                             {/* Badge Orçado/Pendente em Planejamento */}
                             {coluna.id === 'Planejamento' && (
@@ -3117,9 +3084,9 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
               </div>
               )}
 
-              {/* BOTÕES */}
-              <div className="flex gap-4 pt-6 border-t border-white/5">
-                <button 
+              {/* Botões */}
+              <div className="flex gap-4 pt-6 border-t border-white/5 flex-wrap">
+                <button
                   onClick={handleSave}
                   className="flex-1 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-white py-3 rounded-lg font-black uppercase text-sm tracking-widest transition-all shadow-lg shadow-emerald-900/30"
                 >
@@ -4971,7 +4938,8 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                       type="text"
                       className={`${inputClass} bg-white/5 cursor-not-allowed`}
                       disabled
-                      value={(clientes || []).find(c => c.id === editingObra.clienteId)?.razaoSocial || ''}
+                      //  Correção do String() para não quebrar a busca
+                      value={(clientes || []).find(c => String(c.id) === String(editingObra.clienteId))?.razaoSocial || ''}
                     />
                   </div>
 
@@ -4980,7 +4948,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                     <input 
                       type="text"
                       className={inputClass}
-                      value={editingObra.responsavelTecnico}
+                      value={editingObra.responsavelTecnico || ''} // Travas de segurança adicionadas
                       onChange={e => setEditingObra({...editingObra, responsavelTecnico: e.target.value})}
                     />
                   </div>
@@ -4990,7 +4958,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                     <input 
                       type="text"
                       className={inputClass}
-                      value={editingObra.responsavelComercial}
+                      value={editingObra.responsavelComercial || ''} // Travas de segurança adicionadas
                       onChange={e => setEditingObra({...editingObra, responsavelComercial: e.target.value})}
                     />
                   </div>
@@ -5001,7 +4969,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                   <input 
                     type="text"
                     className={inputClass}
-                    value={editingObra.tipo}
+                    value={editingObra.tipo || ''} //  Travas de segurança adicionadas
                     onChange={e => setEditingObra({...editingObra, tipo: e.target.value})}
                   />
                 </div>
@@ -5013,16 +4981,17 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                       type="tel"
                       className={inputClass}
                       placeholder="Telefone"
-                      value={editingObra.telefone}
+                      value={editingObra.telefone || ''} //  Travas de segurança adicionadas
                       onChange={e => setEditingObra({...editingObra, telefone: e.target.value})}
                     />
                     <input 
                       type="email"
                       className={inputClass}
                       placeholder="Email"
-                      value={editingObra.email}
+                      value={editingObra.email || ''} //  Travas de segurança adicionadas
                       onChange={e => setEditingObra({...editingObra, email: e.target.value})}
                     />
+
                   </div>
                 </div>
 
@@ -5090,6 +5059,16 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                 >
                   <FileText size={16} /> Alterar Arquivos
                 </button>
+
+                  {/* BOTÃO DE EXCLUIR ADICIONADO AQUI */}
+                <button 
+                  onClick={() => handleDeleteNegocio(editingObra.negocioBackendId)}
+                  className="px-6 bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300 py-3 rounded-lg font-black uppercase text-sm tracking-widest transition flex items-center gap-2"
+                >
+                  <X size={16} /> Excluir
+                </button>
+                {/* --------------------------------- */}
+
                 <button 
                   onClick={handleSaveEditObra}
                   className="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-400 hover:to-blue-500 text-white py-3 rounded-lg font-black uppercase text-sm tracking-widest transition-all shadow-lg shadow-blue-900/30"

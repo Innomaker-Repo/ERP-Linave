@@ -4,8 +4,13 @@ import { useErp } from '../../../context/ErpContext';
 import { getClientes, createCliente, updateCliente, deleteCliente } from '../../../../services/clientes';
 
 export function ClientesView({ searchQuery }: { searchQuery: string }) {
+<<<<<<< Updated upstream
   const { clientes, obras, saveEntity, userSession } = useErp();
   const [listaClientes, setListaClientes] = useState<any[]>(Array.isArray(clientes) ? clientes : []);
+=======
+  const { clientes, obras, saveCliente, deleteCliente, userSession } = useErp();
+  const listaClientes = Array.isArray(clientes) ? clientes : [];
+>>>>>>> Stashed changes
   
   const [showForm, setShowForm] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -68,6 +73,7 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
   };
 
   const handleSave = async () => {
+<<<<<<< Updated upstream
     if (!currentCliente.razaoSocial?.trim()) {
       alert('Preencha a Razão Social do cliente.');
       return;
@@ -129,6 +135,24 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
       alert(`Erro ao deletar cliente: ${error?.response?.data?.detail || error?.message || 'Falha desconhecida'}`);
     } finally {
       setSaving(false);
+=======
+    try {
+      const clienteParaSalvar = { ...currentCliente };
+      const saved = await saveCliente(clienteParaSalvar);
+      if (saved) {
+        setCurrentCliente(saved);
+      }
+      setShowForm(false);
+    } catch (error) {
+      console.error('Erro ao salvar cliente:', error);
+      alert('Falha ao salvar o cliente. Veja o console para mais detalhes.');
+    }
+  };
+
+  const handleDelete = async (id: any) => {
+    if (confirm("Tem certeza que deseja excluir este cliente?")) {
+      await deleteCliente(id);
+>>>>>>> Stashed changes
     }
   };
 

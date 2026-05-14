@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { getCachedWorkspace, loadWorkspace, saveWorkspace, setActiveAdminEmail, setCachedWorkspace } from '../services/workspaceStorage';
+import { getClientes, createCliente, updateCliente, deleteCliente as deleteClienteApi } from '../../services/comercialService';
 
 
 const cloneDeep = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -788,22 +789,6 @@ const MOCK_OS = [
   buildSevenOceanOS('OS-SEVEN-OCEAN-FINALIZACAO', 'SEVEN-OCEAN-FINALIZACAO', 'concluida', 'aprovada', '2026-02-24')
 ];
 
-const mergeRecordsById = (base: any[] = [], demo: any[] = []) => {
-  const merged = [...base];
-  const ids = new Set(base.map((item) => item?.id).filter(Boolean));
-
-  demo.forEach((item) => {
-    if (!item?.id || !ids.has(item.id)) {
-      merged.push(item);
-      if (item?.id) {
-        ids.add(item.id);
-      }
-    }
-  });
-
-  return merged;
-};
-
 const createInitialData = (savedData: any) => {
   const baseData = {
     empresa: null,
@@ -883,9 +868,7 @@ const createInitialData = (savedData: any) => {
 
   const sanitizedData = {
     ...baseData,
-    clientes: mergeRecordsById(baseData.clientes, sanitizeCollection('clientes', savedData.clientes)),
-    funcionarios: sanitizeCollection('funcionarios', savedData.funcionarios),
-    obras: sanitizeCollection('obras', savedData.obras),
+    clientes: [], // Commercial clients are sourced directly from backend SQL.
     financeiro: sanitizeCollection('financeiro', savedData.financeiro),
     compras: Array.isArray(savedData.compras) ? savedData.compras : [],
     os: sanitizeCollection('os', savedData.os),
@@ -952,6 +935,8 @@ interface ErpContextData {
   saveEntity: (collection: string, data: any) => Promise<void>;
   saveListas: (novasListas: any) => Promise<void>;
   saveConfig: (novaConfig: any) => Promise<void>;
+  saveCliente: (cliente: any) => Promise<any>;
+  deleteCliente: (id: any) => Promise<void>;
   uploadFileToDrive: (file: File) => Promise<string | null>;
   // Drafts (autosave) API
   saveDraft: (key: string, payload: any) => Promise<void>;
@@ -996,6 +981,14 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
         if (!mounted) return;
         console.error('Erro ao carregar workspace do backend', error);
         setData(createInitialData(null));
+      }
+
+      try {
+        const backendClientes = await getClientes();
+        if (!mounted) return;
+        setData((prevData) => ({ ...prevData, clientes: backendClientes }));
+      } catch (error) {
+        console.error('Erro ao carregar clientes SQL', error);
       } finally {
         if (mounted) {
           setLoading(false);
@@ -1020,6 +1013,41 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     console.log('refreshData chamado (sem backend)');
   };
 
+  const saveCliente = async (cliente: any) => {
+    try {
+      const savedCliente = cliente?.id
+        ? await updateCliente(cliente.id, cliente)
+        : await createCliente(cliente);
+
+      setData((prevData) => {
+        const clientesAtuais = Array.isArray(prevData.clientes) ? prevData.clientes : [];
+        const atualizados = clientesAtuais.filter((item: any) => item.id !== savedCliente.id);
+        return { ...prevData, clientes: [...atualizados, savedCliente] };
+      });
+
+      return savedCliente;
+    } catch (error) {
+      console.error('Erro ao salvar cliente no backend', error);
+      throw error;
+    }
+  };
+
+  const deleteCliente = async (id: any) => {
+    try {
+      if (typeof id === 'number' || !Number.isNaN(Number(id))) {
+        await deleteClienteApi(id);
+      }
+    } catch (error) {
+      console.error('Erro ao excluir cliente no backend', error);
+      // Continue removendo localmente para evitar exibição de dados inconsistentes
+    } finally {
+      setData((prevData) => ({
+        ...prevData,
+        clientes: (prevData.clientes || []).filter((item: any) => item.id !== id),
+      }));
+    }
+  };
+
   // Removed: loginComGoogle - agora apenas simula
   const loginComGoogle = async (token: string, email: string) => {
     showTestAlert('Google Login');
@@ -1037,6 +1065,15 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
   const saveEntity = async (collection: string, newData: any) => {
     const adminEmail = userSession?.email || 'admin@modo-teste.com';
     setActiveAdminEmail(adminEmail);
+
+    if (collection === 'clientes') {
+      console.warn('saveEntity("clientes") is deprecated. Use saveCliente() to persist clients to backend SQL.');
+      const currentWorkspace = getCachedWorkspace(adminEmail);
+      const nextWorkspace = { ...currentWorkspace, clientes: [] };
+      setCachedWorkspace(adminEmail, nextWorkspace);
+      setData((prevData) => ({ ...prevData, clientes: newData }));
+      return Promise.resolve(nextWorkspace);
+    }
 
     const executeSave = async () => {
       const currentWorkspace = getCachedWorkspace(adminEmail);

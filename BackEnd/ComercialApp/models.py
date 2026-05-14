@@ -99,6 +99,10 @@ def normalize_workspace_data(data):
 
     normalized['empresa'] = data.get('empresa', defaults['empresa'])
 
+    # Comercial clients must be managed directly by the SQL backend.
+    # Do not persist workspace-local client collections.
+    normalized['clientes'] = []
+
     return normalized
 
 class Cliente(models.Model):
@@ -122,6 +126,15 @@ class Cliente(models.Model):
 
 
 class Negocio(models.Model):
+    # Status do negócio
+    # Opções que batem exatamente com as colunas do React
+    CATEGORIA_CHOICES = [
+        ('Planejamento', 'Planejamento'),
+        ('Negociação', 'Negociação'),
+        ('Em Andamento', 'Em Andamento'),
+        ('Finalização', 'Finalização'),
+    ]
+
     id = models.BigAutoField(primary_key=True)
     cliente = models.ForeignKey('Cliente', on_delete=models.CASCADE, related_name='negocios')
     empresa_prestadora = models.CharField(max_length=100) 
@@ -130,6 +143,14 @@ class Negocio(models.Model):
     cargo = models.CharField(max_length=100, null=True, blank=True)
     telefone = models.CharField(max_length=20, null=True, blank=True)
     email = models.EmailField(max_length=254)
+    
+    # Campo novo para o Kanban
+    categoria = models.CharField(
+        max_length=30, 
+        choices=CATEGORIA_CHOICES, 
+        default='Planejamento'
+    )
+
     data_solicitacao = models.DateField(auto_now_add=True)
     data_prevista_inicio = models.DateField(null=True, blank=True)
     data_prevista_final = models.DateField(null=True, blank=True)
@@ -138,7 +159,7 @@ class Negocio(models.Model):
 
     def __str__(self):
         return f"{self.nome_negocio} - {self.cliente.razao_social}"
-
+    
 class Servico(models.Model):
     id = models.BigAutoField(primary_key=True)
     negocio = models.ForeignKey(Negocio, on_delete=models.CASCADE, related_name='servicos')
