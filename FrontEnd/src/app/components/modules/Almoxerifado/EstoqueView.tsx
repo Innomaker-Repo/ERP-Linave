@@ -74,6 +74,37 @@ const makeRow = (values: Record<string, string>, prefix: string, index: number, 
   };
 };
 
+const STOCK_STORAGE_KEY = 'erp-estoque-storage';
+
+const loadStoredStockState = () => {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return null;
+  }
+
+  const stored = window.localStorage.getItem(STOCK_STORAGE_KEY);
+  if (!stored) return null;
+
+  try {
+    const parsed = JSON.parse(stored);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return parsed as {
+      tables?: StockTable[];
+      gasTypes?: string[];
+      allocations?: GasAllocation[];
+    };
+  } catch {
+    return null;
+  }
+};
+
+const saveStoredStockState = (state: { tables: StockTable[]; gasTypes: string[]; allocations: GasAllocation[] }) => {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+
+  window.localStorage.setItem(STOCK_STORAGE_KEY, JSON.stringify(state));
+};
+
 const sharedColumns: StockColumn[] = [
   { key: 'item', label: 'Item' },
   { key: 'material', label: 'Material' },
@@ -362,11 +393,18 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
     return os?.filter((o: any) => o.statusEnvio === 'enviada' || o.statusOs === 'emproducao' || o.statusAprovacao === 'aprovada') || [];
   }, [os]);
 
-  const [tables, setTables] = useState<StockTable[]>(() => STOCK_TABLES.map((table) => ({
-    ...table,
-    columns: [...table.columns],
-    rows: table.rows.map((row) => ({ ...row, values: { ...row.values } }))
-  })));
+  const storedStock = loadStoredStockState();
+
+  const [tables, setTables] = useState<StockTable[]>(() => {
+    if (storedStock?.tables && Array.isArray(storedStock.tables) && storedStock.tables.length > 0) {
+      return storedStock.tables;
+    }
+    return STOCK_TABLES.map((table) => ({
+      ...table,
+      columns: [...table.columns],
+      rows: table.rows.map((row) => ({ ...row, values: { ...row.values } }))
+    }));
+  });
   
   const [selectedCategory, setSelectedCategory] = useState<'Materiais' | 'Equipamentos' | 'Alugados'>('Materiais');
   const [selectedType, setSelectedType] = useState<string>('');
@@ -380,13 +418,23 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
   const [editingRowTarget, setEditingRowTarget] = useState<{ tableName: string; rowId: string } | null>(null);
 
   // Estados dos Gases e Alocações
-  const [gasTypes, setGasTypes] = useState<string[]>(INITIAL_GAS_TYPES);
+  const [gasTypes, setGasTypes] = useState<string[]>(() => {
+    if (storedStock?.gasTypes && Array.isArray(storedStock.gasTypes) && storedStock.gasTypes.length > 0) {
+      return storedStock.gasTypes;
+    }
+    return INITIAL_GAS_TYPES;
+  });
   const [newGasName, setNewGasName] = useState('');
   const [expandedGasRows, setExpandedGasRows] = useState<Set<string>>(new Set());
   
   // Modal de Alocação Gases
   const [isAllocateModalOpen, setIsAllocateModalOpen] = useState(false);
-  const [allocations, setAllocations] = useState<GasAllocation[]>([]);
+  const [allocations, setAllocations] = useState<GasAllocation[]>(() => {
+    if (storedStock?.allocations && Array.isArray(storedStock.allocations)) {
+      return storedStock.allocations;
+    }
+    return [];
+  });
   const [allocateForm, setAllocateForm] = useState({
     supplierRowId: '',
     gasName: '',
@@ -394,6 +442,11 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
     local: '',
     serviceOS: ''
   });
+
+  // Persist inventory changes to browser localStorage
+  useEffect(() => {
+    saveStoredStockState({ tables, gasTypes, allocations });
+  }, [tables, gasTypes, allocations]);
 
   // Modal de Alocação Equipamentos
   const [isEquipAllocateModalOpen, setIsEquipAllocateModalOpen] = useState(false);

@@ -97,6 +97,9 @@ export function ensureWorkspaceShape(workspace: any): WorkspaceData {
       : { ...DEFAULT_WORKSPACE[key] };
   });
 
+  // Ignore legacy workspace-serialized commercial clients.
+  normalized['clientes'] = [];
+
   return normalized;
 }
 
@@ -142,4 +145,21 @@ export async function saveWorkspace(adminEmail = activeAdminEmail, workspace: Wo
   const savedWorkspace = ensureWorkspaceShape(payload?.data);
   setCachedWorkspace(adminEmail, savedWorkspace);
   return savedWorkspace;
+}
+
+export function clearLegacyCommercialLocalStorage() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+
+  const keysToRemove: string[] = [];
+  for (let index = 0; index < window.localStorage.length; index++) {
+    const key = window.localStorage.key(index);
+    if (!key) continue;
+    if (/workspace|linave|comercial|crm|erp/i.test(key)) {
+      keysToRemove.push(key);
+    }
+  }
+
+  keysToRemove.forEach((key) => window.localStorage.removeItem(key));
 }
