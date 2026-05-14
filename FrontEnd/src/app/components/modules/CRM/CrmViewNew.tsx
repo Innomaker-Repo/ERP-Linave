@@ -8,8 +8,6 @@ import autoTable from 'jspdf-autotable'; // Importação nomeada do plugin
 import { handleDownloadMedicaoPDF } from './handleDownloadMedicaoPDF';
 import { handleDownloadPropostaPDF } from './handleDownloadPropostaPDF'; 
 import { getCachedWorkspace } from '../../../services/workspaceStorage';
-import { getClientes } from '../../../services/clientes';
-import { getNegocios } from '../../../services/negocios';
 import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
 // Substitua as importações antigas por esta única:
 import { 
@@ -125,6 +123,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
 // Estado local que morre ao fechar a página ou dar F5
   const [negociosBackend, setNegociosBackend] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [clientesLoading, setClientesLoading] = useState(false);
   const [showFormNovoNegocio, setShowFormNovoNegocio] = useState(false);
   const [novoNegocioTab, setNovoNegocioTab] = useState<'dados' | 'servicos' | 'documentos'>('dados');
   const [selectedObraDetalhes, setSelectedObraDetalhes] = useState<any>(null);

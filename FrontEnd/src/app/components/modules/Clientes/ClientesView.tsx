@@ -4,13 +4,8 @@ import { useErp } from '../../../context/ErpContext';
 import { getClientes, createCliente, updateCliente, deleteCliente } from '../../../../services/clientes';
 
 export function ClientesView({ searchQuery }: { searchQuery: string }) {
-<<<<<<< Updated upstream
   const { clientes, obras, saveEntity, userSession } = useErp();
   const [listaClientes, setListaClientes] = useState<any[]>(Array.isArray(clientes) ? clientes : []);
-=======
-  const { clientes, obras, saveCliente, deleteCliente, userSession } = useErp();
-  const listaClientes = Array.isArray(clientes) ? clientes : [];
->>>>>>> Stashed changes
   
   const [showForm, setShowForm] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -53,7 +48,7 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
     contato: '',
     endereco: '',
     dataCadastro: new Date().toISOString().split('T')[0],
-    usuarioResponsavel: userSession?.email || 'Sistema'
+    usuarioResponsavel: '' // Campo vazio por padrão
   };
 
   const [currentCliente, setCurrentCliente] = useState<any>(initialClienteState);
@@ -63,17 +58,14 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
       setCurrentCliente(cliente);
       setEditMode(true);
     } else {
-      setCurrentCliente({
-        ...initialClienteState,
-        usuarioResponsavel: userSession?.email || 'Sistema' // Pega o usuário logado automaticamente
-      });
+      setCurrentCliente(initialClienteState);
       setEditMode(false);
     }
     setShowForm(true);
   };
 
   const handleSave = async () => {
-<<<<<<< Updated upstream
+    // Validação de campos obrigatórios
     if (!currentCliente.razaoSocial?.trim()) {
       alert('Preencha a Razão Social do cliente.');
       return;
@@ -82,6 +74,16 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
     const cpfCnpjTrimmed = currentCliente.cpfCnpj?.trim();
     if (!cpfCnpjTrimmed) {
       alert('Preencha o CPF/CNPJ do cliente.');
+      return;
+    }
+
+    if (!currentCliente.contato?.trim()) {
+      alert('Preencha o contato (telefone ou e-mail) do cliente.');
+      return;
+    }
+
+    if (!currentCliente.endereco?.trim()) {
+      alert('Preencha o endereço completo do cliente.');
       return;
     }
 
@@ -135,27 +137,8 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
       alert(`Erro ao deletar cliente: ${error?.response?.data?.detail || error?.message || 'Falha desconhecida'}`);
     } finally {
       setSaving(false);
-=======
-    try {
-      const clienteParaSalvar = { ...currentCliente };
-      const saved = await saveCliente(clienteParaSalvar);
-      if (saved) {
-        setCurrentCliente(saved);
-      }
-      setShowForm(false);
-    } catch (error) {
-      console.error('Erro ao salvar cliente:', error);
-      alert('Falha ao salvar o cliente. Veja o console para mais detalhes.');
     }
   };
-
-  const handleDelete = async (id: any) => {
-    if (confirm("Tem certeza que deseja excluir este cliente?")) {
-      await deleteCliente(id);
->>>>>>> Stashed changes
-    }
-  };
-
 
   // Filtro de busca
   const listaFiltrada = listaClientes.filter((c: any) => 

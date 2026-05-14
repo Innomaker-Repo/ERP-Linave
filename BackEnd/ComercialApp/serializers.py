@@ -62,14 +62,13 @@ class ServicosTerceirizadosSerializer(serializers.ModelSerializer):
     class Meta:
         model = Servico_terceirizado
         fields = '__all__'
-
-<<<<<<< Updated upstream
 class EscopoSerializer(serializers.ModelSerializer):
     tipo_detalhes = ServicoSerializer(source='tipo', read_only=True)
 
     class Meta:
         model = Escopo
         fields = '__all__'
+
 
 class PropostaComercialSerializer(serializers.ModelSerializer):
     cliente_detalhes = ClienteSerializer(source='cliente', read_only=True)
@@ -88,10 +87,7 @@ class PropostaComercialSerializer(serializers.ModelSerializer):
             'proposta_escopo', 'proposta_escopo_input'
         ]
 
-# ------------------  The Summary & Container  -------------------
-=======
 # ------------------ The Summary & Container -------------------
->>>>>>> Stashed changes
 
 class Resumo_orcamentoSerializer(serializers.ModelSerializer):
     total_mdo = serializers.ReadOnlyField()
