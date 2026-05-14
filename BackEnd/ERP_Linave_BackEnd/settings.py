@@ -91,8 +91,12 @@ DATABASES = {
         'ENGINE': 'django.db.backends.mysql',
         'NAME': 'linave_db',
         'USER': 'root',
+<<<<<<< HEAD
         #'PASSWORD': 'Kamilinha1-',
         'PASSWORD': 'password@123',
+=======
+        'PASSWORD': 'Kamilinha1-',
+>>>>>>> 9f29e86 (feat: tentativa-merge)
         'HOST': 'localhost',
         'PORT': '3306',
     }

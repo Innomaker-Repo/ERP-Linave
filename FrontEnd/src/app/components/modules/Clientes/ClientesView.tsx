@@ -50,7 +50,7 @@ import { getClientes, createCliente, updateCliente, deleteCliente } from '../../
     contato: '',
     endereco: '',
     dataCadastro: new Date().toISOString().split('T')[0],
-    usuarioResponsavel: userSession?.email || 'Sistema'
+    usuarioResponsavel: '' // Campo vazio por padrão
   };
 
   const [currentCliente, setCurrentCliente] = useState<any>(initialClienteState);
@@ -60,10 +60,7 @@ import { getClientes, createCliente, updateCliente, deleteCliente } from '../../
       setCurrentCliente(cliente);
       setEditMode(true);
     } else {
-      setCurrentCliente({
-        ...initialClienteState,
-        usuarioResponsavel: userSession?.email || 'Sistema' // Pega o usuário logado automaticamente
-      });
+      setCurrentCliente(initialClienteState);
       setEditMode(false);
     }
     setShowForm(true);
