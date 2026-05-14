@@ -431,12 +431,8 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
 
   const availableOS = useMemo(() => {
     const source = ordensServicoBackend.length > 0 ? ordensServicoBackend : (Array.isArray(os) ? os : []);
-    return source.filter((item: any) => {
-      const statusEnvio = item.statusEnvio || item.status_envio || '';
-      const statusOs = item.statusOs || item.status_os || '';
-      const statusAprovacao = item.statusAprovacao || item.status_aprovacao || '';
-      return statusEnvio === 'enviada' || statusOs === 'emproducao' || statusAprovacao === 'aprovada';
-    });
+    // Temporariamente incluir todas as OS para permitir alocação
+    return source;
   }, [ordensServicoBackend, os]);
 
   useEffect(() => {
@@ -998,14 +994,23 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
       );
     }
 
-    if (column.key === 'total' && table.name === 'Alugados - Gases') {
+    if (column.key === 'serviceOS') {
       return (
-        <Input
-          value={value}
-          readOnly
-          className={`${baseClass} h-12 border-emerald-500/30 bg-emerald-500/10 text-emerald-300 font-bold opacity-90`}
-          placeholder="0"
-        />
+        <Select value={value} onValueChange={(nextValue) => handleRegisterChange(column.key, nextValue)}>
+          <SelectTrigger className={`${baseClass} h-12 justify-between`}>
+            <SelectValue placeholder="Selecione uma OS (opcional)" />
+          </SelectTrigger>
+          <SelectContent className="border border-white/10 bg-[#0b1220] text-white shadow-2xl">
+            <SelectItem value="" className="cursor-pointer rounded-xl px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
+              Nenhuma OS selecionada
+            </SelectItem>
+            {availableOS.map((ordemServico) => (
+              <SelectItem key={getOsOptionValue(ordemServico)} value={getOsOptionValue(ordemServico)} className="cursor-pointer rounded-xl px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
+                {getOsOptionLabel(ordemServico)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       );
     }
 
