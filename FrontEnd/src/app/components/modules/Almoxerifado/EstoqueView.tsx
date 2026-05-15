@@ -5,7 +5,7 @@ import { Badge } from '../../../modules/shared/ui/badge';
 import { Input } from '../../../modules/shared/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../modules/shared/ui/select';
 import { useErp } from '../../../context/ErpContext';
-import { getOrdensServico, getOsOptionLabel, getOsOptionValue, type OrdemServicoResumo } from '../../../../services/ordensServico';
+import { getOrdensServico, getOsOptionLabel, getOsOptionValue, type OrdemServicoResumo, isOsAlvo } from '../../../../services/ordensServico';
 
 interface StockColumn {
   key: string;
@@ -37,6 +37,31 @@ interface GasAllocation {
   quantity: number;
   local: string;
   serviceOS: string;
+}
+
+interface BaixaHistoricoItem {
+  id: string;
+  dataBaixa: string;
+  tableName: string;
+  itemLabel: string;
+  statusAnterior: string;
+  localizacao?: string;
+  serviceOS?: string;
+  snapshot: Record<string, string>;
+}
+
+interface AllocationHistoricoItem {
+  id: string;
+  action: 'alocar' | 'desalocar';
+  kind: 'gases' | 'equipamentos' | 'materiais' | 'alugaveis' | 'outros';
+  dataEvento: string;
+  osId: string;
+  osLabel: string;
+  itemLabel: string;
+  tableName: string;
+  quantity?: number;
+  local?: string;
+  gasName?: string;
 }
 
 const cleanValue = (value: unknown) => {
@@ -178,6 +203,7 @@ const getDefaultStatusForTable = (tableName?: string) => getStatusRule(tableName
 
 // Tipos de gases iniciais simulados
 const INITIAL_GAS_TYPES = ['Oxigênio', 'Acetileno'];
+const EMPTY_SERVICE_OS_VALUE = '__none__';
 
 const STOCK_TABLES: StockTable[] = [
   makeTable(
@@ -383,6 +409,8 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
   const [gasTypes, setGasTypes] = useState<string[]>(INITIAL_GAS_TYPES);
   const [newGasName, setNewGasName] = useState('');
   const [expandedGasRows, setExpandedGasRows] = useState<Set<string>>(new Set());
+  const [baixasHistorico, setBaixasHistorico] = useState<BaixaHistoricoItem[]>([]);
+  const [alocacoesHistorico, setAlocacoesHistorico] = useState<AllocationHistoricoItem[]>([]);
   
   // Modal de Alocação Gases
   const [isAllocateModalOpen, setIsAllocateModalOpen] = useState(false);
@@ -430,15 +458,35 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
   }, []);
 
   const availableOS = useMemo(() => {
-    const source = ordensServicoBackend.length > 0 ? ordensServicoBackend : (Array.isArray(os) ? os : []);
-    // Temporariamente incluir todas as OS para permitir alocação
-    return source;
+    // Merge backend-fetched ordensServico (filtered) with context `os` so
+    // allocation modal always has options even when the API returns none.
+    const backend = Array.isArray(ordensServicoBackend) ? ordensServicoBackend : [];
+    const ctx = Array.isArray(os) ? os : [];
+
+    const merged = [...backend];
+    for (const item of ctx) {
+      if (!isOsAlvo(item)) continue;
+      const val = getOsOptionValue(item as any);
+      if (!merged.some((m) => getOsOptionValue(m as any) === val)) {
+        merged.push(item as any);
+      }
+    }
+
+    return merged;
   }, [ordensServicoBackend, os]);
+
+  // Debug: log available OS when equipment allocation modal opens
+  React.useEffect(() => {
+    if (isEquipAllocateModalOpen) {
+      // eslint-disable-next-line no-console
+      console.log('[EstoqueView] Equip allocation modal opened', { availableOS, os });
+    }
+  }, [isEquipAllocateModalOpen, availableOS, os]);
 
   useEffect(() => {
     if (loading || hasHydratedPersistedState.current) return;
 
-    if (almoxerifado?.version === 1) {
+    if (almoxerifado && typeof almoxerifado === 'object') {
       if (Array.isArray(almoxerifado.tables)) {
         setTables(
           almoxerifado.tables.map((table: StockTable) => ({
@@ -459,18 +507,25 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
         setAllocations(almoxerifado.allocations);
       }
 
+      if (Array.isArray(almoxerifado.baixasHistorico)) {
+        setBaixasHistorico(almoxerifado.baixasHistorico);
+      }
+
+      if (Array.isArray(almoxerifado.alocacoesHistorico)) {
+        setAlocacoesHistorico(almoxerifado.alocacoesHistorico);
+      }
+
       hasHydratedPersistedState.current = true;
       return;
     }
 
     hasHydratedPersistedState.current = true;
-    void saveEntity('almoxerifado', { version: 1, tables, gasTypes, allocations });
-  }, [loading, almoxerifado, saveEntity, tables, gasTypes, allocations]);
+  }, [loading, almoxerifado]);
 
   useEffect(() => {
     if (!hasHydratedPersistedState.current) return;
-    void saveEntity('almoxerifado', { version: 1, tables, gasTypes, allocations });
-  }, [tables, gasTypes, allocations, saveEntity]);
+    void saveEntity('almoxerifado', { version: 2, tables, gasTypes, allocations, baixasHistorico, alocacoesHistorico });
+  }, [tables, gasTypes, allocations, baixasHistorico, alocacoesHistorico]);
 
   const handleRemoveGas = (gasToRemove: string) => {
     setGasTypes((prev) => prev.filter((g) => g !== gasToRemove));
@@ -673,6 +728,20 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
 
     if (!shouldDelete) return;
 
+    setBaixasHistorico((prev) => [
+      {
+        id: `baixa-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        dataBaixa: new Date().toISOString(),
+        tableName: row.tableName,
+        itemLabel: itemName,
+        statusAnterior: row.values.status || '',
+        localizacao: row.values.localizacao || '',
+        serviceOS: row.values.serviceOS || '',
+        snapshot: { ...row.values }
+      },
+      ...prev
+    ]);
+
     setTables((previous) => previous.map((table) => {
       if (table.name !== row.tableName) return table;
       return {
@@ -843,9 +912,97 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
     };
 
     setAllocations((prev) => [...prev, newAlloc]);
+    setAlocacoesHistorico((prev) => [
+      {
+        id: `aloc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        action: 'alocar',
+        kind: 'gases',
+        dataEvento: new Date().toISOString(),
+        osId: serviceOS,
+        osLabel: serviceOS,
+        itemLabel: gasName,
+        tableName: 'Alugados - Gases',
+        quantity: requestedQuantity,
+        local,
+        gasName
+      },
+      ...prev
+    ]);
     setIsAllocateModalOpen(false);
     setAllocateForm({ supplierRowId: '', gasName: '', quantity: '1', local: '', serviceOS: '' });
     setExpandedGasRows(prev => new Set(prev).add(supplierRowId));
+  };
+
+  const handleRemoveAllocation = (allocationId: string, supplierRowId: string) => {
+    const confirmRemoval = window.confirm('Deseja desalocar este serviço?');
+    if (!confirmRemoval) return;
+
+    const allocationToRemove = allocations.find((allocation) => allocation.id === allocationId);
+    setAllocations((prev) => prev.filter((allocation) => allocation.id !== allocationId));
+    if (allocationToRemove) {
+      setAlocacoesHistorico((prev) => [
+        {
+          id: `desal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          action: 'desalocar',
+          kind: 'gases',
+          dataEvento: new Date().toISOString(),
+          osId: allocationToRemove.serviceOS,
+          osLabel: allocationToRemove.serviceOS,
+          itemLabel: allocationToRemove.gasName,
+          tableName: 'Alugados - Gases',
+          quantity: allocationToRemove.quantity,
+          local: allocationToRemove.local,
+          gasName: allocationToRemove.gasName
+        },
+        ...prev
+      ]);
+    }
+    setExpandedGasRows((prev) => new Set(prev).add(supplierRowId));
+  };
+
+  const handleDisallocateRow = (row: StockRow) => {
+    const confirmRemoval = window.confirm('Deseja desalocar este item?');
+    if (!confirmRemoval) return;
+
+    setTables((prevTables) =>
+      prevTables.map((table) => {
+        if (table.name !== row.tableName) return table;
+
+        return {
+          ...table,
+          rows: table.rows.map((currentRow) => {
+            if (currentRow.id !== row.id) return currentRow;
+
+            const nextValues = { ...currentRow.values };
+            delete nextValues.serviceOS;
+            delete nextValues.localizacao;
+            if (normalizeKey(nextValues.status || '') === 'alocado') {
+              nextValues.status = getDefaultStatusForTable(currentRow.tableName);
+            }
+
+            return {
+              ...currentRow,
+              values: nextValues,
+            };
+          })
+        };
+      })
+    );
+
+    setAlocacoesHistorico((prev) => [
+      {
+        id: `desal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        action: 'desalocar',
+        kind: row.tableName === 'Alugados - Equipamentos' ? 'equipamentos' : row.tableName === 'Materiais' ? 'materiais' : 'outros',
+        dataEvento: new Date().toISOString(),
+        osId: row.values.serviceOS || '',
+        osLabel: row.values.serviceOS || '',
+        itemLabel: row.values.material || row.values.equipamento || row.values.modelo || row.values.item || 'Item',
+        tableName: row.tableName,
+        local: row.values.localizacao || ''
+      },
+      ...prev
+    ]);
   };
 
   const handleSaveEquipAllocation = () => {
@@ -879,6 +1036,21 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
       })
     );
 
+    setAlocacoesHistorico((prev) => [
+      {
+        id: `aloc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        action: 'alocar',
+        kind: equipAllocateForm.tableName === 'Alugados - Equipamentos' ? 'equipamentos' : equipAllocateForm.tableName === 'Materiais' ? 'materiais' : 'outros',
+        dataEvento: new Date().toISOString(),
+        osId: equipAllocateForm.osId,
+        osLabel: equipAllocateForm.osId,
+        itemLabel: equipAllocateForm.equipName,
+        tableName: equipAllocateForm.tableName,
+        local: equipAllocateForm.local
+      },
+      ...prev
+    ]);
+
     setIsEquipAllocateModalOpen(false);
     setEquipAllocateForm({ rowId: '', tableName: '', equipName: '', local: '', osId: '' });
   };
@@ -888,6 +1060,7 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
       const isGasTable = row.tableName === 'Alugados - Gases';
       const isEquipamentosCategory = selectedCategory === 'Equipamentos';
       const isAlocado = normalizeKey(row.values.status || '') === 'alocado';
+      const hasServiceAllocation = Boolean(cleanValue(row.values.serviceOS));
       const isExpanded = expandedGasRows.has(row.id);
 
       return (
@@ -909,26 +1082,51 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
           )}
 
           {isEquipamentosCategory && (
+            hasServiceAllocation ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDisallocateRow(row);
+                }}
+                className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/15 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-emerald-200 transition hover:bg-emerald-500/25 hover:text-white"
+              >
+                <Trash2 size={14} />
+                Desalocar
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setEquipAllocateForm({
+                    rowId: row.id,
+                    tableName: row.tableName,
+                    equipName: row.values.material || row.values.modelo || row.values.item || 'Equipamento',
+                    local: '',
+                    osId: ''
+                  });
+                  setIsEquipAllocateModalOpen(true);
+                }}
+                className="inline-flex items-center gap-1 rounded-full border border-red-500/30 bg-red-500/15 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-red-300 transition hover:bg-red-500/25 hover:text-white"
+              >
+                <MapPin size={14} />
+                Alocar
+              </button>
+            )
+          )}
+
+          {!isEquipamentosCategory && hasServiceAllocation && row.tableName !== 'Alugados - Gases' && (
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                if (isAlocado) return;
-
-                setEquipAllocateForm({
-                  rowId: row.id,
-                  tableName: row.tableName,
-                  equipName: row.values.material || row.values.modelo || row.values.item || 'Equipamento',
-                  local: '',
-                  osId: ''
-                });
-                setIsEquipAllocateModalOpen(true);
+                handleDisallocateRow(row);
               }}
-              disabled={isAlocado}
-              className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-widest transition ${isAlocado ? 'bg-white/5 text-white/20 cursor-not-allowed border border-white/5' : 'bg-red-500/15 border border-red-500/30 text-red-300 hover:bg-red-500/25 hover:text-white'}`}
+              className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/15 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-emerald-200 transition hover:bg-emerald-500/25 hover:text-white"
             >
-              <MapPin size={14} />
-              {isAlocado ? 'Alocado' : 'Alocar'}
+              <Trash2 size={14} />
+              Desalocar
             </button>
           )}
 
@@ -996,12 +1194,12 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
 
     if (column.key === 'serviceOS') {
       return (
-        <Select value={value} onValueChange={(nextValue) => handleRegisterChange(column.key, nextValue)}>
+        <Select value={value} onValueChange={(nextValue) => handleRegisterChange(column.key, nextValue === EMPTY_SERVICE_OS_VALUE ? '' : nextValue)}>
           <SelectTrigger className={`${baseClass} h-12 justify-between`}>
             <SelectValue placeholder="Selecione uma OS (opcional)" />
           </SelectTrigger>
           <SelectContent className="border border-white/10 bg-[#0b1220] text-white shadow-2xl">
-            <SelectItem value="" className="cursor-pointer rounded-xl px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
+            <SelectItem value={EMPTY_SERVICE_OS_VALUE} className="cursor-pointer rounded-xl px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
               Nenhuma OS selecionada
             </SelectItem>
             {availableOS.map((ordemServico) => (
@@ -1323,12 +1521,13 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
                                       <th className="py-2 text-left">Serviço (OS)</th>
                                       {gasTypes.map(g => <th key={g} className="py-2 text-center">{g}</th>)}
                                       <th className="py-2 text-center">Total Linha</th>
+                                      <th className="py-2 text-center w-24">Ações</th>
                                     </tr>
                                   </thead>
                                   <tbody className="divide-y divide-white/5">
                                     {allocations.filter(a => a.supplierRowId === row.id).length === 0 && (
                                       <tr>
-                                        <td colSpan={gasTypes.length + 4} className="py-6 text-center text-white/30 text-xs">
+                                        <td colSpan={gasTypes.length + 5} className="py-6 text-center text-white/30 text-xs">
                                           Nenhum cilindro alocado para este fornecedor.
                                         </td>
                                       </tr>
@@ -1349,6 +1548,16 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
                                         ))}
                                         <td className="py-3 text-center text-red-300 font-bold">
                                           {alloc.quantity}
+                                        </td>
+                                        <td className="py-3 text-center">
+                                          <button
+                                            type="button"
+                                            onClick={() => handleRemoveAllocation(alloc.id, row.id)}
+                                            className="inline-flex items-center gap-1 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-red-200 transition hover:bg-red-500/20 hover:text-red-100"
+                                          >
+                                            <Trash2 size={12} />
+                                            Desalocar
+                                          </button>
                                         </td>
                                       </tr>
                                     ))}
@@ -1643,16 +1852,22 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
                       <SelectValue placeholder="Selecione a OS..." />
                     </SelectTrigger>
                     <SelectContent className="border border-white/10 bg-[#0b1220] text-white">
-                      {availableOS.length === 0 ? (
+                      {availableOS.length > 0 ? (
+                        availableOS.map((ordemServico: any) => (
+                          <SelectItem key={getOsOptionValue(ordemServico) || ordemServico?.id} value={getOsOptionValue(ordemServico) || ordemServico?.id}>
+                            {getOsOptionLabel(ordemServico) || String(ordemServico?.ordemServicoNumero || ordemServico?.numeroOs || ordemServico?.id || 'OS')}
+                          </SelectItem>
+                        ))
+                      ) : Array.isArray(os) && os.length > 0 ? (
+                        os.map((ordemServico: any) => (
+                          <SelectItem key={getOsOptionValue(ordemServico) || ordemServico?.id} value={getOsOptionValue(ordemServico) || ordemServico?.id}>
+                            {getOsOptionLabel(ordemServico) || String(ordemServico?.ordemServicoNumero || ordemServico?.numeroOs || ordemServico?.id || 'OS')}
+                          </SelectItem>
+                        ))
+                      ) : (
                         <SelectItem value="none" disabled>
                           Nenhuma OS elegível encontrada
                         </SelectItem>
-                      ) : (
-                        availableOS.map((ordemServico: any) => (
-                          <SelectItem key={getOsOptionValue(ordemServico)} value={getOsOptionValue(ordemServico)}>
-                            {getOsOptionLabel(ordemServico)}
-                          </SelectItem>
-                        ))
                       )}
                     </SelectContent>
                   </Select>
@@ -1724,14 +1939,20 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
                     <SelectValue placeholder="Selecione uma OS em produção..." />
                   </SelectTrigger>
                   <SelectContent className="border border-white/10 bg-[#0b1220] text-white">
-                    {availableOS.length === 0 ? (
-                      <SelectItem value="none" disabled>Nenhuma OS em produção</SelectItem>
-                    ) : (
+                    {availableOS.length > 0 ? (
                       availableOS.map((ordemServico: any) => (
-                        <SelectItem key={getOsOptionValue(ordemServico)} value={getOsOptionValue(ordemServico)} className="cursor-pointer">
-                          {getOsOptionLabel(ordemServico)}
+                        <SelectItem key={getOsOptionValue(ordemServico) || ordemServico?.id} value={getOsOptionValue(ordemServico) || ordemServico?.id} className="cursor-pointer">
+                          {getOsOptionLabel(ordemServico) || String(ordemServico?.ordemServicoNumero || ordemServico?.numeroOs || ordemServico?.id || 'OS')}
                         </SelectItem>
                       ))
+                    ) : Array.isArray(os) && os.length > 0 ? (
+                      os.map((ordemServico: any) => (
+                        <SelectItem key={getOsOptionValue(ordemServico) || ordemServico?.id} value={getOsOptionValue(ordemServico) || ordemServico?.id} className="cursor-pointer">
+                          {getOsOptionLabel(ordemServico) || String(ordemServico?.ordemServicoNumero || ordemServico?.numeroOs || ordemServico?.id || 'OS')}
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <SelectItem value="none" disabled>Nenhuma OS em produção</SelectItem>
                     )}
                   </SelectContent>
                 </Select>

@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, HardHat, Anchor, ClipboardList, 
   ShoppingCart, DollarSign, BarChart3, Settings, Factory, 
   HeartHandshake, List, Clock, ChevronDown, ChevronRight, 
-  Briefcase, Wrench, Activity, FileText, Zap, Building2, CheckCircle2
+  Briefcase, Wrench, Activity, FileText, Zap, Building2, CheckCircle2, Trash2
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -94,6 +94,8 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
       icon: ClipboardList,
       items: [
         { id: 'estoque', label: 'Estoque', icon: ClipboardList },
+        { id: 'historicoBaixa', label: 'Histórico de Baixa', icon: Trash2 },
+        { id: 'alocadosPorOS', label: 'Alocados por OS', icon: ClipboardList },
       ]
     },
     {

@@ -2,6 +2,7 @@ import api from './api';
 
 export type OrdemServicoResumo = {
   id: string;
+  ordemServicoNumero: string;
   numeroOs: string;
   cliente: string;
   projeto: string;
@@ -11,12 +12,19 @@ export type OrdemServicoResumo = {
   statusAprovacao: string;
 };
 
-const isOsAlvo = (os: OrdemServicoResumo) => {
-  return os.statusEnvio === 'enviada' || os.statusOs === 'emproducao' || os.statusAprovacao === 'aprovada';
+export const isOsAlvo = (os: any) => {
+  // Accept multiple naming variants from different sources (backend vs local context)
+  const statusEnvio = String(os?.status_envio ?? os?.statusEnvio ?? '').toLowerCase();
+  const statusOs = String(os?.status_os ?? os?.statusOs ?? os?.statusOs ?? '').toLowerCase();
+  // Eligible when it was sent to production and not finalized
+  const sentToProduction = statusEnvio === 'enviada' || statusEnvio === 'enviado' || statusEnvio === 'enviada para producao';
+  const isFinalized = statusOs === 'concluida' || statusOs === 'concluído' || statusOs === 'concluido';
+  return sentToProduction && !isFinalized;
 };
 
 const normalizeOs = (item: any): OrdemServicoResumo => ({
   id: String(item?.id ?? ''),
+  ordemServicoNumero: String(item?.ordemServicoNumero ?? item?.ordem_servico_numero ?? item?.numero_os ?? item?.numeroOs ?? item?.cc ?? item?.id ?? ''),
   numeroOs: String(item?.numero_os ?? item?.numeroOs ?? item?.id ?? ''),
   cliente: String(item?.cliente_detalhes?.razao_social ?? item?.cliente_detalhes?.razaoSocial ?? item?.cliente ?? ''),
   projeto: String(item?.projeto ?? ''),
@@ -27,13 +35,10 @@ const normalizeOs = (item: any): OrdemServicoResumo => ({
 });
 
 export const getOsOptionLabel = (os: OrdemServicoResumo) => {
-  const parts = [os.numeroOs];
-  if (os.cc) parts.push(`CC ${os.cc}`);
-  if (os.projeto) parts.push(os.projeto);
-  return parts.join(' - ');
+  return String(os.ordemServicoNumero || os.cc || os.numeroOs || os.id || '').trim();
 };
 
-export const getOsOptionValue = (os: OrdemServicoResumo) => os.numeroOs || os.id;
+export const getOsOptionValue = (os: OrdemServicoResumo) => String(os.ordemServicoNumero || os.cc || os.numeroOs || os.id || '').trim();
 
 export async function getOrdensServico(): Promise<OrdemServicoResumo[]> {
   const response = await api.get('ordens-servico/');

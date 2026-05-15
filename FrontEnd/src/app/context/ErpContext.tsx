@@ -863,10 +863,12 @@ const createInitialData = (savedData: any) => {
     horas: Array.isArray(savedData.horas) ? savedData.horas : [],
     almoxerifado: savedData.almoxerifado && typeof savedData.almoxerifado === 'object'
       ? {
-          version: 1,
+          version: Number(savedData.almoxerifado.version) >= 2 ? 2 : 1,
           tables: Array.isArray(savedData.almoxerifado.tables) ? savedData.almoxerifado.tables : [],
           gasTypes: Array.isArray(savedData.almoxerifado.gasTypes) ? savedData.almoxerifado.gasTypes : [],
-          allocations: Array.isArray(savedData.almoxerifado.allocations) ? savedData.almoxerifado.allocations : []
+          allocations: Array.isArray(savedData.almoxerifado.allocations) ? savedData.almoxerifado.allocations : [],
+          baixasHistorico: Array.isArray(savedData.almoxerifado.baixasHistorico) ? savedData.almoxerifado.baixasHistorico : [],
+          alocacoesHistorico: Array.isArray(savedData.almoxerifado.alocacoesHistorico) ? savedData.almoxerifado.alocacoesHistorico : []
         }
       : baseData.almoxerifado,
     config: savedData.config ? { ...baseData.config, ...savedData.config } : baseData.config,
@@ -987,7 +989,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     setActiveAdminEmail(session.email || 'admin@modo-teste.com');
   };
 
-  // Simula salvar - agora realmente salva no estado e localStorage
+  // Persiste localmente no workspace em browser storage
   const saveEntity = async (collection: string, newData: any) => {
     const adminEmail = userSession?.email || 'admin@modo-teste.com';
     setActiveAdminEmail(adminEmail);
@@ -999,14 +1001,9 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
       setCachedWorkspace(adminEmail, nextWorkspace);
       setData(nextWorkspace);
 
-      try {
-        const savedWorkspace = await saveWorkspace(adminEmail, nextWorkspace);
-        setData(savedWorkspace);
-        return savedWorkspace;
-      } catch (error) {
-        console.error(`Erro ao salvar coleção ${collection} no backend`, error);
-        return nextWorkspace;
-      }
+      const savedWorkspace = await saveWorkspace(adminEmail, nextWorkspace);
+      setData(savedWorkspace);
+      return savedWorkspace;
     };
 
     const queuedSave = saveQueueRef.current.then(executeSave, executeSave);
