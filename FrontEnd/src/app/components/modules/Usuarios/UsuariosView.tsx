@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
+import axios from 'axios';
 import { useErp } from '../../../context/ErpContext';
 import { UserPlus, Users, ShieldCheck, Mail, Key, Trash2, Edit, CheckSquare, Square, X, Save, AlertCircle } from 'lucide-react';
+import { getServiceUrl } from '../../../../services/network';
 
 // Lista de módulos que podem ser bloqueados/liberados para utilizadores comuns
 const MODULOS_DISPONIVEIS = [
@@ -39,7 +41,7 @@ export function UsuariosView() {
     if (!inviteEmail.includes('@')) return alert("E-mail inválido");
     setLoading(true);
     try {
-      await axios.post('http://localhost:3001/api/invite-user', {
+      await axios.post(getServiceUrl(3001, '/api/invite-user'), {
         adminEmail: userSession.email,
         empresaNome: 'Linave SaaS',
         userEmail: inviteEmail

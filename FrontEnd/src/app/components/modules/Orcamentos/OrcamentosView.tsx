@@ -3,6 +3,7 @@ import { useErp } from '../../../context/ErpContext';
 import { gerarIdOrcamento, extrairIdProjetoDoNumero, extrairComponentesDoId } from '../../../context/ErpContext';
 import { Plus, X, DollarSign, FileText, Trash2, Lock, Eye, Download } from 'lucide-react';
 import jsPDF from 'jspdf';
+import { getBackendUrl } from '../../../../services/network';
 
 interface MaoDeObra {
   id: string;
@@ -1002,7 +1003,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
 
   // Função para abrir o documento gerado
   const visualizarDocumento = (filename: string) => {
-    const url = `${process.env.REACT_APP_API_URL}/orcamentos/${filename}`;
+    const url = getBackendUrl(`visualizar/${filename}/`);
     window.open(url, '_blank');
   };
 
@@ -1722,6 +1723,6 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
 
 // Função para abrir o documento gerado
 const visualizarDocumento = (filename: string) => {
-  const url = `${process.env.REACT_APP_API_URL}/orcamentos/${filename}`;
+  const url = getBackendUrl(`visualizar/${filename}/`);
   window.open(url, '_blank');
 };

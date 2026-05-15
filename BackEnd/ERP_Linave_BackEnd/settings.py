@@ -26,7 +26,11 @@ SECRET_KEY = 'django-insecure-rq1079+3k43b9c(xc$pgu%4efe7cm#kv)7u69e(j22-#jo@_te
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.environ.get('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1,0.0.0.0,*').split(',')
+    if host.strip()
+]
 
 
 # Application definition
@@ -133,4 +137,7 @@ STATIC_URL = 'assets/'
 STATICFILES_DIRS = [
     os.path.join(BASE_DIR, '../FrontEnd/dist/assets'),
 ]
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
