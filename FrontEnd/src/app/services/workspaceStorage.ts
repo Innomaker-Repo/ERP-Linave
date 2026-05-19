@@ -69,35 +69,21 @@ const LIST_KEYS = [
 
 const OBJECT_KEYS = ['empresa', 'config', 'listas', '_counters', '_osCounters'] as const;
 
+import api from '../../services/api';
+
 let activeAdminEmail = 'admin@modo-teste.com';
-const workspaceCache = new Map<string, WorkspaceData>();
-const STORAGE_PREFIX = 'erp-workspace:';
+let workspaceCache = new Map<string, WorkspaceData>();
 
-const getStorageKey = (adminEmail: string) => `${STORAGE_PREFIX}${adminEmail.trim() || activeAdminEmail}`;
-
-const readFromLocalStorage = (adminEmail: string): WorkspaceData | null => {
-  if (typeof window === 'undefined') return null;
-
+async function fetchWorkspaceFromBackend(adminEmail: string) {
   try {
-    const raw = window.localStorage.getItem(getStorageKey(adminEmail));
-    if (!raw) return null;
-
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? parsed : null;
-  } catch {
+    const res = await api.get(`workspaces/${encodeURIComponent(adminEmail)}/`);
+    // Backend serializer returns an object with a `data` field containing the workspace payload
+    return res.data && res.data.data ? res.data.data : res.data;
+  } catch (err) {
+    // Network/backend unavailable
     return null;
   }
-};
-
-const writeToLocalStorage = (adminEmail: string, workspace: WorkspaceData) => {
-  if (typeof window === 'undefined') return;
-
-  try {
-    window.localStorage.setItem(getStorageKey(adminEmail), JSON.stringify(workspace));
-  } catch {
-    // Ignore quota / access errors and keep the in-memory cache as fallback.
-  }
-};
+}
 
 export function setActiveAdminEmail(email: string) {
   activeAdminEmail = email.trim() || activeAdminEmail;
@@ -131,30 +117,38 @@ export function getCachedWorkspace(adminEmail = activeAdminEmail) {
   const cached = workspaceCache.get(adminEmail);
   if (cached) return cached;
 
-  const persisted = readFromLocalStorage(adminEmail);
-  if (persisted) {
-    const shaped = ensureWorkspaceShape(persisted);
-    workspaceCache.set(adminEmail, shaped);
-    return shaped;
-  }
-
-  return ensureWorkspaceShape(null);
+  // Return a default-shaped workspace until `loadWorkspace` fetches remote data
+  const shaped = ensureWorkspaceShape(null);
+  workspaceCache.set(adminEmail, shaped);
+  return shaped;
 }
 
 export function setCachedWorkspace(adminEmail: string, workspace: WorkspaceData) {
   const shaped = ensureWorkspaceShape(workspace);
   workspaceCache.set(adminEmail, shaped);
-  writeToLocalStorage(adminEmail, shaped);
 }
 
 export async function loadWorkspace(adminEmail = activeAdminEmail): Promise<WorkspaceData> {
-  const workspace = ensureWorkspaceShape(readFromLocalStorage(adminEmail));
+  const remote = await fetchWorkspaceFromBackend(adminEmail);
+  const workspace = ensureWorkspaceShape(remote || {});
   setCachedWorkspace(adminEmail, workspace);
   return workspace;
 }
 
 export async function saveWorkspace(adminEmail = activeAdminEmail, workspace: WorkspaceData): Promise<WorkspaceData> {
   const savedWorkspace = ensureWorkspaceShape(workspace);
+  // Persist to backend; prefer PATCH so existing record is updated
+  try {
+    await api.patch(`workspaces/${encodeURIComponent(adminEmail)}/`, { data: savedWorkspace });
+  } catch (err) {
+    // If PATCH fails, try POST (create)
+    try {
+      await api.post(`workspaces/${encodeURIComponent(adminEmail)}/`, { data: savedWorkspace });
+    } catch (err2) {
+      // Swallow error - keep in-memory cache so UI remains responsive
+    }
+  }
+
   setCachedWorkspace(adminEmail, savedWorkspace);
   return savedWorkspace;
 }
