@@ -10,6 +10,9 @@ interface BaixaHistoricoItem {
   tableName: string;
   itemLabel: string;
   statusAnterior: string;
+  motivo?: string;
+  osId?: string;
+  osLabel?: string;
   localizacao?: string;
   serviceOS?: string;
   snapshot?: Record<string, string>;
@@ -21,6 +24,11 @@ interface HistoricoBaixaViewProps {
 
 const formatDateTime = (value: string) => {
   if (!value) return '-';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [year, month, day] = value.split('-').map(Number);
+    const date = new Date(year, month - 1, day);
+    return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString('pt-BR');
+  }
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString('pt-BR');
@@ -36,7 +44,7 @@ export function HistoricoBaixaView({ searchQuery }: HistoricoBaixaViewProps) {
 
     return source.filter((item) => {
       if (!termo) return true;
-      const searchable = [item.itemLabel, item.tableName, item.statusAnterior, item.localizacao, item.serviceOS]
+      const searchable = [item.itemLabel, item.tableName, item.statusAnterior, item.localizacao, item.serviceOS, item.osLabel, item.motivo, item.dataBaixa]
         .filter(Boolean)
         .join(' ')
         .toLowerCase();
@@ -89,6 +97,8 @@ export function HistoricoBaixaView({ searchQuery }: HistoricoBaixaViewProps) {
                   <th className="px-6 py-4 text-left">Data</th>
                   <th className="px-6 py-4 text-left">Item</th>
                   <th className="px-6 py-4 text-left">Tabela</th>
+                  <th className="px-6 py-4 text-left">OS</th>
+                  <th className="px-6 py-4 text-left">Motivo</th>
                   <th className="px-6 py-4 text-left">Status anterior</th>
                   <th className="px-6 py-4 text-left">Local / OS</th>
                 </tr>
@@ -107,6 +117,13 @@ export function HistoricoBaixaView({ searchQuery }: HistoricoBaixaViewProps) {
                       <div className="text-xs text-white/35">{item.id}</div>
                     </td>
                     <td className="px-6 py-4 text-white/70">{item.tableName}</td>
+                    <td className="px-6 py-4 text-white/70">
+                      <div className="font-medium text-white/90">{item.osLabel || item.serviceOS || '—'}</div>
+                      <div className="text-xs text-white/35">{item.osId || 'Sem OS'}</div>
+                    </td>
+                    <td className="px-6 py-4 text-white/70">
+                      <p className="max-w-[320px] whitespace-pre-wrap text-white/80">{item.motivo || '—'}</p>
+                    </td>
                     <td className="px-6 py-4">
                       <Badge className="border border-red-500/30 bg-red-500/15 text-red-200">{item.statusAnterior || '—'}</Badge>
                     </td>
