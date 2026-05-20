@@ -109,6 +109,11 @@ export function PropostaView() {
   const autoSaveTimer = useRef<any>(null);
   const [novaColunaPorEscopo, setNovaColunaPorEscopo] = useState<Record<string, string>>({});
 
+  const atualizarSelectedObra = (obraAtualizada: any) => {
+    if (!selectedObra || selectedObra.id !== obraAtualizada.id) return;
+    setSelectedObra(obraAtualizada);
+  };
+
   // Negócios em Negociação
   const negociosNegociacao = (obras || []).filter((obra: any) => obra.categoria === 'Negociação');
   const negociosParaProposta = negociosNegociacao.filter((obra: any) => {
@@ -414,7 +419,9 @@ export function PropostaView() {
       propostaPendenteNovaVersao: false,
       motivoRecusaProposta: '',
       houveAlteracaoDocumentosRecusa: false,
-      dataRecusaProposta: ''
+      dataRecusaProposta: '',
+      categoria: 'Negociação',
+      status: 'Aguardando proposta'
     };
 
     const obrasAtualizadas = obras?.map((o: any) => o.id === selectedObra.id ? obraAtualizada : o) || [];
@@ -541,13 +548,16 @@ export function PropostaView() {
       propostaPendenteNovaVersao: false,
       motivoRecusaProposta: '',
       houveAlteracaoDocumentosRecusa: false,
-      dataRecusaProposta: ''
+      dataRecusaProposta: '',
+      categoria: 'Em Andamento',
+      status: 'Em andamento'
     };
 
     const obrasAtualizadas = obras?.map((o: any) => o.id === obra.id ? obraAtualizada : o) || [];
     saveEntity('obras', obrasAtualizadas);
+    atualizarSelectedObra(obraAtualizada);
 
-    alert('Proposta aprovada pelo cliente!');
+    alert('Proposta aprovada pelo cliente! Negócio movido para Em Andamento.');
   };
 
   const handlePendenteCliente = (obra: any) => {
@@ -571,6 +581,7 @@ export function PropostaView() {
 
     const obrasAtualizadas = obras?.map((o: any) => o.id === obra.id ? obraAtualizada : o) || [];
     saveEntity('obras', obrasAtualizadas);
+    atualizarSelectedObra(obraAtualizada);
 
     alert('Proposta marcada como pendente. Negócio retornou para Fazer Proposta.');
   };
@@ -644,6 +655,7 @@ export function PropostaView() {
       ...((obras || []).filter((o: any) => o.id !== obra.id))
     ];
     saveEntity('obras', obrasAtualizadas);
+    atualizarSelectedObra(obraAtualizada);
 
     alert('Proposta recusada. Negócio retornou para Aguardando orçamento.');
   };

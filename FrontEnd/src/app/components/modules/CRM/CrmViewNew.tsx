@@ -8,8 +8,6 @@ import autoTable from 'jspdf-autotable'; // Importação nomeada do plugin
 import { handleDownloadMedicaoPDF } from './handleDownloadMedicaoPDF';
 import { handleDownloadPropostaPDF } from './handleDownloadPropostaPDF'; 
 import { getCachedWorkspace } from '../../../services/workspaceStorage';
-import { getClientes } from '../../../services/clientes';
-import { getNegocios } from '../../../services/negocios';
 import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
 // Substitua as importações antigas por esta única:
 import { 
@@ -2292,6 +2290,25 @@ if (selectedObraDetalhes && conteudoDataUrl) {
     toast.success('OS aprovada com sucesso.');
   };
 
+  const handleAvancarParaFinalizacao = async () => {
+    if (!selectedObraDetalhes) return;
+
+    const podeFinalizar = possuiOSAprovadaParaFinalizacao(selectedObraDetalhes.id);
+    if (!podeFinalizar) {
+      toast.error('Para avançar para Finalização, a OS precisa estar enviada e aprovada.');
+      return;
+    }
+
+    const obraAtualizada = {
+      ...selectedObraDetalhes,
+      categoria: 'Finalização' as CategoriaObra,
+      status: 'Finalização'
+    };
+
+    await persistirObraAtualizada(obraAtualizada);
+    toast.success('Negócio movido para Finalização.');
+  };
+
   const handleUploadAssinaturaAprovacaoOS = async (osId: string, files: FileList | null) => {
     if (!files || files.length === 0) return;
 
@@ -2329,6 +2346,7 @@ if (selectedObraDetalhes && conteudoDataUrl) {
     return osDoNegocio.some((item: any) => (
       item.statusEnvio === 'enviada'
       && item.statusAprovacao === 'aprovada'
+      && Boolean(item.documentoAssinaturaAprovacao?.conteudo || item.documentoAssinaturaAprovacao?.url)
     ));
   };
 
@@ -2481,9 +2499,17 @@ const obrasOrdenadas = useMemo(() => {
                                     <span className="text-emerald-300 text-[10px] font-black">Orçado</span>
                                   </div>
                                 ) : (
-                                  <div className="px-1.5 py-0.5 bg-amber-500/20 border border-amber-500/40 rounded-full whitespace-nowrap">
-                                    <span className="text-amber-300 text-[10px] font-black">Aguard. orçamento</span>
-                                  </div>
+                                  <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation(); //  Impede que o modal abra
+                                    //  CORREÇÃO: Dispara a mudança de tela para o App.tsx escutar
+                                    window.dispatchEvent(new CustomEvent('mudarTelaERP', { detail: 'orcamentos' }));
+                                  }}
+                                  className="px-1.5 py-0.5 bg-amber-500/20 border border-amber-500/40 rounded-full whitespace-nowrap hover:bg-amber-500/40 hover:scale-105 transition-all cursor-pointer"
+                                  title="Clique para orçar este negócio"
+                                >
+                                  <span className="text-amber-300 text-[10px] font-black">Aguard. orçamento</span>
+                                </button>
                                 )}
                               </>
                             )}

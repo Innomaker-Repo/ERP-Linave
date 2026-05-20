@@ -27,8 +27,8 @@ type NegocioPayload = {
 
 type OrcamentoPayload = {
   levantamento: {
-    cliente: number;
-    negocio: number;
+    cliente_id: number;
+    negocio_id: number;
   };
   resumo: {
     margem: number;
@@ -41,6 +41,7 @@ type OrcamentoPayload = {
   terceirizados: any[];
   atividades: any[];
   observacoes?: string;
+  finalizar?: boolean;
 };
 
 const parseDecimal = (value: any): number => {
@@ -175,14 +176,14 @@ const mapTerceirizadoItem = (item: any) => ({
 
 const mapAtividadeItem = (item: any) => ({
   atividade: item.atividade || '',
-  ['duração']: Number(item.dias || item.duração || 0),
+  duracao: Number(item.dias || item.duração || 0),
   observacao: String(item.observacao || '').trim()
 });
 
 export const buildOrcamentoPayload = (orcamentoData: any, obra: any, negocioId: number, clienteId: number): OrcamentoPayload => ({
   levantamento: {
-    cliente: clienteId,
-    negocio: negocioId
+    cliente_id: clienteId,
+    negocio_id: negocioId
   },
   resumo: {
     margem: parseDecimal(orcamentoData.margem || 0),
