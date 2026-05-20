@@ -92,11 +92,15 @@ DATABASES = {
         'NAME': 'linave_db',
         'USER': 'root',
 <<<<<<< HEAD
+<<<<<<< HEAD
         #'PASSWORD': 'Kamilinha1-',
         'PASSWORD': 'password@123',
 =======
         'PASSWORD': 'Kamilinha1-',
 >>>>>>> 9f29e86 (feat: tentativa-merge)
+=======
+        'PASSWORD': 'password@123',
+>>>>>>> 3c3ffb4 (falha integração)
         'HOST': 'localhost',
         'PORT': '3306',
     }

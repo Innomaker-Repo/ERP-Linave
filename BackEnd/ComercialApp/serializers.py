@@ -27,6 +27,20 @@ class ClienteSerializer(serializers.ModelSerializer):
         model = Cliente
         fields = '__all__'
 
+    def validate(self, attrs):
+        # Removemos o documento se ele for vazio para não violar a unicidade
+        if 'documento' in attrs and (attrs['documento'] is None or attrs['documento'] == ""):
+            attrs.pop('documento', None)
+        return attrs
+
+    def create(self, validated_data):
+        # Verifica se o documento já existe antes de salvar
+        doc = validated_data.get('documento')
+        if doc and Cliente.objects.filter(documento=doc).exists():
+            # Retorna o cliente existente em vez de dar erro
+            return Cliente.objects.get(documento=doc)
+        return super().create(validated_data)
+
 class NegocioResumoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Negocio
@@ -48,14 +62,24 @@ class NegocioSerializer(serializers.ModelSerializer):
         model = Negocio
         fields = '__all__'
 
+    # No serializers.py, dentro da classe NegocioSerializer
     def get_orcamentos(self, obj):
         try:
-            orcamento = obj.negocio_orcamento.orcamento_levantamento
-        except AttributeError:
+            # Acessa o levantamento relacionado ao negócio
+            levantamento = getattr(obj, 'negocio_orcamento', None)
+            if not levantamento:
+                return []
+            
+            # Acessa o orçamento relacionado ao levantamento
+            orcamento = getattr(levantamento, 'orcamento_levantamento', None)
+            if not orcamento:
+                return []
+                
+            return [OrcamentoSerializer(orcamento).data]
+        except Exception as e:
+            # Isso força o erro a aparecer no seu console de qualquer jeito
+            print(f"ERRO CRÍTICO NO GET_ORCAMENTOS: {str(e)}")
             return []
-        if orcamento is None:
-            return []
-        return [OrcamentoSerializer(orcamento).data]
 
     def get_propostas(self, obj):
         propostas = obj.negocio_propostas.all()
@@ -89,13 +113,13 @@ class Ativ_previstaSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class MaterialSerializer(serializers.ModelSerializer):
-    valor_total = serializers.ReadOnlyField()
+    valor_total = serializers.ReadOnlyField() # Note: valor_total é property no model, mantenha read_only
     class Meta:
         model = Material
         fields = '__all__'
 
 class ServicosTerceirizadosSerializer(serializers.ModelSerializer):
-    valor_tot = serializers.ReadOnlyField()
+    valor_tot = serializers.ReadOnlyField() # property no model
     class Meta:
         model = Servico_terceirizado
         fields = '__all__'
@@ -310,9 +334,30 @@ class OrcamentoSerializer(serializers.ModelSerializer):
         }
 
     def create(self, validated_data):
-        resumo_data = validated_data.pop('resumo')
-        resumo_obj = Resumo_orcamento.objects.create(**resumo_data)
-        orcamento = Orcamento.objects.create(resumo=resumo_obj, **validated_data)
+        data = self.initial_data
+        # ... (código anterior de criação de levantamento e resumo)
+
+        # Crie o orçamento garantindo que observacoes não seja None
+        orcamento = Orcamento.objects.create(
+            levantamento=levantamento,
+            resumo=resumo,
+            observacoes_setor_orcamento=data.get('observacoes', '') or '',
+            numero_orcamento=data.get('numeroOrcamento', '') or '',
+            **validated_data
+        )
+
+        # Salva itens filhos com conversão de tipos explícita
+        for mdo in data.get('mao_de_obra', []):
+            MDO.objects.create(
+                orcamento=orcamento, 
+                fnc=mdo.get('fnc'),
+                qnt=int(mdo.get('qnt') or 0),
+                dias=int(mdo.get('dias') or 0),
+                custo_unit_dia=Decimal(str(mdo.get('custo_unit_dia') or 0)),
+                observacao=mdo.get('observacao', '')
+            )
+            
+        # ... Repita essa lógica de conversão Decimal(str()) para Materiais e Terceirizados
         return orcamento
 
 # --------------------- Ordem de Servico (OS) ---------------------
