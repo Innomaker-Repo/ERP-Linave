@@ -3,9 +3,9 @@ import { UserPlus, Save, X, Edit2, Trash2, Building2, User, MapPin, Phone, Calen
 import { useErp } from '../../../context/ErpContext';
 import { getClientes, createCliente, updateCliente, deleteCliente } from '../../../../services/clientes';
 
-  export function ClientesView({ searchQuery }: { searchQuery: string }) {
-  const { clientes, obras, saveCliente, deleteCliente, userSession, saveEntity } = useErp();
-  const listaClientes = Array.isArray(clientes) ? clientes : [];
+export function ClientesView({ searchQuery }: { searchQuery: string }) {
+  const { clientes, obras, saveEntity, userSession } = useErp();
+  const [listaClientes, setListaClientes] = useState<any[]>(Array.isArray(clientes) ? clientes : []);
   
  //variáveis que controlam os modais e carregamentos
   const [showForm, setShowForm] = useState(false);
@@ -50,7 +50,7 @@ import { getClientes, createCliente, updateCliente, deleteCliente } from '../../
     contato: '',
     endereco: '',
     dataCadastro: new Date().toISOString().split('T')[0],
-    usuarioResponsavel: userSession?.email || 'Sistema'
+    usuarioResponsavel: '' // Campo vazio por padrão
   };
 
   const [currentCliente, setCurrentCliente] = useState<any>(initialClienteState);
@@ -60,35 +60,87 @@ import { getClientes, createCliente, updateCliente, deleteCliente } from '../../
       setCurrentCliente(cliente);
       setEditMode(true);
     } else {
-      setCurrentCliente({
-        ...initialClienteState,
-        usuarioResponsavel: userSession?.email || 'Sistema' // Pega o usuário logado automaticamente
-      });
+      setCurrentCliente(initialClienteState);
       setEditMode(false);
     }
     setShowForm(true);
   };
 
   const handleSave = async () => {
+    // Validação de campos obrigatórios
+    if (!currentCliente.razaoSocial?.trim()) {
+      alert('Preencha a Razão Social do cliente.');
+      return;
+    }
+
+    const cpfCnpjTrimmed = currentCliente.cpfCnpj?.trim();
+    if (!cpfCnpjTrimmed) {
+      alert('Preencha o CPF/CNPJ do cliente.');
+      return;
+    }
+
+    if (!currentCliente.contato?.trim()) {
+      alert('Preencha o contato (telefone ou e-mail) do cliente.');
+      return;
+    }
+
+    if (!currentCliente.endereco?.trim()) {
+      alert('Preencha o endereço completo do cliente.');
+      return;
+    }
+
+    setSaving(true);
     try {
-      const clienteParaSalvar = { ...currentCliente };
-      const saved = await saveCliente(clienteParaSalvar);
-      if (saved) {
-        setCurrentCliente(saved);
+      let clienteAtualizado;
+      
+      if (editMode && currentCliente.id && !isNaN(Number(currentCliente.id))) {
+        // Atualizar cliente existente no backend
+        clienteAtualizado = await updateCliente(String(currentCliente.id), currentCliente);
+        setListaClientes((prev) =>
+          prev.map((c) => c.id === currentCliente.id ? clienteAtualizado : c)
+        );
+      } else {
+        // Criar novo cliente no backend
+        clienteAtualizado = await createCliente(currentCliente);
+        setListaClientes((prev) => [...prev, clienteAtualizado]);
       }
+
+      // Sincronizar com o contexto local
+      const listaAuxiliar = editMode
+        ? listaClientes.map((c) => c.id === currentCliente.id ? clienteAtualizado : c)
+        : [...listaClientes, clienteAtualizado];
+      saveEntity('clientes', listaAuxiliar);
+
+      alert(`Cliente ${editMode ? 'atualizado' : 'cadastrado'} com sucesso!`);
       setShowForm(false);
-    } catch (error) {
-      console.error('Erro ao salvar cliente:', error);
-      alert('Falha ao salvar o cliente. Veja o console para mais detalhes.');
+      setCurrentCliente(initialClienteState);
+    } catch (error: any) {
+      console.error(error);
+      alert(`Erro ao salvar cliente: ${error?.response?.data?.detail || error?.message || 'Falha desconhecida'}`);
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handleDelete = async (id: any) => {
-    if (confirm("Tem certeza que deseja excluir este cliente?")) {
+  const handleDelete = async (id: string) => {
+    if (!confirm("Tem certeza que deseja excluir este cliente?")) {
+      return;
+    }
+
+    setSaving(true);
+    try {
       await deleteCliente(id);
+      const listaAtualizada = listaClientes.filter((c: any) => c.id !== id);
+      setListaClientes(listaAtualizada);
+      saveEntity('clientes', listaAtualizada);
+      alert('Cliente excluído com sucesso!');
+    } catch (error: any) {
+      console.error(error);
+      alert(`Erro ao deletar cliente: ${error?.response?.data?.detail || error?.message || 'Falha desconhecida'}`);
+    } finally {
+      setSaving(false);
     }
   };
-
 
   // Filtro de busca
   const listaFiltrada = listaClientes.filter((c: any) => 

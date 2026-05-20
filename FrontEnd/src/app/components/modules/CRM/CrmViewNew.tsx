@@ -123,7 +123,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
 // Estado local que morre ao fechar a página ou dar F5
   const [negociosBackend, setNegociosBackend] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [clientesLoading, setClientesLoading] = useState(false); 
+  const [clientesLoading, setClientesLoading] = useState(false);
   const [showFormNovoNegocio, setShowFormNovoNegocio] = useState(false);
   const [novoNegocioTab, setNovoNegocioTab] = useState<'dados' | 'servicos' | 'documentos'>('dados');
   const [selectedObraDetalhes, setSelectedObraDetalhes] = useState<any>(null);

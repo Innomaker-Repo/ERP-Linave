@@ -41,17 +41,44 @@ const isValidDocumento = (value: any): boolean => {
 /**
  * Mapeia dados do frontend para o formato esperado pelo backend
  */
-export const mapClienteFrontendToBackend = (cliente: ClienteFrontend): ClientePayload => ({
-  tipo: cliente.tipoPessoa === 'PJ' ? 'Juridica' : 'Fisica',
-  razao_social: cliente.razaoSocial || '',
-  nome_fantasia: cliente.nomeFantasia || undefined,
-  documento: normalizeCpfCnpj(cliente.cpfCnpj),
-  inscricao_estadual: cliente.inscricaoEstadual || undefined,
-  status: (cliente.status || 'Ativo') as 'Ativo' | 'Inativo',
-  contato_geral: cliente.contato || undefined,
-  endereco_completo: cliente.endereco || undefined,
-  usuario_responsavel: cliente.usuarioResponsavel || null
-});
+export const mapClienteFrontendToBackend = (cliente: ClienteFrontend): ClientePayload => {
+  // usuario_responsavel deve ser um email válido ou null
+  let usuarioResponsavel = null;
+  if (cliente.usuarioResponsavel && cliente.usuarioResponsavel.includes('@')) {
+    usuarioResponsavel = cliente.usuarioResponsavel;
+  }
+  
+  // Garantir que campos obrigatórios nunca sejam undefined
+  const razaoSocial = (cliente.razaoSocial || '').trim();
+  const documento = normalizeCpfCnpj(cliente.cpfCnpj);
+  const contato = (cliente.contato || '').trim();
+  const endereco = (cliente.endereco || '').trim();
+  
+  if (!razaoSocial) {
+    throw new Error('Razão Social é obrigatória');
+  }
+  if (!documento) {
+    throw new Error('Documento (CPF/CNPJ) é obrigatório');
+  }
+  if (!contato) {
+    throw new Error('Contato é obrigatório');
+  }
+  if (!endereco) {
+    throw new Error('Endereço é obrigatório');
+  }
+
+  return {
+    tipo: cliente.tipoPessoa === 'PJ' ? 'Juridica' : 'Fisica',
+    razao_social: razaoSocial,
+    nome_fantasia: cliente.nomeFantasia?.trim() || undefined,
+    documento: documento,
+    inscricao_estadual: cliente.inscricaoEstadual?.trim() || undefined,
+    status: (cliente.status || 'Ativo') as 'Ativo' | 'Inativo',
+    contato_geral: contato,
+    endereco_completo: endereco,
+    usuario_responsavel: usuarioResponsavel
+  };
+};
 
 /**
  * Mapeia dados do backend para o formato do frontend
