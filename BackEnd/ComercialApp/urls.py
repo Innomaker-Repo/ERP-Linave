@@ -29,18 +29,15 @@ urlpatterns = [
     # Rota de Dados do Workspace (Sincronização Global)
     path('workspaces/<str:admin_email>/', workspace_data, name='workspace-data'),
 
-    # 1. Rotas de Orçamento
+    # 1. Rotas de Orçamento e Arquivos
     path('orcamentos/criar/', criar_orcamento, name='criar-orcamento'),
     path('visualizar/<str:filename>/', visualizar_orcamento, name='visualizar-pdf'),
-    path('os-por-cliente/<int:cliente_id>/', ordens_servico_por_cliente, name='os-por-cliente'),
-    path('os-por-negocio/<int:negocio_id>/', ordens_servico_por_negocio, name='os-por-negocio'),
-    path('ordens-servico/<int:pk>/atualizar-status/', atualizar_status_os, name='atualizar-status-os'),
-
+    
     # 2. Rotas de Filtro de Ordens de Serviço (Necessárias para o React)
     path('os-por-cliente/<int:cliente_id>/', ordens_servico_por_cliente, name='os-por-cliente'),
     path('os-por-negocio/<int:negocio_id>/', ordens_servico_por_negocio, name='os-por-negocio'),
     path('ordens-servico/<int:pk>/atualizar-status/', atualizar_status_os, name='atualizar-status-os'),
 
-    # 3. Inclusão das rotas automáticas do Router
+    # 3. Inclusão das rotas automáticas do Router (Sempre deixar no final)
     path('', include(router.urls)),
 ]
