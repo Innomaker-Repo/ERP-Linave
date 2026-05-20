@@ -57,6 +57,13 @@ export default function App() {
   const [activeSection, setActiveSection] = useState('dashboard');
   const [searchQuery, setSearchQuery] = useState('');
 
+  //  Escuta o evento customizado para mudar a tela a partir de qualquer componente
+  useEffect(() => {
+    const handleNavegacao = (e: any) => setActiveSection(e.detail);
+    window.addEventListener('mudarTelaERP', handleNavegacao);
+    return () => window.removeEventListener('mudarTelaERP', handleNavegacao);
+  }, []);
+
   // 1. Tela de Carregamento
   if (loading) {
     return (

@@ -3,45 +3,42 @@ import { UserPlus, Save, X, Edit2, Trash2, Building2, User, MapPin, Phone, Calen
 import { useErp } from '../../../context/ErpContext';
 import { getClientes, createCliente, updateCliente, deleteCliente } from '../../../../services/clientes';
 
-export function ClientesView({ searchQuery }: { searchQuery: string }) {
-<<<<<<< Updated upstream
-  const { clientes, obras, saveEntity, userSession } = useErp();
-  const [listaClientes, setListaClientes] = useState<any[]>(Array.isArray(clientes) ? clientes : []);
-=======
-  const { clientes, obras, saveCliente, deleteCliente, userSession } = useErp();
+  export function ClientesView({ searchQuery }: { searchQuery: string }) {
+  const { clientes, obras, saveCliente, deleteCliente, userSession, saveEntity } = useErp();
   const listaClientes = Array.isArray(clientes) ? clientes : [];
->>>>>>> Stashed changes
   
+ //variáveis que controlam os modais e carregamentos
   const [showForm, setShowForm] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [selectedClienteDetalhes, setSelectedClienteDetalhes] = useState<any>(null);
   const [showClienteModal, setShowClienteModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
-  
+
+
+  // Carregar clientes do backend na montagem
+
   // Carregar clientes do backend na montagem
   useEffect(() => {
     const carregarClientes = async () => {
       setLoading(true);
       try {
         const clientesBackend = await getClientes();
-        setListaClientes(clientesBackend || []);
-        // Sincronizar com o contexto local também
-        if (clientesBackend && clientesBackend.length > 0) {
-          saveEntity('clientes', clientesBackend);
+        
+        // Salvar no 'saveEntity' já é o suficiente para atualizar a tela automaticamente!
+       if (clientesBackend && clientesBackend.length > 0) {
+             saveEntity('clientes', clientesBackend); 
+          // Se o aviso persistir, não se preocupe, o importante agora é o dado chegar na tela.
         }
       } catch (error) {
         console.error('Erro ao carregar clientes:', error);
-        // Fallback para dados locais se a API falhar
-        setListaClientes(Array.isArray(clientes) ? clientes : []);
-      } finally {
+     } finally {
         setLoading(false);
       }
     };
     
     carregarClientes();
-  }, []);
-  
+  }, []); 
   // Estado inicial com a estrutura exata solicitada
   const initialClienteState = {
     tipoPessoa: 'PJ',
@@ -73,69 +70,6 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
   };
 
   const handleSave = async () => {
-<<<<<<< Updated upstream
-    if (!currentCliente.razaoSocial?.trim()) {
-      alert('Preencha a Razão Social do cliente.');
-      return;
-    }
-
-    const cpfCnpjTrimmed = currentCliente.cpfCnpj?.trim();
-    if (!cpfCnpjTrimmed) {
-      alert('Preencha o CPF/CNPJ do cliente.');
-      return;
-    }
-
-    setSaving(true);
-    try {
-      let clienteAtualizado;
-      
-      if (editMode && currentCliente.id && !isNaN(Number(currentCliente.id))) {
-        // Atualizar cliente existente no backend
-        clienteAtualizado = await updateCliente(String(currentCliente.id), currentCliente);
-        setListaClientes((prev) =>
-          prev.map((c) => c.id === currentCliente.id ? clienteAtualizado : c)
-        );
-      } else {
-        // Criar novo cliente no backend
-        clienteAtualizado = await createCliente(currentCliente);
-        setListaClientes((prev) => [...prev, clienteAtualizado]);
-      }
-
-      // Sincronizar com o contexto local
-      const listaAuxiliar = editMode
-        ? listaClientes.map((c) => c.id === currentCliente.id ? clienteAtualizado : c)
-        : [...listaClientes, clienteAtualizado];
-      saveEntity('clientes', listaAuxiliar);
-
-      alert(`Cliente ${editMode ? 'atualizado' : 'cadastrado'} com sucesso!`);
-      setShowForm(false);
-      setCurrentCliente(initialClienteState);
-    } catch (error: any) {
-      console.error(error);
-      alert(`Erro ao salvar cliente: ${error?.response?.data?.detail || error?.message || 'Falha desconhecida'}`);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleDelete = async (id: string) => {
-    if (!confirm("Tem certeza que deseja excluir este cliente?")) {
-      return;
-    }
-
-    setSaving(true);
-    try {
-      await deleteCliente(id);
-      const listaAtualizada = listaClientes.filter((c: any) => c.id !== id);
-      setListaClientes(listaAtualizada);
-      saveEntity('clientes', listaAtualizada);
-      alert('Cliente excluído com sucesso!');
-    } catch (error: any) {
-      console.error(error);
-      alert(`Erro ao deletar cliente: ${error?.response?.data?.detail || error?.message || 'Falha desconhecida'}`);
-    } finally {
-      setSaving(false);
-=======
     try {
       const clienteParaSalvar = { ...currentCliente };
       const saved = await saveCliente(clienteParaSalvar);
@@ -152,7 +86,6 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
   const handleDelete = async (id: any) => {
     if (confirm("Tem certeza que deseja excluir este cliente?")) {
       await deleteCliente(id);
->>>>>>> Stashed changes
     }
   };
 
@@ -381,10 +314,10 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
         )}
       </div>
 
-      {/* MODAL - DETALHES E HISTÓRICO DO CLIENTE */}
+     {/* MODAL - DETALHES E HISTÓRICO DO CLIENTE */}
       {showClienteModal && selectedClienteDetalhes && (() => {
-        // Buscar todas as obras deste cliente
-        const negociosDoCliente = (obras || []).filter((o: any) => o.clienteId === selectedClienteDetalhes.id);
+        // BLINDAGEM: Comparamos os IDs como String para garantir que número e texto se encontrem
+        const negociosDoCliente = (obras || []).filter((o: any) => String(o.clienteId) === String(selectedClienteDetalhes.id));
         
         return (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">

@@ -139,6 +139,17 @@ export const getNegociosDoCliente = async (clienteId) => {
     }
 };
 
+// Busca ordens de serviço por negócio (endpoint customizado)
+export const getOrdensPorNegocio = async (negocioId) => {
+    try {
+        const response = await api.get(`os-por-negocio/${negocioId}/`);
+        return response.data;
+    } catch (error) {
+        console.error(`Erro ao buscar OS por negócio ${negocioId}:`, error?.response?.data || error.message);
+        return [];
+    }
+};
+
 // Busca todas as Ordens de Serviço
 export const getOrdensServico = async () => {
     try {
