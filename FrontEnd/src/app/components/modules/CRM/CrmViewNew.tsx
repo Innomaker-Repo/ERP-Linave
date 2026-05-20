@@ -8,6 +8,8 @@ import autoTable from 'jspdf-autotable'; // Importação nomeada do plugin
 import { handleDownloadMedicaoPDF } from './handleDownloadMedicaoPDF';
 import { handleDownloadPropostaPDF } from './handleDownloadPropostaPDF'; 
 import { getCachedWorkspace } from '../../../services/workspaceStorage';
+import { getClientes } from '../../../services/clientes';
+import { getNegocios } from '../../../services/negocios';
 import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
 // Substitua as importações antigas por esta única:
 import { 
