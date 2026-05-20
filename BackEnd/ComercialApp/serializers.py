@@ -1,3 +1,4 @@
+from decimal import Decimal
 from rest_framework import serializers
 from .models import (
     Cliente, Negocio, Servico, User,
@@ -26,17 +27,53 @@ class ClienteSerializer(serializers.ModelSerializer):
         model = Cliente
         fields = '__all__'
 
+class NegocioResumoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Negocio
+        fields = [
+            'id', 'cliente', 'empresa_prestadora', 'nome_negocio',
+            'solicitante', 'cargo', 'telefone', 'email',
+            'categoria', 'status', 'orcamento_realizado',
+            'requer_reorcamento', 'tipo_servico',
+            'data_solicitacao', 'data_prevista_inicio', 'data_prevista_final'
+        ]
+
 class NegocioSerializer(serializers.ModelSerializer):
-    # 'servicos' usa o related_name definido no model Servico
-    servicos = ServicoSerializer(many=True, read_only=True)
-    
-    # Objeto completo do cliente para evitar múltiplas chamadas no React
+    servicos = ServicoSerializer(many=True, required=False)
     cliente_detalhes = ClienteSerializer(source='cliente', read_only=True)
+    orcamentos = serializers.SerializerMethodField()
+    propostas = serializers.SerializerMethodField()
 
     class Meta:
         model = Negocio
-        # '__all__' agora inclui automaticamente o campo 'categoria' adicionado ao Model
         fields = '__all__'
+
+    def get_orcamentos(self, obj):
+        try:
+            orcamento = obj.negocio_orcamento.orcamento_levantamento
+        except AttributeError:
+            return []
+        if orcamento is None:
+            return []
+        return [OrcamentoSerializer(orcamento).data]
+
+    def get_propostas(self, obj):
+        propostas = obj.negocio_propostas.all()
+        return PropostaComercialResumoSerializer(propostas, many=True).data
+
+    # Ensina o Django a salvar os serviços junto com o Negócio
+    def create(self, validated_data):
+        # 1. Tira a lista de serviços do pacote principal
+        servicos_data = validated_data.pop('servicos', [])
+        
+        # 2. Cria o Negócio no banco de dados primeiro
+        negocio = Negocio.objects.create(**validated_data)
+        
+        # 3. Cria cada serviço e vincula ao negócio
+        for servico_data in servicos_data:
+            Servico.objects.create(negocio=negocio, **servico_data)
+            
+        return negocio
 
 # ------------------ Orçamento Items -------------------
 
@@ -63,7 +100,6 @@ class ServicosTerceirizadosSerializer(serializers.ModelSerializer):
         model = Servico_terceirizado
         fields = '__all__'
 
-<<<<<<< Updated upstream
 class EscopoSerializer(serializers.ModelSerializer):
     tipo_detalhes = ServicoSerializer(source='tipo', read_only=True)
 
@@ -71,27 +107,75 @@ class EscopoSerializer(serializers.ModelSerializer):
         model = Escopo
         fields = '__all__'
 
+class PropostaComercialResumoSerializer(serializers.ModelSerializer):
+    numeroProposta = serializers.CharField(source='numero_proposta', read_only=True)
+    dataCriacao = serializers.DateField(source='data_criacao', read_only=True)
+    status = serializers.CharField(read_only=True)
+    motivoRecusaProposta = serializers.CharField(source='motivo_recusa', read_only=True)
+    textoAbertura = serializers.CharField(source='texto_de_abertura', read_only=True)
+    escopoA = serializers.SerializerMethodField()
+    escopoBasicoServicos = serializers.SerializerMethodField()
+    referencias = serializers.CharField(source='referencia', read_only=True)
+    responsabilidadeContratada = serializers.CharField(source='responsabilidade_contratada', read_only=True)
+    responsabilidadeContratante = serializers.CharField(source='responsabilidade_contratante', read_only=True)
+    condicoesGerais = serializers.CharField(source='condicoes_gerais', read_only=True)
+    condicoesPagamento = serializers.CharField(source='condicoes_pagamento', read_only=True)
+
+    class Meta:
+        model = PropostaComercial
+        fields = [
+            'id', 'numeroProposta', 'dataCriacao', 'status', 'motivoRecusaProposta',
+            'cliente', 'negocio', 'referencias', 'saudacao', 'assunto', 'textoAbertura',
+            'responsabilidadeContratada', 'responsabilidadeContratante', 'preco',
+            'condicoesGerais', 'condicoesPagamento', 'prazo', 'encerramento',
+            'escopoA', 'escopoBasicoServicos'
+        ]
+
+    def get_escopoA(self, obj):
+        first = obj.proposta_escopo.first()
+        return first.descricao if first else ''
+
+    def get_escopoBasicoServicos(self, obj):
+        escopos = []
+        for escopo in obj.proposta_escopo.all():
+            escopos.append({
+                'id': str(escopo.id),
+                'servicoId': str(escopo.tipo_id) if escopo.tipo_id else '',
+                'titulo': str(escopo.tipo.tipo_servico) if escopo.tipo else 'Serviço',
+                'descricaoServico': escopo.descricao,
+                'textosDepois': [],
+                'colunas': ['Descrição'],
+                'linhas': [{'id': f'linha-{escopo.id}-1', 'valores': {'Descrição': escopo.descricao or ''}}]
+            })
+        return escopos
+
 class PropostaComercialSerializer(serializers.ModelSerializer):
     cliente_detalhes = ClienteSerializer(source='cliente', read_only=True)
-    negocio_detalhes = NegocioSerializer(source='negocio', read_only=True)
+    negocio_detalhes = NegocioResumoSerializer(source='negocio', read_only=True)
+    numeroProposta = serializers.CharField(source='numero_proposta', required=False, allow_blank=True)
+    status = serializers.CharField(required=False, allow_blank=True)
+    motivoRecusaProposta = serializers.CharField(source='motivo_recusa', required=False, allow_blank=True)
+    referencias = serializers.CharField(source='referencia', required=False, allow_blank=True)
+    textoAbertura = serializers.CharField(source='texto_de_abertura', required=False, allow_blank=True)
+    responsabilidadeContratada = serializers.CharField(source='responsabilidade_contratada', required=False, allow_blank=True)
+    responsabilidadeContratante = serializers.CharField(source='responsabilidade_contratante', required=False, allow_blank=True)
+    condicoesGerais = serializers.CharField(source='condicoes_gerais', required=False, allow_blank=True)
+    condicoesPagamento = serializers.CharField(source='condicoes_pagamento', required=False, allow_blank=True)
     proposta_escopo = EscopoSerializer(many=True, read_only=True)
     proposta_escopo_input = EscopoSerializer(source='proposta_escopo', many=True, write_only=True, required=False)
 
     class Meta:
         model = PropostaComercial
         fields = [
-            'id', 'data_criacao', 'cliente', 'cliente_detalhes',
-            'negocio', 'negocio_detalhes', 'referencia', 'saudacao',
-            'assunto', 'texto_de_abertura', 'responsabilidade_contratada',
-            'responsabilidade_contratante', 'preco', 'condicoes_gerais',
-            'condicoes_pagamento', 'prazo', 'encerramento',
+            'id', 'data_criacao', 'numeroProposta', 'status', 'motivoRecusaProposta',
+            'cliente', 'cliente_detalhes', 'negocio', 'negocio_detalhes',
+            'referencias', 'saudacao', 'assunto', 'textoAbertura',
+            'responsabilidadeContratada', 'responsabilidadeContratante', 'preco',
+            'condicoesGerais', 'condicoesPagamento', 'prazo', 'encerramento',
             'proposta_escopo', 'proposta_escopo_input'
         ]
 
 # ------------------  The Summary & Container  -------------------
-=======
-# ------------------ The Summary & Container -------------------
->>>>>>> Stashed changes
 
 class Resumo_orcamentoSerializer(serializers.ModelSerializer):
     total_mdo = serializers.ReadOnlyField()
@@ -126,14 +210,104 @@ class OrcamentoSerializer(serializers.ModelSerializer):
         write_only=True
     )
     resumo_input = Resumo_orcamentoSerializer(source='resumo', write_only=True)
+    numeroOrcamento = serializers.CharField(source='numero_orcamento', read_only=True)
+    versao = serializers.CharField(read_only=True)
+    status = serializers.CharField(read_only=True)
+    dataCriacao = serializers.DateField(source='data_criacao', read_only=True)
+    dataRecusa = serializers.DateField(source='data_recusa', read_only=True)
+    data = serializers.SerializerMethodField()
+    valores = serializers.SerializerMethodField()
 
     class Meta:
         model = Orcamento
         fields = [
-            'id', 'levantamento', 'levantamento_id', 
-            'resumo', 'resumo_input', 'Observacoes_setor_orcamento',
-            'materiais', 'mao_de_obra', 'terceirizados', 'atividades'
+            'id', 'levantamento', 'levantamento_id',
+            'resumo', 'resumo_input', 'observacoes_setor_orcamento',
+            'materiais', 'mao_de_obra', 'terceirizados', 'atividades',
+            'numeroOrcamento', 'versao', 'status', 'dataCriacao', 'dataRecusa',
+            'data', 'valores'
         ]
+
+    def get_data(self, obj):
+        dados_servicos = []
+        if obj.levantamento and hasattr(obj.levantamento, 'dados_servicos'):
+            dados_servicos = [ServicoSerializer(servico).data for servico in obj.levantamento.dados_servicos]
+
+        return {
+            'numeroOrcamento': obj.numero_orcamento,
+            'solicitante': obj.levantamento.negocio.solicitante if obj.levantamento and obj.levantamento.negocio else '',
+            'responsavelComercial': obj.levantamento.cliente.razao_social if obj.levantamento else '',
+            'escopoOrcamento': '',
+            'documentosReferencia': str(obj.levantamento.arquivos_negocio) if obj.levantamento else '',
+            'dadosServicos': dados_servicos,
+            'maoDeObra': MDOSerializer(obj.mao_de_obra.all(), many=True).data,
+            'materiais': MaterialSerializer(obj.materiais.all(), many=True).data,
+            'terceirizados': ServicosTerceirizadosSerializer(obj.terceirizados.all(), many=True).data,
+            'atividades': Ativ_previstaSerializer(obj.atividades.all(), many=True).data,
+            'observacoes': obj.observacoes_setor_orcamento or '',
+            'margem': float(obj.resumo.margem) if obj.resumo else 0,
+            'oh': float(obj.resumo.OH) if obj.resumo else 0,
+            'impostos': float(obj.resumo.impostos) if obj.resumo else 0,
+            'quantidadeItensProduzidos': obj.resumo.qnt if obj.resumo else 0
+        }
+
+    def get_valores(self, obj):
+        if not obj.resumo:
+            return {
+                'totalMaoDeObra': 0,
+                'totalMateriais': 0,
+                'totalTerceirizados': 0,
+                'totalBruto': 0,
+                'subtotal': 0,
+                'margem': 0,
+                'oh': 0,
+                'impostos': 0,
+                'valorMargem': 0,
+                'valorOH': 0,
+                'valorImpostos': 0,
+                'totalSemImposto': 0,
+                'precoFinal': 0,
+                'quantidadeItensProduzidos': 0,
+                'valorPorUnidade': 0
+            }
+
+        # Normaliza valores para Decimal para evitar erros de tipo
+        total_mdo = Decimal(obj.resumo.total_mdo or 0)
+        total_material = Decimal(obj.resumo.total_material or 0)
+        total_terceirizados = Decimal(obj.resumo.total_serv_terceirizado or 0)
+        total_bruto = total_mdo + total_material + total_terceirizados
+
+        margem_percentual = Decimal(obj.resumo.margem or 0)
+        oh_percentual = Decimal(obj.resumo.OH or 0)
+        impostos_percentual = Decimal(obj.resumo.impostos or 0)
+
+        valor_margem = (total_bruto * margem_percentual) / Decimal(100)
+        valor_oh = (total_bruto * oh_percentual) / Decimal(100)
+        total_sem_imposto = total_bruto + valor_margem + valor_oh
+        valor_impostos = (total_sem_imposto * impostos_percentual) / Decimal(100)
+        preco_final = total_sem_imposto + valor_impostos
+
+        qnt = Decimal(obj.resumo.qnt or 0)
+        valor_por_unidade = (preco_final / qnt) if qnt > 0 else Decimal(0)
+
+        # Converte para tipos nativos JSON-serializáveis (float/int)
+        return {
+            'totalMaoDeObra': float(total_mdo),
+            'totalMateriais': float(total_material),
+            'totalTerceirizados': float(total_terceirizados),
+            'totalBruto': float(total_bruto),
+            'subtotal': float(total_bruto),
+            'margem': float(margem_percentual),
+            'oh': float(oh_percentual),
+            'impostos': float(impostos_percentual),
+            'valorMargem': float(valor_margem),
+            'valorOH': float(valor_oh),
+            'valorImpostos': float(valor_impostos),
+            'totalSemImposto': float(total_sem_imposto),
+            'precoFinal': float(preco_final),
+            'quantidadeItensProduzidos': int(qnt),
+            'valorPorUnidade': float(valor_por_unidade)
+        }
 
     def create(self, validated_data):
         resumo_data = validated_data.pop('resumo')
