@@ -70,7 +70,7 @@ interface OrcamentosViewProps {
 }
 
 export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
-  const { obras, clientes, saveEntity } = useErp();
+  const { obras, clientes, saveEntity, saveCliente } = useErp() as any;
   const listaClientes = Array.isArray(clientes) ? clientes : [];
   const [showForm, setShowForm] = useState(false);
   const [selectedObra, setSelectedObra] = useState<any>(null);
@@ -78,24 +78,36 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   const [saving, setSaving] = useState(false);
  
 
-  useEffect(() => {
+
+    // 1. Verificação de segurança: Não carregue se já houver dados no contexto
+    useEffect(() => {
+    // 1. TRAVA DE SEGURANÇA: 
+    // Impede que o useEffect rode se os dados já existirem no contexto global.
+    // Isso elimina o "pisca-pisca" da interface.
+    if (obras && obras.length > 0) return;
+
     const carregarDadosSQL = async () => {
       setLoadingData(true);
       try {
-      
-       // 1. Busca os clientes e garante que o React "perceba" a mudança
+        // 2. Busca os clientes
         const clientesBackend = await getClientes();
-        if (clientesBackend && clientesBackend.length > 0) {
-          await saveEntity('clientes', clientesBackend);
-        }
 
-       // 2. Busca os negócios (projetos)
+// Se o backend retornou dados, salvamos diretamente via saveCliente
+if (clientesBackend && Array.isArray(clientesBackend)) {
+  await saveCliente(clientesBackend);
+}
+
+        // 3. Busca os negócios (projetos)
         const dados = await getNegocios();
         if (Array.isArray(dados)) {
+          const clientesMapa: any = {};
+          if (Array.isArray(clientesBackend)) {
+            clientesBackend.forEach((c: any) => { clientesMapa[c.id] = c; });
+          }
+
           const formatados = dados.map((n: any) => ({
             id: `ID ${n.id}`,
             nome: n.nome_negocio,
-            //BLINDAGEM: Lê o ID do cliente em todas as variações possíveis que o Django pode enviar
             clienteId: n.cliente || n.cliente_id || n.clienteId,
             empresaPrestadora: n.empresa_prestadora || 'Linave',
             categoria: n.categoria || 'Planejamento',
@@ -108,38 +120,23 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
             orcamentos: n.orcamentos || [],
             propostas: n.propostas || [],
             documentosNegocio: n.documentos || n.arquivos || [],
-            // Campos úteis para preencher formulário
-            dataPrevistaInicio: n.data_prevista_inicio || n.dataPrevistaInicio || null,
-            dataPrevistaFinal: n.data_prevista_final || n.dataPrevistaFinal || null,
-            equipamento: (n.servicos && n.servicos[0] && (n.servicos[0].embarcacao || n.servicos[0].embarcacao)) || '',
-            supervisor: n.solicitante || '',
-            centroCusto: n.cc || n.centro_custo || '',
-            endereco: n.endereco || n.endereco_completo || '',
-            contato: n.contato || n.contato_geral || ''
+            dataPrevistaInicio: n.data_prevista_inicio || null,
+            dataPrevistaFinal: n.data_prevista_final || null,
+            responsavelComercial: (clientesMapa[n.cliente] && (clientesMapa[n.cliente].razao_social || clientesMapa[n.cliente].razaoSocial)) || ''
           }));
 
-          // Preencher nome do cliente/responsável comercial quando possível
-          const clientesMapa: any = {};
-          if (Array.isArray(clientesBackend)) {
-            clientesBackend.forEach((c: any) => { clientesMapa[c.id] = c; });
-          }
-
-          const formatadosComCliente = formatados.map((f: any) => ({
-            ...f,
-            responsavelComercial: (clientesMapa[f.clienteId] && (clientesMapa[f.clienteId].razao_social || clientesMapa[f.clienteId].razaoSocial)) || ''
-          }));
-
-          saveEntity('obras', formatadosComCliente); // Salva na memória global para a tela desenhar
+          // 4. Salva apenas UMA VEZ no contexto global
+          saveEntity('obras', formatados);
         }
-     } catch (error) {
-        console.error("Erro ao carregar dados na aba de orçamentos:", error);
+      } catch (error) {
+        console.error("Erro ao carregar dados do SQL:", error);
       } finally {
         setLoadingData(false);
       }
     };
 
     carregarDadosSQL();
-  }, []); //Assim ele roda só 1x ao abrir a tela!
+  }, []); // A dependência vazia [] é o que trava a execução apenas para a montagem inicial.
 
   const indexToVersaoAlfabetica = (index: number) => {
     if (index < 0) return 'A';
@@ -407,28 +404,130 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     }
 
     // Validar se há pelo menos uma linha em mão de obra
+   // ==========================================
+    // VALIDACAO: MÃO DE OBRA (MDO)
+    // ==========================================
     if (orcamentoData.maoDeObra.length === 0 || orcamentoData.maoDeObra.every(item => !item.funcao.trim())) {
       alert("É necessário informar pelo menos uma função de mão de obra.");
       return;
     }
 
-    // Validar itens de mão de obra
+    // Cole isto fora de qualquer componente, de preferência nas últimas linhas do arquivo
+const parseNumber = (value: any): number => {
+  if (value === null || value === undefined) return NaN;
+  if (typeof value === 'number') return value;
+  let s = String(value).trim();
+  if (!s) return NaN;
+  
+  // Lida com formatos brasileiros: '.' como separador de milhar e ',' como decimal
+  if (s.includes(',') && s.includes('.')) {
+    s = s.replace(/\./g, '').replace(',', '.');
+  } else if (s.includes(',')) {
+    s = s.replace(',', '.');
+  }
+  
+  // Remover espaços residuais
+  s = s.replace(/\s+/g, '');
+  const n = parseFloat(s);
+  return isNaN(n) ? NaN : n;
+};
+
+    console.debug('Validação MDO - estado atual:', orcamentoData.maoDeObra);
+
     for (const item of orcamentoData.maoDeObra) {
-      if (item.funcao.trim() || item.quantidade || item.dias || item.custoUnitDia) {
-        if (!item.funcao.trim()) {
+      const hasFuncao = !!(item.funcao && String(item.funcao).trim());
+      const qVal = parseNumber(item.quantidade);
+      const diasVal = parseNumber(item.dias);
+      const custoVal = parseNumber(item.custoUnitDia ?? item.custoUnitDay);
+
+      // Considera preenchido se tiver função E algum valor numérico populado,
+      // ou se o usuário alterou a função padrão "Encarregado" para outra coisa.
+      const deFatoPreenchido = hasFuncao && (Number.isFinite(qVal) || Number.isFinite(diasVal) || Number.isFinite(custoVal));
+
+      if (deFatoPreenchido || (hasFuncao && item.funcao !== 'Encarregado')) {
+        if (!hasFuncao) {
           alert("Função é obrigatória para todos os itens de mão de obra preenchidos.");
           return;
         }
-        if (!item.quantidade || parseFloat(item.quantidade) <= 0) {
-          alert("Quantidade deve ser um número maior que 0 para itens de mão de obra.");
+        if (!Number.isFinite(qVal) || qVal <= 0) {
+          alert(`Quantidade deve ser um número maior que 0 para a função "${item.funcao}".`);
           return;
         }
-        if (!item.dias || parseFloat(item.dias) <= 0) {
-          alert("Dias deve ser um número maior que 0 para itens de mão de obra.");
+        if (!Number.isFinite(diasVal) || diasVal <= 0) {
+          alert(`Dias deve ser um número maior que 0 para a função "${item.funcao}".`);
           return;
         }
-        if (!item.custoUnitDia || parseFloat(item.custoUnitDia) <= 0) {
-          alert("Custo unitário por dia deve ser um número maior que 0 para itens de mão de obra.");
+        if (!Number.isFinite(custoVal) || custoVal <= 0) {
+          alert(`Custo unitário por dia deve ser um número maior que 0 para a função "${item.funcao}".`);
+          return;
+        }
+      }
+    }
+
+    // ==========================================
+    // VALIDAÇÃO: CONSUMÍVEIS E MATERIAIS
+    // ==========================================
+    for (const item of orcamentoData.materiais) {
+      if (isMaterialRowFilled(item)) {
+        if (!item.descricao.trim()) {
+          alert("Descrição é obrigatória para todos os itens de materiais preenchidos.");
+          return;
+        }
+        if (!item.unidade.trim()) {
+          alert(`A unidade é obrigatória para o material "${item.descricao}".`);
+          return;
+        }
+        const matQ = parseNumber(item.quantidade);
+        if (isNaN(matQ) || matQ <= 0) {
+          alert(`Quantidade deve ser um número maior que 0 para o material "${item.descricao}".`);
+          return;
+        }
+        const matC = parseNumber(item.custoUnit);
+        if (isNaN(matC) || matC <= 0) {
+          alert(`Custo unitário deve ser um número maior que 0 para o material "${item.descricao}".`);
+          return;
+        }
+      }
+    }
+
+    // ==========================================
+    // VALIDAÇÃO: SERVIÇOS TERCEIRIZADOS
+    // ==========================================
+    for (const item of orcamentoData.terceirizados) {
+      if (isTerceirizadoRowFilled(item)) {
+        if (!item.descricao.trim()) {
+          alert("Descrição é obrigatória para todos os itens terceirizados preenchidos.");
+          return;
+        }
+        if (!item.unidade.trim()) {
+          alert(`A unidade é obrigatória para o serviço terceirizado "${item.descricao}".`);
+          return;
+        }
+        const terQ = parseNumber(item.quantidade);
+        if (isNaN(terQ) || terQ <= 0) {
+          alert(`Quantidade deve ser um número maior que 0 para o serviço terceirizado "${item.descricao}".`);
+          return;
+        }
+        const terC = parseNumber(item.custoUnit);
+        if (isNaN(terC) || terC <= 0) {
+          alert(`Custo unitário deve ser um número maior que 0 para o serviço terceirizado "${item.descricao}".`);
+          return;
+        }
+      }
+    }
+
+    // ==========================================
+    // VALIDAÇÃO: ATIVIDADES PREVISTAS
+    // ==========================================
+    for (const item of orcamentoData.atividades) {
+      if (isAtividadeRowFilled(item)) {
+        if (!item.atividade.trim()) {
+          alert("Atividade é obrigatória para todos os itens de atividades preenchidos.");
+          return;
+        }
+        const actDias = parseNumber(item.dias);
+        if (isNaN(actDias) || actDias <= 0) {
+          alert(`Dias deve ser um número maior que 0 para a atividade "${item.atividade}".`);
           return;
         }
       }
@@ -445,11 +544,13 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
           alert("Unidade é obrigatória para todos os itens de materiais preenchidos.");
           return;
         }
-        if (!item.quantidade || parseFloat(item.quantidade) <= 0) {
+        const matQ = parseNumber(item.quantidade);
+        if (isNaN(matQ) || matQ <= 0) {
           alert("Quantidade deve ser um número maior que 0 para itens de materiais.");
           return;
         }
-        if (!item.custoUnit || parseFloat(item.custoUnit) <= 0) {
+        const matC = parseNumber(item.custoUnit);
+        if (isNaN(matC) || matC <= 0) {
           alert("Custo unitário deve ser um número maior que 0 para itens de materiais.");
           return;
         }
@@ -467,11 +568,13 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
           alert("Unidade é obrigatória para todos os itens terceirizados preenchidos.");
           return;
         }
-        if (!item.quantidade || parseFloat(item.quantidade) <= 0) {
+        const terQ = parseNumber(item.quantidade);
+        if (isNaN(terQ) || terQ <= 0) {
           alert("Quantidade deve ser um número maior que 0 para itens terceirizados.");
           return;
         }
-        if (!item.custoUnit || parseFloat(item.custoUnit) <= 0) {
+        const terC = parseNumber(item.custoUnit);
+        if (isNaN(terC) || terC <= 0) {
           alert("Custo unitário deve ser um número maior que 0 para itens terceirizados.");
           return;
         }
@@ -485,7 +588,8 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
           alert("Atividade é obrigatória para todos os itens de atividades preenchidos.");
           return;
         }
-        if (!item.dias || parseFloat(item.dias) <= 0) {
+        const actDias = parseNumber(item.dias);
+        if (isNaN(actDias) || actDias <= 0) {
           alert("Dias deve ser um número maior que 0 para itens de atividades.");
           return;
         }

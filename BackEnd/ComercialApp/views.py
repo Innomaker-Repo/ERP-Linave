@@ -17,6 +17,9 @@ from django.http import FileResponse
 from django.conf import settings
 import os
 
+import logging
+logger = logging.getLogger(__name__)
+
 # --- ViewSets Básicos ---
 class ClienteViewSet(viewsets.ModelViewSet):
     queryset = Cliente.objects.all()
@@ -60,6 +63,15 @@ class NegocioViewSet(viewsets.ModelViewSet):
     
     queryset = Negocio.objects.select_related('cliente').prefetch_related('servicos').all()
     serializer_class = NegocioSerializer
+
+    def list(self, request, *args, **kwargs):
+        try:
+            return super().list(request, *args, **kwargs)
+        except Exception as e:
+            # Isso vai salvar o erro real em um arquivo chamado 'django_debug.log'
+            with open('django_debug.log', 'a') as f:
+                f.write(f"ERRO GET NEGOCIOS: {str(e)}\n")
+            raise e # Relança o erro para o Django tratar
 
     @transaction.atomic
     def create(self, request, *args, **kwargs):

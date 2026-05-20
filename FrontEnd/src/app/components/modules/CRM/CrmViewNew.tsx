@@ -119,8 +119,7 @@ export const indexToVersaoAlfabetica = (index: number) => {
 };
 
 export function CrmViewNew({ searchQuery }: CrmViewProps) {
-  const { os, clientes, saveEntity, userSession, config, obras} = useErp();
-// Estado local que morre ao fechar a página ou dar F5
+  const { os, clientes, saveEntity, userSession, config, obras, saveCliente } = useErp() as any;// Estado local que morre ao fechar a página ou dar F5
   const [negociosBackend, setNegociosBackend] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [clientesLoading, setClientesLoading] = useState(false);
@@ -267,27 +266,50 @@ const initialServico: Servico = {
   };
 
   // --- EFEITO DE CARREGAMENTO SQL PURO ---
+  // --- EFEITO DE CARREGAMENTO SQL PURO ---
   useEffect(() => {
     const carregarDadosExclusivosSQL = async () => {
       setIsLoading(true);
       try {
+        // 1. Garante que temos a lista de clientes atualizada na memória
+        const clientesBackend = await getClientes();
+        const clientesMapa: Record<string, string> = {};
+        
+        if (Array.isArray(clientesBackend)) {
+          await saveEntity('clientes', clientesBackend);
+          // Cria um mapa rápido de ID -> Nome para busca instantânea
+          clientesBackend.forEach((c: any) => {
+            clientesMapa[String(c.id)] = c.razaoSocial || c.razao_social || '';
+          });
+        }
+
+        // 2. Busca os negócios do banco
         const dados = await getNegocios();
         if (Array.isArray(dados)) {
-         const formatados = dados.map((n: any) => ({
-            id: `ID ${n.id}`, 
-            nome: n.nome_negocio,
-            clienteId: n.cliente,
-            empresaPrestadora: n.empresa_prestadora || 'Linave',
-            categoria: n.categoria || 'Planejamento',
-            status: n.status || 'Aguardando orçamento', // 🟢 LÊ O STATUS REAL OU FORÇA O PADRÃO
-            solicitante: n.solicitante,
-            servicos: n.servicos || [],
-            negocioBackendId: n.id,
-            orcamentos: [], 
-            propostas: [],
-            documentosNegocio: []
-          }));
+          const formatados = dados.map((n: any) => {
+            const idClienteStr = String(n.cliente || '');
+            
+            return {
+              id: `ID ${n.id}`, 
+              nome: n.nome_negocio,
+              clienteId: n.cliente,
+              // BLINDAGEM: Injeta o nome real resolvido direto no card
+              nomeClienteResolvido: clientesMapa[idClienteStr] || n.cliente_nome || n.nome_cliente || "Cliente Identificado",
+              empresaPrestadora: n.empresa_prestadora || 'Linave',
+              categoria: n.categoria || 'Planejamento',
+              status: n.status || 'Aguardando orçamento',
+              solicitante: n.solicitante,
+              servicos: n.servicos || [],
+              negocioBackendId: n.id,
+              orcamentos: n.orcamentos || [], 
+              propostas: n.propostas || [],
+              documentosNegocio: n.documentos || n.arquivos || []
+            };
+          });
+          
           setNegociosBackend(formatados);
+          // Sincroniza com o ErpContext global para as outras abas lerem a mesma estrutura
+          saveEntity('obras', formatados);
         }
       } catch (error) {
         console.error("Erro ao carregar dados do SQL:", error);
@@ -298,7 +320,7 @@ const initialServico: Servico = {
     };
 
     carregarDadosExclusivosSQL();
-  }, []);
+  }, [saveEntity]);
 
   const obraTemDocumentoMediacao = (obra: any) => {
     const docs = Array.isArray(obra?.documentosNegocio) ? obra.documentosNegocio : [];
@@ -499,24 +521,23 @@ const initialServico: Servico = {
     });
   };
 
-  useEffect(() => {
-    const carregarClientesCRM = async () => {
-      if (Array.isArray(clientes) && clientes.length > 0) return;
-      setClientesLoading(true);
-      try {
-        const clientesBackend = await getClientes();
-        if (clientesBackend && clientesBackend.length > 0) {
-          await saveEntity('clientes', clientesBackend);
-        }
-      } catch (error) {
-        console.error('Erro ao carregar clientes no CRM:', error);
-      } finally {
-        setClientesLoading(false);
-      }
-    };
+useEffect(() => {
+  // Se já temos clientes no estado global, não busque da API
+  if (clientes && clientes.length > 0) return; 
 
-    carregarClientesCRM();
-  }, [clientes, saveEntity]);
+  const carregarClientesCRM = async () => {
+    setClientesLoading(true);
+    try {
+      const data = await getClientes();
+      saveCliente(data); // Usa a função nova
+    } catch (err) {
+      console.error("Erro ao carregar:", err);
+    } finally {
+      setClientesLoading(false);
+    }
+  };
+  carregarClientesCRM();
+}, [clientes, saveCliente]); // Adicionei saveCliente nas dependências
 
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`;
@@ -1351,6 +1372,9 @@ const initialServico: Servico = {
 
     // Usando await e fechando a função corretamente
     await persistirObraAtualizada(obraAtualizada);
+    setNegociosBackend(prev => 
+      prev.map(o => o.id === obraAtualizada.id ? obraAtualizada : o)
+    );
     alert(mensagem);
     setShowDetalhesObraModal(false);
     setSelectedObraDetalhes(null);
@@ -2331,7 +2355,6 @@ const obrasOrdenadas = useMemo(() => {
       if (!searchQuery) return true;
 
       const termo = searchQuery.toLowerCase();
-      // Adicionada proteção opcional ?. para o caso de clientes ser undefined
       const cliente = (clientes || []).find(c => String(c.id) === String(obra.clienteId));
       
       return (
@@ -2339,6 +2362,24 @@ const obrasOrdenadas = useMemo(() => {
         obra.id?.toLowerCase().includes(termo) ||
         cliente?.razaoSocial?.toLowerCase().includes(termo)
       );
+    }).map((obra: any) => {
+      // 🚀 BLINDAGEM DE CATEGORIA: Corrige o texto que vem do banco para bater com o ID da coluna
+      let categoriaTratada = String(obra.categoria || '').trim();
+      
+      if (categoriaTratada.toLowerCase().includes('andamento')) {
+        categoriaTratada = 'Em Andamento';
+      } else if (categoriaTratada.toLowerCase().includes('negocia')) {
+        categoriaTratada = 'Negociação';
+      } else if (categoriaTratada.toLowerCase().includes('planeja')) {
+        categoriaTratada = 'Planejamento';
+      } else if (categoriaTratada.toLowerCase().includes('finaliza')) {
+        categoriaTratada = 'Finalização';
+      }
+
+      return {
+        ...obra,
+        categoria: categoriaTratada
+      };
     });
 }, [negociosBackend, searchQuery, clientes]);
 
@@ -2544,9 +2585,9 @@ const obrasOrdenadas = useMemo(() => {
                           </div>
                         </div>
 
-                        {/* Cliente */}
-                        <p className="text-white/70 text-xs font-bold mb-2 truncate">
-                          {cliente?.razaoSocial}
+                       {/* Altere para buscar a propriedade direta e segura que mapeamos: */}
+                        <p className="text-amber-400 text-xs font-bold mb-2 truncate">
+                          {obra.nomeClienteResolvido}
                         </p>
 
                         {/* Prestador */}

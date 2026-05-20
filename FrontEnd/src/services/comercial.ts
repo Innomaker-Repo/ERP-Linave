@@ -67,38 +67,45 @@ export const createCliente = async (cliente: ClientePayload) => {
   return response.data;
 };
 
+
 export const findOrCreateCliente = async (cliente: any) => {
   const source = cliente || {};
   const documento = String(source.cpfCnpj || source.documento || '').trim();
-  const razaoSocial = String(source.razaoSocial || source.razao_social || source.nomeFantasia || '').trim();
+  const razaoSocial = String(source.razaoSocial || source.razao_social || source.nomeFantasia || 'Cliente Sem Nome').trim();
 
-  if (!documento && !razaoSocial) {
-    throw new Error('Dados de cliente insuficientes para criação.');
-  }
-
+  // 1. Busca os existentes
   const clientes = await getClientes();
   const existing = clientes.find((item: any) => {
-    if (documento && item.documento === documento) return true;
-    if (razaoSocial && String(item.razao_social).trim().toLowerCase() === razaoSocial.toLowerCase()) return true;
-    return false;
+    return (documento && item.documento === documento) || 
+           (razaoSocial && String(item.razao_social).trim().toLowerCase() === razaoSocial.toLowerCase());
   });
 
   if (existing) return existing;
 
+  // 2. PROTEÇÃO CONTRA 400: Se não tem documento, NÃO envia POST
+  if (!documento || documento === 'undefined' || documento.length < 5) {
+      console.warn("Criação bloqueada: documento inválido.");
+      return { id: null, razao_social: razaoSocial };
+  }
+
+  // 3. Payload
   const payload: ClientePayload = {
-    tipo: String(source.tipoPessoa || source.tipo || 'Juridica') === 'PJ' ? 'Juridica' : 'Fisica',
-    razao_social: razaoSocial || 'Cliente Sem Nome',
-    nome_fantasia: String(source.nomeFantasia || source.nome_fantasia || source.razaoSocial || '').trim() || undefined,
-    documento: documento || `00000000000000${Date.now()}`,
-    inscricao_estadual: String(source.inscricaoEstadual || source.inscricao_estadual || '').trim() || undefined,
-    status: String(source.status || 'Ativo') === 'Ativo' ? 'Ativo' : 'Inativo',
-    contato_geral: String(source.contato || source.contato_geral || '').trim() || undefined,
-    endereco_completo: String(source.endereco || source.endereco_completo || '').trim() || undefined,
-    usuario_responsavel: null
+    tipo: String(source.tipoPessoa || 'Juridica'),
+    razao_social: razaoSocial,
+    documento: documento,
+    contato_geral: String(source.contato || source.contato_geral || 'Não informado').trim(),
+    endereco_completo: String(source.endereco || source.endereco_completo || 'Não informado').trim(),
   };
 
-  return createCliente(payload);
+  try {
+    return await createCliente(payload);
+  } catch (error) {
+    // Aqui é onde o seu console log deve estar revelando o erro detalhado
+    console.error("Erro na criação do cliente:", error);
+    return { id: null, razao_social: razaoSocial };
+  }
 };
+
 
 export const getNegocios = async () => {
   const response = await api.get('negocios/');
@@ -147,56 +154,65 @@ export const findOrCreateNegocio = async (obra: any, clienteId: number) => {
   return createNegocio(payload);
 };
 
-const mapMDOItem = (item: any) => ({
-  fnc: item.funcao || item.fnc || '',
-  qnt: Number(item.quantidade || item.qnt || 0),
-  dias: Number(item.dias || 0),
-  custo_unit_dia: parseDecimal(item.custoUnitDia || item.custo_unit_dia || item.custoUnit || 0),
-  observacao: String(item.observacao || '').trim()
-});
+export const buildOrcamentoPayload = (orcamentoData: any, obra: any, negocioId: number, clienteId: number): OrcamentoPayload => {
+  
+  // Mapeamento correto para bater com models.py
+  const mapMDOItem = (item: any) => ({
+    fnc: String(item.funcao || item.fnc || 'Indefinido'),
+    qnt: parseInt(item.quantidade || item.qnt || 0),
+    dias: parseInt(item.dias || 0),
+    custo_unit_dia: parseDecimal(item.custoUnitDia || item.custo_unit_dia || 0),
+    observacao: String(item.observacao || '').trim()
+  });
 
-const mapMaterialItem = (item: any) => ({
-  item: item.descricao || '',
-  unidade: item.unidade || '',
-  quantidade: Number(item.quantidade || 0),
-  peso: parseDecimal(item.pesoFator || item.peso || 0),
-  custo_unitario: parseDecimal(item.custoUnit || item.custo_unitario || 0),
-  terceirizado: String(item.origemTerceiros || '').toLowerCase() === 'sim',
+ const mapMaterialItem = (item: any) => ({
+  item: String(item.descricao || ''),
+  unidade: String(item.unidade || ''),
+  qnt: parseInt(item.quantidade) || 0, // Backend espera "qnt"
+  peso: parseDecimal(item.pesoFator || 0),
+  custo_unit: parseDecimal(item.custoUnit || 0), // Backend espera "custo_unit"
+  terceirizado: item.origemTerceiros === 'Sim',
   observacao: String(item.observacao || '').trim()
 });
 
 const mapTerceirizadoItem = (item: any) => ({
   descricao: item.descricao || '',
   unidade: item.unidade || '',
-  quantidade: parseDecimal(item.quantidade || 0),
-  peso: parseDecimal(item.pesoFator || item.peso || 0),
-  custo_unit: parseDecimal(item.custoUnit || item.custo_unit || 0),
-  observacao: String(item.observacao || '').trim()
+  qnt: parseInt(item.quantidade) || 0, // Backend espera "qnt"
+  peso: parseDecimal(item.pesoFator || 0),
+  valor_unit: parseDecimal(item.custoUnit || 0), // Backend espera "valor_unit"
+  observacao: String(item.observacao || item.observacoes || '').trim()
 });
 
-const mapAtividadeItem = (item: any) => ({
-  atividade: item.atividade || '',
-  duracao: Number(item.dias || item.duração || 0),
-  observacao: String(item.observacao || '').trim()
-});
+  const mapAtividadeItem = (item: any) => ({
+    atividade: String(item.atividade || ''),
+    duracao: parseInt(item.dias || item.duracao || 0), // Nome correto no models.py
+    observacao: String(item.observacao || '').trim()
+  });
 
-export const buildOrcamentoPayload = (orcamentoData: any, obra: any, negocioId: number, clienteId: number): OrcamentoPayload => ({
-  levantamento: {
-    cliente_id: clienteId,
-    negocio_id: negocioId
-  },
-  resumo: {
-    margem: parseDecimal(orcamentoData.margem || 0),
-    OH: parseDecimal(orcamentoData.oh || 0),
-    impostos: parseDecimal(orcamentoData.impostos || 0),
-    qnt: Number(orcamentoData.quantidadeItensProduzidos || 0)
-  },
-  mao_de_obra: Array.isArray(orcamentoData.maoDeObra) ? orcamentoData.maoDeObra.map(mapMDOItem) : [],
-  materiais: Array.isArray(orcamentoData.materiais) ? orcamentoData.materiais.map(mapMaterialItem) : [],
-  terceirizados: Array.isArray(orcamentoData.terceirizados) ? orcamentoData.terceirizados.map(mapTerceirizadoItem) : [],
-  atividades: Array.isArray(orcamentoData.atividades) ? orcamentoData.atividades.map(mapAtividadeItem) : [],
-  observacoes: String(orcamentoData.observacoes || '').trim()
-});
+  return {
+    levantamento: { cliente_id: clienteId, negocio_id: negocioId },
+    resumo: {
+      margem: parseDecimal(orcamentoData.margem || 0),
+      OH: parseDecimal(orcamentoData.oh || 0),
+      impostos: parseDecimal(orcamentoData.impostos || 0),
+      qnt: parseInt(orcamentoData.quantidadeItensProduzidos) || 0
+    },
+    mao_de_obra: Array.isArray(orcamentoData.maoDeObra) 
+      ? orcamentoData.maoDeObra.filter((mo: any) => mo.funcao && mo.funcao.trim() !== '').map(mapMDOItem) 
+      : [],
+    materiais: Array.isArray(orcamentoData.materiais) 
+      ? orcamentoData.materiais.filter((mat: any) => mat.descricao && mat.descricao !== 'Consumível ou material' && mat.descricao.trim() !== '').map(mapMaterialItem) 
+      : [],
+    terceirizados: Array.isArray(orcamentoData.terceirizados) 
+      ? orcamentoData.terceirizados.filter((ter: any) => ter.descricao && ter.descricao !== 'Jateamento / pintura terceirizada' && ter.descricao.trim() !== '').map(mapTerceirizadoItem) 
+      : [],
+    atividades: Array.isArray(orcamentoData.atividades) 
+      ? orcamentoData.atividades.filter((act: any) => act.atividade && act.atividade !== 'Levantamento / Inspeção' && act.atividade.trim() !== '').map(mapAtividadeItem) 
+      : [],
+    observacoes: String(orcamentoData.observacoes || '').trim()
+  };
+};
 
 export const createOrcamento = async (payload: OrcamentoPayload) => {
   const response = await api.post('orcamentos/criar/', payload);
