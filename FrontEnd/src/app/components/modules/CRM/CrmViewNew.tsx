@@ -1225,40 +1225,44 @@ const initialServico: Servico = {
     };
 
     try {
-      // 2. Dispara a requisição HTTP POST para a API do Django
-      const respostaBackend = await criarNegocio(payloadDjango);
+          // 2. Dispara a requisição HTTP POST para a API do Django
+          const respostaBackend = await criarNegocio(payloadDjango);
 
-      toast.success(`${formData.servicos.length} Serviço(s) criado(s) com sucesso no Banco de Dados!`);
-      
-      setShowFormNovoNegocio(false);
-      setNovoNegocioTab('dados');
-      setFormData(initialForm);
+          // BLINDAGEM: O Django pode devolver o objeto de duas formas. Isso garante que o React não quebre lendo 'undefined'
+          const dadosNegocio = respostaBackend.negocio || respostaBackend;
+          const dadosServicos = respostaBackend.servicos || formData.servicos;
 
-      // 3. Adiciona o objeto real devolvido pelo backend na tela
-     const negocioFormatado = {
-        id: `ID ${respostaBackend.negocio.id}`, 
-        nome: respostaBackend.negocio.nome_negocio,
-        clienteId: String(respostaBackend.negocio.cliente), 
-        empresaPrestadora: respostaBackend.negocio.empresa_prestadora,
-        categoria: respostaBackend.negocio.categoria || 'Planejamento',
-        status: 'Aguardando orçamento', // FORÇANDO STATUS PARA APARECER NA TELA DE ORÇAMENTOS
-        requerReorcamento: true,        // SINALIZA QUE PRECISA SER ORÇADO
-        orcamentoRealizado: false,      // SINALIZA QUE AINDA NÃO FOI ORÇADO
-        solicitante: respostaBackend.negocio.solicitante,
-        servicos: respostaBackend.servicos || [],
-        negocioBackendId: respostaBackend.negocio.id,
-        orcamentos: [], 
-        propostas: [],
-        documentosNegocio: []
-      };
+          // 3. Monta o objeto de forma totalmente segura ANTES de fechar a tela
+          const negocioFormatado = {
+            id: `ID ${dadosNegocio.id || Date.now()}`, 
+            nome: dadosNegocio.nome_negocio || formData.nomeNegocio,
+            clienteId: String(dadosNegocio.cliente || formData.clienteId), 
+            empresaPrestadora: dadosNegocio.empresa_prestadora || formData.empresaPrestadora,
+            categoria: dadosNegocio.categoria || 'Planejamento',
+            status: 'Aguardando orçamento', 
+            requerReorcamento: true,        
+            orcamentoRealizado: false,      
+            solicitante: dadosNegocio.solicitante || formData.solicitante,
+            servicos: dadosServicos || [],
+            negocioBackendId: dadosNegocio.id || Date.now(),
+            orcamentos: [], 
+            propostas: [],
+            documentosNegocio: []
+          };
 
-      // Atualiza o Kanban imediatamente
-      setNegociosBackend(prev => [...prev, negocioFormatado]);
+          toast.success(`${formData.servicos.length} Serviço(s) criado(s) com sucesso no Banco de Dados!`);
+          
+          setShowFormNovoNegocio(false);
+          setNovoNegocioTab('dados');
+          setFormData(initialForm);
 
-      //Atualiza a memória global para a tela de Orçamentos enxergar!
-      saveEntity('obras', [...(obras || []), negocioFormatado]);
+          // Atualiza o Kanban imediatamente
+          setNegociosBackend(prev => [...prev, negocioFormatado]);
 
-    } catch (error: any) {
+          // Atualiza a memória global para a tela de Orçamentos enxergar!
+          saveEntity('obras', [...(obras || []), negocioFormatado]);
+
+        } catch (error: any) {
       console.error('Erro detalhado do Backend:', error);
       alert('Erro ao salvar novo serviço! Verifique os dados e tente novamente.');
     }
@@ -2260,6 +2264,25 @@ if (selectedObraDetalhes && conteudoDataUrl) {
     toast.success('OS aprovada com sucesso.');
   };
 
+  const handleAvancarParaFinalizacao = async () => {
+    if (!selectedObraDetalhes) return;
+
+    const podeFinalizar = possuiOSAprovadaParaFinalizacao(selectedObraDetalhes.id);
+    if (!podeFinalizar) {
+      toast.error('Para avançar para Finalização, a OS precisa estar enviada e aprovada.');
+      return;
+    }
+
+    const obraAtualizada = {
+      ...selectedObraDetalhes,
+      categoria: 'Finalização' as CategoriaObra,
+      status: 'Finalização'
+    };
+
+    await persistirObraAtualizada(obraAtualizada);
+    toast.success('Negócio movido para Finalização.');
+  };
+
   const handleUploadAssinaturaAprovacaoOS = async (osId: string, files: FileList | null) => {
     if (!files || files.length === 0) return;
 
@@ -2297,6 +2320,7 @@ if (selectedObraDetalhes && conteudoDataUrl) {
     return osDoNegocio.some((item: any) => (
       item.statusEnvio === 'enviada'
       && item.statusAprovacao === 'aprovada'
+      && Boolean(item.documentoAssinaturaAprovacao?.conteudo || item.documentoAssinaturaAprovacao?.url)
     ));
   };
 
@@ -2449,9 +2473,17 @@ const obrasOrdenadas = useMemo(() => {
                                     <span className="text-emerald-300 text-[10px] font-black">Orçado</span>
                                   </div>
                                 ) : (
-                                  <div className="px-1.5 py-0.5 bg-amber-500/20 border border-amber-500/40 rounded-full whitespace-nowrap">
-                                    <span className="text-amber-300 text-[10px] font-black">Aguard. orçamento</span>
-                                  </div>
+                                  <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation(); //  Impede que o modal abra
+                                    //  CORREÇÃO: Dispara a mudança de tela para o App.tsx escutar
+                                    window.dispatchEvent(new CustomEvent('mudarTelaERP', { detail: 'orcamentos' }));
+                                  }}
+                                  className="px-1.5 py-0.5 bg-amber-500/20 border border-amber-500/40 rounded-full whitespace-nowrap hover:bg-amber-500/40 hover:scale-105 transition-all cursor-pointer"
+                                  title="Clique para orçar este negócio"
+                                >
+                                  <span className="text-amber-300 text-[10px] font-black">Aguard. orçamento</span>
+                                </button>
                                 )}
                               </>
                             )}
