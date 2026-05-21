@@ -37,6 +37,7 @@ function getAbaForSection(section: string): { aba: string; item: string } {
     
     // Compras
     'compras': { aba: 'compras', item: 'compras' },
+    'kanbanCompras': { aba: 'compras', item: 'kanbanCompras' },
     'fornecedores': { aba: 'compras', item: 'fornecedores' },
     
     // Almoxerifado

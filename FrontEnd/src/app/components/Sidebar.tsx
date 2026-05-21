@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, HardHat, Anchor, ClipboardList, 
   ShoppingCart, DollarSign, BarChart3, Settings, Factory, 
   HeartHandshake, List, Clock, ChevronDown, ChevronRight, 
-  Briefcase, Wrench, Activity, FileText, Zap, Building2, CheckCircle2, Trash2
+  Briefcase, Wrench, Activity, FileText, Zap, Building2, CheckCircle2, Trash2, LayoutGrid
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -85,6 +85,7 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
       icon: ShoppingCart,
       items: [
         { id: 'compras', label: 'Compras / Requisições', icon: ShoppingCart },
+        { id: 'kanbanCompras', label: 'Kanban de Compras', icon: LayoutGrid },
         { id: 'fornecedores', label: 'Fornecedores', icon: Factory },
       ]
     },
@@ -118,6 +119,8 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
     
     // Admin tem acesso irrestrito
     if (role === 'ADMIN') return true;
+
+    if (itemId === 'compras') return true;
     
     // Utilizador comum verifica a lista de permissões recebida do Drive
     return userSession.permissoes?.[itemId] === true;

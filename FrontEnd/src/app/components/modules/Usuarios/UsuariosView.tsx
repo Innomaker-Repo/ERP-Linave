@@ -11,6 +11,7 @@ const MODULOS_DISPONIVEIS = [
   { id: 'obras', label: 'Engenharia (Obras)' },
   { id: 'servicos', label: 'Operação (Serviços)' },
   { id: 'compras', label: 'Compras' },
+  { id: 'kanbanCompras', label: 'Kanban de Compras' },
   { id: 'fornecedores', label: 'Fornecedores' },
   { id: 'financeiro', label: 'Financeiro (Restrito)' },
   { id: 'relatorios', label: 'Relatórios BI' },
