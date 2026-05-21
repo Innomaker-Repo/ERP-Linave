@@ -10,6 +10,8 @@ interface AlmoxerifadoModuleProps {
 
 export function AlmoxerifadoModule({ activeItem, searchQuery }: AlmoxerifadoModuleProps) {
   switch (activeItem) {
+    case 'estoquePublico':
+      return <EstoqueView searchQuery={searchQuery} mode="public" />;
     case 'historicoBaixa':
       return <HistoricoBaixaView searchQuery={searchQuery} />;
     case 'alocadosPorOS':

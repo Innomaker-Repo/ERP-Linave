@@ -2,8 +2,37 @@ import type { ElementType } from 'react';
 import { CheckCircle2, ClipboardList, Clock3 } from 'lucide-react';
 
 export type BoardStage = 'SOLICITACOES' | 'APROVACAO' | 'COMPRADOS';
-export type ApprovalRoute = 'direta' | 'gerente' | null;
+export type ApprovalRoute = 'gerenteComercial' | 'diretorFinanceiro' | null;
 export type PurchaseState = 'comprado' | 'entregue' | 'estoque';
+
+export const APPROVAL_LIMIT = 500;
+
+export const approvalRouteLabel: Record<Exclude<ApprovalRoute, null>, string> = {
+  gerenteComercial: 'Gerente Comercial',
+  diretorFinanceiro: 'Diretor Financeiro',
+};
+
+export const resolveApprovalRoute = (budgetValue: number | null | undefined): Exclude<ApprovalRoute, null> =>
+  (budgetValue || 0) >= APPROVAL_LIMIT ? 'diretorFinanceiro' : 'gerenteComercial';
+
+export interface QuoteFornecedor {
+  fornecedor: string;
+  valor: number;
+  prazoEntrega: string;
+  condicaoPagamento: string;
+}
+
+export interface QuoteItem {
+  itemId: string;
+  fornecedores: QuoteFornecedor[];
+  menorValor: number | null;
+  fornecedorVencedor: string;
+  fornecedorSelecionado: string;
+  valorSelecionado: number | null;
+  prazoEntregaSelecionado: string;
+  condicaoPagamentoSelecionada: string;
+  jaEmEstoque: boolean;
+}
 
 export interface ItemCompra {
   id: string;
@@ -28,6 +57,7 @@ export interface RequisicaoCompra {
   approvalRoute: ApprovalRoute;
   purchaseState: PurchaseState;
   budgetValue: number | null;
+  budgetDetails: QuoteItem[];
   createdAt: string;
   updatedAt: string;
 }
@@ -51,7 +81,7 @@ export const BOARD_COLUMNS: Array<{ id: BoardStage; title: string; subtitle: str
   {
     id: 'APROVACAO',
     title: 'Aprovações',
-    subtitle: 'Direta ou com gerente acima de R$ 500',
+    subtitle: 'Até R$ 499 com gerente comercial, a partir de R$ 500 com diretor financeiro',
     icon: Clock3,
     accent: 'from-sky-500/20 to-sky-500/5 border-sky-500/20 text-sky-300',
   },
@@ -100,6 +130,50 @@ export const createDefaultRequest = (solicitante = '', departamento = '', centro
 export const normalizeRequests = (value: unknown): RequisicaoCompra[] => {
   if (!Array.isArray(value)) return [];
 
+  const normalizeFornecedor = (source: any): QuoteFornecedor => ({
+    fornecedor: String(source?.fornecedor || ''),
+    valor: Number(source?.valor || 0),
+    prazoEntrega: String(source?.prazoEntrega || ''),
+    condicaoPagamento: String(source?.condicaoPagamento || ''),
+  });
+
+  const normalizeQuote = (quote: any, index: number): QuoteItem => {
+    const fornecedores = Array.isArray(quote?.fornecedores) && quote.fornecedores.length > 0
+      ? quote.fornecedores.map(normalizeFornecedor)
+      : [quote?.fornecedor1, quote?.fornecedor2, quote?.fornecedor3].map(normalizeFornecedor);
+
+    const valoresValidos: QuoteFornecedor[] = fornecedores.filter((entry: QuoteFornecedor) => entry.fornecedor.trim() && Number.isFinite(entry.valor) && entry.valor > 0);
+    const menor = valoresValidos.reduce<number | null>((current: number | null, entry: QuoteFornecedor) => (current === null || entry.valor < current ? entry.valor : current), null);
+    const vencedor = valoresValidos.find((entry: QuoteFornecedor) => entry.valor === menor)?.fornecedor || '';
+    const selecionado = String(quote?.fornecedorSelecionado || '');
+    const fornecedorSelecionado = fornecedores.find((entry: QuoteFornecedor) => entry.fornecedor === selecionado) || null;
+
+    return {
+      itemId: String(quote?.itemId || quote?.id || index),
+      fornecedores: valoresValidos,
+      menorValor: menor,
+      fornecedorVencedor: vencedor,
+      fornecedorSelecionado: fornecedorSelecionado?.fornecedor || '',
+      valorSelecionado: fornecedorSelecionado ? fornecedorSelecionado.valor : null,
+      prazoEntregaSelecionado: fornecedorSelecionado?.prazoEntrega || '',
+      condicaoPagamentoSelecionada: fornecedorSelecionado?.condicaoPagamento || '',
+      jaEmEstoque: Boolean(quote?.jaEmEstoque),
+    };
+  };
+
+  const normalizeApprovalRoute = (route: any, budgetValue: number | null): ApprovalRoute => {
+    if (route === 'gerenteComercial' || route === 'diretorFinanceiro') {
+      return route;
+    }
+
+    // Backward compatibility with older route names.
+    if (route === 'gerente' || route === 'direta') {
+      return resolveApprovalRoute(budgetValue);
+    }
+
+    return null;
+  };
+
   return value
     .filter((item) => item && typeof item === 'object')
     .map((item: any) => ({
@@ -122,9 +196,10 @@ export const normalizeRequests = (value: unknown): RequisicaoCompra[] => {
           }))
         : [],
       stage: item.stage === 'APROVACAO' || item.stage === 'COMPRADOS' ? item.stage : 'SOLICITACOES',
-      approvalRoute: item.approvalRoute === 'direta' || item.approvalRoute === 'gerente' ? item.approvalRoute : null,
+      approvalRoute: normalizeApprovalRoute(item.approvalRoute, typeof item.budgetValue === 'number' ? item.budgetValue : null),
       purchaseState: item.purchaseState === 'entregue' || item.purchaseState === 'estoque' ? item.purchaseState : 'comprado',
       budgetValue: typeof item.budgetValue === 'number' ? item.budgetValue : null,
+      budgetDetails: Array.isArray(item.budgetDetails) ? item.budgetDetails.map(normalizeQuote) : [],
       createdAt: String(item.createdAt || new Date().toISOString()),
       updatedAt: String(item.updatedAt || new Date().toISOString()),
     }))
@@ -150,4 +225,10 @@ export const saveRequests = (requests: RequisicaoCompra[]) => {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(requests));
 };
 
-export const formatCurrency = (value: number) => value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+export const formatCurrency = (value: number | null | undefined) => {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return '-';
+  }
+
+  return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+};

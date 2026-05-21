@@ -31,6 +31,7 @@ interface StockTable {
 
 interface StockViewProps {
   searchQuery: string;
+  mode?: 'public' | 'manage';
 }
 
 interface GasAllocation {
@@ -395,10 +396,11 @@ const createRegisterValues = (table?: StockTable, baseValues: Record<string, str
   return values;
 };
 
-export function EstoqueView({ searchQuery }: StockViewProps) {
+export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   const { os, almoxerifado, saveEntity, loading } = useErp();
   const hasHydratedPersistedState = useRef(false);
   const [ordensServicoBackend, setOrdensServicoBackend] = useState<OrdemServicoResumo[]>([]);
+  const [publicSearch, setPublicSearch] = useState<string>(searchQuery || '');
 
   const [tables, setTables] = useState<StockTable[]>(() => STOCK_TABLES.map((table) => ({
     ...table,
@@ -630,6 +632,10 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
   }, [searchQuery]);
 
   useEffect(() => {
+    setPublicSearch(searchQuery || '');
+  }, [searchQuery, mode]);
+
+  useEffect(() => {
     const types = categoryMap[selectedCategory] as string[];
     if (selectedCategory === 'Materiais') {
       setSelectedType('Materiais');
@@ -703,6 +709,26 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
     });
   }, [allocations, availableOS, filtro, selectedOsFilter, selectedTable.rows, visibleColumns]);
 
+  const publicRows = useMemo(() => {
+    const query = publicSearch.toLowerCase().trim();
+
+    return tables.flatMap((table) => table.rows.filter((row) => {
+      if (!query) return true;
+
+      const searchableName = [
+        row.values.item,
+        row.values.material,
+        row.values.nome,
+        row.values.equipamento,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+
+      return searchableName.includes(query);
+    }).map((row) => ({ ...row, tableName: table.name })));
+  }, [publicSearch, tables]);
+
   const currentRegisterTable = useMemo(
     () => tables.find((table) => table.name === registerTableName) || tables[0],
     [registerTableName, tables]
@@ -721,6 +747,104 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
     if (!isRegisterOpen || !currentRegisterTable) return;
     setRegisterValues((previous) => createRegisterValues(currentRegisterTable, previous));
   }, [currentRegisterTable, isRegisterOpen]);
+
+  if (mode === 'public') {
+    return (
+      <div className="flex flex-1 flex-col overflow-hidden bg-gradient-to-br from-[#101f3d] via-[#0d1830] to-[#0b1220]">
+        <div className="border-b border-white/5 p-8 pb-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div>
+              <h1 className="text-3xl font-black uppercase tracking-wide text-white flex items-center drop-shadow-md">
+                <Package className="mr-3 text-amber-400" size={32} />
+                Estoque
+              </h1>
+              <p className="mt-2 text-xs font-bold uppercase tracking-widest text-white/40">
+                Consulta pública de itens disponíveis no estoque
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="px-8 pt-6">
+          <div className="flex items-center gap-3 rounded-[24px] border border-white/5 bg-white/[0.03] px-4 py-3 shadow-xl backdrop-blur-md">
+            <Search size={16} className="text-white/45 shrink-0" />
+            <Input
+              value={publicSearch}
+              onChange={(event) => setPublicSearch(event.target.value)}
+              placeholder="Pesquisar por nome"
+              className="h-10 border-0 bg-transparent px-0 text-white placeholder:text-white/30 shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-4 px-8 pt-4">
+          <div className="flex items-center gap-2 rounded-full border border-white/5 bg-white/5 px-4 py-1.5 text-[11px] font-bold uppercase tracking-wider text-white/60 shadow-sm">
+            <Layers3 size={14} className="text-amber-400" />
+            Pesquisa por nome
+          </div>
+          <div className="rounded-full border border-white/5 bg-white/5 px-4 py-1.5 text-[11px] font-bold uppercase tracking-wider text-white/50 shadow-sm">
+            Exibindo {publicRows.length} registros
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-auto px-8 py-4 pb-8">
+          {publicRows.length === 0 ? (
+            <div className="flex h-full items-center justify-center rounded-[24px] border border-white/5 bg-white/[0.02] backdrop-blur shadow-inner">
+              <div className="text-center">
+                <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-white/5 bg-[#0b1220]/50 shadow-sm">
+                  <Package size={28} className="text-white/30" />
+                </div>
+                <p className="font-bold text-white/60">Nenhum item encontrado</p>
+                <p className="mt-2 text-sm text-white/35">Tente outro nome na busca.</p>
+              </div>
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-[24px] border border-white/5 bg-[#0b1220]/40 shadow-xl backdrop-blur-md">
+              <div className="overflow-auto">
+                <table className="min-w-max w-full text-sm">
+                  <thead className="sticky top-0 z-10 bg-[#131f37] shadow-sm">
+                    <tr className="border-b border-white/10">
+                      <th className="px-5 py-4 text-left text-[11px] font-bold uppercase tracking-wider text-white/50">Tabela</th>
+                      <th className="px-5 py-4 text-left text-[11px] font-bold uppercase tracking-wider text-white/50">Item</th>
+                      <th className="px-5 py-4 text-left text-[11px] font-bold uppercase tracking-wider text-white/50">Material</th>
+                      <th className="px-5 py-4 text-center text-[11px] font-bold uppercase tracking-wider text-white/50">Quantidade</th>
+                      <th className="px-5 py-4 text-center text-[11px] font-bold uppercase tracking-wider text-white/50">Unidade</th>
+                      <th className="px-5 py-4 text-left text-[11px] font-bold uppercase tracking-wider text-white/50">Fornecedor</th>
+                      <th className="px-5 py-4 text-left text-[11px] font-bold uppercase tracking-wider text-white/50">Local</th>
+                      <th className="px-5 py-4 text-center text-[11px] font-bold uppercase tracking-wider text-white/50">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {publicRows.map((row) => {
+                      const itemLabel = row.values.item || row.id;
+                      const materialLabel = row.values.material || row.values.equipamento || row.values.nome || '—';
+
+                      return (
+                        <tr key={`${row.tableName}-${row.id}`} className="hover:bg-white/5 transition-colors">
+                          <td className="px-5 py-4 align-middle text-[13px] text-white/80">{row.tableName}</td>
+                          <td className="px-5 py-4 align-middle text-[13px] text-white/80">{itemLabel}</td>
+                          <td className="px-5 py-4 align-middle text-[13px] text-white/80">{materialLabel}</td>
+                          <td className="px-5 py-4 align-middle text-center text-[13px] text-white/80">{row.values.quantidade || row.values.qtd || '—'}</td>
+                          <td className="px-5 py-4 align-middle text-center text-[13px] text-white/80">{row.values.unidade || row.values.unid || '—'}</td>
+                          <td className="px-5 py-4 align-middle text-[13px] text-white/80">{row.values.fornecedor || '—'}</td>
+                          <td className="px-5 py-4 align-middle text-[13px] text-white/80">{row.values.localizacao || '—'}</td>
+                          <td className="px-5 py-4 align-middle text-center">
+                            <Badge variant="outline" className={`rounded-full border px-3 py-1 shadow-sm ${getStatusTone(row.values.status || '', row.tableName)}`}>
+                              {row.values.status || '—'}
+                            </Badge>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   const closeRegisterModal = () => {
     setIsRegisterOpen(false);

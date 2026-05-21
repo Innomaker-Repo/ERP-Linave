@@ -63,6 +63,7 @@ export function ModuleView({ section, searchQuery }: ModuleViewProps) {
     case "compras": return <ComprasView searchQuery={searchQuery} />;
     case "fornecedores": return <FornecedoresView searchQuery={searchQuery} />;
     
+    case "estoquePublico": return <EstoqueView searchQuery={searchQuery} mode="public" />;
     case "estoque": return <EstoqueView searchQuery={searchQuery} />;
     
     case "usuarios": return <UsuariosView />;

@@ -38,9 +38,11 @@ function getAbaForSection(section: string): { aba: string; item: string } {
     // Compras
     'compras': { aba: 'compras', item: 'compras' },
     'kanbanCompras': { aba: 'compras', item: 'kanbanCompras' },
+    'aprovacoesCompras': { aba: 'compras', item: 'aprovacoesCompras' },
     'fornecedores': { aba: 'compras', item: 'fornecedores' },
     
     // Almoxerifado
+    'estoquePublico': { aba: 'almoxerifado', item: 'estoquePublico' },
     'estoque': { aba: 'almoxerifado', item: 'estoque' },
     'historicoBaixa': { aba: 'almoxerifado', item: 'historicoBaixa' },
     'alocadosPorOS': { aba: 'almoxerifado', item: 'alocadosPorOS' },

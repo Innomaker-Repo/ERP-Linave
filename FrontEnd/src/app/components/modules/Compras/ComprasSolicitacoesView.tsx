@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
-import { Eraser, Link as LinkIcon, Plus, Send, ShoppingCart, Trash2, Truck } from 'lucide-react';
+import { Eraser, Plus, Send, ShoppingCart, Trash2 } from 'lucide-react';
 import { createDefaultRequest, createEmptyItem, createId, getStoredRequests, saveRequests, type ItemCompra } from './comprasLocal';
 
 export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQuery: string }) {
-  const { obras, listas, userSession } = useErp();
+  const { obras, userSession } = useErp();
   const [formData, setFormData] = useState(() =>
     createDefaultRequest(userSession?.nome || userSession?.email || '', '', '')
   );
@@ -30,19 +30,24 @@ export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQ
   };
 
   const handleCreateRequest = () => {
-    if (!formData.solicitante || !formData.departamento || !formData.centroCusto) {
+    if (!formData.solicitante || !formData.centroCusto) {
       return window.alert('Por favor, preencha todos os campos obrigatórios (*).');
     }
 
-    const itensValidos = itens.filter((item) => item.nome.trim() !== '');
+    const itensValidos = itens
+      .filter((item) => item.descricao.trim() !== '')
+      .map((item) => ({
+        ...item,
+        nome: item.descricao.trim(),
+      }));
     if (itensValidos.length === 0) {
-      return window.alert('Preencha ao menos um item na tabela.');
+      return window.alert('Preencha ao menos uma descrição na tabela.');
     }
 
     const novaRequisicao = {
       id: createId(),
       solicitante: formData.solicitante,
-      departamento: formData.departamento,
+      departamento: '',
       centroCusto: formData.centroCusto,
       itens: itensValidos,
       stage: 'SOLICITACOES' as const,
@@ -74,7 +79,7 @@ export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQ
 
       <section className="bg-[#101f3d]/50 border border-white/5 rounded-3xl p-8 shadow-xl">
         <h3 className="text-amber-400 text-xs font-bold uppercase tracking-widest mb-6">1. Nova Solicitação</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div className="grid grid-cols-1 gap-8">
           <div className="space-y-2">
             <label className="text-sm font-medium text-white/70 ml-1">Solicitante <span className="text-red-400">*</span></label>
             <input
@@ -83,23 +88,6 @@ export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQ
               value={formData.solicitante}
               onChange={(event) => setFormData({ ...formData, solicitante: event.target.value })}
             />
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-white/70 ml-1">Departamento <span className="text-red-400">*</span></label>
-            <div className="relative">
-              <select
-                className="w-full bg-[#0b1220] border border-white/10 p-4 rounded-xl text-white text-sm outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/50 transition-all appearance-none cursor-pointer"
-                value={formData.departamento}
-                onChange={(event) => setFormData({ ...formData, departamento: event.target.value })}
-              >
-                <option value="">Selecione o departamento...</option>
-                {listas?.departamentos?.map((dep: string) => (
-                  <option key={dep} value={dep}>{dep}</option>
-                ))}
-              </select>
-              <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-white/30">▼</div>
-            </div>
           </div>
 
           <div className="space-y-2 md:col-span-2">
@@ -131,73 +119,32 @@ export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQ
 
         <div className="bg-[#101f3d] border border-white/10 rounded-3xl overflow-hidden shadow-2xl">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1200px]">
+            <table className="w-full min-w-[560px]">
               <thead>
                 <tr className="bg-[#0b1220] text-xs font-bold text-white/40 uppercase tracking-wider text-left border-b border-white/10">
-                  <th className="p-4 w-40 pl-6">Item</th>
+                  <th className="p-4 w-24 pl-6">Item</th>
                   <th className="p-4 w-48">Descrição / Detalhes</th>
-                  <th className="p-4 w-32">Fornecedor</th>
-                  <th className="p-4 w-32">Categoria</th>
-                  <th className="p-4 w-36">Data Limite</th>
-                  <th className="p-4 w-28">Prioridade</th>
                   <th className="p-4 w-20 text-center">Qtd</th>
                   <th className="p-4 w-20 text-center">Un</th>
-                  <th className="p-4 w-32">Link Ref.</th>
                   <th className="p-4 w-16 text-center pr-6"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
-                {itens.map((item) => (
+                {itens.map((item, index) => (
                   <tr key={item.id} className="group hover:bg-white/[0.02] transition-colors">
                     <td className="p-3 pl-6">
-                      <input className="input-table font-medium text-white" placeholder="Nome" value={item.nome} onChange={(event) => updateItem(item.id, 'nome', event.target.value)} />
-                    </td>
-                    <td className="p-3">
-                      <input className="input-table text-white/70" placeholder="Detalhes" value={item.descricao} onChange={(event) => updateItem(item.id, 'descricao', event.target.value)} />
-                    </td>
-                    <td className="p-3">
-                      <div className="relative">
-                        <Truck size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
-                        <input className="input-table pl-8 text-white/80" placeholder="Fornecedor" value={item.fornecedor} onChange={(event) => updateItem(item.id, 'fornecedor', event.target.value)} />
+                      <div className="input-table flex items-center justify-center font-black text-amber-400 bg-white/5">
+                        {String(index + 1).padStart(2, '0')}
                       </div>
                     </td>
                     <td className="p-3">
-                      <select className="input-table cursor-pointer appearance-none text-amber-400" value={item.categoria} onChange={(event) => updateItem(item.id, 'categoria', event.target.value)}>
-                        <option value="">Selecione...</option>
-                        {listas?.categorias?.map((cat: string) => (
-                          <option key={cat} value={cat}>{cat}</option>
-                        ))}
-                      </select>
-                    </td>
-                    <td className="p-3">
-                      <input type="date" className="input-table cursor-pointer text-white/80" value={item.dataDesejada} onChange={(event) => updateItem(item.id, 'dataDesejada', event.target.value)} />
-                    </td>
-                    <td className="p-3">
-                      <select
-                        className={`input-table cursor-pointer appearance-none font-bold ${
-                          item.prioridade === 'Urgente' ? 'text-red-400'
-                            : item.prioridade === 'Alta' ? 'text-orange-400'
-                            : 'text-amber-400'
-                        }`}
-                        value={item.prioridade}
-                        onChange={(event) => updateItem(item.id, 'prioridade', event.target.value)}
-                      >
-                        {listas?.prioridades?.map((prio: string) => (
-                          <option key={prio} value={prio} className="text-white">{prio}</option>
-                        ))}
-                      </select>
+                      <input className="input-table text-white/70" placeholder="Descrição do item" value={item.descricao} onChange={(event) => updateItem(item.id, 'descricao', event.target.value)} />
                     </td>
                     <td className="p-3 text-center">
                       <input type="number" className="input-table text-center font-bold bg-white/5 rounded-lg" min="1" value={item.qtd} onChange={(event) => updateItem(item.id, 'qtd', Number(event.target.value))} />
                     </td>
                     <td className="p-3 text-center">
                       <input className="input-table text-center uppercase text-xs" placeholder="UN" value={item.un} onChange={(event) => updateItem(item.id, 'un', event.target.value)} />
-                    </td>
-                    <td className="p-3">
-                      <div className="relative group/link">
-                        <LinkIcon size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30 group-focus-within/link:text-blue-400" />
-                        <input className="input-table pl-8 text-blue-400 hover:underline cursor-pointer" placeholder="Link..." value={item.link} onChange={(event) => updateItem(item.id, 'link', event.target.value)} />
-                      </div>
                     </td>
                     <td className="p-3 text-center pr-6">
                       <button onClick={() => handleRemoveItem(item.id)} className="p-2 text-white/20 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all" title="Remover item">
