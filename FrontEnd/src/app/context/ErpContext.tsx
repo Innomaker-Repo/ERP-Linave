@@ -925,14 +925,21 @@ interface ErpContextData {
 
 const ErpContext = createContext<ErpContextData>({} as ErpContextData);
 
+const SESSION_STORAGE_KEY = 'erp.userSession';
+
+const getStoredSession = () => {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const raw = window.localStorage.getItem(SESSION_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (_error) {
+    return null;
+  }
+};
+
 export function ErpProvider({ children }: { children: React.ReactNode }) {
-  // DEBUG: Injetar ADMIN imediatamente
-  const [userSession, setUserSession] = useState<any>({
-    email: 'admin@modo-teste.com',
-    role: 'ADMIN',
-    nome: 'Administrador (Teste)',
-    permissoes: {}
-  });
+  const [userSession, setUserSession] = useState<any>(() => getStoredSession());
   const [loading, setLoading] = useState(true);
   
   const [data, setData] = useState(() => createInitialData(null));
@@ -986,6 +993,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
   const loginDireto = (user: any) => {
     const session = { ...user, token: null };
     setUserSession(session);
+    window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
     setActiveAdminEmail(session.email || 'admin@modo-teste.com');
   };
 
@@ -1024,6 +1032,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
   const saveConfig = async (c: any) => saveEntity('config', { ...(data.config || {}), ...c });
 
   const logout = () => {
+    window.localStorage.removeItem(SESSION_STORAGE_KEY);
     setUserSession(null);
     window.location.href = '/';
   };

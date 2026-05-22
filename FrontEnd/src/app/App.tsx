@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { CadastroCompletoView } from './components/modules/Configuracoes/CadastroCompletoView';
 import { useErp } from './context/ErpContext';
+import { LoginPage } from './pages/Login';
 
 // Importação dos Módulos de Abas
 import { GestaoModule } from './modules/Gestao';
@@ -58,7 +59,7 @@ function getAbaForSection(section: string): { aba: string; item: string } {
 }
 
 export default function App() {
-  const { userSession, setUserSession, logout, config, loading } = useErp();
+  const { userSession, setUserSession, config, loading } = useErp();
   const [activeSection, setActiveSection] = useState('dashboard');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -70,6 +71,10 @@ export default function App() {
         <p className="text-amber-500 font-bold uppercase tracking-widest text-xs">A carregar dados...</p>
       </div>
     );
+  }
+
+  if (!userSession) {
+    return <LoginPage onLoginSuccess={(user) => setUserSession(user)} />;
   }
 
   // FLUXO DE ONBOARDING (CADASTRO DA EMPRESA)

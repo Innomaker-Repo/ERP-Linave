@@ -2,6 +2,7 @@ import React from 'react';
 import { useErp } from '../../context/ErpContext';
 import { ComprasKanbanView } from '../../components/modules/Compras/ComprasKanbanView';
 import { ComprasSolicitacoesView } from '../../components/modules/Compras/ComprasSolicitacoesView';
+import { ComprasAprovacoesView } from '../../components/modules/Compras/ComprasAprovacoesView';
 import { FornecedoresView } from '../../components/modules/Fornecedores/FornecedoresView';
 
 interface ComprasModuleProps {
@@ -27,6 +28,8 @@ export function ComprasModule({ activeItem, searchQuery }: ComprasModuleProps) {
       }
 
       return <ComprasKanbanView searchQuery={searchQuery} />;
+    case 'aprovacoesCompras':
+      return <ComprasAprovacoesView searchQuery={searchQuery} />;
     case 'fornecedores':
       if (!temAcessoCompras) {
         return (

@@ -12,6 +12,9 @@ interface SidebarProps {
   setActiveSection: (section: string) => void;
 }
 
+const MOCK_GERENTE_COMERCIAL_EMAIL = 'gerente.comercial@linave.com.br';
+const MOCK_DIRETOR_FINANCEIRO_EMAIL = 'diretor.financeiro@linave.com.br';
+
 export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
   const { userSession, config } = useErp();
   
@@ -119,8 +122,8 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
     if (!userSession) return false;
     const role = userSession.role?.toUpperCase() || '';
     const email = String(userSession.email || '').toLowerCase();
-    const isGerenteComercial = email.includes('gerente') && email.includes('comercial');
-    const isDiretorFinanceiro = email.includes('diretor') && email.includes('financeiro');
+    const isGerenteComercial = email === MOCK_GERENTE_COMERCIAL_EMAIL || (email.includes('gerente') && email.includes('comercial'));
+    const isDiretorFinanceiro = email === MOCK_DIRETOR_FINANCEIRO_EMAIL || (email.includes('diretor') && email.includes('financeiro'));
     
     // Admin tem acesso irrestrito
     if (role === 'ADMIN') return true;
@@ -128,7 +131,6 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
     if (itemId === 'compras') return true;
     if (itemId === 'aprovacoesCompras') {
       return (
-        userSession.permissoes?.[itemId] === true ||
         userSession.permissoes?.aprovacoesComprasGerente === true ||
         userSession.permissoes?.aprovacoesComprasFinanceiro === true ||
         isGerenteComercial ||

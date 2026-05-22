@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Clock3, ShoppingCart, Undo2 } from 'lucide-react';
+import { useErp } from '../../../context/ErpContext';
 import {
   approvalRouteLabel,
   formatCurrency,
@@ -8,6 +9,9 @@ import {
   type ApprovalRoute,
   type RequisicaoCompra,
 } from './comprasLocal';
+
+const MOCK_GERENTE_COMERCIAL_EMAIL = 'gerente.comercial@linave.com.br';
+const MOCK_DIRETOR_FINANCEIRO_EMAIL = 'diretor.financeiro@linave.com.br';
 
 const isGerenteComercialEmail = (email: string) => {
   const normalized = email.trim().toLowerCase();
@@ -28,27 +32,20 @@ const isDiretorFinanceiroEmail = (email: string) => {
 };
 
 export function ComprasAprovacoesView({ searchQuery }: { searchQuery: string }) {
+  const { userSession } = useErp();
   const [requests, setRequests] = useState<RequisicaoCompra[]>(() => getStoredRequests());
-  const [currentUser, setCurrentUser] = useState<any>(null);
 
   useEffect(() => {
     saveRequests(requests);
   }, [requests]);
 
-  useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem('erp.userSession');
-      setCurrentUser(raw ? JSON.parse(raw) : null);
-    } catch (_error) {
-      setCurrentUser(null);
-    }
-  }, []);
+  const isAdmin = userSession?.role === 'ADMIN';
+  const email = String(userSession?.email || '').toLowerCase();
+  const isMockGerenteComercial = email === MOCK_GERENTE_COMERCIAL_EMAIL;
+  const isMockDiretorFinanceiro = email === MOCK_DIRETOR_FINANCEIRO_EMAIL;
 
-  const isAdmin = currentUser?.role === 'ADMIN';
-  const email = String(currentUser?.email || '').toLowerCase();
-
-  const canApproveGerente = isAdmin || currentUser?.permissoes?.aprovacoesComprasGerente === true || isGerenteComercialEmail(email);
-  const canApproveFinanceiro = isAdmin || currentUser?.permissoes?.aprovacoesComprasFinanceiro === true || isDiretorFinanceiroEmail(email);
+  const canApproveGerente = isAdmin || userSession?.permissoes?.aprovacoesComprasGerente === true || isMockGerenteComercial || isGerenteComercialEmail(email);
+  const canApproveFinanceiro = isAdmin || userSession?.permissoes?.aprovacoesComprasFinanceiro === true || isMockDiretorFinanceiro || isDiretorFinanceiroEmail(email);
 
   const allowedRoutes = useMemo(() => {
     if (isAdmin) return ['gerenteComercial', 'diretorFinanceiro'] as const;
@@ -59,7 +56,7 @@ export function ComprasAprovacoesView({ searchQuery }: { searchQuery: string }) 
     return routes;
   }, [isAdmin, canApproveGerente, canApproveFinanceiro]);
 
-  const canAccess = isAdmin || allowedRoutes.length > 0 || currentUser?.permissoes?.aprovacoesCompras === true;
+  const canAccess = isAdmin || allowedRoutes.length > 0;
 
   const filteredRequests = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -67,7 +64,7 @@ export function ComprasAprovacoesView({ searchQuery }: { searchQuery: string }) 
     return requests
       .filter((request) => request.stage === 'APROVACAO')
       .filter((request) => {
-        if (isAdmin || currentUser?.permissoes?.aprovacoesCompras === true) return true;
+        if (isAdmin) return true;
         return request.approvalRoute !== null && allowedRoutes.includes(request.approvalRoute);
       })
       .filter((request) => {
@@ -86,7 +83,7 @@ export function ComprasAprovacoesView({ searchQuery }: { searchQuery: string }) 
 
         return searchableText.includes(query);
       });
-  }, [requests, searchQuery, isAdmin, currentUser?.permissoes?.aprovacoesCompras, allowedRoutes]);
+  }, [requests, searchQuery, isAdmin, allowedRoutes]);
 
   const patchRequest = (requestId: string, updater: (request: RequisicaoCompra) => RequisicaoCompra) => {
     setRequests((current) => current.map((request) => (request.id === requestId ? updater(request) : request)));

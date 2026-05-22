@@ -1,6 +1,6 @@
 import React from 'react';
 import { useErp } from '../context/ErpContext';
-import { Search, Bell, UserCircle } from 'lucide-react';
+import { Search, UserCircle, LogOut } from 'lucide-react';
 
 interface HeaderProps {
   activeSection: string;
@@ -9,7 +9,7 @@ interface HeaderProps {
 }
 
 export function Header({ activeSection, searchQuery, setSearchQuery }: HeaderProps) {
-  const { userSession, empresa } = useErp();
+  const { userSession, empresa, logout } = useErp();
 
   return (
     <header className="h-20 border-b border-white/5 bg-[#0b1220] flex items-center justify-between px-8">
@@ -34,9 +34,16 @@ export function Header({ activeSection, searchQuery, setSearchQuery }: HeaderPro
         <div className="text-right">
           <p className="text-white font-black text-xs uppercase">{empresa?.nome || 'Linave'}</p>
           <p className="text-amber-500 font-bold text-[10px] uppercase tracking-widest">
-            {userSession?.email === 'rebeca.carvalho@gmail.com' ? 'UFF ADMIN' : 'COLABORADOR'}
+            {userSession?.role === 'ADMIN' ? 'ADMIN' : 'COLABORADOR'}
           </p>
         </div>
+        <button
+          onClick={logout}
+          className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-white/70 hover:text-white text-[10px] font-bold uppercase tracking-widest transition-all"
+          title="Sair"
+        >
+          <LogOut size={14} /> Sair
+        </button>
         <div className="w-10 h-10 bg-amber-500/10 rounded-xl flex items-center justify-center text-amber-500 border border-amber-500/20">
           <UserCircle size={24} />
         </div>
