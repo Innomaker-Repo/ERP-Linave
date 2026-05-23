@@ -195,10 +195,17 @@ export function FinalizadosComercialView({ searchQuery }: FinalizadosComercialVi
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <button
-                    type="button"
+                  <div
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setSelectedDetail({ obra, section: 'orcamento' })}
-                    className="text-left bg-[#0b1220] border border-white/10 hover:border-emerald-400/40 rounded-lg p-3 space-y-2 transition"
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        setSelectedDetail({ obra, section: 'orcamento' });
+                      }
+                    }}
+                    className="text-left bg-[#0b1220] border border-white/10 hover:border-emerald-400/40 rounded-lg p-3 space-y-2 transition cursor-pointer"
                   >
                     <div className="flex items-center gap-2 text-emerald-300 text-xs font-black uppercase tracking-widest">
                       <ClipboardList size={14} /> Orçamento
@@ -212,12 +219,19 @@ export function FinalizadosComercialView({ searchQuery }: FinalizadosComercialVi
                     >
                       <Download size={12} /> Download
                     </button>
-                  </button>
+                  </div>
 
-                  <button
-                    type="button"
+                  <div
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setSelectedDetail({ obra, section: 'proposta' })}
-                    className="text-left bg-[#0b1220] border border-white/10 hover:border-cyan-400/40 rounded-lg p-3 space-y-2 transition"
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        setSelectedDetail({ obra, section: 'proposta' });
+                      }
+                    }}
+                    className="text-left bg-[#0b1220] border border-white/10 hover:border-cyan-400/40 rounded-lg p-3 space-y-2 transition cursor-pointer"
                   >
                     <div className="flex items-center gap-2 text-cyan-300 text-xs font-black uppercase tracking-widest">
                       <FileText size={14} /> Proposta
@@ -231,12 +245,19 @@ export function FinalizadosComercialView({ searchQuery }: FinalizadosComercialVi
                     >
                       <Download size={12} /> Download
                     </button>
-                  </button>
+                  </div>
 
-                  <button
-                    type="button"
+                  <div
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setSelectedDetail({ obra, section: 'os' })}
-                    className="text-left bg-[#0b1220] border border-white/10 hover:border-violet-400/40 rounded-lg p-3 space-y-2 transition"
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        setSelectedDetail({ obra, section: 'os' });
+                      }
+                    }}
+                    className="text-left bg-[#0b1220] border border-white/10 hover:border-violet-400/40 rounded-lg p-3 space-y-2 transition cursor-pointer"
                   >
                     <div className="flex items-center gap-2 text-violet-300 text-xs font-black uppercase tracking-widest">
                       <Wrench size={14} /> OS
@@ -250,12 +271,19 @@ export function FinalizadosComercialView({ searchQuery }: FinalizadosComercialVi
                     >
                       <Download size={12} /> Download
                     </button>
-                  </button>
+                  </div>
 
-                  <button
-                    type="button"
+                  <div
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setSelectedDetail({ obra, section: 'mediacao' })}
-                    className="text-left bg-[#0b1220] border border-white/10 hover:border-amber-400/40 rounded-lg p-3 space-y-2 transition"
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        setSelectedDetail({ obra, section: 'mediacao' });
+                      }
+                    }}
+                    className="text-left bg-[#0b1220] border border-white/10 hover:border-amber-400/40 rounded-lg p-3 space-y-2 transition cursor-pointer"
                   >
                     <div className="flex items-center gap-2 text-amber-300 text-xs font-black uppercase tracking-widest">
                       <FileCheck2 size={14} /> Medição
@@ -269,7 +297,7 @@ export function FinalizadosComercialView({ searchQuery }: FinalizadosComercialVi
                     >
                       <Download size={12} /> Download
                     </button>
-                  </button>
+                  </div>
                 </div>
 
                 {!documentoMediacaoValido && (

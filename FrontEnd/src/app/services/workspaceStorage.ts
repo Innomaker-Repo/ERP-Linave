@@ -69,8 +69,21 @@ const LIST_KEYS = [
 
 const OBJECT_KEYS = ['empresa', 'config', 'listas', '_counters', '_osCounters'] as const;
 
+import api from '../../services/api';
+
 let activeAdminEmail = 'admin@modo-teste.com';
-const workspaceCache = new Map<string, WorkspaceData>();
+let workspaceCache = new Map<string, WorkspaceData>();
+
+async function fetchWorkspaceFromBackend(adminEmail: string) {
+  try {
+    const res = await api.get(`workspaces/${encodeURIComponent(adminEmail)}/`);
+    // Backend serializer returns an object with a `data` field containing the workspace payload
+    return res.data && res.data.data ? res.data.data : res.data;
+  } catch (err) {
+    // Network/backend unavailable
+    return null;
+  }
+}
 
 export function setActiveAdminEmail(email: string) {
   activeAdminEmail = email.trim() || activeAdminEmail;
@@ -104,45 +117,41 @@ export function ensureWorkspaceShape(workspace: any): WorkspaceData {
 }
 
 export function getCachedWorkspace(adminEmail = activeAdminEmail) {
-  return workspaceCache.get(adminEmail) || ensureWorkspaceShape(null);
+  const cached = workspaceCache.get(adminEmail);
+  if (cached) return cached;
+
+  // Return a default-shaped workspace until `loadWorkspace` fetches remote data
+  const shaped = ensureWorkspaceShape(null);
+  workspaceCache.set(adminEmail, shaped);
+  return shaped;
 }
 
 export function setCachedWorkspace(adminEmail: string, workspace: WorkspaceData) {
-  workspaceCache.set(adminEmail, ensureWorkspaceShape(workspace));
+  const shaped = ensureWorkspaceShape(workspace);
+  workspaceCache.set(adminEmail, shaped);
 }
 
-// API base URL - aponta para o backend Django
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-
 export async function loadWorkspace(adminEmail = activeAdminEmail): Promise<WorkspaceData> {
-  const url = `${API_BASE_URL}/comercial/workspaces/${encodeURIComponent(adminEmail)}/`;
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Falha ao carregar workspace (${response.status})`);
-  }
-
-  const payload = await response.json();
-  const workspace = ensureWorkspaceShape(payload?.data);
+  const remote = await fetchWorkspaceFromBackend(adminEmail);
+  const workspace = ensureWorkspaceShape(remote || {});
   setCachedWorkspace(adminEmail, workspace);
   return workspace;
 }
 
 export async function saveWorkspace(adminEmail = activeAdminEmail, workspace: WorkspaceData): Promise<WorkspaceData> {
-  const url = `${API_BASE_URL}/comercial/workspaces/${encodeURIComponent(adminEmail)}/`;
-  const response = await fetch(url, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(ensureWorkspaceShape(workspace)),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Falha ao salvar workspace (${response.status})`);
+  const savedWorkspace = ensureWorkspaceShape(workspace);
+  // Persist to backend; prefer PATCH so existing record is updated
+  try {
+    await api.patch(`workspaces/${encodeURIComponent(adminEmail)}/`, { data: savedWorkspace });
+  } catch (err) {
+    // If PATCH fails, try POST (create)
+    try {
+      await api.post(`workspaces/${encodeURIComponent(adminEmail)}/`, { data: savedWorkspace });
+    } catch (err2) {
+      // Swallow error - keep in-memory cache so UI remains responsive
+    }
   }
 
-  const payload = await response.json();
-  const savedWorkspace = ensureWorkspaceShape(payload?.data);
   setCachedWorkspace(adminEmail, savedWorkspace);
   return savedWorkspace;
 }

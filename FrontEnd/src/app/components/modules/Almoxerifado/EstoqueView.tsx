@@ -1,10 +1,14 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Anchor, Cable, CheckCircle2, ChevronDown, ChevronUp, ClipboardList, Gauge, Hammer, Layers3, MapPin, Microscope, Package, Plus, Search, Table2, TrendingUp, X, Zap } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Anchor, Cable, CheckCircle2, ChevronDown, ChevronUp, ClipboardList, Gauge, Hammer, Layers3, MapPin, Microscope, Package, Plus, Search, Table2, Trash2, X, Zap } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Badge } from '../../../modules/shared/ui/badge';
 import { Input } from '../../../modules/shared/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../modules/shared/ui/select';
 import { useErp } from '../../../context/ErpContext';
+import { getOrdensServico, getOsOptionLabel, getOsOptionValue, type OrdemServicoResumo, isOsAlvo } from '../../../../services/ordensServico';
+import api from '../../../../services/api';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 interface StockColumn {
   key: string;
@@ -27,6 +31,7 @@ interface StockTable {
 
 interface StockViewProps {
   searchQuery: string;
+  mode?: 'public' | 'manage';
 }
 
 interface GasAllocation {
@@ -36,6 +41,34 @@ interface GasAllocation {
   quantity: number;
   local: string;
   serviceOS: string;
+}
+
+interface BaixaHistoricoItem {
+  id: string;
+  dataBaixa: string;
+  tableName: string;
+  itemLabel: string;
+  statusAnterior: string;
+  motivo?: string;
+  osId?: string;
+  osLabel?: string;
+  localizacao?: string;
+  serviceOS?: string;
+  snapshot: Record<string, string>;
+}
+
+interface AllocationHistoricoItem {
+  id: string;
+  action: 'alocar' | 'desalocar';
+  kind: 'gases' | 'equipamentos' | 'materiais' | 'alugaveis' | 'outros';
+  dataEvento: string;
+  osId: string;
+  osLabel: string;
+  itemLabel: string;
+  tableName: string;
+  quantity?: number;
+  local?: string;
+  gasName?: string;
 }
 
 const cleanValue = (value: unknown) => {
@@ -206,8 +239,16 @@ const getStatusTone = (status: string, tableName?: string) => {
 const getStatusOptionsForTable = (tableName?: string) => getStatusRule(tableName).options;
 const getDefaultStatusForTable = (tableName?: string) => getStatusRule(tableName).defaultStatus;
 
-// Tipos de gases iniciais simulados
+const getOsLocalExecution = (os: any) => cleanValue(
+  os?.negocio_detalhes?.servicos?.[0]?.local_execucao
+  || os?.negocio_detalhes?.servicos?.[0]?.localExecucao
+  || os?.local_execucao
+  || os?.localExecucao
+  || os?.local
+);
+
 const INITIAL_GAS_TYPES = ['Oxigênio', 'Acetileno'];
+const EMPTY_SERVICE_OS_VALUE = '__none__';
 
 const STOCK_TABLES: StockTable[] = [
   makeTable(
@@ -386,48 +427,42 @@ const createRegisterValues = (table?: StockTable, baseValues: Record<string, str
   return values;
 };
 
-export function EstoqueView({ searchQuery }: StockViewProps) {
-  const { os } = useErp();
+export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
+  const { os, almoxerifado, saveEntity, loading } = useErp();
+  const hasHydratedPersistedState = useRef(false);
+  const [ordensServicoBackend, setOrdensServicoBackend] = useState<OrdemServicoResumo[]>([]);
+  const [publicSearch, setPublicSearch] = useState<string>(searchQuery || '');
 
-  const availableOS = useMemo(() => {
-    return os?.filter((o: any) => o.statusEnvio === 'enviada' || o.statusOs === 'emproducao' || o.statusAprovacao === 'aprovada') || [];
-  }, [os]);
-
-  const storedStock = loadStoredStockState();
-
-  const [tables, setTables] = useState<StockTable[]>(() => {
-    if (storedStock?.tables && Array.isArray(storedStock.tables) && storedStock.tables.length > 0) {
-      return storedStock.tables;
-    }
-    return STOCK_TABLES.map((table) => ({
-      ...table,
-      columns: [...table.columns],
-      rows: table.rows.map((row) => ({ ...row, values: { ...row.values } }))
-    }));
-  });
+  const [tables, setTables] = useState<StockTable[]>(() => STOCK_TABLES.map((table) => ({
+    ...table,
+    columns: [...table.columns],
+    rows: table.rows.map((row) => ({ ...row, values: { ...row.values } }))
+  })));
   
   const [selectedCategory, setSelectedCategory] = useState<'Materiais' | 'Equipamentos' | 'Alugados'>('Materiais');
   const [selectedType, setSelectedType] = useState<string>('');
   const [filtro, setFiltro] = useState<string>(searchQuery || '');
+  const [selectedOsFilter, setSelectedOsFilter] = useState<string>('');
   
-  // Modais de Criação/Edição
   const [isRegisterOpen, setIsRegisterOpen] = useState(false);
   const [registerTableName, setRegisterTableName] = useState<string>(tables[0]?.name || '');
   const [registerValues, setRegisterValues] = useState<Record<string, string>>(() => createRegisterValues(tables[0]));
   const [activeRowTarget, setActiveRowTarget] = useState<{ tableName: string; rowId: string } | null>(null);
   const [editingRowTarget, setEditingRowTarget] = useState<{ tableName: string; rowId: string } | null>(null);
 
-  // Estados dos Gases e Alocações
-  const [gasTypes, setGasTypes] = useState<string[]>(() => {
-    if (storedStock?.gasTypes && Array.isArray(storedStock.gasTypes) && storedStock.gasTypes.length > 0) {
-      return storedStock.gasTypes;
-    }
-    return INITIAL_GAS_TYPES;
-  });
+  const [gasTypes, setGasTypes] = useState<string[]>(INITIAL_GAS_TYPES);
   const [newGasName, setNewGasName] = useState('');
   const [expandedGasRows, setExpandedGasRows] = useState<Set<string>>(new Set());
+  const [baixasHistorico, setBaixasHistorico] = useState<BaixaHistoricoItem[]>([]);
+  const [alocacoesHistorico, setAlocacoesHistorico] = useState<AllocationHistoricoItem[]>([]);
+  const [isBaixaModalOpen, setIsBaixaModalOpen] = useState(false);
+  const [baixaTargetRow, setBaixaTargetRow] = useState<StockRow | null>(null);
+  const [baixaForm, setBaixaForm] = useState({
+    osId: '',
+    dataBaixa: new Date().toISOString().slice(0, 10),
+    motivo: ''
+  });
   
-  // Modal de Alocação Gases
   const [isAllocateModalOpen, setIsAllocateModalOpen] = useState(false);
   const [allocations, setAllocations] = useState<GasAllocation[]>(() => {
     if (storedStock?.allocations && Array.isArray(storedStock.allocations)) {
@@ -443,12 +478,6 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
     serviceOS: ''
   });
 
-  // Persist inventory changes to browser localStorage
-  useEffect(() => {
-    saveStoredStockState({ tables, gasTypes, allocations });
-  }, [tables, gasTypes, allocations]);
-
-  // Modal de Alocação Equipamentos
   const [isEquipAllocateModalOpen, setIsEquipAllocateModalOpen] = useState(false);
   const [equipAllocateForm, setEquipAllocateForm] = useState({
     rowId: '',
@@ -457,6 +486,106 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
     local: '',
     osId: ''
   });
+
+  const [selectedForRomaneio, setSelectedForRomaneio] = useState<Set<string>>(new Set());
+  const [isRomaneioModalOpen, setIsRomaneioModalOpen] = useState(false);
+  const [romaneioOsId, setRomaneioOsId] = useState<string>('');
+
+  useEffect(() => {
+    let mounted = true;
+
+    const carregarOrdensServico = async () => {
+      try {
+        const ordens = await getOrdensServico();
+        if (mounted) {
+          setOrdensServicoBackend(ordens);
+        }
+      } catch (error) {
+        console.error('Erro ao carregar ordens de servico do backend:', error);
+        if (mounted) {
+          setOrdensServicoBackend([]);
+        }
+      }
+    };
+
+    void carregarOrdensServico();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const availableOS = useMemo(() => {
+    const backend = Array.isArray(ordensServicoBackend) ? ordensServicoBackend : [];
+    const ctx = Array.isArray(os) ? os : [];
+
+    const merged = [...backend];
+    for (const item of ctx) {
+      if (!isOsAlvo(item)) continue;
+      const val = getOsOptionValue(item as any);
+      if (!merged.some((m) => getOsOptionValue(m as any) === val)) {
+        merged.push(item as any);
+      }
+    }
+
+    return merged;
+  }, [ordensServicoBackend, os]);
+
+  React.useEffect(() => {
+    if (isEquipAllocateModalOpen) {
+      console.log('[EstoqueView] Equip allocation modal opened', { availableOS, os });
+    }
+  }, [isEquipAllocateModalOpen, availableOS, os]);
+
+  useEffect(() => {
+    if (loading || hasHydratedPersistedState.current) return;
+
+    if (almoxerifado && typeof almoxerifado === 'object') {
+      if (Array.isArray(almoxerifado.tables)) {
+        setTables(
+          almoxerifado.tables.map((table: StockTable) => ({
+            ...table,
+            columns: Array.isArray(table.columns) ? [...table.columns] : [],
+            rows: Array.isArray(table.rows)
+              ? table.rows.map((row) => ({ ...row, values: { ...(row.values || {}) } }))
+              : []
+          }))
+        );
+      }
+
+      if (Array.isArray(almoxerifado.gasTypes)) {
+        setGasTypes(almoxerifado.gasTypes);
+      }
+
+      if (Array.isArray(almoxerifado.allocations)) {
+        setAllocations(almoxerifado.allocations);
+      }
+
+      if (Array.isArray(almoxerifado.baixasHistorico)) {
+        setBaixasHistorico(almoxerifado.baixasHistorico);
+      }
+
+      if (Array.isArray(almoxerifado.alocacoesHistorico)) {
+        setAlocacoesHistorico(almoxerifado.alocacoesHistorico);
+      }
+      if (Array.isArray(almoxerifado.selectedForRomaneio)) {
+        try {
+          setSelectedForRomaneio(new Set(almoxerifado.selectedForRomaneio));
+        } catch (e) {
+        }
+      }
+
+      hasHydratedPersistedState.current = true;
+      return;
+    }
+
+    hasHydratedPersistedState.current = true;
+  }, [loading, almoxerifado]);
+
+  useEffect(() => {
+    if (!hasHydratedPersistedState.current) return;
+    void saveEntity('almoxerifado', { version: 2, tables, gasTypes, allocations, baixasHistorico, alocacoesHistorico, selectedForRomaneio: Array.from(selectedForRomaneio) });
+  }, [tables, gasTypes, allocations, baixasHistorico, alocacoesHistorico, selectedForRomaneio]);
 
   const handleRemoveGas = (gasToRemove: string) => {
     setGasTypes((prev) => prev.filter((g) => g !== gasToRemove));
@@ -539,6 +668,10 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
   }, [searchQuery]);
 
   useEffect(() => {
+    setPublicSearch(searchQuery || '');
+  }, [searchQuery, mode]);
+
+  useEffect(() => {
     const types = categoryMap[selectedCategory] as string[];
     if (selectedCategory === 'Materiais') {
       setSelectedType('Materiais');
@@ -563,31 +696,74 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
   
   const visibleColumns = useMemo(() => {
     const cols = [...selectedTable.columns];
-    if (selectedCategory === 'Equipamentos' && !cols.some(c => c.key === 'actions')) {
+    if (!cols.some(c => c.key === 'actions')) {
       cols.push({ key: 'actions', label: '', align: 'right' });
     }
+    if (!cols.some(c => c.key === '__select__')) {
+      cols.unshift({ key: '__select__', label: '', align: 'center' });
+    }
     return cols;
-  }, [selectedTable, selectedCategory]);
+  }, [selectedTable]);
 
   const visibleRows = useMemo(() => {
     const query = filtro.toLowerCase().trim();
-    if (!query) return selectedTable.rows;
-
     return selectedTable.rows.filter((row) => {
+      const matchesOsFilter = !selectedOsFilter || (() => {
+        const rowServiceOs = cleanValue(row.values.serviceOS);
+        const selectedOs = availableOS.find((item: any) => getOsOptionValue(item) === selectedOsFilter);
+
+        if (!selectedOs) {
+          return normalizeKey(rowServiceOs).includes(normalizeKey(selectedOsFilter));
+        }
+
+        const selectedLabels = [
+          getOsOptionValue(selectedOs),
+          selectedOs.numeroOs,
+          selectedOs.cc,
+          selectedOs.projeto
+        ].filter(Boolean).map((value) => normalizeKey(String(value)));
+
+        if (selectedLabels.some((value) => value && normalizeKey(rowServiceOs).includes(value))) {
+          return true;
+        }
+
+        if (row.tableName === 'Alugados - Gases') {
+          return allocations.some((allocation) =>
+            allocation.supplierRowId === row.id && selectedLabels.some((value) => value && normalizeKey(allocation.serviceOS).includes(value))
+          );
+        }
+
+        return false;
+      })();
+
+      const matchesQuery = !query || (() => {
       const matchesColumns = visibleColumns.some((column) => (row.values[column.key] || '').toLowerCase().includes(query));
       return matchesColumns || row.searchText.includes(query);
-    });
-  }, [filtro, selectedTable.rows, visibleColumns]);
+      })();
 
-  const stats = useMemo(() => {
-    const criticalItems = visibleRows.filter((row) => normalizeKey(row.values.status || '').includes('crit')).length;
-    return {
-      totalTables: tables.length,
-      visibleRows: visibleRows.length,
-      visibleColumns: visibleColumns.length,
-      criticalItems
-    };
-  }, [tables.length, visibleColumns.length, visibleRows]);
+      return matchesQuery && matchesOsFilter;
+    });
+  }, [allocations, availableOS, filtro, selectedOsFilter, selectedTable.rows, visibleColumns]);
+
+  const publicRows = useMemo(() => {
+    const query = publicSearch.toLowerCase().trim();
+
+    return tables.flatMap((table) => table.rows.filter((row) => {
+      if (!query) return true;
+
+      const searchableName = [
+        row.values.item,
+        row.values.material,
+        row.values.nome,
+        row.values.equipamento,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+
+      return searchableName.includes(query);
+    }).map((row) => ({ ...row, tableName: table.name })));
+  }, [publicSearch, tables]);
 
   const currentRegisterTable = useMemo(
     () => tables.find((table) => table.name === registerTableName) || tables[0],
@@ -608,6 +784,104 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
     setRegisterValues((previous) => createRegisterValues(currentRegisterTable, previous));
   }, [currentRegisterTable, isRegisterOpen]);
 
+  if (mode === 'public') {
+    return (
+      <div className="flex flex-1 flex-col overflow-hidden bg-gradient-to-br from-[#101f3d] via-[#0d1830] to-[#0b1220]">
+        <div className="border-b border-white/5 p-8 pb-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div>
+              <h1 className="text-3xl font-black uppercase tracking-wide text-white flex items-center drop-shadow-md">
+                <Package className="mr-3 text-amber-400" size={32} />
+                Estoque
+              </h1>
+              <p className="mt-2 text-xs font-bold uppercase tracking-widest text-white/40">
+                Consulta pública de itens disponíveis no estoque
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="px-8 pt-6">
+          <div className="flex items-center gap-3 rounded-[24px] border border-white/5 bg-white/[0.03] px-4 py-3 shadow-xl backdrop-blur-md">
+            <Search size={16} className="text-white/45 shrink-0" />
+            <Input
+              value={publicSearch}
+              onChange={(event) => setPublicSearch(event.target.value)}
+              placeholder="Pesquisar por nome"
+              className="h-10 border-0 bg-transparent px-0 text-white placeholder:text-white/30 shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-4 px-8 pt-4">
+          <div className="flex items-center gap-2 rounded-full border border-white/5 bg-white/5 px-4 py-1.5 text-[11px] font-bold uppercase tracking-wider text-white/60 shadow-sm">
+            <Layers3 size={14} className="text-amber-400" />
+            Pesquisa por nome
+          </div>
+          <div className="rounded-full border border-white/5 bg-white/5 px-4 py-1.5 text-[11px] font-bold uppercase tracking-wider text-white/50 shadow-sm">
+            Exibindo {publicRows.length} registros
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-auto px-8 py-4 pb-8">
+          {publicRows.length === 0 ? (
+            <div className="flex h-full items-center justify-center rounded-[24px] border border-white/5 bg-white/[0.02] backdrop-blur shadow-inner">
+              <div className="text-center">
+                <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-white/5 bg-[#0b1220]/50 shadow-sm">
+                  <Package size={28} className="text-white/30" />
+                </div>
+                <p className="font-bold text-white/60">Nenhum item encontrado</p>
+                <p className="mt-2 text-sm text-white/35">Tente outro nome na busca.</p>
+              </div>
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-[24px] border border-white/5 bg-[#0b1220]/40 shadow-xl backdrop-blur-md">
+              <div className="overflow-auto">
+                <table className="min-w-max w-full text-sm">
+                  <thead className="sticky top-0 z-10 bg-[#131f37] shadow-sm">
+                    <tr className="border-b border-white/10">
+                      <th className="px-5 py-4 text-left text-[11px] font-bold uppercase tracking-wider text-white/50">Tabela</th>
+                      <th className="px-5 py-4 text-left text-[11px] font-bold uppercase tracking-wider text-white/50">Item</th>
+                      <th className="px-5 py-4 text-left text-[11px] font-bold uppercase tracking-wider text-white/50">Material</th>
+                      <th className="px-5 py-4 text-center text-[11px] font-bold uppercase tracking-wider text-white/50">Quantidade</th>
+                      <th className="px-5 py-4 text-center text-[11px] font-bold uppercase tracking-wider text-white/50">Unidade</th>
+                      <th className="px-5 py-4 text-left text-[11px] font-bold uppercase tracking-wider text-white/50">Fornecedor</th>
+                      <th className="px-5 py-4 text-left text-[11px] font-bold uppercase tracking-wider text-white/50">Local</th>
+                      <th className="px-5 py-4 text-center text-[11px] font-bold uppercase tracking-wider text-white/50">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {publicRows.map((row) => {
+                      const itemLabel = row.values.item || row.id;
+                      const materialLabel = row.values.material || row.values.equipamento || row.values.nome || '—';
+
+                      return (
+                        <tr key={`${row.tableName}-${row.id}`} className="hover:bg-white/5 transition-colors">
+                          <td className="px-5 py-4 align-middle text-[13px] text-white/80">{row.tableName}</td>
+                          <td className="px-5 py-4 align-middle text-[13px] text-white/80">{itemLabel}</td>
+                          <td className="px-5 py-4 align-middle text-[13px] text-white/80">{materialLabel}</td>
+                          <td className="px-5 py-4 align-middle text-center text-[13px] text-white/80">{row.values.quantidade || row.values.qtd || '—'}</td>
+                          <td className="px-5 py-4 align-middle text-center text-[13px] text-white/80">{row.values.unidade || row.values.unid || '—'}</td>
+                          <td className="px-5 py-4 align-middle text-[13px] text-white/80">{row.values.fornecedor || '—'}</td>
+                          <td className="px-5 py-4 align-middle text-[13px] text-white/80">{row.values.localizacao || '—'}</td>
+                          <td className="px-5 py-4 align-middle text-center">
+                            <Badge variant="outline" className={`rounded-full border px-3 py-1 shadow-sm ${getStatusTone(row.values.status || '', row.tableName)}`}>
+                              {row.values.status || '—'}
+                            </Badge>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   const closeRegisterModal = () => {
     setIsRegisterOpen(false);
     setEditingRowTarget(null);
@@ -619,6 +893,97 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
 
   const closeRowDetails = () => {
     setActiveRowTarget(null);
+  };
+
+  const openBaixaModal = (row: StockRow) => {
+    const currentOs = cleanValue(row.values.serviceOS);
+    const matchedOs = availableOS.find((ordemServico: any) => {
+      const osValue = getOsOptionValue(ordemServico as any);
+      const osLabel = getOsOptionLabel(ordemServico as any);
+      const osId = String((ordemServico as any)?.id || '');
+      return currentOs && (currentOs === osValue || currentOs === osLabel || currentOs === osId);
+    });
+
+    setBaixaTargetRow(row);
+    setBaixaForm({
+      osId: matchedOs ? String((matchedOs as any)?.id || getOsOptionValue(matchedOs as any)) : '',
+      dataBaixa: new Date().toISOString().slice(0, 10),
+      motivo: ''
+    });
+    setIsBaixaModalOpen(true);
+  };
+
+  const closeBaixaModal = () => {
+    setIsBaixaModalOpen(false);
+    setBaixaTargetRow(null);
+  };
+
+  const handleConfirmBaixa = () => {
+    if (!baixaTargetRow) return;
+
+    const itemName = baixaTargetRow.values.material || baixaTargetRow.values.fornecedor || baixaTargetRow.values.equipamento || baixaTargetRow.values.item || 'item';
+    const motivo = cleanValue(baixaForm.motivo);
+    const osId = cleanValue(baixaForm.osId);
+    const dataBaixa = cleanValue(baixaForm.dataBaixa);
+
+    if (!osId || !dataBaixa || !motivo) {
+      alert('Preencha OS, data e motivo para registrar a baixa.');
+      return;
+    }
+
+    const selectedOs = availableOS.find((ordemServico: any) => {
+      const osValue = getOsOptionValue(ordemServico as any);
+      const osLabel = getOsOptionLabel(ordemServico as any);
+      const currentId = String((ordemServico as any)?.id || '');
+      return osId === osValue || osId === osLabel || osId === currentId;
+    });
+    const osLabel = selectedOs ? getOsOptionLabel(selectedOs as any) : osId;
+    const osLocal = selectedOs ? getOsLocalExecution(selectedOs) : '';
+
+    setBaixasHistorico((prev) => [
+      {
+        id: `baixa-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        dataBaixa,
+        tableName: baixaTargetRow.tableName,
+        itemLabel: itemName,
+        statusAnterior: baixaTargetRow.values.status || '',
+        motivo,
+        osId,
+        osLabel,
+        localizacao: baixaTargetRow.values.localizacao || osLocal || '',
+        serviceOS: osLabel,
+        snapshot: { ...baixaTargetRow.values }
+      },
+      ...prev
+    ]);
+
+    setTables((previous) => previous.map((table) => {
+      if (table.name !== baixaTargetRow.tableName) return table;
+      return {
+        ...table,
+        rows: table.rows.filter((currentRow) => currentRow.id !== baixaTargetRow.id)
+      };
+    }));
+
+    if (baixaTargetRow.tableName === 'Alugados - Gases') {
+      setAllocations((previous) => previous.filter((allocation) => allocation.supplierRowId !== baixaTargetRow.id));
+      setExpandedGasRows((previous) => {
+        const next = new Set(previous);
+        next.delete(baixaTargetRow.id);
+        return next;
+      });
+    }
+
+    if (activeRowTarget?.tableName === baixaTargetRow.tableName && activeRowTarget?.rowId === baixaTargetRow.id) {
+      setActiveRowTarget(null);
+    }
+
+    closeBaixaModal();
+    setBaixaForm({
+      osId: '',
+      dataBaixa: new Date().toISOString().slice(0, 10),
+      motivo: ''
+    });
   };
 
   const openEditFromRow = () => {
@@ -657,6 +1022,11 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
     setRegisterValues((previous) => {
       const next = { ...previous, [columnKey]: value };
 
+      if (columnKey === 'serviceOS') {
+        const selectedOs = availableOS.find((ordemServico: any) => String(getOsOptionValue(ordemServico as any)) === String(value) || String((ordemServico as any)?.id || '') === String(value));
+        next.localizacao = selectedOs ? getOsLocalExecution(selectedOs) : '';
+      }
+
       if (registerTableName === 'Alugados - Gases' && columnKey.startsWith('gas')) {
         const newTotal = gasTypes.reduce((sum, gas) => {
           const key = `gas${normalizeKey(gas)}`;
@@ -679,6 +1049,15 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
     const table = tables.find((item) => item.name === registerTableName);
     if (!table) return;
     const wasEditing = Boolean(editingRowTarget && editingRowTarget.tableName === table.name);
+
+    const missingRequiredFields = table.columns
+      .filter((column) => column.key !== 'actions' && column.key !== 'item')
+      .filter((column) => !cleanValue(registerValues[column.key]));
+
+    if (missingRequiredFields.length > 0) {
+      alert(`Preencha todos os campos obrigatórios antes de salvar:\n\n${missingRequiredFields.map((column) => `- ${column.label}`).join('\n')}`);
+      return;
+    }
 
     const payload = table.columns.reduce<Record<string, string>>((accumulator, column) => {
       const value = cleanValue(registerValues[column.key]);
@@ -721,7 +1100,7 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
     const { supplierRowId, gasName, quantity, local, serviceOS } = allocateForm;
 
     if (!supplierRowId || !gasName || !quantity || !local || !serviceOS) {
-      alert("Por favor, preencha todos os campos da alocação.");
+      alert('Por favor, preencha todos os campos da alocação e selecione uma OS.');
       return;
     }
 
@@ -759,14 +1138,102 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
     };
 
     setAllocations((prev) => [...prev, newAlloc]);
+    setAlocacoesHistorico((prev) => [
+      {
+        id: `aloc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        action: 'alocar',
+        kind: 'gases',
+        dataEvento: new Date().toISOString(),
+        osId: serviceOS,
+        osLabel: serviceOS,
+        itemLabel: gasName,
+        tableName: 'Alugados - Gases',
+        quantity: requestedQuantity,
+        local,
+        gasName
+      },
+      ...prev
+    ]);
     setIsAllocateModalOpen(false);
     setAllocateForm({ supplierRowId: '', gasName: '', quantity: '1', local: '', serviceOS: '' });
     setExpandedGasRows(prev => new Set(prev).add(supplierRowId));
   };
 
+  const handleRemoveAllocation = (allocationId: string, supplierRowId: string) => {
+    const confirmRemoval = window.confirm('Deseja desalocar este serviço?');
+    if (!confirmRemoval) return;
+
+    const allocationToRemove = allocations.find((allocation) => allocation.id === allocationId);
+    setAllocations((prev) => prev.filter((allocation) => allocation.id !== allocationId));
+    if (allocationToRemove) {
+      setAlocacoesHistorico((prev) => [
+        {
+          id: `desal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          action: 'desalocar',
+          kind: 'gases',
+          dataEvento: new Date().toISOString(),
+          osId: allocationToRemove.serviceOS,
+          osLabel: allocationToRemove.serviceOS,
+          itemLabel: allocationToRemove.gasName,
+          tableName: 'Alugados - Gases',
+          quantity: allocationToRemove.quantity,
+          local: allocationToRemove.local,
+          gasName: allocationToRemove.gasName
+        },
+        ...prev
+      ]);
+    }
+    setExpandedGasRows((prev) => new Set(prev).add(supplierRowId));
+  };
+
+  const handleDisallocateRow = (row: StockRow) => {
+    const confirmRemoval = window.confirm('Deseja desalocar este item?');
+    if (!confirmRemoval) return;
+
+    setTables((prevTables) =>
+      prevTables.map((table) => {
+        if (table.name !== row.tableName) return table;
+
+        return {
+          ...table,
+          rows: table.rows.map((currentRow) => {
+            if (currentRow.id !== row.id) return currentRow;
+
+            const nextValues = { ...currentRow.values };
+            delete nextValues.serviceOS;
+            delete nextValues.localizacao;
+            if (normalizeKey(nextValues.status || '') === 'alocado') {
+              nextValues.status = getDefaultStatusForTable(currentRow.tableName);
+            }
+
+            return {
+              ...currentRow,
+              values: nextValues,
+            };
+          })
+        };
+      })
+    );
+
+    setAlocacoesHistorico((prev) => [
+      {
+        id: `desal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        action: 'desalocar',
+        kind: row.tableName === 'Alugados - Equipamentos' ? 'equipamentos' : row.tableName === 'Materiais' ? 'materiais' : 'outros',
+        dataEvento: new Date().toISOString(),
+        osId: row.values.serviceOS || '',
+        osLabel: row.values.serviceOS || '',
+        itemLabel: row.values.material || row.values.equipamento || row.values.modelo || row.values.item || 'Item',
+        tableName: row.tableName,
+        local: row.values.localizacao || ''
+      },
+      ...prev
+    ]);
+  };
+
   const handleSaveEquipAllocation = () => {
     if (!equipAllocateForm.local || !equipAllocateForm.osId) {
-      alert("Por favor, preencha o local e selecione a OS.");
+      alert('Por favor, preencha o local e selecione a OS.');
       return;
     }
 
@@ -795,55 +1262,238 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
       })
     );
 
+    setAlocacoesHistorico((prev) => [
+      {
+        id: `aloc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        action: 'alocar',
+        kind: equipAllocateForm.tableName === 'Alugados - Equipamentos' ? 'equipamentos' : equipAllocateForm.tableName === 'Materiais' ? 'materiais' : 'outros',
+        dataEvento: new Date().toISOString(),
+        osId: equipAllocateForm.osId,
+        osLabel: equipAllocateForm.osId,
+        itemLabel: equipAllocateForm.equipName,
+        tableName: equipAllocateForm.tableName,
+        local: equipAllocateForm.local
+      },
+      ...prev
+    ]);
+
     setIsEquipAllocateModalOpen(false);
     setEquipAllocateForm({ rowId: '', tableName: '', equipName: '', local: '', osId: '' });
   };
 
+  const keyForRow = (tableName: string, rowId: string) => `${tableName}::${rowId}`;
+
+  const getSelectedRows = () => {
+    const items: { tableName: string; row: StockRow }[] = [];
+    for (const key of Array.from(selectedForRomaneio)) {
+      const [tableName, rowId] = key.split('::');
+      const table = tables.find(t => t.name === tableName);
+      const row = table?.rows.find(r => r.id === rowId);
+      if (table && row) items.push({ tableName: table.name, row });
+    }
+    return items;
+  };
+
+  const generateRomaneioPdf = (osLabel: string, osLocal: string) => {
+    const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+    const title = `Romaneio - OS: ${osLabel}`;
+    doc.setFontSize(14);
+    doc.text(title, 40, 50);
+
+    const rows = getSelectedRows().map(({ tableName, row }) => [
+      tableName,
+      row.values.item || row.id,
+      row.values.material || row.values.equipamento || row.values.fornecedor || '—',
+      row.values.quantidade || row.values.qtd || '1',
+      osLocal || row.values.localizacao || '—'
+    ]);
+
+    autoTable(doc, {
+      head: [['Tabela', 'Item', 'Descrição', 'Quantidade', 'Local']],
+      body: rows,
+      startY: 80,
+      styles: { fontSize: 10 }
+    });
+
+    return doc;
+  };
+
+  const handleConfirmRomaneio = async () => {
+    if (!romaneioOsId) {
+      alert('Selecione uma OS para executar a alocação.');
+      return;
+    }
+
+    const selectedOs = availableOS.find((o: any) => String(o.id) === String(romaneioOsId));
+    let osLabel = romaneioOsId;
+    let osLocal = '';
+    if (selectedOs) {
+      osLabel = getOsOptionLabel(selectedOs as any);
+      osLocal = (selectedOs as any).negocio_detalhes?.servicos?.[0]?.local_execucao || (selectedOs as any).local || '';
+    } else {
+      try {
+        const resp = await api.get(`ordens-servico/${romaneioOsId}/`);
+        const data = resp.data;
+        osLabel = getOsOptionLabel(data as any);
+        osLocal = data?.negocio_detalhes?.servicos?.[0]?.local_execucao || data?.local || '';
+      } catch (e) {
+      }
+    }
+
+    setTables(prev => prev.map(table => ({
+      ...table,
+      rows: table.rows.map(row => {
+        const key = keyForRow(table.name, row.id);
+        if (selectedForRomaneio.has(key)) {
+          const nextValues = {
+            ...row.values,
+            serviceOS: osLabel,
+            localizacao: osLocal || row.values.localizacao,
+            status: 'Alocado'
+          };
+          return { ...row, values: nextValues };
+        }
+        return row;
+      })
+    })));
+
+    const timestamp = new Date().toISOString();
+    const newHist = getSelectedRows().map(({ tableName, row }) => ({
+      id: `aloc-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
+      action: 'alocar' as const,
+      kind: (tableName === 'Alugados - Equipamentos' ? 'equipamentos' : tableName === 'Materiais' ? 'materiais' : 'outros') as AllocationHistoricoItem['kind'],
+      dataEvento: timestamp,
+      osId: romaneioOsId,
+      osLabel: osLabel,
+      itemLabel: row.values.material || row.values.equipamento || row.values.item || 'Item',
+      tableName,
+      local: osLocal || row.values.localizacao || ''
+    }));
+
+    setAlocacoesHistorico(prev => [...newHist, ...prev]);
+
+    try {
+      const doc = generateRomaneioPdf(osLabel, osLocal);
+      doc.save(`romaneio-${osLabel || romaneioOsId}.pdf`);
+    } catch (e) {
+      console.error('Erro ao gerar pdf do romaneio', e);
+    }
+
+    setSelectedForRomaneio(new Set());
+    setIsRomaneioModalOpen(false);
+    setRomaneioOsId('');
+  };
+
   const renderCell = (row: StockRow, column: StockColumn) => {
-    if (column.key === 'actions') {
-      if (row.tableName === 'Alugados - Gases') {
-        const isExpanded = expandedGasRows.has(row.id);
-        return (
-          <button
-            onClick={(e) => {
+    if (column.key === '__select__') {
+      const key = `${row.tableName}::${row.id}`;
+      const checked = selectedForRomaneio.has(key);
+      return (
+        <div className="flex items-center justify-center">
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={(e) => {
               e.stopPropagation();
-              const next = new Set(expandedGasRows);
-              if (isExpanded) next.delete(row.id);
-              else next.add(row.id);
-              setExpandedGasRows(next);
+              setSelectedForRomaneio((prev) => {
+                const next = new Set(prev);
+                if (checked) next.delete(key);
+                else next.add(key);
+                return next;
+              });
             }}
-            className="inline-flex items-center gap-1 rounded-full bg-red-500/15 border border-red-500/30 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-red-300 transition hover:bg-red-500/25 hover:text-white"
-          >
-            Alocados {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-          </button>
-        );
-      } 
-      else if (selectedCategory === 'Equipamentos') {
-        const isAlocado = normalizeKey(row.values.status || '') === 'alocado';
-        return (
+            onClick={(e) => e.stopPropagation()}
+            className="h-4 w-4 rounded border-white/20 bg-black/20 accent-emerald-500 transition-all cursor-pointer"
+          />
+        </div>
+      );
+    }
+    if (column.key === 'actions') {
+      const isGasTable = row.tableName === 'Alugados - Gases';
+      const isEquipamentosCategory = selectedCategory === 'Equipamentos';
+      const isAlocado = normalizeKey(row.values.status || '') === 'alocado';
+      const hasServiceAllocation = Boolean(cleanValue(row.values.serviceOS));
+      const isExpanded = expandedGasRows.has(row.id);
+
+      return (
+        <div className="inline-flex items-center justify-end gap-2">
+          {isGasTable && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                const next = new Set(expandedGasRows);
+                if (isExpanded) next.delete(row.id);
+                else next.add(row.id);
+                setExpandedGasRows(next);
+              }}
+              className="inline-flex items-center gap-1 rounded-lg bg-red-500/15 border border-red-500/30 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-red-300 transition hover:bg-red-500/25 hover:text-white"
+            >
+              Alocados {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            </button>
+          )}
+          {isEquipamentosCategory && (
+            hasServiceAllocation ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDisallocateRow(row);
+                }}
+                className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/30 bg-emerald-500/15 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-emerald-200 transition hover:bg-emerald-500/25 hover:text-white"
+              >
+                <Trash2 size={14} />
+                Desalocar
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setEquipAllocateForm({
+                    rowId: row.id,
+                    tableName: row.tableName,
+                    equipName: row.values.material || row.values.modelo || row.values.item || 'Equipamento',
+                    local: '',
+                    osId: ''
+                  });
+                  setIsEquipAllocateModalOpen(true);
+                }}
+                className="inline-flex items-center gap-1 rounded-lg border border-red-500/30 bg-red-500/15 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-red-300 transition hover:bg-red-500/25 hover:text-white"
+              >
+                <MapPin size={14} />
+                Alocar
+              </button>
+            )
+          )}
+
+          {!isEquipamentosCategory && hasServiceAllocation && row.tableName !== 'Alugados - Gases' && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleDisallocateRow(row);
+              }}
+              className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/30 bg-emerald-500/15 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-emerald-200 transition hover:bg-emerald-500/25 hover:text-white"
+            >
+              <Trash2 size={14} />
+              Desalocar
+            </button>
+          )}
+
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              if (isAlocado) return;
-              
-              setEquipAllocateForm({
-                rowId: row.id,
-                tableName: row.tableName,
-                equipName: row.values.material || row.values.modelo || row.values.item || 'Equipamento',
-                local: '',
-                osId: ''
-              });
-              setIsEquipAllocateModalOpen(true);
+              openBaixaModal(row);
             }}
-            disabled={isAlocado}
-            className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-widest transition ${isAlocado ? 'bg-white/5 text-white/20 cursor-not-allowed border border-white/5' : 'bg-red-500/15 border border-red-500/30 text-red-300 hover:bg-red-500/25 hover:text-white'}`}
+            className="inline-flex items-center gap-1 rounded-lg bg-red-500/15 border border-red-500/30 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-red-300 transition hover:bg-red-500/25 hover:text-white"
           >
-            <MapPin size={14} />
-            {isAlocado ? 'Alocado' : 'Alocar'}
+            <Trash2 size={14} />
+            Baixa
           </button>
-        );
-      }
+        </div>
+      );
     }
 
     const value = row.values[column.key] || '—';
@@ -852,14 +1502,14 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
 
     if (column.key === 'status') {
       return (
-        <Badge variant="outline" className={`rounded-full border px-3 py-1 ${getStatusTone(value, row.tableName)}`}>
+        <Badge variant="outline" className={`rounded-full border px-3 py-1 shadow-sm ${getStatusTone(value, row.tableName)}`}>
           {value}
         </Badge>
       );
     }
 
     return (
-      <span className={`block whitespace-pre-wrap text-xs leading-relaxed ${textTone} ${column.align === 'center' ? 'text-center' : ''} ${column.align === 'right' ? 'text-right' : ''}`}>
+      <span className={`block whitespace-pre-wrap text-[13px] leading-relaxed ${textTone} ${column.align === 'center' ? 'text-center' : ''} ${column.align === 'right' ? 'text-right' : ''}`}>
         {value}
       </span>
     );
@@ -868,10 +1518,10 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
   const renderRegisterField = (column: StockColumn, table: StockTable) => {
     const value = registerValues[column.key] || '';
     const isTextarea = /descricao|observacao|texto|detalhe|conteudo/.test(column.key);
-    const baseClass = 'w-full rounded-2xl border border-white/10 bg-[#0b1220] px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/25 focus:border-amber-400';
+    const baseClass = 'w-full rounded-xl border border-white/10 bg-[#0b1220]/80 px-4 py-3 text-sm text-white outline-none shadow-sm transition placeholder:text-white/30 focus:border-amber-400 focus:ring-1 focus:ring-amber-400';
 
     if (column.key === 'item') {
-      return <Input value={value} readOnly className={`${baseClass} h-12 opacity-80`} placeholder="ID automático do item" />;
+      return <Input value={value} readOnly className={`${baseClass} h-12 opacity-70`} placeholder="ID automático do item" />;
     }
 
     if (column.key === 'status') {
@@ -883,7 +1533,7 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
           </SelectTrigger>
           <SelectContent className="border border-white/10 bg-[#0b1220] text-white shadow-2xl">
             {statusOptions.map((option) => (
-              <SelectItem key={option} value={option} className="cursor-pointer rounded-xl px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
+              <SelectItem key={option} value={option} className="cursor-pointer rounded-lg px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
                 {option}
               </SelectItem>
             ))}
@@ -892,14 +1542,20 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
       );
     }
 
-    if (column.key === 'total' && table.name === 'Alugados - Gases') {
+    if (column.key === 'serviceOS') {
       return (
-        <Input
-          value={value}
-          readOnly
-          className={`${baseClass} h-12 border-emerald-500/30 bg-emerald-500/10 text-emerald-300 font-bold opacity-90`}
-          placeholder="0"
-        />
+        <Select value={value} onValueChange={(nextValue) => handleRegisterChange(column.key, nextValue)}>
+          <SelectTrigger className={`${baseClass} h-12 justify-between`}>
+            <SelectValue placeholder="Selecione uma OS" />
+          </SelectTrigger>
+          <SelectContent className="border border-white/10 bg-[#0b1220] text-white shadow-2xl">
+            {availableOS.map((ordemServico) => (
+              <SelectItem key={getOsOptionValue(ordemServico)} value={getOsOptionValue(ordemServico)} className="cursor-pointer rounded-lg px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
+                {getOsOptionLabel(ordemServico)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       );
     }
 
@@ -927,141 +1583,108 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-gradient-to-br from-[#101f3d] via-[#0d1830] to-[#0b1220]">
-      <div className="border-b border-white/5 p-8">
+      <div className="border-b border-white/5 p-8 pb-6">
         <div className="flex flex-wrap items-start justify-between gap-6">
           <div>
-            <h1 className="text-3xl font-black uppercase tracking-wide text-white">
-              <Package className="mr-3 inline-block text-amber-400" size={32} />
+            <h1 className="text-3xl font-black uppercase tracking-wide text-white flex items-center drop-shadow-md">
+              <Package className="mr-3 text-amber-400" size={32} />
               Controle de Estoque
             </h1>
             <p className="mt-2 text-xs font-bold uppercase tracking-widest text-white/40">
               Gerenciamento de estoque com alocação em cascata
             </p>
           </div>
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={openRegisterModal}
-              className="inline-flex items-center gap-2 rounded-2xl border border-emerald-500/30 bg-gradient-to-r from-emerald-500/20 to-cyan-500/20 px-5 py-3 text-xs font-black uppercase tracking-widest text-emerald-200 transition hover:from-emerald-500/30 hover:to-cyan-500/30"
-            >
-              <Plus size={16} />
-              Novo item
-            </button>
-          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 px-8 pt-8 md:grid-cols-2 xl:grid-cols-4">
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur">
-          <p className="mb-2 text-xs font-black uppercase tracking-widest text-white/40">Tabelas</p>
-          <p className="text-3xl font-black text-white">{stats.totalTables}</p>
-          <div className="mt-2 flex items-center gap-2">
-            <TrendingUp size={14} className="text-blue-400" />
-            <span className="text-[10px] font-bold text-blue-400">Abas disponíveis</span>
-          </div>
-        </div>
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur">
-          <p className="mb-2 text-xs font-black uppercase tracking-widest text-white/40">Registros Visíveis</p>
-          <p className="text-3xl font-black text-white">{stats.visibleRows}</p>
-          <div className="mt-2 flex items-center gap-2">
-            <Layers3 size={14} className="text-amber-400" />
-            <span className="text-[10px] font-bold text-amber-400">Aba atual / Todos</span>
-          </div>
-        </div>
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur">
-          <p className="mb-2 text-xs font-black uppercase tracking-widest text-white/40">Colunas Visíveis</p>
-          <p className="text-3xl font-black text-white">{stats.visibleColumns}</p>
-          <div className="mt-2 flex items-center gap-2">
-            <Table2 size={14} className="text-cyan-400" />
-            <span className="text-[10px] font-bold text-cyan-400">Campos em exibição</span>
-          </div>
-        </div>
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur">
-          <p className="mb-2 text-xs font-black uppercase tracking-widest text-white/40">Itens Críticos</p>
-          <p className="text-3xl font-black text-white">{stats.criticalItems}</p>
-          <div className="mt-2 flex items-center gap-2">
-            <AlertTriangle size={14} className="text-red-400" />
-            <span className="text-[10px] font-bold text-red-400">Status crítico</span>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 px-8 pt-8 xl:grid-cols-[1.05fr_1.05fr_1fr_220px] xl:items-end">
+      <div className="mx-8 mt-6 grid grid-cols-1 gap-5 rounded-[24px] border border-white/5 bg-gradient-to-r from-white/[0.03] to-transparent p-6 shadow-xl backdrop-blur-md xl:grid-cols-[1fr_1fr_2fr_auto] xl:items-end">
         <div className="space-y-2">
-          <label className="ml-1 block text-[10px] font-black uppercase tracking-widest text-white/40">Categoria</label>
+          <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">Categoria</label>
           <Select value={selectedCategory} onValueChange={(val) => setSelectedCategory(val as 'Materiais' | 'Equipamentos' | 'Alugados')}>
-            <SelectTrigger className="group min-h-[55px] rounded-[24px] border border-white/10 bg-gradient-to-r from-white/8 to-white/5 px-5 py-5 text-white shadow-lg shadow-black/15 backdrop-blur transition hover:border-amber-400/40 hover:from-white/12 hover:to-white/8">
-              <div className="flex min-w-0 items-center gap-4 text-left">
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/20">
-                  <Package size={18} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-[10px] font-black uppercase leading-none tracking-widest text-white/40">Categoria</p>
-                  <SelectValue placeholder="Selecione" className="mt-1 text-sm font-semibold leading-tight" />
-                </div>
-              </div>
+            <SelectTrigger className="relative h-12 w-full rounded-xl border border-white/5 bg-[#0b1220]/80 pl-11 pr-4 text-white shadow-sm transition focus:border-amber-400 focus:ring-1 focus:ring-amber-400 hover:border-white/20">
+              <Package size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-amber-400" />
+              <SelectValue placeholder="Selecione" className="text-sm font-semibold" />
             </SelectTrigger>
             <SelectContent className="border border-white/10 bg-[#0b1220]/95 text-white shadow-2xl backdrop-blur">
-              <SelectItem value="Materiais" className="cursor-pointer rounded-xl px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
+              <SelectItem value="Materiais" className="cursor-pointer rounded-lg px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
                 Materiais
               </SelectItem>
-              <SelectItem value="Equipamentos" className="cursor-pointer rounded-xl px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
+              <SelectItem value="Equipamentos" className="cursor-pointer rounded-lg px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
                 Equipamentos
               </SelectItem>
-              <SelectItem value="Alugados" className="cursor-pointer rounded-xl px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
+              <SelectItem value="Alugados" className="cursor-pointer rounded-lg px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
                 Alugados
               </SelectItem>
             </SelectContent>
           </Select>
         </div>
 
-        {(selectedCategory === 'Equipamentos' || selectedCategory === 'Alugados') && (
-          <div className="space-y-2">
-            <label className="ml-1 block text-[10px] font-black uppercase tracking-widest text-white/40">Tipo</label>
+        <div className="space-y-2">
+          <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">Tipo</label>
+          {(selectedCategory === 'Equipamentos' || selectedCategory === 'Alugados') ? (
             <Select value={selectedType} onValueChange={setSelectedType}>
-              <SelectTrigger className="group min-h-[55px] rounded-[24px] border border-white/10 bg-gradient-to-r from-white/8 to-white/5 px-5 py-5 text-white shadow-lg shadow-black/15 backdrop-blur transition hover:border-amber-400/40 hover:from-white/12 hover:to-white/8">
-                <div className="flex min-w-0 items-center gap-4 text-left">
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-cyan-500/15 text-cyan-300 ring-1 ring-cyan-500/20">
-                    <Layers3 size={18} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[10px] font-black uppercase leading-none tracking-widest text-white/40">Tipo</p>
-                    <SelectValue placeholder="Selecione" className="mt-1 text-sm font-semibold leading-tight" />
-                  </div>
-                </div>
+              <SelectTrigger className="relative h-12 w-full rounded-xl border border-white/5 bg-[#0b1220]/80 pl-11 pr-4 text-white shadow-sm transition focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 hover:border-white/20">
+                <Layers3 size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-cyan-400" />
+                <SelectValue placeholder="Selecione" className="text-sm font-semibold" />
               </SelectTrigger>
               <SelectContent className="border border-white/10 bg-[#0b1220]/95 text-white shadow-2xl backdrop-blur">
                 {(categoryMap[selectedCategory] as string[]).map((type) => (
-                  <SelectItem key={type} value={type} className="cursor-pointer rounded-xl px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
+                  <SelectItem key={type} value={type} className="cursor-pointer rounded-lg px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
                     {type}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-          </div>
-        )}
+          ) : (
+            <div className="flex h-12 w-full items-center rounded-xl border border-white/5 bg-[#0b1220]/40 px-4 text-xs font-semibold uppercase tracking-widest text-white/30">
+              Sem subtipo
+            </div>
+          )}
+        </div>
 
         <div className="space-y-2">
-          <label className="ml-1 block text-[10px] font-black uppercase tracking-widest text-white/40">Busca</label>
-          <div className="relative">
-            <Search size={18} className="pointer-events-none absolute left-4 top-3.5 text-white/40" />
-            <Input
-              placeholder="Buscar por nome, categoria, fornecedor..."
-              value={filtro}
-              onChange={(event) => setFiltro(event.target.value)}
-              className="h-14 border-white/10 bg-white/5 pl-12 text-white placeholder:text-white/40"
-            />
+          <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">Busca e Filtro</label>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_200px]">
+            <div className="relative">
+              <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40" />
+              <Input
+                placeholder="Buscar por nome, fornecedor..."
+                value={filtro}
+                onChange={(event) => setFiltro(event.target.value)}
+                className="h-12 w-full rounded-xl border border-white/5 bg-[#0b1220]/80 pl-11 pr-4 text-white placeholder:text-white/30 shadow-sm transition focus:border-white/30 hover:border-white/20"
+              />
+            </div>
+
+            <Select value={selectedOsFilter || '__all__'} onValueChange={(value) => setSelectedOsFilter(value === '__all__' ? '' : value)}>
+              <SelectTrigger className="h-12 w-full rounded-xl border border-white/5 bg-[#0b1220]/80 px-4 text-white shadow-sm transition hover:border-white/20">
+                <SelectValue placeholder="Filtrar por OS" />
+              </SelectTrigger>
+              <SelectContent className="border border-white/10 bg-[#0b1220] text-white shadow-2xl">
+                <SelectItem value="__all__" className="cursor-pointer rounded-lg px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
+                  Todas as OS
+                </SelectItem>
+                {availableOS.map((ordemServico: any) => (
+                  <SelectItem
+                    key={getOsOptionValue(ordemServico)}
+                    value={getOsOptionValue(ordemServico)}
+                    className="cursor-pointer rounded-lg px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white"
+                  >
+                    {getOsOptionLabel(ordemServico)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
 
         <div className="space-y-2">
-          <label className="ml-1 block text-[10px] font-black uppercase tracking-widest text-white/40">Ação Rápida</label>
-          <div className="flex items-center gap-2">
+          <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">Ação Rápida</label>
+          <div className="grid grid-cols-2 gap-2 w-full min-w-[260px]">
             {selectedTable.name === 'Alugados - Gases' ? (
               <button
                 type="button"
                 onClick={() => setIsAllocateModalOpen(true)}
-                className="inline-flex h-14 w-full items-center justify-center gap-2 rounded-[24px] border border-red-500/30 bg-red-500/15 px-4 text-xs font-black uppercase tracking-widest text-red-200 transition hover:bg-red-500/25 hover:text-white"
+                className="col-span-2 inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-red-500/30 bg-red-500/15 px-4 text-xs font-bold uppercase tracking-widest text-red-200 transition hover:bg-red-500/25 hover:text-white shadow-sm"
               >
                 <MapPin size={16} />
                 Alocar
@@ -1070,49 +1693,66 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
               <button
                 type="button"
                 onClick={openRegisterModal}
-                className="inline-flex h-14 w-full items-center justify-center gap-2 rounded-[24px] border border-emerald-500/30 bg-emerald-500/15 px-4 text-xs font-black uppercase tracking-widest text-emerald-200 transition hover:bg-emerald-500/25 hover:text-white"
+                className="col-span-2 inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/15 px-4 text-xs font-bold uppercase tracking-widest text-emerald-200 transition hover:bg-emerald-500/25 hover:text-white shadow-sm"
               >
                 <Plus size={16} />
-                Reg. Item
+                Registrar Item
               </button>
             )}
+            
+            <div className="col-span-2 flex h-12 w-full items-center justify-between rounded-xl border border-white/5 bg-[#0b1220]/60 px-3 overflow-hidden shadow-inner">
+               <div className="text-[10px] font-bold uppercase tracking-widest text-white/40 truncate mr-2">
+                 Selec. <span className="ml-1 rounded-md bg-amber-500/20 px-1.5 py-0.5 text-amber-400">{selectedForRomaneio.size}</span>
+               </div>
+               <button
+                type="button"
+                disabled={selectedForRomaneio.size === 0}
+                onClick={() => setIsRomaneioModalOpen(true)}
+                className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-[10px] font-bold uppercase tracking-widest transition whitespace-nowrap ${selectedForRomaneio.size === 0 ? 'border-transparent bg-white/5 text-white/30' : 'border-amber-500/30 bg-amber-500/15 text-amber-200 hover:bg-amber-500/25 hover:text-white shadow-sm'}`}
+               >
+                 <ClipboardList size={14} />
+                 Romaneio
+               </button>
+            </div>
           </div>
         </div>
       </div>
 
-      <div className="flex items-center justify-between gap-4 px-8 pt-4">
-        <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-white/50">
+      <div className="flex items-center justify-between gap-4 px-8 pt-6">
+        <div className="flex items-center gap-2 rounded-full border border-white/5 bg-white/5 px-4 py-1.5 text-[11px] font-bold uppercase tracking-wider text-white/60 shadow-sm">
           <Layers3 size={14} className="text-amber-400" />
           {selectedCategory === 'Materiais'
-            ? 'Visualizando Materiais - Categoria simples sem tipos'
+            ? 'Visualizando Materiais'
             : selectedCategory === 'Equipamentos'
-            ? `Equipamentos - Tipo: ${selectedType}`
-            : `Alugados - Tipo: ${selectedType}`}
+            ? `Equipamentos / ${selectedType}`
+            : `Alugados / ${selectedType}`}
         </div>
-        <div className="text-[11px] font-bold uppercase tracking-widest text-white/40">
+        <div className="rounded-full border border-white/5 bg-white/5 px-4 py-1.5 text-[11px] font-bold uppercase tracking-wider text-white/50 shadow-sm">
           Exibindo {visibleRows.length} de {selectedTable.rows.length} registros
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto px-8 py-6">
+      <div className="flex-1 overflow-auto px-8 py-4 pb-8">
         {visibleRows.length === 0 ? (
-          <div className="flex h-full items-center justify-center rounded-2xl border border-white/10 bg-white/5 backdrop-blur">
+          <div className="flex h-full items-center justify-center rounded-[24px] border border-white/5 bg-white/[0.02] backdrop-blur shadow-inner">
             <div className="text-center">
-              <Package size={48} className="mx-auto mb-4 text-white/20" />
-              <p className="font-bold text-white/40">Nenhum registro encontrado</p>
-              <p className="mt-2 text-sm text-white/20">Ajuste o filtro ou escolha outra tabela</p>
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-white/5 bg-[#0b1220]/50 shadow-sm">
+                <Package size={28} className="text-white/30" />
+              </div>
+              <p className="font-bold text-white/60">Nenhum registro encontrado</p>
+              <p className="mt-2 text-sm text-white/35">Ajuste a busca, o filtro de OS ou troque o tipo.</p>
             </div>
           </div>
         ) : (
-          <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/5 backdrop-blur">
+          <div className="overflow-hidden rounded-[24px] border border-white/5 bg-[#0b1220]/40 shadow-xl backdrop-blur-md">
             <div className="overflow-auto">
               <table className="min-w-max w-full text-sm">
-                <thead className="sticky top-0 z-10 bg-[#101f3d]">
+                <thead className="sticky top-0 z-10 bg-[#131f37] shadow-sm">
                   <tr className="border-b border-white/10">
                     {visibleColumns.map((column) => (
                       <th
                         key={column.key}
-                        className={`px-6 py-4 text-left text-[10px] font-black uppercase tracking-widest text-white/40 ${column.align === 'center' ? 'text-center' : ''} ${column.align === 'right' ? 'text-right' : ''}`}
+                        className={`px-5 py-4 text-left text-[11px] font-bold uppercase tracking-wider text-white/50 ${column.align === 'center' ? 'text-center' : ''} ${column.align === 'right' ? 'text-right' : ''}`}
                       >
                         {column.label}
                       </th>
@@ -1136,12 +1776,12 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
                               openRowDetails(row);
                             }
                           }}
-                          className={`cursor-pointer transition-colors ${rowIsNegative ? 'bg-red-500/10 hover:bg-red-500/15' : 'hover:bg-white/5'}`}
+                          className={`cursor-pointer transition-colors ${rowIsNegative ? 'bg-red-500/[0.03] hover:bg-red-500/10' : 'hover:bg-white/5'}`}
                         >
                           {visibleColumns.map((column) => (
                             <td
                               key={`${row.id}-${column.key}`}
-                              className={`px-6 py-4 align-middle ${column.align === 'center' ? 'text-center' : ''} ${column.align === 'right' ? 'text-right' : ''}`}
+                              className={`px-5 py-4 align-middle ${column.align === 'center' ? 'text-center' : ''} ${column.align === 'right' ? 'text-right' : ''}`}
                             >
                               {renderCell(row, column)}
                             </td>
@@ -1152,13 +1792,13 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
                         {isExpanded && row.tableName === 'Alugados - Gases' && (
                           <tr className="bg-[#080d18] cursor-default" onClick={(e) => e.stopPropagation()}>
                             <td colSpan={visibleColumns.length} className="p-0 border-b border-white/5">
-                              <div className="p-6 pt-5 pb-6 pl-12 shadow-inner border-l-2 border-red-500/30">
-                                <h4 className="text-[10px] font-black text-white/50 mb-4 uppercase tracking-widest">
-                                  Detalhamento de Alocação - Fornecedor: {row.values.fornecedor}
+                              <div className="p-6 pt-5 pb-6 pl-14 shadow-inner border-l-2 border-red-500/40">
+                                <h4 className="text-[11px] font-bold text-white/50 mb-4 uppercase tracking-wider flex items-center gap-2">
+                                  <ChevronDown size={14} className="text-red-400" /> Detalhamento de Alocação - Fornecedor: {row.values.fornecedor}
                                 </h4>
 
-                                <div className="mb-6 flex flex-wrap items-center gap-4 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4">
-                                  <Badge className="bg-emerald-500/15 text-emerald-300 border-emerald-500/30 py-1">
+                                <div className="mb-6 flex flex-wrap items-center gap-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 shadow-sm">
+                                  <Badge className="bg-emerald-500/15 text-emerald-300 border-emerald-500/30 py-1.5 px-3 rounded-lg text-xs">
                                     Disponíveis no Estoque
                                   </Badge>
                                   <div className="flex flex-wrap gap-8 ml-2">
@@ -1171,56 +1811,69 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
                                       const available = totalOwned - totalAllocated;
                                       return (
                                         <div key={g} className="text-center">
-                                          <p className="text-[10px] font-black uppercase tracking-widest text-white/40">{g}</p>
-                                          <p className="text-xl font-bold text-emerald-400">{available}</p>
+                                          <p className="text-[10px] font-bold uppercase tracking-widest text-white/50">{g}</p>
+                                          <p className="text-lg font-bold text-emerald-400 drop-shadow-sm">{available}</p>
                                         </div>
                                       );
                                     })}
                                   </div>
                                 </div>
 
-                                <h5 className="text-[10px] font-black text-white/50 mb-3 uppercase tracking-widest">
+                                <h5 className="text-[10px] font-bold text-white/50 mb-3 uppercase tracking-widest">
                                   Cilindros Alocados (Em campo)
                                 </h5>
-                                <table className="w-full text-sm">
-                                  <thead>
-                                    <tr className="border-b border-white/10 text-[10px] uppercase tracking-widest text-white/40">
-                                      <th className="py-2 text-left w-24">Status</th>
-                                      <th className="py-2 text-left">Local</th>
-                                      <th className="py-2 text-left">Serviço (OS)</th>
-                                      {gasTypes.map(g => <th key={g} className="py-2 text-center">{g}</th>)}
-                                      <th className="py-2 text-center">Total Linha</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-white/5">
-                                    {allocations.filter(a => a.supplierRowId === row.id).length === 0 && (
-                                      <tr>
-                                        <td colSpan={gasTypes.length + 4} className="py-6 text-center text-white/30 text-xs">
-                                          Nenhum cilindro alocado para este fornecedor.
-                                        </td>
+                                <div className="rounded-xl border border-white/5 overflow-hidden bg-[#0b1220]/80">
+                                  <table className="w-full text-sm">
+                                    <thead>
+                                      <tr className="border-b border-white/5 bg-white/5 text-[10px] uppercase tracking-widest text-white/40">
+                                        <th className="py-3 px-4 text-left w-28">Status</th>
+                                        <th className="py-3 px-4 text-left">Local</th>
+                                        <th className="py-3 px-4 text-left">Serviço (OS)</th>
+                                        {gasTypes.map(g => <th key={g} className="py-3 px-4 text-center">{g}</th>)}
+                                        <th className="py-3 px-4 text-center">Total Linha</th>
+                                        <th className="py-3 px-4 text-right">Ações</th>
                                       </tr>
-                                    )}
-                                    {allocations.filter(a => a.supplierRowId === row.id).map(alloc => (
-                                      <tr key={alloc.id} className="hover:bg-white/5 transition-colors">
-                                        <td className="py-3">
-                                          <Badge className="bg-red-500/15 text-red-300 border-red-500/30">Alocado</Badge>
-                                        </td>
-                                        <td className="py-3 text-white/80">{alloc.local}</td>
-                                        <td className="py-3 text-white/80">{alloc.serviceOS}</td>
-                                        {gasTypes.map(g => (
-                                          <td key={g} className="py-3 text-center text-white/60">
-                                            {alloc.gasName === g ? (
-                                              <span className="font-bold text-white/90">{alloc.quantity}</span>
-                                            ) : '—'}
+                                    </thead>
+                                    <tbody className="divide-y divide-white/5">
+                                      {allocations.filter(a => a.supplierRowId === row.id).length === 0 && (
+                                        <tr>
+                                          <td colSpan={gasTypes.length + 5} className="py-8 text-center text-white/30 text-xs">
+                                            Nenhum cilindro alocado para este fornecedor.
                                           </td>
-                                        ))}
-                                        <td className="py-3 text-center text-red-300 font-bold">
-                                          {alloc.quantity}
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
+                                        </tr>
+                                      )}
+                                      {allocations.filter(a => a.supplierRowId === row.id).map(alloc => (
+                                        <tr key={alloc.id} className="hover:bg-white/5 transition-colors">
+                                          <td className="py-3 px-4">
+                                            <Badge className="bg-red-500/15 text-red-300 border-red-500/30 rounded-lg shadow-sm">Alocado</Badge>
+                                          </td>
+                                          <td className="py-3 px-4 text-[13px] text-white/80">{alloc.local}</td>
+                                          <td className="py-3 px-4 text-[13px] text-white/80">{alloc.serviceOS}</td>
+                                          {gasTypes.map(g => (
+                                            <td key={g} className="py-3 px-4 text-center text-[13px] text-white/60">
+                                              {alloc.gasName === g ? (
+                                                <span className="font-bold text-white">{alloc.quantity}</span>
+                                              ) : '—'}
+                                            </td>
+                                          ))}
+                                          <td className="py-3 px-4 text-center text-[13px] text-red-300 font-bold">
+                                            {alloc.quantity}
+                                          </td>
+                                          <td className="py-3 px-4 text-right">
+                                            <button
+                                              type="button"
+                                              onClick={() => handleRemoveAllocation(alloc.id, row.id)}
+                                              className="inline-flex items-center gap-1 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-red-300 transition hover:bg-red-500/20 hover:text-white"
+                                            >
+                                              <Trash2 size={12} />
+                                              Desalocar
+                                            </button>
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
                               </div>
                             </td>
                           </tr>
@@ -1237,57 +1890,55 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
 
       {/* MODAL DE REGISTRO / EDIÇÃO PADRÃO */}
       {isRegisterOpen && currentRegisterTable && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-          <div className="max-h-[92vh] w-full max-w-6xl overflow-hidden rounded-[32px] border border-white/10 bg-[#101f3d] shadow-2xl shadow-black/40">
-            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-white/10 bg-gradient-to-r from-emerald-500/20 to-cyan-500/20 p-6 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <div className="max-h-[92vh] w-full max-w-6xl overflow-hidden rounded-[24px] border border-white/10 bg-[#0d1830] shadow-2xl shadow-black/50">
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-white/5 bg-gradient-to-r from-[#101f3d] to-[#0d1830] p-6 shadow-sm">
               <div>
-                <p className="text-[10px] font-black uppercase tracking-widest text-white/40">{editingRowTarget ? 'Editar registro' : 'Novo registro'}</p>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-400/80 mb-1">{editingRowTarget ? 'Editar registro' : 'Novo registro'}</p>
                 <h2 className="text-2xl font-black uppercase tracking-wide text-white">
                   {editingRowTarget ? 'Editar item no estoque' : 'Cadastrar item no estoque'}
                 </h2>
-                <p className="mt-1 text-xs text-white/60">Selecione o tipo e os campos da aba mudam conforme a tabela escolhida.</p>
               </div>
               <button
                 type="button"
                 onClick={closeRegisterModal}
-                className="rounded-full border border-white/10 bg-white/5 p-2 text-white/70 transition hover:bg-white/10 hover:text-white"
+                className="rounded-full bg-white/5 p-2.5 text-white/70 transition hover:bg-white/10 hover:text-white"
               >
                 <X size={18} />
               </button>
             </div>
 
-            <div className="max-h-[calc(92vh-100px)] overflow-y-auto p-6 space-y-6">
-              <div className="grid grid-cols-1 gap-4 xl:grid-cols-[320px_1fr]">
+            <div className="max-h-[calc(92vh-100px)] overflow-y-auto p-8 space-y-6">
+              <div className="grid grid-cols-1 gap-6 xl:grid-cols-[340px_1fr]">
                 <div className="space-y-2">
-                  <label className="ml-1 block text-[10px] font-black uppercase tracking-widest text-white/40">Tipo do item</label>
+                  <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">Tipo do item</label>
                   <Select value={registerTableName} onValueChange={setRegisterTableName} disabled={Boolean(editingRowTarget)}>
-                    <SelectTrigger className="min-h-[92px] rounded-[28px] border border-white/10 bg-white/5 px-5 py-4 text-white shadow-lg shadow-black/15 backdrop-blur transition hover:border-emerald-400/40 hover:bg-white/10">
-                      <div className="flex min-w-0 items-center gap-4 text-left">
-                        <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ring-1 ${registerTableIcon.badgeClass}`}>
-                          <registerTableIcon.Icon size={20} className={registerTableIcon.iconClass} />
+                    <SelectTrigger className="h-16 rounded-xl border border-white/5 bg-[#0b1220]/80 px-4 text-white shadow-sm transition hover:border-emerald-400/40 focus:ring-1 focus:ring-emerald-400">
+                      <div className="flex min-w-0 items-center gap-3 text-left w-full">
+                        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ring-1 shadow-inner ${registerTableIcon.badgeClass}`}>
+                          <registerTableIcon.Icon size={18} className={registerTableIcon.iconClass} />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Tabela selecionada</p>
-                          <SelectValue placeholder="Escolha o tipo" />
+                           <SelectValue placeholder="Escolha o tipo" className="text-sm font-semibold truncate" />
                         </div>
                       </div>
                     </SelectTrigger>
                     {editingRowTarget && (
-                      <p className="ml-1 text-[10px] font-bold uppercase tracking-widest text-white/30">
-                        A tabela fica fixa enquanto o item é editado.
+                      <p className="ml-1 mt-2 text-[10px] font-bold uppercase tracking-widest text-white/30">
+                        A tabela fica fixa na edição.
                       </p>
                     )}
                     <SelectContent className="border border-white/10 bg-[#0b1220]/95 p-2 text-white shadow-2xl backdrop-blur">
                       {tables.map((table) => (
-                        <SelectItem key={table.name} value={table.name} className="cursor-pointer rounded-2xl px-3 py-3 text-sm text-white/80 focus:bg-white/10 focus:text-white">
+                        <SelectItem key={table.name} value={table.name} className="cursor-pointer rounded-lg px-3 py-3 text-sm text-white/80 focus:bg-white/10 focus:text-white">
                           {(() => {
                             const tableIcon = getTableIconConfig(table.name);
                             return (
                               <div className="flex items-center gap-3">
-                                <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ring-1 ${tableIcon.badgeClass}`}>
-                                  <tableIcon.Icon size={17} className={tableIcon.iconClass} />
+                                <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ring-1 ${tableIcon.badgeClass}`}>
+                                  <tableIcon.Icon size={14} className={tableIcon.iconClass} />
                                 </div>
-                                <span className="min-w-0 flex-1 truncate">{table.name}</span>
+                                <span className="min-w-0 flex-1 truncate font-semibold">{table.name}</span>
                               </div>
                             );
                           })()}
@@ -1297,37 +1948,39 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
                   </Select>
                 </div>
 
-                <div className="rounded-[28px] border border-white/10 bg-white/5 p-5 backdrop-blur">
-                  <div className="flex items-center justify-between gap-4">
+                <div className="rounded-xl border border-white/5 bg-white/[0.02] p-5 shadow-inner flex items-center justify-between gap-4">
                     <div>
-                      <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Campos do tipo selecionado</p>
-                      <p className="text-sm text-white/70">Os campos abaixo se adaptam à tabela {currentRegisterTable.name}.</p>
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-white/50 mb-1">Campos do tipo selecionado</p>
+                      <p className="text-sm text-white/70">Os campos adaptam-se à tabela {currentRegisterTable.name}.</p>
                     </div>
-                    <div className="rounded-full border border-emerald-500/30 bg-emerald-500/15 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-emerald-200">
+                    <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/15 px-3 py-1.5 text-xs font-bold tracking-wide text-emerald-300 whitespace-nowrap shadow-sm">
                       {currentRegisterTable.columns.length} campos
                     </div>
-                  </div>
                 </div>
               </div>
 
-              <div className="rounded-[28px] border border-white/10 bg-white/5 p-6 backdrop-blur">
-                <div className="mb-5 flex items-center gap-2">
-                  <CheckCircle2 size={16} className="text-emerald-300" />
-                  <h3 className="text-sm font-black uppercase tracking-widest text-white">Preenchimento do item</h3>
+              <div className="rounded-xl border border-white/5 bg-white/[0.02] p-6 shadow-inner">
+                <div className="mb-6 flex items-center gap-2">
+                  <CheckCircle2 size={18} className="text-emerald-400" />
+                  <h3 className="text-sm font-bold uppercase tracking-widest text-white">Preenchimento do item</h3>
                 </div>
 
+                <p className="mb-5 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-amber-100">
+                  Todos os campos são obrigatórios. Ao selecionar a OS, o local é preenchido automaticamente.
+                </p>
+
                 {currentRegisterTable.name === 'Alugados - Gases' && (
-                  <div className="col-span-full mb-6 space-y-6">
-                    <div className="rounded-[24px] border border-cyan-500/20 bg-cyan-500/5 p-5">
-                      <h4 className="mb-3 text-[10px] font-black uppercase tracking-widest text-cyan-400">
+                  <div className="col-span-full mb-8 space-y-6">
+                    <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-5 shadow-sm">
+                      <h4 className="mb-3 text-[11px] font-bold uppercase tracking-wider text-cyan-400">
                         Configuração de Colunas de Gases
                       </h4>
                       <div className="flex flex-wrap items-center gap-3">
                         <Input
                           value={newGasName}
                           onChange={(e) => setNewGasName(e.target.value)}
-                          placeholder="Ex: Hidrogênio, Argônio..."
-                          className="h-12 w-full max-w-xs border-cyan-500/20 bg-[#0b1220]/50 text-sm text-white focus:border-cyan-400"
+                          placeholder="Ex: Hidrogênio..."
+                          className="h-12 w-full max-w-xs rounded-xl border border-cyan-500/30 bg-[#0b1220]/80 text-sm text-white focus:border-cyan-400"
                         />
                         <button
                           type="button"
@@ -1339,30 +1992,29 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
                               setRegisterValues((prev) => ({ ...prev, [`gas${normalizeKey(trimmed)}`]: '0' }));
                             }
                           }}
-                          className="inline-flex h-12 items-center gap-2 rounded-2xl bg-cyan-600 px-5 text-xs font-black uppercase tracking-widest text-white transition hover:bg-cyan-500"
+                          className="inline-flex h-12 items-center gap-2 rounded-xl bg-cyan-600 px-5 text-xs font-bold uppercase tracking-wider text-white shadow-sm transition hover:bg-cyan-500"
                         >
                           <Plus size={16} />
-                          Adicionar Gás
+                          Add Gás
                         </button>
                       </div>
                     </div>
 
-                    <div className="rounded-[24px] border border-white/5 bg-white/5 p-5">
-                      <p className="mb-4 text-[10px] font-black uppercase tracking-widest text-white/40 text-red-400">
-                        Gases Ativos (Clique no X para remover a coluna)
+                    <div className="rounded-xl border border-white/5 bg-[#0b1220]/40 p-5 shadow-inner">
+                      <p className="mb-4 text-[11px] font-bold uppercase tracking-wider text-red-400/80">
+                        Gases Ativos (Clique no X para remover)
                       </p>
                       <div className="flex flex-wrap gap-2">
                         {gasTypes.map((gas) => (
                           <div 
                             key={gas} 
-                            className="flex items-center gap-2 rounded-xl bg-[#0b1220] border border-white/10 pl-4 pr-2 py-2"
+                            className="flex items-center gap-2 rounded-lg bg-[#131f37] border border-white/10 pl-3 pr-1 py-1 shadow-sm"
                           >
-                            <span className="text-xs font-bold text-white/80">{gas}</span>
+                            <span className="text-xs font-bold text-white/90">{gas}</span>
                             <button
                               type="button"
                               onClick={() => handleRemoveGas(gas)}
-                              className="p-1 hover:bg-red-500/20 rounded-lg text-white/40 hover:text-red-400 transition"
-                              title={`Remover coluna de ${gas}`}
+                              className="p-1.5 hover:bg-red-500/20 rounded-md text-white/50 hover:text-red-400 transition"
                             >
                               <X size={14} />
                             </button>
@@ -1373,12 +2025,12 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
                   {currentRegisterTable.columns.map((column) => {
                     if (column.key === 'actions') return null;
                     return (
                       <div key={column.key} className={column.key === 'status' ? 'md:col-span-1' : ''}>
-                        <label className="ml-1 mb-2 block text-[10px] font-black uppercase tracking-widest text-white/40">
+                        <label className="ml-1 mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-white/50">
                           {column.label}
                         </label>
                         {renderRegisterField(column, currentRegisterTable)}
@@ -1388,18 +2040,18 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
                 </div>
               </div>
 
-              <div className="flex flex-wrap gap-3 border-t border-white/10 pt-4">
+              <div className="flex flex-wrap justify-end gap-3 border-t border-white/5 pt-6 mt-4">
                 <button
                   type="button"
                   onClick={closeRegisterModal}
-                  className="rounded-2xl border border-white/10 bg-white/5 px-6 py-3 text-xs font-black uppercase tracking-widest text-white transition hover:bg-white/10"
+                  className="rounded-xl border border-white/5 bg-[#0b1220]/80 px-6 py-3 text-xs font-bold uppercase tracking-wider text-white transition hover:bg-white/10"
                 >
                   Cancelar
                 </button>
                 <button
                   type="button"
                   onClick={handleSaveRegister}
-                  className="inline-flex items-center gap-2 rounded-2xl border border-emerald-500/30 bg-gradient-to-r from-emerald-500 to-emerald-600 px-6 py-3 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-emerald-900/30 transition hover:from-emerald-400 hover:to-emerald-500"
+                  className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-600 px-6 py-3 text-xs font-bold uppercase tracking-wider text-white shadow-lg shadow-emerald-900/40 transition hover:bg-emerald-500"
                 >
                   <CheckCircle2 size={16} />
                   {editingRowTarget ? 'Salvar alterações' : 'Salvar item'}
@@ -1410,39 +2062,133 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
         </div>
       )}
 
-      {/* MODAL DE ALOCAÇÃO DE GASES */}
-      {isAllocateModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-2xl overflow-hidden rounded-[32px] border border-white/10 bg-[#101f3d] shadow-2xl shadow-black/40">
-            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-white/10 bg-gradient-to-r from-red-500/20 to-orange-500/20 p-6 backdrop-blur-md">
+      {isBaixaModalOpen && baixaTargetRow && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-3xl overflow-hidden rounded-[24px] border border-white/10 bg-[#0d1830] shadow-2xl shadow-black/50">
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-white/5 bg-gradient-to-r from-red-500/20 to-orange-500/20 p-6 shadow-sm">
               <div>
-                <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Alocação de Cilindros</p>
-                <h2 className="text-2xl font-black uppercase tracking-wide text-white">Alocar Gás</h2>
-                <p className="mt-1 text-xs text-white/60">Selecione o fornecedor, o gás e para qual OS ele será enviado.</p>
+                <p className="mb-1 text-[11px] font-bold uppercase tracking-wider text-red-400">Baixa de item</p>
+                <h2 className="text-2xl font-black uppercase tracking-wide text-white">Registrar baixa</h2>
               </div>
               <button
                 type="button"
-                onClick={() => setIsAllocateModalOpen(false)}
-                className="rounded-full border border-white/10 bg-white/5 p-2 text-white/70 transition hover:bg-white/10 hover:text-white"
+                onClick={closeBaixaModal}
+                className="rounded-full bg-white/5 p-2.5 text-white/70 transition hover:bg-white/10 hover:text-white"
               >
                 <X size={18} />
               </button>
             </div>
 
-            <div className="p-6 space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-6 p-8">
+              <div className="rounded-xl border border-white/5 bg-white/[0.02] p-5 shadow-inner">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-white/50">Item selecionado</p>
+                <p className="mt-2 text-lg font-black text-white">
+                  {baixaTargetRow.values.material || baixaTargetRow.values.equipamento || baixaTargetRow.values.fornecedor || baixaTargetRow.values.item || 'Item'}
+                </p>
+                <p className="mt-1 text-sm text-white/45">{baixaTargetRow.tableName}</p>
+              </div>
+
+              <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
                 <div className="space-y-2">
-                  <label className="ml-1 block text-[10px] font-black uppercase tracking-widest text-white/40">Fornecedor</label>
+                  <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">OS</label>
+                  <Select value={baixaForm.osId} onValueChange={(value) => setBaixaForm((prev) => ({ ...prev, osId: value }))}>
+                    <SelectTrigger className="h-12 rounded-xl border border-white/5 bg-[#0b1220]/80 px-4 text-white shadow-sm transition hover:border-red-400/40 focus:ring-1 focus:ring-red-400">
+                      <SelectValue placeholder="Selecione a OS" />
+                    </SelectTrigger>
+                    <SelectContent className="border border-white/10 bg-[#0b1220]/95 p-2 text-white shadow-2xl backdrop-blur">
+                      {availableOS.length === 0 ? (
+                        <SelectItem value="__none__" disabled className="cursor-not-allowed rounded-lg px-3 py-3 text-sm text-white/40">
+                          Nenhuma OS disponível
+                        </SelectItem>
+                      ) : (
+                        availableOS.map((ordemServico) => {
+                          const value = String((ordemServico as any)?.id || getOsOptionValue(ordemServico as any));
+                          return (
+                            <SelectItem key={value} value={value} className="cursor-pointer rounded-lg px-3 py-3 text-sm text-white/80 focus:bg-white/10 focus:text-white">
+                              {getOsOptionLabel(ordemServico as any)}
+                            </SelectItem>
+                          );
+                        })
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">Data da baixa</label>
+                  <Input
+                    type="date"
+                    value={baixaForm.dataBaixa}
+                    onChange={(event) => setBaixaForm((prev) => ({ ...prev, dataBaixa: event.target.value }))}
+                    className="h-12 rounded-xl border border-white/5 bg-[#0b1220]/80 px-4 text-white shadow-sm transition hover:border-red-400/40 focus:border-red-400 focus:ring-1 focus:ring-red-400"
+                  />
+                </div>
+
+                <div className="space-y-2 md:col-span-2">
+                  <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">Motivo</label>
+                  <textarea
+                    value={baixaForm.motivo}
+                    onChange={(event) => setBaixaForm((prev) => ({ ...prev, motivo: event.target.value }))}
+                    placeholder="Descreva o motivo da baixa"
+                    className="min-h-[120px] w-full rounded-xl border border-white/5 bg-[#0b1220]/80 px-4 py-3 text-sm text-white outline-none shadow-sm transition placeholder:text-white/30 focus:border-red-400 focus:ring-1 focus:ring-red-400"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-wrap justify-end gap-3 border-t border-white/5 pt-6">
+                <button
+                  type="button"
+                  onClick={closeBaixaModal}
+                  className="rounded-xl border border-white/5 bg-[#0b1220]/80 px-6 py-3 text-xs font-bold uppercase tracking-wider text-white transition hover:bg-white/10"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmBaixa}
+                  className="inline-flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-600 px-6 py-3 text-xs font-bold uppercase tracking-wider text-white shadow-lg shadow-red-900/40 transition hover:bg-red-500"
+                >
+                  <Trash2 size={16} />
+                  Confirmar baixa
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE ALOCAÇÃO DE GASES */}
+      {isAllocateModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-2xl overflow-hidden rounded-[24px] border border-white/10 bg-[#0d1830] shadow-2xl shadow-black/50">
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-white/5 bg-gradient-to-r from-red-500/20 to-orange-500/20 p-6 shadow-sm">
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-red-400 mb-1">Alocação de Cilindros</p>
+                <h2 className="text-2xl font-black uppercase tracking-wide text-white">Alocar Gás</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAllocateModalOpen(false)}
+                className="rounded-full bg-white/5 p-2.5 text-white/70 transition hover:bg-white/10 hover:text-white"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-8 space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div className="space-y-2">
+                  <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">Fornecedor</label>
                   <Select 
                     value={allocateForm.supplierRowId} 
                     onValueChange={(val) => setAllocateForm(prev => ({ ...prev, supplierRowId: val }))}
                   >
-                    <SelectTrigger className="w-full rounded-2xl border border-white/10 bg-[#0b1220] h-12 text-white">
+                    <SelectTrigger className="w-full rounded-xl border border-white/5 bg-[#0b1220]/80 h-12 text-white shadow-sm focus:border-white/30 hover:border-white/20">
                       <SelectValue placeholder="Selecione..." />
                     </SelectTrigger>
                     <SelectContent className="border border-white/10 bg-[#0b1220] text-white">
                       {tables.find(t => t.name === 'Alugados - Gases')?.rows.map(row => (
-                        <SelectItem key={row.id} value={row.id}>
+                        <SelectItem key={row.id} value={row.id} className="rounded-lg">
                           {row.values.fornecedor || row.id}
                         </SelectItem>
                       ))}
@@ -1451,35 +2197,33 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
                 </div>
 
                 <div className="space-y-2">
-                  <label className="ml-1 block text-[10px] font-black uppercase tracking-widest text-white/40">Substância (Gás)</label>
+                  <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">Substância (Gás)</label>
                   <Select 
                     value={allocateForm.gasName} 
                     onValueChange={(val) => setAllocateForm(prev => ({ ...prev, gasName: val }))}
                   >
-                    <SelectTrigger className="w-full rounded-2xl border border-white/10 bg-[#0b1220] h-12 text-white">
+                    <SelectTrigger className="w-full rounded-xl border border-white/5 bg-[#0b1220]/80 h-12 text-white shadow-sm focus:border-white/30 hover:border-white/20">
                       <SelectValue placeholder="Selecione..." />
                     </SelectTrigger>
                     <SelectContent className="border border-white/10 bg-[#0b1220] text-white">
                       {gasTypes.map(g => (
-                        <SelectItem key={g} value={g}>{g}</SelectItem>
+                        <SelectItem key={g} value={g} className="rounded-lg">{g}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
 
                 <div className="space-y-2">
-                  <label className="ml-1 block text-[10px] font-black uppercase tracking-widest text-white/40">
-                    Quantidade
-                  </label>
+                  <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">Quantidade</label>
                   <Input 
                     type="number"
                     value={allocateForm.quantity}
                     onChange={(e) => setAllocateForm(prev => ({ ...prev, quantity: e.target.value }))}
-                    className="w-full rounded-2xl border border-white/10 bg-[#0b1220] h-12 text-white"
+                    className="w-full rounded-xl border border-white/5 bg-[#0b1220]/80 h-12 text-white shadow-sm focus:border-white/30 hover:border-white/20"
                   />
 
                   {allocateForm.supplierRowId && allocateForm.gasName && (
-                    <div className="mt-1 ml-1">
+                    <div className="mt-1.5 ml-1">
                       {(() => {
                         const row = tables.find(t => t.name === 'Alugados - Gases')?.rows.find(r => r.id === allocateForm.supplierRowId);
                         const total = Number(row?.values[`gas${normalizeKey(allocateForm.gasName)}`]) || 0;
@@ -1499,40 +2243,61 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-2">
                 <div className="space-y-2">
-                  <label className="ml-1 block text-[10px] font-black uppercase tracking-widest text-white/40">Serviço (OS)</label>
-                  <Input 
-                    placeholder="Ex: Mauá"
+                  <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">Serviço (OS)</label>
+                  <Select
                     value={allocateForm.serviceOS}
-                    onChange={(e) => setAllocateForm(prev => ({ ...prev, serviceOS: e.target.value }))}
-                    className="w-full rounded-2xl border border-white/10 bg-[#0b1220] h-12 text-white"
-                  />
+                    onValueChange={(val) => setAllocateForm((prev) => ({ ...prev, serviceOS: val }))}
+                  >
+                    <SelectTrigger className="w-full rounded-xl border border-white/5 bg-[#0b1220]/80 h-12 text-white shadow-sm focus:border-white/30 hover:border-white/20">
+                      <SelectValue placeholder="Selecione a OS..." />
+                    </SelectTrigger>
+                    <SelectContent className="border border-white/10 bg-[#0b1220] text-white">
+                      {availableOS.length > 0 ? (
+                        availableOS.map((ordemServico: any) => (
+                          <SelectItem key={getOsOptionValue(ordemServico) || ordemServico?.id} value={getOsOptionValue(ordemServico) || ordemServico?.id} className="rounded-lg">
+                            {getOsOptionLabel(ordemServico) || String(ordemServico?.ordemServicoNumero || ordemServico?.numeroOs || ordemServico?.id || 'OS')}
+                          </SelectItem>
+                        ))
+                      ) : Array.isArray(os) && os.length > 0 ? (
+                        os.map((ordemServico: any) => (
+                          <SelectItem key={getOsOptionValue(ordemServico) || ordemServico?.id} value={getOsOptionValue(ordemServico) || ordemServico?.id} className="rounded-lg">
+                            {getOsOptionLabel(ordemServico) || String(ordemServico?.ordemServicoNumero || ordemServico?.numeroOs || ordemServico?.id || 'OS')}
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <SelectItem value="none" disabled>
+                          Nenhuma OS elegível encontrada
+                        </SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-2">
-                  <label className="ml-1 block text-[10px] font-black uppercase tracking-widest text-white/40">Local</label>
+                  <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">Local / Destino</label>
                   <Input 
                     placeholder="Ex: Estaleiro"
                     value={allocateForm.local}
                     onChange={(e) => setAllocateForm(prev => ({ ...prev, local: e.target.value }))}
-                    className="w-full rounded-2xl border border-white/10 bg-[#0b1220] h-12 text-white"
+                    className="w-full rounded-xl border border-white/5 bg-[#0b1220]/80 h-12 text-white shadow-sm focus:border-white/30 hover:border-white/20"
                   />
                 </div>
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-3 border-t border-white/10 p-6 bg-white/5">
+            <div className="flex justify-end gap-3 border-t border-white/5 p-6 bg-[#131f37]">
               <button
                 type="button"
                 onClick={() => setIsAllocateModalOpen(false)}
-                className="rounded-2xl border border-white/10 bg-white/5 px-6 py-3 text-xs font-black uppercase tracking-widest text-white transition hover:bg-white/10"
+                className="rounded-xl border border-white/5 bg-[#0b1220]/80 px-6 py-3 text-xs font-bold uppercase tracking-wider text-white transition hover:bg-white/10"
               >
                 Cancelar
               </button>
               <button
                 type="button"
                 onClick={handleSaveAllocation}
-                className="inline-flex items-center gap-2 rounded-2xl border border-red-500/30 bg-red-600 px-6 py-3 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-red-900/30 transition hover:bg-red-500"
+                className="inline-flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-600 px-6 py-3 text-xs font-bold uppercase tracking-wider text-white shadow-lg shadow-red-900/40 transition hover:bg-red-500"
               >
                 <MapPin size={16} />
                 Confirmar Alocação
@@ -1542,76 +2307,160 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
         </div>
       )}
 
+      {/* MODAL DE ROMANEIO / ALOCAÇÃO EM MASSA */}
+      {isRomaneioModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-3xl overflow-hidden rounded-[24px] border border-white/10 bg-[#0d1830] shadow-2xl shadow-black/50">
+            <div className="flex items-center justify-between border-b border-white/5 p-6 bg-[#101f3d]">
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-amber-400 mb-1">Romaneio</p>
+                <h2 className="text-xl font-black uppercase tracking-wide text-white">Alocação em massa</h2>
+              </div>
+              <button type="button" onClick={() => setIsRomaneioModalOpen(false)} className="rounded-full bg-white/5 p-2.5 text-white/70 hover:bg-white/10">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-8 space-y-6">
+              <div className="flex flex-col md:flex-row items-end justify-between gap-6">
+                <div className="flex-1 w-full">
+                  <label className="block ml-1 mb-2 text-[11px] font-bold uppercase tracking-wider text-white/50">Ordem de Serviço (OS)</label>
+                  <Select value={romaneioOsId} onValueChange={setRomaneioOsId}>
+                    <SelectTrigger className="w-full rounded-xl border border-white/5 bg-[#0b1220]/80 h-12 text-white shadow-sm focus:border-white/30 hover:border-white/20">
+                      <SelectValue placeholder="Selecione a OS..." />
+                    </SelectTrigger>
+                    <SelectContent className="border border-white/10 bg-[#0b1220] text-white">
+                      {availableOS.map((ordemServico: any) => (
+                        <SelectItem key={ordemServico.id} value={String(ordemServico.id)} className="rounded-lg">
+                          {getOsOptionLabel(ordemServico)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="w-full md:w-auto min-w-[140px]">
+                   <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-center shadow-inner">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-amber-400/80 mb-1">Selecionados</p>
+                      <p className="text-2xl font-black text-amber-400">{selectedForRomaneio.size}</p>
+                   </div>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-white/5 bg-white/[0.02] p-5 shadow-inner">
+                <h4 className="text-[11px] font-bold uppercase tracking-wider text-white/50 mb-4">Itens Selecionados</h4>
+                <div className="max-h-60 overflow-y-auto pr-2 custom-scrollbar">
+                  {getSelectedRows().length === 0 ? (
+                    <p className="text-white/40 text-sm text-center py-4">Nenhum item selecionado.</p>
+                  ) : (
+                    <ul className="space-y-2">
+                      {getSelectedRows().map(({ tableName, row }) => (
+                        <li key={`${tableName}::${row.id}`} className="flex items-center justify-between rounded-lg border border-white/5 bg-[#0b1220]/40 p-3 shadow-sm">
+                          <div className="min-w-0 pr-4">
+                            <div className="text-sm font-bold text-white truncate">{row.values.material || row.values.fornecedor || row.values.item}</div>
+                            <div className="text-xs text-white/50 mt-1">{tableName} • <span className="font-semibold text-white/70">{row.values.quantidade || row.values.qtd || '1'} unid.</span></div>
+                          </div>
+                          <div>
+                            <button 
+                              type="button" 
+                              onClick={() => setSelectedForRomaneio(prev => { const next = new Set(prev); next.delete(`${tableName}::${row.id}`); return next; })} 
+                              className="rounded-lg bg-red-500/10 px-3 py-1.5 text-red-300 text-[10px] font-bold uppercase tracking-wider hover:bg-red-500/20 transition whitespace-nowrap"
+                            >
+                              Remover
+                            </button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 border-t border-white/5 p-6 bg-[#131f37]">
+              <button type="button" onClick={() => setIsRomaneioModalOpen(false)} className="rounded-xl border border-white/5 bg-[#0b1220]/80 px-6 py-3 text-xs font-bold uppercase tracking-wider text-white hover:bg-white/10 transition">Cancelar</button>
+              <button type="button" onClick={handleConfirmRomaneio} disabled={selectedForRomaneio.size === 0} className="rounded-xl bg-amber-600 px-6 py-3 text-xs font-bold uppercase tracking-wider text-white disabled:opacity-40 hover:bg-amber-500 shadow-lg transition">Alocar e Gerar Romaneio</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MODAL DE ALOCAÇÃO DE EQUIPAMENTOS */}
       {isEquipAllocateModalOpen && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md overflow-hidden rounded-[32px] border border-white/10 bg-[#101f3d] shadow-2xl shadow-black/40">
-            <div className="flex items-center justify-between border-b border-white/10 bg-gradient-to-r from-red-500/20 to-orange-500/20 p-6">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md overflow-hidden rounded-[24px] border border-white/10 bg-[#0d1830] shadow-2xl shadow-black/50">
+            <div className="flex items-center justify-between border-b border-white/5 bg-gradient-to-r from-red-500/20 to-orange-500/20 p-6">
               <div>
-                <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Alocação de Equipamento</p>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-red-400 mb-1">Alocação de Equipamento</p>
                 <h2 className="text-xl font-black uppercase tracking-wide text-white">Alocar Item</h2>
               </div>
               <button
                 type="button"
                 onClick={() => setIsEquipAllocateModalOpen(false)}
-                className="rounded-full bg-white/5 p-2 text-white/70 hover:bg-white/10 hover:text-white"
+                className="rounded-full bg-white/5 p-2.5 text-white/70 hover:bg-white/10 hover:text-white"
               >
                 <X size={18} />
               </button>
             </div>
 
-            <div className="p-6 space-y-4">
-              <div className="rounded-2xl bg-white/5 p-4 border border-white/10 mb-2">
-                 <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Equipamento Selecionado</p>
-                 <p className="font-bold text-white text-lg">{equipAllocateForm.equipName}</p>
+            <div className="p-8 space-y-6">
+              <div className="rounded-xl bg-white/[0.02] p-5 border border-white/5 shadow-inner">
+                 <p className="text-[11px] font-bold uppercase tracking-wider text-white/50 mb-1.5">Equipamento Selecionado</p>
+                 <p className="font-bold text-white text-base leading-tight">{equipAllocateForm.equipName}</p>
               </div>
 
               <div className="space-y-2">
-                <label className="ml-1 block text-[10px] font-black uppercase tracking-widest text-white/40">Ordem de Serviço (OS)</label>
+                <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">Ordem de Serviço (OS)</label>
                 <Select 
                   value={equipAllocateForm.osId} 
                   onValueChange={(val) => setEquipAllocateForm(prev => ({ ...prev, osId: val }))}
                 >
-                  <SelectTrigger className="w-full rounded-2xl border border-white/10 bg-[#0b1220] h-12 text-white">
+                  <SelectTrigger className="w-full rounded-xl border border-white/5 bg-[#0b1220]/80 h-12 text-white shadow-sm focus:border-white/30 hover:border-white/20">
                     <SelectValue placeholder="Selecione uma OS em produção..." />
                   </SelectTrigger>
                   <SelectContent className="border border-white/10 bg-[#0b1220] text-white">
-                    {availableOS.length === 0 ? (
-                      <SelectItem value="none" disabled>Nenhuma OS em produção</SelectItem>
-                    ) : (
-                      availableOS.map((o: any) => (
-                        <SelectItem key={o.id} value={o.cc || o.ordemServicoNumero || o.id} className="cursor-pointer">
-                          {o.cc || o.ordemServicoNumero} - {o.projeto || o.cliente}
+                    {availableOS.length > 0 ? (
+                      availableOS.map((ordemServico: any) => (
+                        <SelectItem key={getOsOptionValue(ordemServico) || ordemServico?.id} value={getOsOptionValue(ordemServico) || ordemServico?.id} className="rounded-lg cursor-pointer">
+                          {getOsOptionLabel(ordemServico) || String(ordemServico?.ordemServicoNumero || ordemServico?.numeroOs || ordemServico?.id || 'OS')}
                         </SelectItem>
                       ))
+                    ) : Array.isArray(os) && os.length > 0 ? (
+                      os.map((ordemServico: any) => (
+                        <SelectItem key={getOsOptionValue(ordemServico) || ordemServico?.id} value={getOsOptionValue(ordemServico) || ordemServico?.id} className="rounded-lg cursor-pointer">
+                          {getOsOptionLabel(ordemServico) || String(ordemServico?.ordemServicoNumero || ordemServico?.numeroOs || ordemServico?.id || 'OS')}
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <SelectItem value="none" disabled>Nenhuma OS em produção</SelectItem>
                     )}
                   </SelectContent>
                 </Select>
               </div>
 
               <div className="space-y-2">
-                <label className="ml-1 block text-[10px] font-black uppercase tracking-widest text-white/40">Local / Destino</label>
+                <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">Local / Destino</label>
                 <Input 
                   placeholder="Ex: Canteiro 3, Bordo..."
                   value={equipAllocateForm.local}
                   onChange={(e) => setEquipAllocateForm(prev => ({ ...prev, local: e.target.value }))}
-                  className="w-full rounded-2xl border border-white/10 bg-[#0b1220] h-12 text-white"
+                  className="w-full rounded-xl border border-white/5 bg-[#0b1220]/80 h-12 text-white shadow-sm focus:border-white/30 hover:border-white/20"
                 />
               </div>
             </div>
 
-            <div className="flex gap-3 border-t border-white/10 p-6 bg-white/5">
+            <div className="flex gap-3 border-t border-white/5 p-6 bg-[#131f37]">
               <button
                 type="button"
                 onClick={() => setIsEquipAllocateModalOpen(false)}
-                className="flex-1 rounded-2xl border border-white/10 bg-white/5 py-3 text-xs font-black uppercase tracking-widest text-white hover:bg-white/10 transition"
+                className="flex-1 rounded-xl border border-white/5 bg-[#0b1220]/80 py-3 text-xs font-bold uppercase tracking-wider text-white hover:bg-white/10 transition"
               >
                 Cancelar
               </button>
               <button
                 type="button"
                 onClick={handleSaveEquipAllocation}
-                className="flex-1 inline-flex items-center justify-center gap-2 rounded-2xl bg-red-600 py-3 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-red-900/30 hover:bg-red-500 transition"
+                className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-red-600 py-3 text-xs font-bold uppercase tracking-wider text-white shadow-lg shadow-red-900/40 hover:bg-red-500 transition"
               >
                 <MapPin size={16} />
                 Confirmar
@@ -1623,7 +2472,7 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
 
       {/* DETALHES DA LINHA LATERAL */}
       {activeRow && (
-        <div className="fixed inset-0 z-[60] flex justify-end bg-black/55 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[60] flex justify-end bg-black/70 backdrop-blur-sm">
           <button
             type="button"
             aria-label="Fechar detalhes do item"
@@ -1631,41 +2480,40 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
             onClick={closeRowDetails}
           />
 
-          <aside className="relative h-full w-full max-w-xl overflow-hidden border-l border-white/10 bg-[#101f3d] shadow-2xl shadow-black/40">
-            <div className="flex items-start justify-between gap-4 border-b border-white/10 bg-white/5 p-6">
+          <aside className="relative h-full w-full max-w-xl overflow-hidden border-l border-white/10 bg-[#0d1830] shadow-2xl shadow-black/60 flex flex-col">
+            <div className="flex items-start justify-between gap-4 border-b border-white/5 bg-[#101f3d] p-8 shadow-sm">
               <div>
-                <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Detalhes do item</p>
-                <h3 className="mt-1 text-2xl font-black uppercase tracking-wide text-white">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-white/50">Detalhes do item</p>
+                <h3 className="mt-2 text-2xl font-black uppercase tracking-wide text-white leading-tight">
                   {activeRow.row.values.material || activeRow.row.values.fornecedor || activeRow.row.values.item || 'Item selecionado'}
                 </h3>
-                <p className="mt-2 text-xs text-white/60">Clique em editar para abrir o formulário já preenchido.</p>
               </div>
               <button
                 type="button"
                 onClick={closeRowDetails}
-                className="rounded-full border border-white/10 bg-white/5 p-2 text-white/70 transition hover:bg-white/10 hover:text-white"
+                className="rounded-full bg-white/5 p-2.5 text-white/70 transition hover:bg-white/10 hover:text-white"
               >
                 <X size={18} />
               </button>
             </div>
 
-            <div className="max-h-[calc(100vh-180px)] overflow-y-auto p-6">
-              <div className="mb-6 flex flex-wrap items-center gap-3">
-                <div className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-white/60">
+            <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
+              <div className="mb-8 flex flex-wrap items-center gap-3">
+                <div className="rounded-lg border border-white/5 bg-white/[0.03] px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-white/70 shadow-sm">
                   {activeRow.table.name}
                 </div>
                 {activeRow.table.name !== 'Alugados - Gases' && (
-                  <Badge variant="outline" className={`rounded-full border px-3 py-1 ${getStatusTone(activeRow.row.values.status || '—', activeRow.row.tableName)}`}>
+                  <Badge variant="outline" className={`rounded-lg border px-4 py-2 shadow-sm ${getStatusTone(activeRow.row.values.status || '—', activeRow.row.tableName)}`}>
                     {activeRow.row.values.status || '—'}
                   </Badge>
                 )}
               </div>
 
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
                 {activeRow.table.columns.filter(col => col.key !== 'actions').map((column) => (
-                  <div key={column.key} className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-white/35">{column.label}</p>
-                    <p className={`mt-2 whitespace-pre-wrap text-sm leading-relaxed ${column.align === 'center' ? 'text-center' : ''} ${column.align === 'right' ? 'text-right' : ''} ${isNegativeStatus(activeRow.row.tableName, activeRow.row.values.status || '') ? 'text-red-100' : 'text-white/85'}`}>
+                  <div key={column.key} className="rounded-xl border border-white/5 bg-[#0b1220]/40 p-5 shadow-inner">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-white/40">{column.label}</p>
+                    <p className={`mt-2.5 whitespace-pre-wrap text-[13px] font-medium leading-relaxed ${column.align === 'center' ? 'text-center' : ''} ${column.align === 'right' ? 'text-right' : ''} ${isNegativeStatus(activeRow.row.tableName, activeRow.row.values.status || '') ? 'text-red-300' : 'text-white/90'}`}>
                       {activeRow.row.values[column.key] || '—'}
                     </p>
                   </div>
@@ -1673,20 +2521,28 @@ export function EstoqueView({ searchQuery }: StockViewProps) {
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-3 border-t border-white/10 p-6">
+            <div className="flex flex-wrap gap-3 border-t border-white/5 p-8 bg-[#131f37]">
               <button
                 type="button"
                 onClick={closeRowDetails}
-                className="rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-xs font-black uppercase tracking-widest text-white transition hover:bg-white/10"
+                className="rounded-xl border border-white/5 bg-[#0b1220]/80 px-6 py-3 text-xs font-bold uppercase tracking-wider text-white transition hover:bg-white/10"
               >
                 Fechar
               </button>
               <button
                 type="button"
                 onClick={openEditFromRow}
-                className="inline-flex items-center gap-2 rounded-2xl border border-emerald-500/30 bg-emerald-500/15 px-5 py-3 text-xs font-black uppercase tracking-widest text-emerald-200 transition hover:bg-emerald-500/25 hover:text-white"
+                className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/15 px-6 py-3 text-xs font-bold uppercase tracking-wider text-emerald-200 transition hover:bg-emerald-500/25 hover:text-white shadow-sm"
               >
                 Editar item
+              </button>
+              <button
+                type="button"
+                onClick={() => openBaixaModal(activeRow.row)}
+                className="inline-flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/15 px-6 py-3 text-xs font-bold uppercase tracking-wider text-red-300 transition hover:bg-red-500/25 hover:text-white shadow-sm"
+              >
+                <Trash2 size={14} />
+                Dar baixa
               </button>
             </div>
           </aside>

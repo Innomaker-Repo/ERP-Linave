@@ -36,7 +36,7 @@ export function ModuleView({ section, searchQuery }: ModuleViewProps) {
   }
 
   // Proteção de Acesso
-  const temAcesso = userSession?.role === 'ADMIN' || userSession?.permissoes?.[section] === true;
+  const temAcesso = section === 'compras' || userSession?.role === 'ADMIN' || userSession?.permissoes?.[section] === true;
 
   if (!temAcesso && section !== "dashboard") {
     return (
@@ -63,6 +63,7 @@ export function ModuleView({ section, searchQuery }: ModuleViewProps) {
     case "compras": return <ComprasView searchQuery={searchQuery} />;
     case "fornecedores": return <FornecedoresView searchQuery={searchQuery} />;
     
+    case "estoquePublico": return <EstoqueView searchQuery={searchQuery} mode="public" />;
     case "estoque": return <EstoqueView searchQuery={searchQuery} />;
     
     case "usuarios": return <UsuariosView />;

@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
+import axios from 'axios';
 import { useErp } from '../../../context/ErpContext';
 import { HardHat, Save, Folder, FileSpreadsheet, Plus, Search, ChevronDown, ChevronUp, ExternalLink, User, Calendar, CreditCard, BookOpen } from 'lucide-react';
+import { getServiceUrl } from '../../../../services/network';
 
 export function FuncionariosView({ searchQuery }: { searchQuery: string }) {
   const { funcionarios, userSession, saveEntity } = useErp();
@@ -86,7 +88,7 @@ export function FuncionariosView({ searchQuery }: { searchQuery: string }) {
     setLoading(true);
     try {
       // Chama a rota especial do backend que cria pastas e planilhas
-      const res = await axios.post('http://localhost:3001/api/create-employee', {
+      const res = await axios.post(getServiceUrl(3001, '/api/create-employee'), {
         accessToken: userSession.token, // Usa token do Admin para criar no Drive correto
         data: formData
       });

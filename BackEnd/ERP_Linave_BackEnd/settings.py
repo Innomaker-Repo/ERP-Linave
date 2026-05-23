@@ -26,7 +26,11 @@ SECRET_KEY = 'django-insecure-rq1079+3k43b9c(xc$pgu%4efe7cm#kv)7u69e(j22-#jo@_te
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.environ.get('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1,0.0.0.0,*').split(',')
+    if host.strip()
+]
 
 
 # Application definition
@@ -48,6 +52,7 @@ MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
+    'ComercialApp.middleware.APILoggingMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
@@ -86,6 +91,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.mysql',
         'NAME': 'linave_db',
         'USER': 'root',
+        #'PASSWORD': 'Kamilinha1-',
         'PASSWORD': 'password@123',
         'HOST': 'localhost',
         'PORT': '3306',
@@ -132,4 +138,7 @@ STATIC_URL = 'assets/'
 STATICFILES_DIRS = [
     os.path.join(BASE_DIR, '../FrontEnd/dist/assets'),
 ]
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 

@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { CadastroCompletoView } from './components/modules/Configuracoes/CadastroCompletoView';
 import { useErp } from './context/ErpContext';
+import { LoginPage } from './pages/Login';
 
 // Importação dos Módulos de Abas
 import { GestaoModule } from './modules/Gestao';
@@ -37,10 +38,15 @@ function getAbaForSection(section: string): { aba: string; item: string } {
     
     // Compras
     'compras': { aba: 'compras', item: 'compras' },
+    'kanbanCompras': { aba: 'compras', item: 'kanbanCompras' },
+    'aprovacoesCompras': { aba: 'compras', item: 'aprovacoesCompras' },
     'fornecedores': { aba: 'compras', item: 'fornecedores' },
     
     // Almoxerifado
+    'estoquePublico': { aba: 'almoxerifado', item: 'estoquePublico' },
     'estoque': { aba: 'almoxerifado', item: 'estoque' },
+    'historicoBaixa': { aba: 'almoxerifado', item: 'historicoBaixa' },
+    'alocadosPorOS': { aba: 'almoxerifado', item: 'alocadosPorOS' },
     
     // Configurações
     'usuarios': { aba: 'config', item: 'usuarios' },
@@ -53,7 +59,7 @@ function getAbaForSection(section: string): { aba: string; item: string } {
 }
 
 export default function App() {
-  const { userSession, setUserSession, logout, config, loading } = useErp();
+  const { userSession, setUserSession, config, loading } = useErp();
   const [activeSection, setActiveSection] = useState('dashboard');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -72,6 +78,10 @@ export default function App() {
         <p className="text-amber-500 font-bold uppercase tracking-widest text-xs">A carregar dados...</p>
       </div>
     );
+  }
+
+  if (!userSession) {
+    return <LoginPage onLoginSuccess={(user) => setUserSession(user)} />;
   }
 
   // FLUXO DE ONBOARDING (CADASTRO DA EMPRESA)

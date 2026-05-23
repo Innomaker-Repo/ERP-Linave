@@ -1402,7 +1402,7 @@ const parseNumber = (value: any): number => {
 
   // Função para abrir o documento gerado
   const visualizarDocumento = (filename: string) => {
-    const url = `${process.env.REACT_APP_API_URL}/orcamentos/${filename}`;
+    const url = getBackendUrl(`visualizar/${filename}/`);
     window.open(url, '_blank');
   };
 
@@ -2184,6 +2184,6 @@ const parseNumber = (value: any): number => {
 
 // Função para abrir o documento gerado
 const visualizarDocumento = (filename: string) => {
-  const url = `${process.env.REACT_APP_API_URL}/orcamentos/${filename}`;
+  const url = getBackendUrl(`visualizar/${filename}/`);
   window.open(url, '_blank');
 };

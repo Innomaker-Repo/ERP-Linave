@@ -92,7 +92,35 @@ export const handleDownloadPropostaPDF = (
     const pageHeight = doc.internal.pageSize.getHeight();
     const margin = 20;
     const usableWidth = pageWidth - margin * 2;
+    const linaveFooterLines = [
+      'W.L.M Linave Servicos Navais e Offshore',
+      'Rua Visconde de Itaborai, 24 - Centro - Niteroi - RJ',
+      'CEP 24.030-091',
+      '+55 (21) 99129-3251 / 3629-1439',
+    ];
     let y = margin;
+
+    const drawLinaveFooter = () => {
+      if (!isLinave) return;
+
+      const rightX = pageWidth - margin;
+      const lineHeight = 3.4;
+      const startY = pageHeight - 18 - (linaveFooterLines.length - 1) * lineHeight;
+
+      doc.setDrawColor(210, 210, 210);
+      doc.setLineWidth(0.3);
+      // doc.line(pageWidth - 95, startY - 2.2, rightX, startY - 2.2);
+
+      doc.setFont('Arial', 'normal');
+      doc.setFontSize(7.5);
+      doc.setTextColor(70, 70, 70);
+
+      linaveFooterLines.forEach((line, index) => {
+        doc.text(line, rightX, startY + index * lineHeight, { align: 'right' });
+      });
+
+      doc.setTextColor(0, 0, 0);
+    };
 
     const drawHeader = () => {
       let currentY = 15;
@@ -107,18 +135,9 @@ export const handleDownloadPropostaPDF = (
       currentY += 25;
 
       if (isLinave) {
-        // Cabeçalho específico para Linave
-        doc.text('Linave', margin, currentY);
+        doc.text('Engenharia e servicos navais', margin, currentY);
         doc.setFont('Arial', 'normal');
         doc.setFontSize(9);
-        currentY += 5;
-        doc.text('End. Rua Visconde de Itaborai, 24 –', margin, currentY);
-        currentY += 5;
-        doc.text('Centro – Niteroi - RJ', margin, currentY);
-        currentY += 5;
-        doc.text('CEP 24.030-091', margin, currentY);
-        currentY += 5;
-        doc.text('+55 (21) 99129-3251 / 3629-1439', margin, currentY);
       } else {
         // Cabeçalho padrão para Servinave
         const nomeEmpresa = propostaForm.empresaNome || 'VTS - Servinave Engenharia e Reparos Navais';
@@ -281,6 +300,14 @@ export const handleDownloadPropostaPDF = (
     writeText(propostaForm.encerramento || 'Atenciosamente,', 11, false, 'left', 0, 6);
     writeText(propostaForm.assinaturaNome || 'Servinave Eng. e Rep. Navais', 11, true, 'left', 0, 1);
     writeText(propostaForm.assinaturaCargo || 'Setor Comercial', 11, false, 'left', 0, 10);
+
+    if (isLinave) {
+      const totalPages = doc.internal.getNumberOfPages();
+      for (let page = 1; page <= totalPages; page += 1) {
+        doc.setPage(page);
+        drawLinaveFooter();
+      }
+    }
 
     const nomeArquivo = `${propostaForm.numeroProposta || 'Proposta'}.pdf`;
     const conteudoDataUrl = doc.output('datauristring');

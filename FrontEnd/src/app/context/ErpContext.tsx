@@ -763,6 +763,7 @@ const createInitialData = (savedData: any) => {
     users: [],
     pendingUsers: [],
     clientes: [],
+    clientes: [],
     funcionarios: [],
     obras: [],
     financeiro: [],
@@ -775,6 +776,7 @@ const createInitialData = (savedData: any) => {
     equipes: [],
     fornecedores: [],
     horas: [],
+    almoxerifado: null,
     config: {
       empresaNome: 'Linave ERP Demo',
       empresasPrestadoras: [
@@ -843,6 +845,16 @@ const createInitialData = (savedData: any) => {
     equipes: Array.isArray(savedData.equipes) ? savedData.equipes : [],
     fornecedores: sanitizeCollection('fornecedores', savedData.fornecedores),
     horas: Array.isArray(savedData.horas) ? savedData.horas : [],
+    almoxerifado: savedData.almoxerifado && typeof savedData.almoxerifado === 'object'
+      ? {
+          version: Number(savedData.almoxerifado.version) >= 2 ? 2 : 1,
+          tables: Array.isArray(savedData.almoxerifado.tables) ? savedData.almoxerifado.tables : [],
+          gasTypes: Array.isArray(savedData.almoxerifado.gasTypes) ? savedData.almoxerifado.gasTypes : [],
+          allocations: Array.isArray(savedData.almoxerifado.allocations) ? savedData.almoxerifado.allocations : [],
+          baixasHistorico: Array.isArray(savedData.almoxerifado.baixasHistorico) ? savedData.almoxerifado.baixasHistorico : [],
+          alocacoesHistorico: Array.isArray(savedData.almoxerifado.alocacoesHistorico) ? savedData.almoxerifado.alocacoesHistorico : []
+        }
+      : baseData.almoxerifado,
     config: savedData.config ? { ...baseData.config, ...savedData.config } : baseData.config,
     listas: savedData.listas ? { ...baseData.listas, ...savedData.listas } : baseData.listas
   };
@@ -860,7 +872,9 @@ const createInitialData = (savedData: any) => {
     sanitizedData.horas
   ].some((collection) => collection.length > 0);
 
-  if (!hasUserData && (!sanitizedData.config?.empresaNome || sanitizedData.config.empresaNome === 'Linave ERP' || sanitizedData.config.empresaNome === 'Nova Empresa')) {
+  const hasAlmoxerifadoData = Boolean(savedData?.almoxerifado && typeof savedData.almoxerifado === 'object');
+
+  if (!hasUserData && !hasAlmoxerifadoData && (!sanitizedData.config?.empresaNome || sanitizedData.config.empresaNome === 'Linave ERP' || sanitizedData.config.empresaNome === 'Nova Empresa')) {
     return baseData;
   }
 
@@ -881,6 +895,7 @@ interface ErpContextData {
   equipes: any[];
   fornecedores: any[];
   horas: any[];
+  almoxerifado: any;
   config: any;
   listas: any;
   loginComGoogle: (token: string, email: string) => Promise<void>;
@@ -896,14 +911,21 @@ interface ErpContextData {
 
 const ErpContext = createContext<ErpContextData>({} as ErpContextData);
 
+const SESSION_STORAGE_KEY = 'erp.userSession';
+
+const getStoredSession = () => {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const raw = window.localStorage.getItem(SESSION_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (_error) {
+    return null;
+  }
+};
+
 export function ErpProvider({ children }: { children: React.ReactNode }) {
-  // DEBUG: Injetar ADMIN imediatamente
-  const [userSession, setUserSession] = useState<any>({
-    email: 'admin@modo-teste.com',
-    role: 'ADMIN',
-    nome: 'Administrador (Teste)',
-    permissoes: {}
-  });
+  const [userSession, setUserSession] = useState<any>(() => getStoredSession());
   const [loading, setLoading] = useState(true);
   
   const [data, setData] = useState(() => createInitialData(null));
@@ -1000,6 +1022,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
   const loginDireto = (user: any) => {
     const session = { ...user, token: null };
     setUserSession(session);
+    window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
     setActiveAdminEmail(session.email || 'admin@modo-teste.com');
   };
 
@@ -1024,14 +1047,9 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
       setCachedWorkspace(adminEmail, nextWorkspace);
       setData(nextWorkspace);
 
-      try {
-        const savedWorkspace = await saveWorkspace(adminEmail, nextWorkspace);
-        setData(savedWorkspace);
-        return savedWorkspace;
-      } catch (error) {
-        console.error(`Erro ao salvar coleção ${collection} no backend`, error);
-        return nextWorkspace;
-      }
+      const savedWorkspace = await saveWorkspace(adminEmail, nextWorkspace);
+      setData(savedWorkspace);
+      return savedWorkspace;
     };
 
     const queuedSave = saveQueueRef.current.then(executeSave, executeSave);
@@ -1052,6 +1070,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
   const saveConfig = async (c: any) => saveEntity('config', { ...(data.config || {}), ...c });
 
   const logout = () => {
+    window.localStorage.removeItem(SESSION_STORAGE_KEY);
     setUserSession(null);
     window.location.href = '/';
   };

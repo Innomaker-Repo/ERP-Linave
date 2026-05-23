@@ -2,6 +2,9 @@ import React, { useState } from 'react';
 import { ShieldCheck, UserPlus, LogIn, Mail, Lock, ArrowLeft, Send, CheckCircle, ChevronRight, Briefcase } from 'lucide-react';
 import { useErp } from '../context/ErpContext';
 
+const MOCK_GERENTE_COMERCIAL_EMAIL = 'gerente.comercial@linave.com.br';
+const MOCK_DIRETOR_FINANCEIRO_EMAIL = 'diretor.financeiro@linave.com.br';
+
 export function LoginPage({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) {
   const { loginDireto } = useErp();
   
@@ -10,23 +13,64 @@ export function LoginPage({ onLoginSuccess }: { onLoginSuccess: (user: any) => v
   const [senha, setSenha] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const getMockUserByEmail = (rawEmail: string) => {
+    const normalizedEmail = rawEmail.trim().toLowerCase();
+
+    if (normalizedEmail === MOCK_GERENTE_COMERCIAL_EMAIL) {
+      return {
+        email: MOCK_GERENTE_COMERCIAL_EMAIL,
+        role: 'USER',
+        nome: 'Gerente Comercial',
+        permissoes: {
+          compras: true,
+          aprovacoesCompras: true,
+          aprovacoesComprasGerente: true,
+        },
+      };
+    }
+
+    if (normalizedEmail === MOCK_DIRETOR_FINANCEIRO_EMAIL) {
+      return {
+        email: MOCK_DIRETOR_FINANCEIRO_EMAIL,
+        role: 'USER',
+        nome: 'Diretor Financeiro',
+        permissoes: {
+          compras: true,
+          aprovacoesCompras: true,
+          aprovacoesComprasFinanceiro: true,
+        },
+      };
+    }
+
+    return null;
+  };
+
   // Login simples - apenas local, sem backend
   const handleLogin = () => {
     if (!email || !senha) return alert("Preencha todos os campos.");
     
     // Login de teste com admin/admin
     if (email === 'admin' && senha === 'admin') {
-      loginDireto({ email: 'admin', role: 'ADMIN', nome: 'Administrador' });
-      onLoginSuccess({ email: 'admin', role: 'ADMIN', nome: 'Administrador' });
+      const adminUser = { email: 'admin@modo-teste.com', role: 'ADMIN', nome: 'Administrador', permissoes: {} };
+      loginDireto(adminUser);
+      onLoginSuccess(adminUser);
       return;
     }
     
     // Login normal requer email válido
     if (!email.includes('@')) return alert("Email inválido.");
+
+    const mockUser = getMockUserByEmail(email);
+    if (mockUser) {
+      loginDireto(mockUser);
+      onLoginSuccess(mockUser);
+      return;
+    }
     
     // Login simulado - apenas salva localmente
-    loginDireto({ email, role: 'USER', nome: email.split('@')[0] });
-    onLoginSuccess({ email, role: 'USER' });
+    const genericUser = { email, role: 'USER', nome: email.split('@')[0], permissoes: { compras: true } };
+    loginDireto(genericUser);
+    onLoginSuccess(genericUser);
   };
 
   // Criar novo usuário - apenas local
@@ -161,7 +205,9 @@ export function LoginPage({ onLoginSuccess }: { onLoginSuccess: (user: any) => v
                 {/* Dica de credenciais de teste */}
                 <div className="p-3 rounded-xl bg-yellow-500/10 border border-yellow-500/30 text-center">
                   <p className="text-yellow-400 text-xs font-bold uppercase tracking-wide">Credenciais de Teste</p>
-                  <p className="text-yellow-400/70 text-xs mt-1">Usuário: <span className="font-mono font-bold">admin</span> | Senha: <span className="font-mono font-bold">admin</span></p>
+                  <p className="text-yellow-400/70 text-xs mt-1">{MOCK_GERENTE_COMERCIAL_EMAIL} (gerente comercial)</p>
+                  <p className="text-yellow-400/70 text-xs">{MOCK_DIRETOR_FINANCEIRO_EMAIL} (diretor financeiro)</p>
+                  <p className="text-yellow-400/70 text-xs mt-1">Senha: qualquer valor não vazio</p>
                 </div>
                 
                 <div className="space-y-4">

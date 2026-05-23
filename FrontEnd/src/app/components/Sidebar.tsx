@@ -4,13 +4,16 @@ import {
   LayoutDashboard, Users, HardHat, Anchor, ClipboardList, 
   ShoppingCart, DollarSign, BarChart3, Settings, Factory, 
   HeartHandshake, List, Clock, ChevronDown, ChevronRight, 
-  Briefcase, Wrench, Activity, FileText, Zap, Building2, CheckCircle2
+  Briefcase, Wrench, Activity, FileText, Zap, Building2, CheckCircle2, Trash2, LayoutGrid
 } from 'lucide-react';
 
 interface SidebarProps {
   activeSection: string;
   setActiveSection: (section: string) => void;
 }
+
+const MOCK_GERENTE_COMERCIAL_EMAIL = 'gerente.comercial@linave.com.br';
+const MOCK_DIRETOR_FINANCEIRO_EMAIL = 'diretor.financeiro@linave.com.br';
 
 export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
   const { userSession, config } = useErp();
@@ -85,6 +88,8 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
       icon: ShoppingCart,
       items: [
         { id: 'compras', label: 'Compras / Requisições', icon: ShoppingCart },
+        { id: 'kanbanCompras', label: 'Kanban de Compras', icon: LayoutGrid },
+        { id: 'aprovacoesCompras', label: 'Aprovações', icon: Clock },
         { id: 'fornecedores', label: 'Fornecedores', icon: Factory },
       ]
     },
@@ -93,7 +98,10 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
       title: 'Almoxerifado',
       icon: ClipboardList,
       items: [
-        { id: 'estoque', label: 'Estoque', icon: ClipboardList },
+        { id: 'estoquePublico', label: 'Estoque', icon: ClipboardList },
+        { id: 'estoque', label: 'Adicionar itens', icon: ClipboardList },
+        { id: 'historicoBaixa', label: 'Histórico de Baixa', icon: Trash2 },
+        { id: 'alocadosPorOS', label: 'Alocados por OS', icon: ClipboardList },
       ]
     },
     {
@@ -113,9 +121,24 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
   const hasAccess = (itemId: string) => {
     if (!userSession) return false;
     const role = userSession.role?.toUpperCase() || '';
+    const email = String(userSession.email || '').toLowerCase();
+    const isGerenteComercial = email === MOCK_GERENTE_COMERCIAL_EMAIL || (email.includes('gerente') && email.includes('comercial'));
+    const isDiretorFinanceiro = email === MOCK_DIRETOR_FINANCEIRO_EMAIL || (email.includes('diretor') && email.includes('financeiro'));
     
     // Admin tem acesso irrestrito
     if (role === 'ADMIN') return true;
+
+    if (itemId === 'compras') return true;
+    if (itemId === 'aprovacoesCompras') {
+      return (
+        userSession.permissoes?.aprovacoesComprasGerente === true ||
+        userSession.permissoes?.aprovacoesComprasFinanceiro === true ||
+        isGerenteComercial ||
+        isDiretorFinanceiro
+      );
+    }
+    if (itemId === 'estoquePublico') return true;
+    if (itemId === 'estoque') return userSession.permissoes?.almoxerifado === true || userSession.permissoes?.[itemId] === true;
     
     // Utilizador comum verifica a lista de permissões recebida do Drive
     return userSession.permissoes?.[itemId] === true;
