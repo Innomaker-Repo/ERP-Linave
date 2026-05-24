@@ -24,19 +24,16 @@ import { getClientes, createCliente, updateCliente, deleteCliente } from '../../
       setLoading(true);
       try {
         const clientesBackend = await getClientes();
-        
-        // Salvar no 'saveEntity' já é o suficiente para atualizar a tela automaticamente!
-       if (clientesBackend && clientesBackend.length > 0) {
-             saveEntity('clientes', clientesBackend); 
-          // Se o aviso persistir, não se preocupe, o importante agora é o dado chegar na tela.
+        if (Array.isArray(clientesBackend)) {
+          setListaClientes(clientesBackend);
         }
       } catch (error) {
         console.error('Erro ao carregar clientes:', error);
-     } finally {
+      } finally {
         setLoading(false);
       }
     };
-    
+
     carregarClientes();
   }, []); 
   // Estado inicial com a estrutura exata solicitada

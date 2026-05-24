@@ -175,3 +175,45 @@ export const criarOrcamentoCompleto = async (dadosOrcamento) => {
         throw error;
     }
 };
+
+// Cria uma nova Ordem de Serviço no backend
+export const criarOrdemServico = async (dadosOS: any) => {
+    try {
+        const response = await api.post('ordens-servico/', dadosOS);
+        return response.data;
+    } catch (error) {
+        console.error("Erro ao criar OS:", (error as any)?.response?.data || error);
+        throw error;
+    }
+};
+
+// Busca todas as Ordens de Serviço
+export const getOrdensServicoPorNegocio = async (negocioId: number) => {
+    try {
+        const response = await api.get(`os-por-negocio/${negocioId}/`);
+        return response.data;
+    } catch (error) {
+        console.error(`Erro ao buscar OS do negócio ${negocioId}:`, error);
+        return { ordens_servico: [] };
+    }
+};
+
+export const criarProposta = async (payload: any) => {
+    try {
+        const response = await api.post('propostas-comerciais/', payload);
+        return response.data;
+    } catch (error) {
+        console.error('Erro ao criar proposta:', (error as any)?.response?.data || error);
+        throw error;
+    }
+};
+
+export const atualizarProposta = async (id: number, payload: any) => {
+    try {
+        const response = await api.patch(`propostas-comerciais/${id}/`, payload);
+        return response.data;
+    } catch (error) {
+        console.error(`Erro ao atualizar proposta ${id}:`, (error as any)?.response?.data || error);
+        throw error;
+    }
+};

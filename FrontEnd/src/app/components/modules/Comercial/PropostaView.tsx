@@ -5,6 +5,8 @@ import { handleDownloadPropostaPDF } from '../CRM/handleDownloadPropostaPDF';
 import PizZip from 'pizzip';
 import Docxtemplater from 'docxtemplater';
 import { saveAs } from 'file-saver';
+import { getNegocios } from '../../../../services/comercial';
+import { getClientes, criarProposta, atualizarProposta, atualizarNegocio } from '../../../../services/comercialService';
 
 interface EscopoLinha {
   id: string;
@@ -77,12 +79,70 @@ const getBase64FromUrl = async (url: string): Promise<string | undefined> => {
 // --------------------------
 
 
+const mapNegocioToObra = (n: any): any => ({
+  backendId: n.id,
+  clienteBackendId: n.cliente,
+  id: `LN-${String(n.id).padStart(4, '0')}/${new Date().getFullYear().toString().slice(-2)}`,
+  nome: n.nome_negocio,
+  clienteId: n.cliente,
+  categoria: n.categoria,
+  status: n.status,
+  empresaPrestadora: n.empresa_prestadora,
+  responsavelComercial: n.solicitante,
+  tipo: n.tipo_servico,
+  servicos: (n.servicos || []).map((s: any) => ({
+    id: s.id,
+    tipo: s.tipo_servico,
+    localExecucao: s.local_execucao,
+    descricao: s.descricao,
+  })),
+  propostas: (n.propostas || []).map((p: any) => ({
+    id: p.id,
+    versao: p.versao || 'A',
+    dataCriacao: p.dataCriacao,
+    status: p.status,
+    numeroProposta: p.numeroProposta,
+    motivoRecusa: p.motivoRecusaProposta,
+    preco: p.preco !== null && p.preco !== undefined ? String(p.preco) : '',
+    prazo: p.prazo || '',
+    referencias: p.referencias || '',
+    saudacao: p.saudacao || '',
+    assunto: p.assunto || '',
+    textoAbertura: p.textoAbertura || '',
+    responsabilidadeContratada: p.responsabilidadeContratada || '',
+    escopoA: p.escopoA || '',
+    escopoBasicoServicos: p.escopoBasicoServicos || [],
+  })),
+  orcamentoRealizado: n.orcamento_realizado,
+  orcamentoValores: n.orcamentos?.[0]?.valores || null,
+});
+
+const parsePrecoParaDecimal = (preco: string): number => {
+  const cleaned = preco.replace(/[^0-9,.]/g, '').replace(',', '.');
+  const parsed = parseFloat(cleaned);
+  return isNaN(parsed) ? 0 : parsed;
+};
+
 export function PropostaView() {
   const { obras, clientes, saveEntity, saveDraft, loadDraft, clearDraft } = useErp();
   const listaClientes = Array.isArray(clientes) ? clientes : [];
   const [viewMode, setViewMode] = useState<'list' | 'form' | 'historico'>('list');
   const [selectedObra, setSelectedObra] = useState<any>(null);
   const [selectedPropostaVersion, setSelectedPropostaVersion] = useState<number | null>(null);
+
+  useEffect(() => {
+    const carregar = async () => {
+      const [negociosRaw, clientesRaw] = await Promise.all([getNegocios(), getClientes()]);
+      setListaNegocios(Array.isArray(negociosRaw) ? negociosRaw.map(mapNegocioToObra) : []);
+      setListaClientesLocal(Array.isArray(clientesRaw) ? clientesRaw : []);
+    };
+    carregar();
+  }, []);
+
+  const refreshNegocios = async () => {
+    const raw = await getNegocios();
+    setListaNegocios(Array.isArray(raw) ? raw.map(mapNegocioToObra) : []);
+  };
 
   const getInitialPropostaForm = (): PropostaFormData => ({
     dataProposta: new Date().toISOString().split('T')[0],
@@ -109,21 +169,16 @@ export function PropostaView() {
   const autoSaveTimer = useRef<any>(null);
   const [novaColunaPorEscopo, setNovaColunaPorEscopo] = useState<Record<string, string>>({});
 
-  const atualizarSelectedObra = (obraAtualizada: any) => {
-    if (!selectedObra || selectedObra.id !== obraAtualizada.id) return;
-    setSelectedObra(obraAtualizada);
-  };
-
   // Negócios em Negociação
-  const negociosNegociacao = (obras || []).filter((obra: any) => obra.categoria === 'Negociação');
+  const negociosNegociacao = listaNegocios.filter((obra: any) => obra.categoria === 'Negociação');
   const negociosParaProposta = negociosNegociacao.filter((obra: any) => {
     if (!Array.isArray(obra.propostas) || obra.propostas.length === 0) return true;
     const ultimaProposta = obra.propostas[obra.propostas.length - 1];
     return ultimaProposta?.status === 'recusada';
   });
-  
+
   // Todas as obras com propostas (independente do status)
-  const obrasComPropostas = (obras || []).filter((obra: any) => obra.propostas && obra.propostas.length > 0);
+  const obrasComPropostas = listaNegocios.filter((obra: any) => obra.propostas && obra.propostas.length > 0);
 
   const criarLinhaEscopo = (colunas: string[]): EscopoLinha => ({
     id: `linha-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -347,7 +402,7 @@ export function PropostaView() {
   };
 
   const handleDownloadPropostaPDFWithLogo = async (proposta: any, obra: any) => {
-    const cliente = listaClientes.find(c => c.id === obra.clienteId);
+    const cliente = listaClientesLocal.find((c: any) => c.id === obra.clienteId);
     const rawEmpresa = obra.empresaPrestadora || '';
     const cleaned = (typeof rawEmpresa === 'string' ? rawEmpresa : (rawEmpresa.nome || '')).toLowerCase();
     const isLinave = !cleaned.includes('servi');
@@ -357,7 +412,9 @@ export function PropostaView() {
     handleDownloadPropostaPDF(proposta, cliente, obra, logoBase64, isLinave);
   };
 
- const handleSelectObra = (obra: any) => {
+  const getRascunhoKey = (obraId: number) => `proposta_rascunho_${obraId}`;
+
+  const handleSelectObra = (obra: any) => {
     setSelectedObra(obra);
          
     // Pré-preencher dados
@@ -366,8 +423,7 @@ export function PropostaView() {
     // Descobrir a versão alfabética: primeira emissão fica sem sufixo.
     const indexVersao = obra.propostas?.length || 0;
     const proximaVersaoLetra = indexToVersaoAlfabetica(indexVersao);
-    
-    // Extrair número de sequência do ID do projeto (ex: de "LN-0731/26" extrair "0731")
+
     const componentesId = extrairComponentesDoId(obra.id);
     const numeroSequencial = componentesId?.numero || '0001';
     const anoAtual = new Date().getFullYear().toString().slice(-2);
@@ -390,17 +446,20 @@ export function PropostaView() {
       setPropostaForm((prev) => ({ ...prev, ...draft }));
     }
     setNovaColunaPorEscopo({});
-         
     setViewMode('form');
   };
 
-  const handleSaveProposta = () => {
+  const handleSaveProposta = async () => {
     if (!selectedObra) return;
     
     // A primeira versão fica sem sufixo; as próximas entram como A, B, C...
     const indexVersao = selectedObra.propostas?.length || 0;
     const proximaVersaoLetra = indexToVersaoAlfabetica(indexVersao);
-    
+
+    const componentesId = extrairComponentesDoId(selectedObra.id);
+    const numeroSequencial = componentesId?.numero || String(selectedObra.backendId).padStart(4, '0');
+    const numeroProposta = gerarIdProposta(componentesId?.prefixo || 'LN', numeroSequencial, proximaVersaoLetra);
+
     const escopoAConsolidado = propostaForm.escopoBasicoServicos.length > 0
       ? gerarEscopoBasicoConsolidado(propostaForm.escopoBasicoServicos)
       : propostaForm.escopoA;
@@ -534,130 +593,70 @@ export function PropostaView() {
     }
   };
 
-  const handleAprovacaoCliente = (obra: any) => {
+  const handleAprovacaoCliente = async (obra: any) => {
     const ultimaProposta = obra.propostas?.[obra.propostas.length - 1];
-    if (!ultimaProposta) return;
-
-    const propostasAtualizadas = obra.propostas.map((p: any, idx: number) => 
-      idx === obra.propostas.length - 1 ? { ...p, status: 'aceita' as const } : p
-    );
-
-    const obraAtualizada = {
-      ...obra,
-      propostas: propostasAtualizadas,
-      propostaPendenteNovaVersao: false,
-      motivoRecusaProposta: '',
-      houveAlteracaoDocumentosRecusa: false,
-      dataRecusaProposta: '',
-      categoria: 'Em Andamento',
-      status: 'Em andamento'
-    };
-
-    const obrasAtualizadas = obras?.map((o: any) => o.id === obra.id ? obraAtualizada : o) || [];
-    saveEntity('obras', obrasAtualizadas);
-    atualizarSelectedObra(obraAtualizada);
-
-    alert('Proposta aprovada pelo cliente! Negócio movido para Em Andamento.');
+    if (!ultimaProposta?.id) return;
+    try {
+      await atualizarProposta(ultimaProposta.id, { status: 'aceita' });
+      await atualizarNegocio(obra.backendId, { categoria: 'Em Andamento', status: 'Em andamento' });
+      await refreshNegocios();
+      if (selectedObra?.backendId === obra.backendId) {
+        setSelectedObra(null);
+        setViewMode('list');
+      }
+      alert('Proposta aprovada pelo cliente! Negócio movido para Em Andamento.');
+    } catch (err) {
+      console.error('Erro ao aprovar proposta:', err);
+      alert('Erro ao processar aprovação.');
+    }
   };
 
-  const handlePendenteCliente = (obra: any) => {
+  const handlePendenteCliente = async (obra: any) => {
     const ultimaProposta = obra.propostas?.[obra.propostas.length - 1];
-    if (!ultimaProposta) return;
-
-    const propostasAtualizadas = obra.propostas.map((p: any, idx: number) => 
-      idx === obra.propostas.length - 1 ? { ...p, status: 'pendente' as const } : p
-    );
-
-    const obraAtualizada = {
-      ...obra,
-      propostas: propostasAtualizadas,
-      propostaPendenteNovaVersao: true,
-      motivoRecusaProposta: '',
-      houveAlteracaoDocumentosRecusa: false,
-      dataRecusaProposta: '',
-      categoria: 'Negociação',
-      status: 'Aguardando proposta'
-    };
-
-    const obrasAtualizadas = obras?.map((o: any) => o.id === obra.id ? obraAtualizada : o) || [];
-    saveEntity('obras', obrasAtualizadas);
-    atualizarSelectedObra(obraAtualizada);
-
-    alert('Proposta marcada como pendente. Negócio retornou para Fazer Proposta.');
+    if (!ultimaProposta?.id) return;
+    try {
+      await atualizarProposta(ultimaProposta.id, { status: 'pendente' });
+      await refreshNegocios();
+      alert('Proposta marcada como pendente.');
+    } catch (err) {
+      console.error('Erro ao atualizar proposta:', err);
+      alert('Erro ao processar operação.');
+    }
   };
 
-  const handleRecusaCliente = (obra: any) => {
+  const handleRecusaCliente = async (obra: any) => {
     const ultimaProposta = obra.propostas?.[obra.propostas.length - 1];
-    if (!ultimaProposta) return;
+    if (!ultimaProposta?.id) return;
 
     const motivoRecusaInput = window.prompt('Informe o motivo da recusa da proposta:');
     if (motivoRecusaInput === null) return;
-
     const motivoRecusa = motivoRecusaInput.trim();
     if (!motivoRecusa) {
       alert('O motivo da recusa é obrigatório.');
       return;
     }
 
-    const houveAlteracaoDocumentos = window.confirm('Algum documento foi alterado ou adicionado pelo cliente?\n\nOK = Sim\nCancelar = Não');
+    window.confirm('Algum documento foi alterado ou adicionado pelo cliente?\n\nOK = Sim\nCancelar = Não');
     const retornarParaOrcamento = window.confirm('Deseja retornar este negócio para ORÇAMENTO agora?\n\nOK = Voltar para orçamento\nCancelar = Cancelar recusa');
     if (!retornarParaOrcamento) return;
 
-    // Marcar última proposta como recusada
-    const propostasAtualizadas = obra.propostas.map((p: any, idx: number) => 
-      idx === obra.propostas.length - 1
-        ? {
-            ...p,
-            status: 'recusada' as const,
-            motivoRecusa,
-            dataRecusa: new Date().toISOString().split('T')[0],
-            houveAlteracaoDocumentos
-          }
-        : p
-    );
-
-    const dataRecusa = new Date().toISOString().split('T')[0];
-    const orcamentosBase = (obra.orcamentos && obra.orcamentos.length > 0)
-      ? obra.orcamentos
-      : (obra.orcamentoRealizado && obra.orcamentoData && obra.orcamentoValores)
-        ? [{
-            versao: 'A',
-            dataCriacao: obra.dataCadastro,
-            status: 'pendente' as const,
-            numeroOrcamento: obra.orcamentoData.numeroOrcamento,
-            data: obra.orcamentoData,
-            valores: obra.orcamentoValores
-          }]
-        : [];
-
-    const orcamentosAtualizados = orcamentosBase.map((orcamento: any, idx: number, lista: any[]) =>
-      idx === lista.length - 1
-        ? { ...orcamento, status: 'recusado' as const, dataRecusa }
-        : orcamento
-    );
-
-    const obraAtualizada = {
-      ...obra,
-      propostas: propostasAtualizadas,
-      orcamentos: orcamentosAtualizados,
-      orcamentoRealizado: false,
-      requerReorcamento: true,
-      propostaPendenteNovaVersao: true,
-      motivoRecusaProposta: motivoRecusa,
-      houveAlteracaoDocumentosRecusa: houveAlteracaoDocumentos,
-      dataRecusaProposta: dataRecusa,
-      categoria: 'Planejamento',
-      status: 'Aguardando orçamento'
-    };
-
-    const obrasAtualizadas = [
-      obraAtualizada,
-      ...((obras || []).filter((o: any) => o.id !== obra.id))
-    ];
-    saveEntity('obras', obrasAtualizadas);
-    atualizarSelectedObra(obraAtualizada);
-
-    alert('Proposta recusada. Negócio retornou para Aguardando orçamento.');
+    try {
+      await atualizarProposta(ultimaProposta.id, { status: 'recusada', motivoRecusaProposta: motivoRecusa });
+      await atualizarNegocio(obra.backendId, {
+        categoria: 'Planejamento',
+        status: 'Aguardando orçamento',
+        requer_reorcamento: true,
+      });
+      await refreshNegocios();
+      if (selectedObra?.backendId === obra.backendId) {
+        setSelectedObra(null);
+        setViewMode('list');
+      }
+      alert('Proposta recusada. Negócio retornou para Aguardando orçamento.');
+    } catch (err) {
+      console.error('Erro ao recusar proposta:', err);
+      alert('Erro ao processar recusa.');
+    }
   };
 
   const inputClass = "w-full bg-[#0b1220] border border-white/10 p-3 rounded-lg text-white text-sm outline-none focus:border-blue-500 transition-all placeholder:text-white/20";
@@ -686,7 +685,7 @@ export function PropostaView() {
                       <div>
                         <h3 className="text-lg font-black text-white">{obra.nome}</h3>
                         <p className="text-white/70 text-sm mt-1">
-                          Cliente: {listaClientes.find(c => c.id === obra.clienteId)?.razaoSocial}
+                          Cliente: {listaClientesLocal.find((c: any) => c.id === obra.clienteId)?.razaoSocial}
                         </p>
                       </div>
                     </div>
@@ -741,7 +740,7 @@ export function PropostaView() {
                       <div>
                         <h3 className="text-lg font-black text-white">{obra.nome}</h3>
                         <p className="text-white/70 text-sm mt-1">
-                          Cliente: {listaClientes.find(c => c.id === obra.clienteId)?.razaoSocial}
+                          Cliente: {listaClientesLocal.find((c: any) => c.id === obra.clienteId)?.razaoSocial}
                         </p>
                       </div>
                       <div className="flex gap-2">

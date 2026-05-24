@@ -198,17 +198,17 @@ const mapTerceirizadoItem = (item: any) => ({
       impostos: parseDecimal(orcamentoData.impostos || 0),
       qnt: parseInt(orcamentoData.quantidadeItensProduzidos) || 0
     },
-    mao_de_obra: Array.isArray(orcamentoData.maoDeObra) 
-      ? orcamentoData.maoDeObra.filter((mo: any) => mo.funcao && mo.funcao.trim() !== '').map(mapMDOItem) 
+    mao_de_obra: Array.isArray(orcamentoData.maoDeObra)
+      ? orcamentoData.maoDeObra.filter((mo: any) => mo.funcao && mo.funcao.trim() !== '').map(mapMDOItem)
       : [],
-    materiais: Array.isArray(orcamentoData.materiais) 
-      ? orcamentoData.materiais.filter((mat: any) => mat.descricao && mat.descricao !== 'Consumível ou material' && mat.descricao.trim() !== '').map(mapMaterialItem) 
+    materiais: Array.isArray(orcamentoData.materiais)
+      ? orcamentoData.materiais.filter((mat: any) => mat.descricao && mat.descricao.trim() !== '').map(mapMaterialItem)
       : [],
-    terceirizados: Array.isArray(orcamentoData.terceirizados) 
-      ? orcamentoData.terceirizados.filter((ter: any) => ter.descricao && ter.descricao !== 'Jateamento / pintura terceirizada' && ter.descricao.trim() !== '').map(mapTerceirizadoItem) 
+    terceirizados: Array.isArray(orcamentoData.terceirizados)
+      ? orcamentoData.terceirizados.filter((ter: any) => ter.descricao && ter.descricao.trim() !== '').map(mapTerceirizadoItem)
       : [],
-    atividades: Array.isArray(orcamentoData.atividades) 
-      ? orcamentoData.atividades.filter((act: any) => act.atividade && act.atividade !== 'Levantamento / Inspeção' && act.atividade.trim() !== '').map(mapAtividadeItem) 
+    atividades: Array.isArray(orcamentoData.atividades)
+      ? orcamentoData.atividades.filter((act: any) => act.atividade && act.atividade.trim() !== '').map(mapAtividadeItem)
       : [],
     observacoes: String(orcamentoData.observacoes || '').trim()
   };

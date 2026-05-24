@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { extrairIdProjetoDoNumero } from '../../../context/ErpContext';
-import { Plus, X, FileText, DollarSign, CheckCircle, Clock, ArrowRight, Edit2, ChevronDown, Zap, AlertCircle, Download, Eye } from 'lucide-react';
+import { Plus, X, FileText, DollarSign, CheckCircle, Clock, ArrowRight, Edit2, ChevronDown, Zap, AlertCircle, Download, Eye, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable'; // Importação nomeada do plugin
@@ -243,7 +243,30 @@ const initialServico: Servico = {
   };
 
   // --- FORMULÁRIO DE NOVO NEGÓCIO ---
-  const [formData, setFormData] = useState(initialForm);
+  const createInitialForm = () => ({
+  empresaPrestadora: empresaPrestadoraPadrao,
+  nomeNegocio: '',
+  clienteId: '',
+  cnpj: '',
+  origemLead: '',
+  solicitante: '',
+  cargo: '',
+  telefone: '',
+  email: '',
+  dataSolicitacao: new Date().toISOString().split('T')[0],
+  dataPrevistaInicio: '',
+  dataPrevistaFinal: '',
+  servicos: [{ ...initialServico, id: `servico-${Date.now()}` }],
+  fase: 'Pre-Venda' as FaseOS,
+  docs: {
+    requisitos: false,
+    proposta: false,
+    orcamento: false
+  },
+  documentosNegocio: [] as DocumentoNegocio[]
+});
+ 
+ const [formData, setFormData] = useState(createInitialForm);
 
   // --- FUNÇÕES DE MANIPULAÇÃO DE SERVIÇOS (Corrigindo o ReferenceError) ---
   const handleAddServico = () => {
@@ -282,8 +305,7 @@ const initialServico: Servico = {
         const clientesMapa: Record<string, string> = {};
         
         if (Array.isArray(clientesBackend)) {
-          await saveEntity('clientes', clientesBackend);
-          // Cria um mapa rápido de ID -> Nome para busca instantânea
+          setListaClientesCRM(clientesBackend);
           clientesBackend.forEach((c: any) => {
             clientesMapa[String(c.id)] = c.razaoSocial || c.razao_social || '';
           });
@@ -292,27 +314,35 @@ const initialServico: Servico = {
         // 2. Busca os negócios do banco
         const dados = await getNegocios();
         if (Array.isArray(dados)) {
+          // Lê o contexto atual para preservar campos que só existem no frontend
+          const obrasContextoAtual: any[] = Array.isArray(obras) ? obras : [];
+
           const formatados = dados.map((n: any) => {
+            const idFormatado = `ID ${n.id}`;
             const idClienteStr = String(n.cliente || '');
-            
+            // Preserva campos frontend-only (dadosMediacao, finalizadoComMediacao, documentosNegocio, etc.)
+            const obraExistente = obrasContextoAtual.find(
+              (o: any) => o.id === idFormatado || o.negocioBackendId === n.id
+            ) || {};
+
             return {
-              id: `ID ${n.id}`, 
+              ...obraExistente,
+              id: idFormatado,
               nome: n.nome_negocio,
               clienteId: n.cliente,
-              // BLINDAGEM: Injeta o nome real resolvido direto no card
               nomeClienteResolvido: clientesMapa[idClienteStr] || n.cliente_nome || n.nome_cliente || "Cliente Identificado",
               empresaPrestadora: n.empresa_prestadora || 'Linave',
-              categoria: n.categoria || 'Planejamento',
-              status: n.status || 'Aguardando orçamento',
+              categoria: n.categoria || obraExistente.categoria || 'Planejamento',
+              status: n.status || obraExistente.status || 'Aguardando orçamento',
               solicitante: n.solicitante,
               servicos: n.servicos || [],
               negocioBackendId: n.id,
-              orcamentos: n.orcamentos || [], 
+              orcamentos: n.orcamentos || [],
               propostas: n.propostas || [],
-              documentosNegocio: n.documentos || n.arquivos || []
+              documentosNegocio: obraExistente.documentosNegocio || n.documentos || n.arquivos || [],
             };
           });
-          
+
           setNegociosBackend(formatados);
           // Sincroniza com o ErpContext global para as outras abas lerem a mesma estrutura
           saveEntity('obras', formatados);
@@ -326,7 +356,8 @@ const initialServico: Servico = {
     };
 
     carregarDadosExclusivosSQL();
-  }, [saveEntity]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const obraTemDocumentoMediacao = (obra: any) => {
     const docs = Array.isArray(obra?.documentosNegocio) ? obra.documentosNegocio : [];
@@ -510,9 +541,6 @@ const initialServico: Servico = {
     return empresaEncontrada?.nome || valor;
   };
 
-    
-
-
  useEffect(() => {
   const empresasDisponiveis = empresasPrestadoras.map((empresa) => empresa.nome);
   // Só alteramos o estado se houver empresas E o campo atual estiver vazio ou for inválido
@@ -521,9 +549,8 @@ const initialServico: Servico = {
   }
 }, [empresasPrestadoras, formData.empresaPrestadora]); // Adicione a dependência para validação segura
 
-  
   const handleClienteChange = (clienteId: string) => {
-    const cliente = (clientes || []).find(c => String(c.id) === String(clienteId));
+    const cliente = listaClientesCRM.find((c: any) => String(c.id) === String(clienteId));
     setFormData({
       ...formData,
       clienteId,
@@ -531,23 +558,6 @@ const initialServico: Servico = {
     });
   };
 
-useEffect(() => {
-  // Se já temos clientes no estado global, não busque da API
-  if (clientes && clientes.length > 0) return; 
-
-  const carregarClientesCRM = async () => {
-    setClientesLoading(true);
-    try {
-      const data = await getClientes();
-      saveCliente(data); // Usa a função nova
-    } catch (err) {
-      console.error("Erro ao carregar:", err);
-    } finally {
-      setClientesLoading(false);
-    }
-  };
-  carregarClientesCRM();
-}, [clientes, saveCliente]); // Adicionei saveCliente nas dependências
 
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`;
@@ -771,7 +781,7 @@ useEffect(() => {
 
     try {
       const obraAtual = (obras || []).find((item: any) => item.id === documentoMediacaoForm.obraId);
-      const clienteAtual = (clientes || []).find((c: any) => c.id === obraAtual?.clienteId);
+      const clienteAtual = listaClientesCRM.find((c: any) => c.id === obraAtual?.clienteId);
 
       console.log("Iniciando geração de PDF de medição...", { documentoMediacaoForm });
 
@@ -811,8 +821,9 @@ useEffect(() => {
           ...obraAtual,
           documentosNegocio: [...documentosAtuais, novoDocumento],
           finalizadoComMediacao: true,
+          dadosMediacao: documentoMediacaoForm,
           dataFinalizacaoLocal: new Date().toISOString().split('T')[0],
-          status: 'Finalizado (Medição)'
+          status: 'Finalizado',
         });
       }
       toast.success('Documento de medição gerado e baixado com sucesso!');
@@ -870,7 +881,7 @@ useEffect(() => {
     }
 
     const ultimaProposta = selectedObraDetalhes.propostas[selectedObraDetalhes.propostas.length - 1];
-    const clienteAtual = (clientes || []).find((c: any) => c.id === selectedObraDetalhes.clienteId);
+    const clienteAtual = listaClientesCRM.find((c: any) => c.id === selectedObraDetalhes.clienteId);
 
     try {
       let logoBase64: string | undefined;
@@ -1007,12 +1018,16 @@ useEffect(() => {
       }
 
       // 3. Atualiza a tela localmente
-     setNegociosBackend(prev => {
-        const listaBase = prev.filter(o => o.id !== obraAtualizada.id);
-        return moverParaTopo 
-          ? [obraAtualizada, ...listaBase]
-          : prev.map(o => (o.id === obraAtualizada.id ? obraAtualizada : o));
-      });
+      setNegociosBackend(prev => {
+      const listaAtualizada = prev.map(o =>
+        o.id === obraAtualizada.id ? obraAtualizada : o
+      );
+      if (!moverParaTopo) return listaAtualizada;
+      return [
+        obraAtualizada,
+        ...listaAtualizada.filter(o => o.id !== obraAtualizada.id)
+      ];
+    });
 
       //  Sincroniza qualquer edição/movimentação com as outras telas
       saveEntity('obras', (obras || []).map(o => o.id === obraAtualizada.id ? obraAtualizada : o));
@@ -1479,7 +1494,7 @@ useEffect(() => {
       
   const ultimoOrcamento = orcamentosBase.length > 0 ? orcamentosBase[orcamentosBase.length - 1] : null;
   const ultimaProposta = propostasBase.length > 0 ? propostasBase[propostasBase.length - 1] : null;
-  const cliente = (clientes || []).find((c: any) => c.id === selectedObraDetalhes?.clienteId);
+  const cliente = listaClientesCRM.find((c: any) => c.id === selectedObraDetalhes?.clienteId);
   
   let logoBase64 = await getBase64FromUrl('/image2.jpg');
   
@@ -1783,7 +1798,7 @@ if (selectedObraDetalhes && conteudoDataUrl) {
     if (!selectedObraDetalhes?.orcamentos || selectedObraDetalhes.orcamentos.length === 0) return;
 
     const ultimoOrcamento = selectedObraDetalhes.orcamentos[selectedObraDetalhes.orcamentos.length - 1];
-    const cliente = (clientes || []).find(c => c.id === selectedObraDetalhes.clienteId);
+    const cliente = listaClientesCRM.find(c => c.id === selectedObraDetalhes.clienteId);
     const obraParam = selectedObraDetalhes;
 
     try {
@@ -2324,6 +2339,18 @@ if (selectedObraDetalhes && conteudoDataUrl) {
     toast.success('OS aprovada com sucesso.');
   };
 
+  const handleArquivarNegocio = async (obra: any, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm(`Arquivar "${obra.nome}"?\n\nO negócio será removido do Kanban e listado em Negócios → Finalizados.`)) return;
+    await persistirObraAtualizada({
+      ...obra,
+      categoria: 'Arquivado',
+      status: 'Arquivado',
+      dataArquivamento: new Date().toISOString().split('T')[0],
+    });
+    toast.success(`"${obra.nome}" arquivado com sucesso.`);
+  };
+
   const handleAvancarParaFinalizacao = async () => {
     if (!selectedObraDetalhes) return;
 
@@ -2387,11 +2414,11 @@ if (selectedObraDetalhes && conteudoDataUrl) {
 
 const obrasOrdenadas = useMemo(() => {
     return negociosBackend.filter((obra: any) => {
-      if (obraTemDocumentoMediacao(obra)) return false;
+      if (obra.categoria === 'Arquivado') return false;
       if (!searchQuery) return true;
 
       const termo = searchQuery.toLowerCase();
-      const cliente = (clientes || []).find(c => String(c.id) === String(obra.clienteId));
+      const cliente = listaClientesCRM.find(c => String(c.id) === String(obra.clienteId));
       
       return (
         obra.nome?.toLowerCase().includes(termo) || 
@@ -2417,7 +2444,7 @@ const obrasOrdenadas = useMemo(() => {
         categoria: categoriaTratada
       };
     });
-}, [negociosBackend, searchQuery, clientes]);
+}, [negociosBackend, searchQuery, listaClientesCRM]);
 
   const inputClass = "w-full bg-[#0b1220] border border-white/10 p-3 rounded-lg text-white text-sm outline-none focus:border-amber-500 transition-all placeholder:text-white/20";
   const labelClass = "text-[9px] font-black text-white/40 uppercase tracking-widest ml-1 mb-1.5 block";
@@ -2483,7 +2510,7 @@ const obrasOrdenadas = useMemo(() => {
               <div className="space-y-4 flex-1 overflow-y-auto">
                 {obrasNaColuna.length > 0 ? (
                   obrasNaColuna.map((obra: any) => {
-                    const cliente = (clientes || []).find(c => c.id === obra.clienteId);
+                    const cliente = listaClientesCRM.find(c => c.id === obra.clienteId);
                     const ultimaPropostaCard = Array.isArray(obra.propostas) && obra.propostas.length > 0
                       ? obra.propostas[obra.propostas.length - 1]
                       : null;
@@ -2778,14 +2805,29 @@ const obrasOrdenadas = useMemo(() => {
                                 <p className="text-purple-100 text-xs mt-1">{temOS ? `${osAprovadas} aprovada(s)` : 'Nenhuma OS vinculada'}</p>
                               </div>
 
+                              {(obra.dadosMediacao || obra.finalizadoComMediacao) ? (
+                                <button
+                                  onClick={(e) => handleEditarMediacao(obra, e)}
+                                  className="w-full py-2 rounded-lg bg-gradient-to-r from-amber-500/30 to-orange-500/30 hover:from-amber-500/50 hover:to-orange-500/50 border border-amber-400/40 text-amber-200 text-[11px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5"
+                                >
+                                  <Pencil size={13} /> Editar Medição
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleAbrirDocumentoMediacao(obra);
+                                  }}
+                                  className="w-full py-2 rounded-lg bg-gradient-to-r from-emerald-500/30 to-cyan-500/30 hover:from-emerald-500/50 hover:to-cyan-500/50 border border-emerald-400/40 text-emerald-200 text-[11px] font-black uppercase tracking-wider transition-all"
+                                >
+                                  <FileText size={14} className="inline mr-1" /> Criar Documento de Medição
+                                </button>
+                              )}
                               <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleAbrirDocumentoMediacao(obra);
-                                }}
-                                className="w-full py-2 rounded-lg bg-gradient-to-r from-emerald-500/30 to-cyan-500/30 hover:from-emerald-500/50 hover:to-cyan-500/50 border border-emerald-400/40 text-emerald-200 text-[11px] font-black uppercase tracking-wider transition-all"
+                                onClick={(e) => handleArquivarNegocio(obra, e)}
+                                className="w-full py-2 rounded-lg bg-gradient-to-r from-gray-500/20 to-gray-600/20 hover:from-amber-500/20 hover:to-amber-600/20 border border-gray-500/30 hover:border-amber-400/50 text-gray-300 hover:text-amber-200 text-[11px] font-black uppercase tracking-wider transition-all"
                               >
-                                <FileText size={14} className="inline mr-1" /> Criar Documento de Medição
+                                Arquivar Negócio
                               </button>
                             </div>
                           );
@@ -2892,7 +2934,7 @@ const obrasOrdenadas = useMemo(() => {
                       <option value="" disabled>
                         {clientesLoading ? 'Carregando clientes...' : 'Selecione um cliente'}
                       </option>
-                      {(clientes || []).map(c => (
+                      {listaClientesCRM.map(c => (
                         <option key={c.id} value={c.id}>{c.razaoSocial}</option>
                       ))}
                     </select>
@@ -3211,7 +3253,7 @@ const obrasOrdenadas = useMemo(() => {
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
                     <p className="text-white/50 text-xs mb-1">Cliente</p>
-                    <p className="text-white font-bold">{(clientes || []).find(c => c.id === selectedObraDetalhes.clienteId)?.razaoSocial}</p>
+                    <p className="text-white font-bold">{listaClientesCRM.find(c => c.id === selectedObraDetalhes.clienteId)?.razaoSocial}</p>
                   </div>
                   <div>
                     <p className="text-white/50 text-xs mb-1">Responsável</p>
@@ -3722,12 +3764,139 @@ const obrasOrdenadas = useMemo(() => {
                     </p>
 
                     {selectedObraDetalhes.categoria === 'Finalização' && (
-                      <button
-                        onClick={() => handleAbrirDocumentoMediacao(selectedObraDetalhes)}
-                        className="w-full bg-gradient-to-r from-emerald-500/30 to-cyan-500/30 hover:from-emerald-500/50 hover:to-cyan-500/50 border border-emerald-400/40 text-emerald-300 hover:text-emerald-100 rounded-lg py-2.5 font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
-                      >
-                        <FileText size={16} /> Criar Documento de Medição
-                      </button>
+                      (selectedObraDetalhes.dadosMediacao || selectedObraDetalhes.finalizadoComMediacao) ? (
+                        <button
+                          onClick={() => handleEditarMediacao(selectedObraDetalhes, { stopPropagation: () => {} } as any)}
+                          className="w-full bg-gradient-to-r from-amber-500/30 to-orange-500/30 hover:from-amber-500/50 hover:to-orange-500/50 border border-amber-400/40 text-amber-300 hover:text-amber-100 rounded-lg py-2.5 font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                        >
+                          <Pencil size={16} /> Editar Medição
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleAbrirDocumentoMediacao(selectedObraDetalhes)}
+                          className="w-full bg-gradient-to-r from-emerald-500/30 to-cyan-500/30 hover:from-emerald-500/50 hover:to-cyan-500/50 border border-emerald-400/40 text-emerald-300 hover:text-emerald-100 rounded-lg py-2.5 font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                        >
+                          <FileText size={16} /> Criar Documento de Medição
+                        </button>
+                      )
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* SEÇÃO FINALIZAÇÃO — dados da medição + download */}
+              {selectedObraDetalhes.dadosMediacao && (() => {
+                const dm = selectedObraDetalhes.dadosMediacao;
+                const docMediacao = (Array.isArray(selectedObraDetalhes.documentosNegocio)
+                  ? selectedObraDetalhes.documentosNegocio
+                  : []
+                ).filter((d: any) => {
+                  const id = String(d?.id || '').toLowerCase();
+                  const nome = String(d?.nome || '').toLowerCase();
+                  return id.includes('mediacao') || nome.includes('medi');
+                }).sort((a: any, b: any) =>
+                  new Date(b?.dataUpload || 0).getTime() - new Date(a?.dataUpload || 0).getTime()
+                )[0] || null;
+
+                return (
+                  <div className="bg-gradient-to-r from-amber-500/10 to-orange-500/10 rounded-xl p-6 border border-amber-500/30 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-amber-400 font-black text-lg">FINALIZAÇÃO / MEDIÇÃO</h3>
+                      <span className="px-2 py-0.5 bg-amber-500/20 border border-amber-500/40 rounded-full text-amber-300 text-[10px] font-black uppercase">
+                        {selectedObraDetalhes.status || 'Finalizado'}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      {[
+                        ['Empresa', dm.empresa],
+                        ['Cliente', dm.cliente],
+                        ['CNPJ', dm.cnpj],
+                        ['Embarcação', dm.embarcacao],
+                        ['Número BM', dm.numeroBM],
+                        ['Período', dm.periodo],
+                        ['Data Emissão', dm.dataEmissao],
+                        ['Rep. Cliente', dm.representanteCliente],
+                        ['Rep. Linave', dm.representanteLinave],
+                      ].filter(([, v]) => v).map(([label, value]) => (
+                        <div key={label as string}>
+                          <p className="text-white/40 text-[10px] uppercase tracking-widest mb-0.5">{label}</p>
+                          <p className="text-white font-bold text-xs">{value}</p>
+                        </div>
+                      ))}
+                    </div>
+
+                    {Array.isArray(dm.tabelaItens) && dm.tabelaItens.length > 0 && (
+                      <div>
+                        <p className="text-white/40 text-[10px] uppercase tracking-widest mb-2">Itens Medidos</p>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs border-collapse">
+                            <thead>
+                              <tr className="text-white/40 border-b border-white/10">
+                                <th className="text-left pb-1 pr-3 font-bold">Descrição</th>
+                                <th className="text-center pb-1 pr-3 font-bold">Unid.</th>
+                                <th className="text-right pb-1 pr-3 font-bold">Qtd Prev.</th>
+                                <th className="text-right pb-1 pr-3 font-bold">Qtd Real.</th>
+                                <th className="text-right pb-1 font-bold">Val. Unit.</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {dm.tabelaItens.map((item: any, i: number) => (
+                                <tr key={item.id || i} className="border-b border-white/5 text-white/70">
+                                  <td className="py-1.5 pr-3">{item.descricao || '-'}</td>
+                                  <td className="py-1.5 pr-3 text-center">{item.unidade || '-'}</td>
+                                  <td className="py-1.5 pr-3 text-right">{item.quantidadePrevista || '-'}</td>
+                                  <td className="py-1.5 pr-3 text-right">{item.quantidadeRealizada || '-'}</td>
+                                  <td className="py-1.5 text-right">{item.valorUnitario || '-'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {Array.isArray(dm.tabelaRecursos) && dm.tabelaRecursos.length > 0 && (
+                      <div>
+                        <p className="text-white/40 text-[10px] uppercase tracking-widest mb-2">Recursos</p>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs border-collapse">
+                            <thead>
+                              <tr className="text-white/40 border-b border-white/10">
+                                <th className="text-left pb-1 pr-3 font-bold">Função</th>
+                                <th className="text-right pb-1 pr-3 font-bold">Período</th>
+                                <th className="text-right pb-1 font-bold">Horas</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {dm.tabelaRecursos.map((rec: any, i: number) => (
+                                <tr key={rec.id || i} className="border-b border-white/5 text-white/70">
+                                  <td className="py-1.5 pr-3">{rec.funcao || '-'}</td>
+                                  <td className="py-1.5 pr-3 text-right">{rec.periodo || '-'}</td>
+                                  <td className="py-1.5 text-right">{rec.horas || '-'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {docMediacao && (
+                      <div className="flex gap-3 pt-3 border-t border-white/10">
+                        <button
+                          onClick={() => handleVerDocumentoNegocio(docMediacao)}
+                          className="flex-1 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/40 text-blue-300 rounded-lg py-2 font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                        >
+                          <Eye size={14} /> Ver PDF
+                        </button>
+                        <button
+                          onClick={() => handleDownloadDocumento(docMediacao)}
+                          className="flex-1 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 rounded-lg py-2 font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                        >
+                          <Download size={14} /> Download
+                        </button>
+                      </div>
                     )}
                   </div>
                 );
@@ -4049,7 +4218,7 @@ const obrasOrdenadas = useMemo(() => {
       {/* MODAL - PROPOSTA COMPLETA */}
       {showPropostaFullModal && selectedObraDetalhes?.propostas && selectedObraDetalhes.propostas.length > 0 && (() => {
         const ultimaProposta = selectedObraDetalhes.propostas[selectedObraDetalhes.propostas.length - 1];
-        const cliente = (clientes || []).find(c => c.id === selectedObraDetalhes.clienteId);
+        const cliente = listaClientesCRM.find(c => c.id === selectedObraDetalhes.clienteId);
         const idProjetoModal = extrairIdProjetoDoNumero(ultimaProposta.numeroProposta || '');
         return (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -4076,7 +4245,7 @@ const obrasOrdenadas = useMemo(() => {
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div>
                       <p className="text-white/50 text-xs mb-1">Cliente</p>
-                      <p className="text-white font-bold">{(clientes || []).find(c => c.id === selectedObraDetalhes.clienteId)?.razaoSocial}</p>
+                      <p className="text-white font-bold">{listaClientesCRM.find(c => c.id === selectedObraDetalhes.clienteId)?.razaoSocial}</p>
                     </div>
                     <div>
                       <p className="text-white/50 text-xs mb-1">Negócio</p>
@@ -4331,7 +4500,7 @@ const obrasOrdenadas = useMemo(() => {
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div>
                       <p className="text-white/50 text-xs mb-1">Cliente</p>
-                      <p className="text-white font-bold">{(clientes || []).find(c => c.id === selectedObraDetalhes.clienteId)?.razaoSocial}</p>
+                      <p className="text-white font-bold">{listaClientesCRM.find(c => c.id === selectedObraDetalhes.clienteId)?.razaoSocial}</p>
                     </div>
                     <div>
                       <p className="text-white/50 text-xs mb-1">Projeto</p>
@@ -4680,7 +4849,7 @@ const obrasOrdenadas = useMemo(() => {
       {/* MODAL - ORÇAMENTO COMPLETO */}
       {showOrcamentoFullModal && selectedObraDetalhes?.orcamentos && selectedObraDetalhes.orcamentos.length > 0 && (() => {
         const ultimoOrcamento = selectedObraDetalhes.orcamentos[selectedObraDetalhes.orcamentos.length - 1];
-        const cliente = (clientes || []).find(c => c.id === selectedObraDetalhes.clienteId);
+        const cliente = listaClientesCRM.find(c => c.id === selectedObraDetalhes.clienteId);
         const idProjetoOrc = selectedObraDetalhes.id || '';
         return (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -4973,7 +5142,7 @@ const obrasOrdenadas = useMemo(() => {
       )}
 
       {/* MODAL - EDITAR NEGÓCIO (apenas em Planejamento) */}
-      {showEditModal && editingObra && (() => {
+      {showEditModal && editingObra && ((): React.ReactNode => {
         const idProjetoEdit = editingObra.id || '';
         return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -5016,7 +5185,7 @@ const obrasOrdenadas = useMemo(() => {
                       className={`${inputClass} bg-white/5 cursor-not-allowed`}
                       disabled
                       //  Correção do String() para não quebrar a busca
-                      value={(clientes || []).find(c => String(c.id) === String(editingObra.clienteId))?.razaoSocial || ''}
+                      value={listaClientesCRM.find(c => String(c.id) === String(editingObra.clienteId))?.razaoSocial || ''}
                     />
                   </div>
 
@@ -5163,7 +5332,7 @@ const obrasOrdenadas = useMemo(() => {
           </div>
         </div>
         );
-      })}
+      })()}
     </div>
   );
 }
