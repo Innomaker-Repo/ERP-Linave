@@ -3,7 +3,7 @@ from .models import (
     Cliente, Negocio, Servico, User,
     Levantamento, MDO, Ativ_prevista, Material, 
     Servico_terceirizado, Resumo_orcamento, Orcamento,
-    OrdenServico, Workspace
+    OrdemServico, Workspace
 )
 
 # 1. Define the Child Tables (The "N" items)
@@ -54,5 +54,5 @@ admin.site.register(Negocio)
 admin.site.register(Servico)
 admin.site.register(User)
 admin.site.register(Levantamento)
-admin.site.register(OrdenServico)
+admin.site.register(OrdemServico)
 admin.site.register(Workspace)

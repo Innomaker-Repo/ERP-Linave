@@ -27,9 +27,12 @@ SECRET_KEY = 'django-insecure-rq1079+3k43b9c(xc$pgu%4efe7cm#kv)7u69e(j22-#jo@_te
 DEBUG = True
 
 ALLOWED_HOSTS = [
-    host.strip()
-    for host in os.environ.get('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1,0.0.0.0,*').split(',')
-    if host.strip()
+    # host.strip()
+    # for host in os.environ.get('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1,0.0.0.0,*').split(',')
+    # if host.strip()
+
+    "localhost",
+    "127.0.0.1",
 ]
 
 
@@ -45,7 +48,14 @@ INSTALLED_APPS = [
     "rest_framework",
     "corsheaders",
     "ComercialApp",
+    'rest_framework_simplejwt',
 ]
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ),
+}
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',  # <--- Coloque aqui, como o primeiro da lista
@@ -62,6 +72,7 @@ MIDDLEWARE = [
 CORS_ALLOW_ALL_ORIGINS = True
 
 ROOT_URLCONF = 'ERP_Linave_BackEnd.urls'
+AUTH_USER_MODEL = 'ComercialApp.User'
 
 TEMPLATES = [
     {
