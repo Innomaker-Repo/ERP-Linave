@@ -1,16 +1,41 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { UserPlus, Save, X, Edit2, Trash2, Building2, User, MapPin, Phone, Calendar, UserCheck, History, Eye } from 'lucide-react';
 import { useErp } from '../../../context/ErpContext';
+import { getClientes, createCliente, updateCliente, deleteCliente } from '../../../../services/clientes';
 
 export function ClientesView({ searchQuery }: { searchQuery: string }) {
-  const { clientes, obras, saveEntity, userSession } = useErp();
-  const listaClientes = Array.isArray(clientes) ? clientes : [];
+  const { obras, userSession } = useErp();
+  const [listaClientes, setListaClientes] = useState<any[]>([]);
   
+ //variáveis que controlam os modais e carregamentos
   const [showForm, setShowForm] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [selectedClienteDetalhes, setSelectedClienteDetalhes] = useState<any>(null);
   const [showClienteModal, setShowClienteModal] = useState(false);
-  
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+
+  // Carregar clientes do backend na montagem
+
+  // Carregar clientes do backend na montagem
+  useEffect(() => {
+    const carregarClientes = async () => {
+      setLoading(true);
+      try {
+        const clientesBackend = await getClientes();
+        if (Array.isArray(clientesBackend)) {
+          setListaClientes(clientesBackend);
+        }
+      } catch (error) {
+        console.error('Erro ao carregar clientes:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    carregarClientes();
+  }, []); 
   // Estado inicial com a estrutura exata solicitada
   const initialClienteState = {
     tipoPessoa: 'PJ',
@@ -22,7 +47,7 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
     contato: '',
     endereco: '',
     dataCadastro: new Date().toISOString().split('T')[0],
-    usuarioResponsavel: userSession?.email || 'Sistema'
+    usuarioResponsavel: '' // Campo vazio por padrão
   };
 
   const [currentCliente, setCurrentCliente] = useState<any>(initialClienteState);
@@ -32,32 +57,77 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
       setCurrentCliente(cliente);
       setEditMode(true);
     } else {
-      setCurrentCliente({
-        ...initialClienteState,
-        usuarioResponsavel: userSession?.email || 'Sistema' // Pega o usuário logado automaticamente
-      });
+      setCurrentCliente(initialClienteState);
       setEditMode(false);
     }
     setShowForm(true);
   };
 
-  const handleSave = () => {
-    let listaAtualizada;
-    if (editMode) {
-      listaAtualizada = listaClientes.map((c: any) => c.id === currentCliente.id ? currentCliente : c);
-    } else {
-      const newId = `CLI-${Date.now()}`;
-      listaAtualizada = [...listaClientes, { ...currentCliente, id: newId }];
+  const handleSave = async () => {
+    // Validação de campos obrigatórios
+    if (!currentCliente.razaoSocial?.trim()) {
+      alert('Preencha a Razão Social do cliente.');
+      return;
     }
-    
-    saveEntity('clientes', listaAtualizada);
-    setShowForm(false);
+
+    const cpfCnpjTrimmed = currentCliente.cpfCnpj?.trim();
+    if (!cpfCnpjTrimmed) {
+      alert('Preencha o CPF/CNPJ do cliente.');
+      return;
+    }
+
+    if (!currentCliente.contato?.trim()) {
+      alert('Preencha o contato (telefone ou e-mail) do cliente.');
+      return;
+    }
+
+    if (!currentCliente.endereco?.trim()) {
+      alert('Preencha o endereço completo do cliente.');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      let clienteAtualizado;
+      
+      if (editMode && currentCliente.id && !isNaN(Number(currentCliente.id))) {
+        // Atualizar cliente existente no backend
+        clienteAtualizado = await updateCliente(String(currentCliente.id), currentCliente);
+        setListaClientes((prev) =>
+          prev.map((c) => c.id === currentCliente.id ? clienteAtualizado : c)
+        );
+      } else {
+        // Criar novo cliente no backend
+        clienteAtualizado = await createCliente(currentCliente);
+        setListaClientes((prev) => [...prev, clienteAtualizado]);
+      }
+
+      alert(`Cliente ${editMode ? 'atualizado' : 'cadastrado'} com sucesso!`);
+      setShowForm(false);
+      setCurrentCliente(initialClienteState);
+    } catch (error: any) {
+      console.error(error);
+      alert(`Erro ao salvar cliente: ${error?.response?.data?.detail || error?.message || 'Falha desconhecida'}`);
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleDelete = (id: string) => {
-    if (confirm("Tem certeza que deseja excluir este cliente?")) {
-      const listaAtualizada = listaClientes.filter((c: any) => c.id !== id);
-      saveEntity('clientes', listaAtualizada);
+  const handleDelete = async (id: string) => {
+    if (!confirm("Tem certeza que deseja excluir este cliente?")) {
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await deleteCliente(id);
+      setListaClientes((prev: any[]) => prev.filter((c: any) => c.id !== id));
+      alert('Cliente excluído com sucesso!');
+    } catch (error: any) {
+      console.error(error);
+      alert(`Erro ao deletar cliente: ${error?.response?.data?.detail || error?.message || 'Falha desconhecida'}`);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -76,12 +146,20 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
           <p className="text-white/40 text-sm">Cadastro completo e CRM</p>
         </div>
         <button 
-          onClick={() => handleOpenForm()} 
-          className="bg-amber-500 text-[#0b1220] px-6 py-3 rounded-2xl font-black text-[10px] uppercase flex items-center gap-2 hover:scale-105 transition-transform"
+          onClick={() => handleOpenForm()}
+          disabled={loading}
+          className="bg-amber-500 text-[#0b1220] px-6 py-3 rounded-2xl font-black text-[10px] uppercase flex items-center gap-2 hover:scale-105 transition-transform disabled:opacity-60 disabled:cursor-not-allowed"
         >
-          <UserPlus size={16} /> Novo Cliente
+          <UserPlus size={16} /> {loading ? 'Carregando...' : 'Novo Cliente'}
         </button>
       </div>
+
+      {loading && (
+        <div className="bg-[#101f3d] p-10 rounded-[48px] border border-blue-500/30 flex flex-col items-center justify-center gap-4">
+          <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-blue-500"></div>
+          <p className="text-blue-400 font-black uppercase text-sm">Carregando clientes...</p>
+        </div>
+      )}
 
       {showForm && (
         <div className="bg-[#101f3d] p-10 rounded-[48px] border border-amber-500/30 space-y-8 shadow-2xl relative">
@@ -177,10 +255,18 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
           </div>
 
           <div className="flex gap-4 border-t border-white/5 pt-8">
-            <button onClick={handleSave} className="bg-emerald-500 text-[#0b1220] px-10 py-4 rounded-2xl font-black text-[10px] uppercase flex items-center gap-2 shadow-lg shadow-emerald-500/10 hover:bg-emerald-400 transition-all">
-              <Save size={16}/> {editMode ? 'Salvar Alterações' : 'Cadastrar Cliente'}
+            <button 
+              onClick={handleSave}
+              disabled={saving}
+              className="bg-emerald-500 text-[#0b1220] px-10 py-4 rounded-2xl font-black text-[10px] uppercase flex items-center gap-2 shadow-lg shadow-emerald-500/10 hover:bg-emerald-400 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              <Save size={16}/> {saving ? 'Salvando...' : (editMode ? 'Salvar Alterações' : 'Cadastrar Cliente')}
             </button>
-            <button onClick={() => setShowForm(false)} className="text-white/40 font-black text-[10px] uppercase px-10 py-4 rounded-2xl border border-white/5 hover:bg-white/5 transition-all">
+            <button 
+              onClick={() => setShowForm(false)}
+              disabled={saving}
+              className="text-white/40 font-black text-[10px] uppercase px-10 py-4 rounded-2xl border border-white/5 hover:bg-white/5 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+            >
               <X size={16}/> Cancelar
             </button>
           </div>
@@ -235,31 +321,44 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
                       onClick={() => {
                         setSelectedClienteDetalhes(c);
                         setShowClienteModal(true);
-                      }} 
-                      className="p-2 hover:text-blue-500 hover:bg-blue-500/10 rounded-lg transition-all"
+                      }}
+                      disabled={saving}
+                      className="p-2 hover:text-blue-500 hover:bg-blue-500/10 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                       title="Ver histórico"
                     >
                       <History size={16}/>
                     </button>
-                    <button onClick={() => handleOpenForm(c)} className="p-2 hover:text-amber-500 hover:bg-amber-500/10 rounded-lg transition-all"><Edit2 size={16}/></button>
-                    <button onClick={() => handleDelete(c.id)} className="p-2 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all"><Trash2 size={16}/></button>
+                    <button 
+                      onClick={() => handleOpenForm(c)}
+                      disabled={saving}
+                      className="p-2 hover:text-amber-500 hover:bg-amber-500/10 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Edit2 size={16}/>
+                    </button>
+                    <button 
+                      onClick={() => handleDelete(c.id)}
+                      disabled={saving}
+                      className="p-2 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Trash2 size={16}/>
+                    </button>
                   </div>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
-        {listaFiltrada.length === 0 && (
+        {!loading && listaFiltrada.length === 0 && (
           <div className="p-20 text-center text-white/20 font-black uppercase tracking-widest text-xs">
             Nenhum cliente encontrado.
           </div>
         )}
       </div>
 
-      {/* MODAL - DETALHES E HISTÓRICO DO CLIENTE */}
+     {/* MODAL - DETALHES E HISTÓRICO DO CLIENTE */}
       {showClienteModal && selectedClienteDetalhes && (() => {
-        // Buscar todas as obras deste cliente
-        const negociosDoCliente = (obras || []).filter((o: any) => o.clienteId === selectedClienteDetalhes.id);
+        // BLINDAGEM: Comparamos os IDs como String para garantir que número e texto se encontrem
+        const negociosDoCliente = (obras || []).filter((o: any) => String(o.clienteId) === String(selectedClienteDetalhes.id));
         
         return (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">

@@ -5,6 +5,7 @@ import { Plus, X, Check, Clock, Zap, Download, Eye, FileText } from 'lucide-reac
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { toast } from 'sonner';
+import { criarOrdemServico } from '../../../../services/comercialService';
 
 // ==========================================
 // FUNÇÕES AUXILIARES GERAIS
@@ -200,6 +201,7 @@ interface OsFormData {
   id: string;
   obraId: string;
   clienteId: string;
+  negocioBackendId?: number | null;
   cliente: string;
   projeto: string;
   equipamento: string;
@@ -456,20 +458,20 @@ export function OsView({ searchQuery }: OSViewProps) {
       escopoOrcamento: data.escopoOrcamento || '',
       dadosServicos: (Array.isArray(data.dadosServicos) ? data.dadosServicos : []).map((item: any) => ({
         ordem: item.ordem || 0,
-        tipo: item.tipo || '',
+        tipo: item.tipo_servico || item.tipo || '',
         categoria: item.categoria || '',
         embarcacao: item.embarcacao || '',
-        localExecucao: item.localExecucao || '',
+        localExecucao: item.local_execucao || item.localExecucao || '',
         porto: item.porto || '',
         prazoDes: item.prazoDes || '',
         descricao: item.descricao || '',
         observacoes: item.observacoes || ''
       })),
       maoDeObra: (Array.isArray(data.maoDeObra) ? data.maoDeObra : [])
-        .filter((item: any) => item.funcao)
+        .filter((item: any) => item.fnc || item.funcao)
         .map((item: any) => ({
-          funcao: item.funcao || '',
-          quantidade: String(item.quantidade || ''),
+          funcao: item.fnc || item.funcao || '',
+          quantidade: String(item.qnt || item.quantidade || ''),
           dias: String(item.dias || ''),
           observacao: item.observacao || ''
         })),
@@ -477,26 +479,26 @@ export function OsView({ searchQuery }: OSViewProps) {
         .filter((item: any) => item.atividade)
         .map((item: any) => ({
           atividade: item.atividade || '',
-          dias: String(item.dias || ''),
+          dias: String(item.duracao || item.dias || ''),
           observacao: item.observacao || ''
         })),
       materiais: (Array.isArray(data.materiais) ? data.materiais : [])
-        .filter((item: any) => item.descricao)
+        .filter((item: any) => item.item || item.descricao)
         .map((item: any) => ({
-          descricao: item.descricao || '',
+          descricao: item.item || item.descricao || '',
           unidade: item.unidade || '',
-          quantidade: String(item.quantidade || ''),
-          pesoFator: String(item.pesoFator || ''),
+          quantidade: String(item.qnt || item.quantidade || ''),
+          pesoFator: String(item.peso || item.pesoFator || ''),
           observacao: item.observacao || '',
-          origemTerceiros: item.origemTerceiros || ''
+          origemTerceiros: item.terceirizado ? 'Sim' : (item.origemTerceiros || '')
         })),
       terceirizados: (Array.isArray(data.terceirizados) ? data.terceirizados : [])
         .filter((item: any) => item.descricao)
         .map((item: any) => ({
           descricao: item.descricao || '',
           unidade: item.unidade || '',
-          quantidade: String(item.quantidade || ''),
-          pesoFator: String(item.pesoFator || ''),
+          quantidade: String(item.qnt || item.quantidade || ''),
+          pesoFator: String(item.peso || item.pesoFator || ''),
           observacao: item.observacao || ''
         })),
       observacoes: data.observacoes || ''
@@ -584,7 +586,8 @@ export function OsView({ searchQuery }: OSViewProps) {
     const obra = obrasEmAndamento.find((item: any) => item.id === obraId);
     if (!obra) return;
 
-    const cliente = (clientes || []).find((item: any) => item.id === obra.clienteId);
+    const clienteCtx = (clientes || []).find((item: any) => item.id === obra.clienteId);
+    const nomeCliente = obra.nomeCliente || clienteCtx?.razaoSocial || clienteCtx?.razao_social || '';
     const dataInicioNegocio = obra.dataPrevistaInicio || obra.inicioPrevisto || '';
     const dataTerminoNegocio = obra.dataPrevistaFinal || obra.fimPrevisto || '';
 
@@ -620,9 +623,10 @@ export function OsView({ searchQuery }: OSViewProps) {
       ...prev,
       obraId: obra.id,
       clienteId: obra.clienteId,
-      cliente: cliente?.razaoSocial || '',
+      negocioBackendId: obra.negocioBackendId || null,
+      cliente: nomeCliente,
       projeto: obra.nome || '',
-      local: cliente?.endereco || '',
+      local: clienteCtx?.endereco || '',
       dataInicioPrevisto: dataInicioNegocio,
       dataTerminoPrevisto: dataTerminoNegocio,
       ordemServicoNumero,
@@ -636,7 +640,7 @@ export function OsView({ searchQuery }: OSViewProps) {
     }));
   };
 
-  const handleSaveOS = () => {
+  const handleSaveOS = async () => {
     if (!formData.obraId) {
       return alert('Selecione uma obra para criar a OS.');
     }
@@ -685,15 +689,44 @@ export function OsView({ searchQuery }: OSViewProps) {
       statusAprovacao: 'pendente',
       documentoAssinaturaAprovacao: null,
       horasTrabalhadasPorServico,
-      maoObra: {
-        ...formData.maoObra
-      }
+      maoObra: { ...formData.maoObra }
     };
+
+    // Persist to backend if IDs are available
+    const clienteId = Number(formData.clienteId);
+    const negocioId = formData.negocioBackendId || null;
+    if (clienteId) {
+      try {
+        const payload = {
+          cliente_id: clienteId,
+          negocio_id: negocioId,
+          projeto: formData.projeto || '',
+          equipamento: formData.equipamento || '',
+          local: formData.local || '',
+          cc: formData.cc || '',
+          data_inicio_previsto: formData.dataInicioPrevisto,
+          data_termino_previsto: formData.dataTerminoPrevisto,
+          supervisor_encarregado: formData.supervisorEncarregado || '',
+          descricao_geral_servico: formData.descricaoGeralServico || '',
+          a_ser_incluido: formData.aSerIncluido,
+          mao_obra: formData.maoObra,
+          horas_trabalhadas_servico: horasTrabalhadasPorServico.map(({ servico, hora }) => ({ servico, hora })),
+          status_os: 'emproducao',
+          status_envio: 'enviada',
+          status_aprovacao: 'pendente',
+        };
+        await criarOrdemServico(payload);
+      } catch (err: any) {
+        const detail = err?.response?.data ? JSON.stringify(err.response.data) : String(err);
+        alert(`Erro ao salvar OS no banco de dados: ${detail}`);
+        return;
+      }
+    }
 
     saveEntity('os', [...listaOS, novaOS]);
     setShowFormNovaOS(false);
     setFormData(criarInitialOsData());
-    alert('OS consolidada criada e enviada para produção com sucesso!');
+    toast.success('OS criada e enviada para produção com sucesso!');
   };
 
   const handleDeleteOS = (osId: string) => {

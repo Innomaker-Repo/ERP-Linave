@@ -1,5 +1,8 @@
 from django.db import models
+from django.utils import timezone
 from decimal import Decimal
+from django.contrib.auth.models import AbstractUser
+from django.conf import settings
 
 
 def build_default_workspace_data():
@@ -99,9 +102,14 @@ def normalize_workspace_data(data):
 
     normalized['empresa'] = data.get('empresa', defaults['empresa'])
 
+    # Comercial clients must be managed directly by the SQL backend.
+    # Do not persist workspace-local client collections.
+    normalized['clientes'] = []
+
     return normalized
 
 class Cliente(models.Model):
+    
     TIPO_CHOICES = [('Fisica', 'Pessoa Física'), ('Juridica', 'Pessoa Jurídica')]
     STATUS_CHOICES = [('Ativo', 'Ativo'), ('Inativo', 'Inativo')]
 
@@ -109,19 +117,34 @@ class Cliente(models.Model):
     tipo = models.CharField(max_length=10, choices=TIPO_CHOICES, default='Fisica')
     razao_social = models.CharField(max_length=150) # "Razão Social / Nome Completo"
     nome_fantasia = models.CharField(max_length=150, null=True, blank=True)
-    documento = models.CharField(max_length=20, unique=True) # CPF ou CNPJ
+    documento = models.CharField(max_length=20, unique=True, blank=True, null=True) # CPF ou CNPJ
     inscricao_estadual = models.CharField(max_length=20, null=True, blank=True)
     status = models.CharField(choices=STATUS_CHOICES, max_length=10, default='Ativo')
-    contato_geral = models.CharField(max_length=255) 
-    endereco_completo = models.TextField()
+    contato_geral = models.CharField(max_length=255, null=True, blank=True) 
+    endereco_completo = models.TextField(null=True, blank=True)
     data_cadastro = models.DateField(auto_now_add=True)
-    usuario_responsavel = models.ForeignKey('User', on_delete=models.SET_NULL, null=True)
+    criado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
 
     def __str__(self):
         return f'Razão Social: {self.razao_social}'
 
 
 class Negocio(models.Model):
+    workspace = models.ForeignKey(
+    'Workspace',
+    on_delete=models.SET_NULL,
+    null=True,
+    blank=True,
+    related_name='negocios'
+)
+    CATEGORIA_CHOICES = [
+        ('Planejamento', 'Planejamento'),
+        ('Negociação', 'Negociação'),
+        ('Em Andamento', 'Em Andamento'),
+        ('Finalização', 'Finalização'),
+        ('Arquivado', 'Arquivado'),
+    ]
+
     id = models.BigAutoField(primary_key=True)
     cliente = models.ForeignKey('Cliente', on_delete=models.CASCADE, related_name='negocios')
     empresa_prestadora = models.CharField(max_length=100) 
@@ -130,6 +153,19 @@ class Negocio(models.Model):
     cargo = models.CharField(max_length=100, null=True, blank=True)
     telefone = models.CharField(max_length=20, null=True, blank=True)
     email = models.EmailField(max_length=254)
+    
+    categoria = models.CharField(
+        max_length=30, 
+        choices=CATEGORIA_CHOICES, 
+        default='Planejamento'
+    )
+    
+    # CAMPOS ESSENCIAIS PARA O FLUXO DO KANBAN:
+    status = models.CharField(max_length=50, default='Aguardando orçamento')
+    orcamento_realizado = models.BooleanField(default=False)
+    requer_reorcamento = models.BooleanField(default=True)
+    tipo_servico = models.CharField(max_length=100, null=True, blank=True) # Recebe o tipo principal do form
+
     data_solicitacao = models.DateField(auto_now_add=True)
     data_prevista_inicio = models.DateField(null=True, blank=True)
     data_prevista_final = models.DateField(null=True, blank=True)
@@ -137,8 +173,9 @@ class Negocio(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"{self.nome_negocio} - {self.cliente.razao_social}"
-
+        cliente = self.cliente.razao_social if self.cliente else "Sem cliente"
+        return f"{self.nome_negocio} - {cliente}"
+    
 class Servico(models.Model):
     id = models.BigAutoField(primary_key=True)
     negocio = models.ForeignKey(Negocio, on_delete=models.CASCADE, related_name='servicos')
@@ -153,19 +190,52 @@ class Servico(models.Model):
     def __str__(self):
         return f"{self.tipo_servico} - {self.embarcacao}"
     
-class User(models.Model):
-    user_email = models.CharField(max_length=150, primary_key=True)
-    user_name = models.CharField(max_length=200)
-    user_funcao = models.CharField(max_length=100)
-    user_setor = models.CharField(max_length=100)
+#--------------------- User ------------------
+class User(AbstractUser):
+    workspace = models.ForeignKey(
+    'Workspace',
+    on_delete=models.CASCADE,
+    related_name='users'
+)
+
+    # remove o username padrão
+    username = None
+
+    # email será o login
+    email = models.EmailField(
+        unique=True
+    )
+
+    # campos customizados
+    user_funcao = models.CharField(
+        max_length=100
+    )
+
+    user_setor = models.CharField(
+        max_length=100
+    )
+
     user_data_nascimento = models.DateField()
-    
+
+    # define email como login principal
+    USERNAME_FIELD = 'email'
+
+    # campos obrigatórios no createsuperuser
+    REQUIRED_FIELDS = []
+
     def __str__(self):
-        return f"E-mail: {self.user_email} - Nome: {self.user_name} - Função: {self.user_funcao} - Setor: {self.user_setor}"
+        return self.email
 
 #--------------------- Orçamento ------------------
 
 class Levantamento(models.Model):
+    workspace = models.ForeignKey(
+    'Workspace',
+    on_delete=models.SET_NULL,
+    null=True,
+    blank=True,
+    related_name='levantamentos'
+)
     #External not displayed attributes:
     id_orcamento = models.BigAutoField(primary_key=True) # This entry id, auto-generated by the system
     #Structure
@@ -203,16 +273,18 @@ class MDO(models.Model): #Mão de obra
     id = models.BigAutoField(primary_key=True) # This entry id, auto-generated by the system
     #Structure
     fnc = models.CharField(max_length=100) # free text field to specify the role or function of the labor
-    qnt = models.IntegerField() # field to specify the quantity of labor units required
-    dias = models.IntegerField() # field to specify the number of days required for the labor
-    custo_unit_dia = models.DecimalField(max_digits=10, decimal_places=2) # field to specify the cost of the labor per unit per day
+    qnt = models.IntegerField(null=True, blank=True)
+    dias = models.IntegerField(null=True, blank=True)
+    custo_unit_dia = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     observacao = models.TextField(blank=True, null=True) # free text field for any additional notes or comments about the labor
     
     orcamento = models.ForeignKey('Orcamento', on_delete=models.CASCADE, related_name="mao_de_obra") # link to the orcamento entry that this MDO entry is part of, N:1 N MDO to 1 Resumo_orcamento   
     
     @property
     def valor_total(self):
-        return self.qnt * self.dias * self.custo_unit_dia
+        return  (
+            (self.qnt or 0)*(self.dias or 0)*(self.custo_unit_dia or Decimal('0'))
+    )
     
     def __str__(self):
         return f"Mão de Obra {self.id} - Custo: {self.valor_total}"
@@ -221,13 +293,13 @@ class Ativ_prevista(models.Model):
     #External not displayed attributes:
     id = models.BigAutoField(primary_key=True) # This entry id, auto-generated by the system
     #Structure
-    atividade = models.CharField(max_length=200) # free text field to specify the description of the activity
-    duração = models.IntegerField() # field to specify the duration of the activity in days
-    observacao = models.TextField(blank=True, null=True) # free text field for any additional notes or comments about the activity
-    
+    atividade = models.CharField(max_length=200) 
+    duracao = models.IntegerField() 
+    observacao = models.TextField(blank=True, null=True) 
     orcamento = models.ForeignKey('Orcamento', on_delete=models.CASCADE, related_name='atividades')
+    
     def __str__(self):
-        return f"Atividade Prevista {self.id} - Descrição: {self.atividade} - Duração: {self.duração} dias"
+        return f"Atividade Prevista {self.id} - Descrição: {self.atividade} - Duração: {self.duracao} dias"
 
 class Material(models.Model):
     #External not displayed attributes:
@@ -235,15 +307,15 @@ class Material(models.Model):
     #Structure
     item = models.CharField(max_length=100) # free text field to specify the name of the material
     unidade = models.CharField(max_length=10) # field to specify the unit of measurement for the material
-    quantidade = models.IntegerField() # field to specify the quantity of material required
-    peso = models.DecimalField(max_digits=10, decimal_places=2) # field to specify the weight of the material
-    custo_unitario = models.DecimalField(max_digits=10, decimal_places=2) # field to specify the cost of the material per unit
+    qnt = models.IntegerField(null=True, blank=True) 
+    peso = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True) 
+    custo_unit = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     terceirizado = models.BooleanField(default=False) # field to specify whether the material is outsourced or not
     observacao = models.TextField(blank=True, null=True) # free text field for any additional notes or comments about the material
     
     @property
     def valor_total(self):
-        return self.quantidade * self.custo_unitario
+        return (self.qnt or 0) * (self.custo_unit or 0)
 
     orcamento = models.ForeignKey('Orcamento', on_delete=models.CASCADE, related_name="materiais")
     def __str__(self):
@@ -255,20 +327,25 @@ class Servico_terceirizado(models.Model):
     #Structure
     descricao = models.CharField(max_length=100) # nome; identificacao do servico recebido
     unidade = models.CharField(max_length=10)  
-    quantidade = models.DecimalField(max_digits = 10, decimal_places = 2) 
-    peso = models.DecimalField(max_digits=10, decimal_places=2) 
-    custo_unit = models.DecimalField(max_digits = 10, decimal_places = 2)
+    qnt = models.IntegerField(null=True, blank=True)
+    peso = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    valor_unit = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True) 
     observacao = models.CharField(max_length=250)
 
     @property
     def valor_tot(self):
-        return self.quantidade * self.custo_unit
+        return (self.qnt or 0) * (self.valor_unit or 0)
 
     orcamento = models.ForeignKey('Orcamento', on_delete=models.CASCADE, related_name="terceirizados")
     def __str__(self):
         return f'Descrição: {self.descricao} - Custo total: {self.valor_tot}'
 
 class Resumo_orcamento(models.Model):
+    orcamento = models.OneToOneField(
+        'Orcamento',
+        on_delete=models.CASCADE,
+        related_name='resumo'
+    )
     id = models.BigAutoField(primary_key=True) # This entry id, auto-generated by the system 
     #fields:
     margem = models.DecimalField(max_digits = 5, decimal_places = 2) #validators=[MinValueValidator(0),MaxValueValidator(100)]
@@ -279,16 +356,25 @@ class Resumo_orcamento(models.Model):
     # Calculation properties reach back through the Orcamento link
     @property
     def total_mdo(self):
-        # self.orcamento_resumo is the related_name from the Orcamento model
-        return sum(item.valor_total for item in self.orcamento_resumo.mao_de_obra.all())
+        # self.orcamento is the related_name from the Orcamento model
+        return sum(
+    (item.valor_total or Decimal('0'))
+    for item in self.orcamento.mao_de_obra.all()
+)
 
     @property
     def total_material(self):
-        return sum(item.valor_total for item in self.orcamento_resumo.materiais.all())
+        return sum(
+            (item.valor_total or Decimal('0'))
+            for item in self.orcamento.materiais.all()
+        )
 
     @property
     def total_serv_terceirizado(self):
-        return sum(item.valor_tot for item in self.orcamento_resumo.terceirizados.all())
+        return sum(
+            (item.valor_tot or Decimal('0'))
+            for item in self.orcamento.terceirizados.all()
+        )
 
     @property
     def custo_bruto(self):
@@ -302,27 +388,48 @@ class Resumo_orcamento(models.Model):
 
     @property
     def custo_por_unidade(self):
-        if self.qnt > 0:
+        if (self.qnt or 0) > 0: 
             return self.custo_com_impostos / self.qnt
         return 0
-    #---------------------------------------------------------------------------------
+   
    
     def __str__(self):
         return f'Custo Total: {self.custo_com_impostos} - Custo por Unidade: {self.custo_por_unidade}'
-
+ #---------------------------------------------------------------------------------
+ 
 class Orcamento(models.Model):
-    id = models.BigAutoField(primary_key=True) # This entry id, auto-generated by the system
-    levantamento = models.OneToOneField(Levantamento, on_delete=models.CASCADE, related_name='orcamento_levantamento') # link to the Levantamento entry that contains the details of this orçamento
-    Observacoes_setor_orcamento = models.TextField(blank=True, null=True) # free text field for any additional notes or comments about the orçamento, to be filled in the Observações section of the orçamento form
-    resumo = models.OneToOneField(Resumo_orcamento, on_delete=models.CASCADE, related_name='orcamento_resumo') # link to the Resumo_orcamento entry that contains the economic summary of this orçamento
+    workspace = models.ForeignKey(
+    'Workspace',
+    on_delete=models.SET_NULL,
+    null=True,
+    blank=True,
+    related_name='orcamentos'
+)
+    id = models.BigAutoField(primary_key=True)
+    levantamento = models.OneToOneField(Levantamento, on_delete=models.CASCADE, related_name='orcamento_levantamento')
+    observacoes_setor_orcamento = models.TextField(blank=True, null=True)
+    #resumo = models.OneToOneField(Resumo_orcamento, on_delete=models.CASCADE, related_name='orcamento')
+    numero_orcamento = models.CharField(max_length=100, blank=True)
+    versao = models.CharField(max_length=10, default='A', blank=True)
+    status = models.CharField(max_length=50, default='pendente')
+    data_criacao = models.DateField(default=timezone.now)
+    data_recusa = models.DateField(null=True, blank=True)
 
     def __str__(self):
-        return f'Orçamento {self.id} - Levantamento {self.levantamento.id_orcamento} - Resumo {self.resumo.id}'
+         return f'Orçamento {self.id} - Levantamento {self.levantamento_id}'
 
 
 #--------------------- Ordem de Serviço (OS) ------------------
 
-class OrdenServico(models.Model):
+class OrdemServico(models.Model):
+    workspace = models.ForeignKey(
+    'Workspace',
+    on_delete=models.SET_NULL,
+    null=True,
+    blank=True,
+    related_name='OS'
+)
+      
     STATUS_OS_CHOICES = [
         ('rascunho', 'Rascunho'),
         ('emproducao', 'Em Produção'),
@@ -397,12 +504,58 @@ class OrdenServico(models.Model):
         verbose_name = "Ordem de Serviço"
         verbose_name_plural = "Ordens de Serviço"
 
-
+#--------------------- Workspace ------------------
 class Workspace(models.Model):
-    admin_email = models.CharField(max_length=150, unique=True)
-    data = models.JSONField(default=build_default_workspace_data, blank=True)
+    admin_email = models.EmailField(unique=True)
+    empresa_nome = models.CharField(max_length=150, default="Linave ERP")
+    data = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"Workspace {self.admin_email}"
+        
+#--------------------- Proposta Comercial ------------------
+class Planilhas(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    escopo_link = models.ForeignKey('Escopo', on_delete=models.SET_NULL, null=True, blank=True, related_name='escopo_planilhas')
+    colunas = models.CharField(max_length=255) # field to specify the columns or headers of the spreadsheet, can be a comma-separated string or a JSON string depending on how you want to structure it
+    linhas = models.JSONField(default=list, blank=True)
+
+    def __str__(self):
+        return f"Planilha {self.id}"
+
+class Escopo(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    proposta_link = models.ForeignKey('PropostaComercial', on_delete=models.SET_NULL, null=True, blank=True, related_name='proposta_escopo')
+    tipo = models.ForeignKey(Servico, on_delete=models.CASCADE, related_name='escopo_servico') # link to the Servico entry that this scope of services is about, to be selected from a dropdown list of existing Servico entries
+    descricao = models.TextField() # free text field to specify the description of the scope of services
+    
+
+    def __str__(self):
+        return f"Escopo {self.id} - Descrição: {self.descricao[:50]}..."  # Show first 50 chars of description
+
+class PropostaComercial(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    data_criacao = models.DateField(auto_now_add=True)
+    numero_proposta = models.CharField(max_length=100, blank=True)
+    status = models.CharField(max_length=50, default='pendente')
+    motivo_recusa = models.TextField(blank=True, null=True)
+    cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE, related_name='cliente_propostas')
+    negocio = models.ForeignKey(Negocio, on_delete=models.SET_NULL, null=True, blank=True, related_name='negocio_propostas')
+    referencia = models.CharField(max_length=200) # free text field to specify the reference or title of the commercial proposal
+    saudacao = models.CharField(max_length=200) # free text field for the greeting or introduction of the proposal
+    assunto = models.CharField(max_length=200) # free text field for the subject or main topic of the proposal
+    texto_de_abertura = models.TextField() # free text field for the opening text or executive summary of the proposal
+    responsabilidade_contratada = models.CharField(max_length=150) # free text field to specify the person responsible for the proposal
+    responsabilidade_contratante = models.CharField(max_length=150) # free text field to specify the person responsible on the client's side
+    preco = models.DecimalField(max_digits=10, decimal_places=2) # field to specify the total price or value of the proposal
+    condicoes_gerais = models.TextField() # free text field for the general terms and conditions of the proposal
+    condicoes_pagamento = models.TextField() # free text field for the payment terms and conditions of the proposal
+    prazo = models.CharField(max_length=100) # free text field to specify the delivery time or deadline for the proposal
+    encerramento = models.TextField() # free text field for the closing remarks or conclusion of the proposal
+   
+    def __str__(self):
+        return f"Proposta Comercial {self.id} - {self.cliente.razao_social} - Valor: {self.preco}"
+    
+#--------------------- Fim Proposta Comercial ------------------

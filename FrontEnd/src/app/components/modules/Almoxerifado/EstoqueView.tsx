@@ -107,6 +107,37 @@ const makeRow = (values: Record<string, string>, prefix: string, index: number, 
   };
 };
 
+const STOCK_STORAGE_KEY = 'erp-estoque-storage';
+
+const loadStoredStockState = () => {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return null;
+  }
+
+  const stored = window.localStorage.getItem(STOCK_STORAGE_KEY);
+  if (!stored) return null;
+
+  try {
+    const parsed = JSON.parse(stored);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return parsed as {
+      tables?: StockTable[];
+      gasTypes?: string[];
+      allocations?: GasAllocation[];
+    };
+  } catch {
+    return null;
+  }
+};
+
+const saveStoredStockState = (state: { tables: StockTable[]; gasTypes: string[]; allocations: GasAllocation[] }) => {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+
+  window.localStorage.setItem(STOCK_STORAGE_KEY, JSON.stringify(state));
+};
+
 const sharedColumns: StockColumn[] = [
   { key: 'item', label: 'Item' },
   { key: 'material', label: 'Material' },
@@ -433,7 +464,12 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   });
   
   const [isAllocateModalOpen, setIsAllocateModalOpen] = useState(false);
-  const [allocations, setAllocations] = useState<GasAllocation[]>([]);
+  const [allocations, setAllocations] = useState<GasAllocation[]>(() => {
+    if (almoxerifado?.allocations && Array.isArray(almoxerifado.allocations)) {
+      return almoxerifado.allocations;
+    }
+    return [];
+  });
   const [allocateForm, setAllocateForm] = useState({
     supplierRowId: '',
     gasName: '',

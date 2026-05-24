@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { extrairIdProjetoDoNumero } from '../../../context/ErpContext';
-import { Plus, X, FileText, DollarSign, CheckCircle, Clock, ArrowRight, Edit2, ChevronDown, Zap, AlertCircle, Download, Eye } from 'lucide-react';
+import { Plus, X, FileText, DollarSign, CheckCircle, Clock, ArrowRight, Edit2, ChevronDown, Zap, AlertCircle, Download, Eye, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable'; // Importação nomeada do plugin
@@ -9,6 +9,17 @@ import { handleDownloadMedicaoPDF } from './handleDownloadMedicaoPDF';
 import { handleDownloadPropostaPDF } from './handleDownloadPropostaPDF'; 
 import { getCachedWorkspace } from '../../../services/workspaceStorage';
 import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
+// Substitua as importações antigas por esta única:
+import { 
+    getNegocios, 
+    getClientes, 
+    getNegociosDoCliente,
+    criarNegocio,        
+    atualizarNegocio,
+    excluirNegocio // Adicionado aqui!
+} from '../../../../services/comercialService';
+
+
 
 interface Servico {
   id: string;
@@ -66,16 +77,16 @@ interface DocumentoMediacaoForm {
   tabelaRecursos: LinhaTabelaRecursosMediacao[];
 }
 
-type FaseOS = 
-  | 'Pre-Venda' 
-  | 'PlanoServico' 
-  | 'VendaFechada' 
-  | 'Operacao' 
-  | 'AnteProjeto' 
+type FaseOS =
+  | 'Pre-Venda'
+  | 'PlanoServico'
+  | 'VendaFechada'
+  | 'Operacao'
+  | 'AnteProjeto'
   | 'Projeto'
   | 'Fabricacao'
   | 'Teste'
-  | 'PrestacaoServico' 
+  | 'PrestacaoServico'
   | 'PosVenda';
 
 interface CrmViewProps {
@@ -108,7 +119,11 @@ export const indexToVersaoAlfabetica = (index: number) => {
 };
 
 export function CrmViewNew({ searchQuery }: CrmViewProps) {
-  const { obras, os, clientes, saveEntity, userSession, config } = useErp();
+  const { os, saveEntity, userSession, config, obras } = useErp() as any;
+  const [listaClientesCRM, setListaClientesCRM] = useState<any[]>([]);
+  const [negociosBackend, setNegociosBackend] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [clientesLoading, setClientesLoading] = useState(false);
   const [showFormNovoNegocio, setShowFormNovoNegocio] = useState(false);
   const [novoNegocioTab, setNovoNegocioTab] = useState<'dados' | 'servicos' | 'documentos'>('dados');
   const [selectedObraDetalhes, setSelectedObraDetalhes] = useState<any>(null);
@@ -116,7 +131,6 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingObra, setEditingObra] = useState<any>(null);
   const [expandedOrcamentoSummary, setExpandedOrcamentoSummary] = useState(false);
-  const [expandedPropostaDetalhes, setExpandedPropostaDetalhes] = useState(false);
   const [showPropostaFullModal, setShowPropostaFullModal] = useState(false);
   const [showOSFullModal, setShowOSFullModal] = useState(false);
   const [showOrcamentoFullModal, setShowOrcamentoFullModal] = useState(false);
@@ -127,6 +141,219 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   const [showDocumentoPreviewModal, setShowDocumentoPreviewModal] = useState(false);
   const [documentoVisualizado, setDocumentoVisualizado] = useState<any>(null);
 
+    const empresasPrestadoras = useMemo(() => {
+    const empresasCadastradas = Array.isArray(config?.empresasPrestadoras)
+      ? config.empresasPrestadoras
+      : [];
+
+    const empresasPadrao = [
+      { id: 'EMP-LINAVE', nome: 'Linave', cnpj: '' },
+      { id: 'EMP-SERVINAVE', nome: 'Servinave', cnpj: '' }
+    ];
+
+    const fallbackNome = config?.empresaNome && config.empresaNome !== 'Linave ERP Demo'
+      ? config.empresaNome
+      : 'Linave';
+
+    const origem = empresasCadastradas.length > 0
+      ? [...empresasCadastradas]
+      : [{ id: 'EMP-LINAVE', nome: fallbackNome }];
+
+    empresasPadrao.forEach((empresaPadrao) => {
+      const jaExiste = origem.some((empresa: any) => {
+        const nomeBase = typeof empresa === 'string'
+          ? empresa
+          : empresa?.nome || empresa?.razaoSocial || empresa?.empresaNome || '';
+
+        return String(nomeBase).trim().toLowerCase() === empresaPadrao.nome.toLowerCase();
+      });
+
+      if (!jaExiste) {
+        origem.push(empresaPadrao);
+      }
+    });
+
+    const empresasUnicas = new Map<string, { id: string; nome: string; cnpj: string }>();
+
+    origem.forEach((empresa: any, index: number) => {
+      const nomeBase = typeof empresa === 'string'
+        ? empresa
+        : empresa?.nome || empresa?.razaoSocial || empresa?.empresaNome || '';
+      const nome = String(nomeBase).trim();
+
+      if (!nome) return;
+
+      const chave = nome.toLowerCase();
+      if (empresasUnicas.has(chave)) return;
+
+      empresasUnicas.set(chave, {
+        id: typeof empresa === 'object' && empresa?.id ? empresa.id : `empresa-${index}`,
+        nome,
+        cnpj: typeof empresa === 'object' ? empresa?.cnpj || empresa?.empresaCnpj || '' : ''
+      });
+    });
+
+    const empresasNormalizadas = Array.from(empresasUnicas.values());
+
+    return empresasNormalizadas.length > 0
+      ? empresasNormalizadas
+      : [{ id: 'EMP-LINAVE', nome: fallbackNome || 'Linave', cnpj: '' }];
+  }, [config?.empresasPrestadoras, config?.empresaNome]);
+
+  const empresaPrestadoraPadrao = empresasPrestadoras[0]?.nome || 'Linave';
+  
+const initialServico: Servico = {
+    id: '',
+    tipo: '',
+    categoria: '',
+    embarcacao: '',
+    localExecucao: '',
+    porto: '',
+    prazoDes: '',
+    descricao: '',
+    observacoes: ''
+  };
+
+  const initialForm = {
+    empresaPrestadora: empresaPrestadoraPadrao,
+    nomeNegocio: '',
+    clienteId: '',
+    cnpj: '',
+    origemLead: '',
+    solicitante: '',
+    cargo: '',
+    telefone: '',
+    email: '',
+    dataSolicitacao: new Date().toISOString().split('T')[0],
+    dataPrevistaInicio: '',
+    dataPrevistaFinal: '',
+    servicos: [{ ...initialServico, id: `servico-${Date.now()}` }],
+    fase: 'Pre-Venda' as FaseOS,
+    docs: {
+      requisitos: false,
+      proposta: false,
+      orcamento: false
+    },
+    documentosNegocio: [] as DocumentoNegocio[]
+  };
+
+  // --- FORMULÁRIO DE NOVO NEGÓCIO ---
+  const createInitialForm = () => ({
+  empresaPrestadora: empresaPrestadoraPadrao,
+  nomeNegocio: '',
+  clienteId: '',
+  cnpj: '',
+  origemLead: '',
+  solicitante: '',
+  cargo: '',
+  telefone: '',
+  email: '',
+  dataSolicitacao: new Date().toISOString().split('T')[0],
+  dataPrevistaInicio: '',
+  dataPrevistaFinal: '',
+  servicos: [{ ...initialServico, id: `servico-${Date.now()}` }],
+  fase: 'Pre-Venda' as FaseOS,
+  docs: {
+    requisitos: false,
+    proposta: false,
+    orcamento: false
+  },
+  documentosNegocio: [] as DocumentoNegocio[]
+});
+ 
+ const [formData, setFormData] = useState(createInitialForm);
+
+  // --- FUNÇÕES DE MANIPULAÇÃO DE SERVIÇOS (Corrigindo o ReferenceError) ---
+  const handleAddServico = () => {
+    setFormData(prev => ({
+      ...prev,
+      servicos: [...prev.servicos, { ...initialServico, id: `servico-${Date.now()}` }]
+    }));
+  };
+
+  const handleRemoveServico = (idx: number) => {
+    if (formData.servicos.length === 1) {
+      return alert("Você precisa manter pelo menos um serviço.");
+    }
+    setFormData(prev => ({
+      ...prev,
+      servicos: prev.servicos.filter((_, i) => i !== idx)
+    }));
+  };
+
+  const handleUpdateServico = (idx: number, field: string, value: any) => {
+    setFormData(prev => {
+      const updatedServicos = [...prev.servicos];
+      updatedServicos[idx] = { ...updatedServicos[idx], [field]: value };
+      return { ...prev, servicos: updatedServicos };
+    });
+  };
+
+  // --- EFEITO DE CARREGAMENTO SQL PURO ---
+  // --- EFEITO DE CARREGAMENTO SQL PURO ---
+  useEffect(() => {
+    const carregarDadosExclusivosSQL = async () => {
+      setIsLoading(true);
+      try {
+        // 1. Garante que temos a lista de clientes atualizada na memória
+        const clientesBackend = await getClientes();
+        const clientesMapa: Record<string, string> = {};
+        
+        if (Array.isArray(clientesBackend)) {
+          setListaClientesCRM(clientesBackend);
+          clientesBackend.forEach((c: any) => {
+            clientesMapa[String(c.id)] = c.razaoSocial || c.razao_social || '';
+          });
+        }
+
+        // 2. Busca os negócios do banco
+        const dados = await getNegocios();
+        if (Array.isArray(dados)) {
+          // Lê o contexto atual para preservar campos que só existem no frontend
+          const obrasContextoAtual: any[] = Array.isArray(obras) ? obras : [];
+
+          const formatados = dados.map((n: any) => {
+            const idFormatado = `ID ${n.id}`;
+            const idClienteStr = String(n.cliente || '');
+            // Preserva campos frontend-only (dadosMediacao, finalizadoComMediacao, documentosNegocio, etc.)
+            const obraExistente = obrasContextoAtual.find(
+              (o: any) => o.id === idFormatado || o.negocioBackendId === n.id
+            ) || {};
+
+            return {
+              ...obraExistente,
+              id: idFormatado,
+              nome: n.nome_negocio,
+              clienteId: n.cliente,
+              nomeClienteResolvido: clientesMapa[idClienteStr] || n.cliente_nome || n.nome_cliente || "Cliente Identificado",
+              empresaPrestadora: n.empresa_prestadora || 'Linave',
+              categoria: n.categoria || obraExistente.categoria || 'Planejamento',
+              status: n.status || obraExistente.status || 'Aguardando orçamento',
+              solicitante: n.solicitante,
+              servicos: n.servicos || [],
+              negocioBackendId: n.id,
+              orcamentos: n.orcamentos || [],
+              propostas: n.propostas || [],
+              documentosNegocio: obraExistente.documentosNegocio || n.documentos || n.arquivos || [],
+            };
+          });
+
+          setNegociosBackend(formatados);
+          // Sincroniza com o ErpContext global para as outras abas lerem a mesma estrutura
+          saveEntity('obras', formatados);
+        }
+      } catch (error) {
+        console.error("Erro ao carregar dados do SQL:", error);
+        toast.error("Erro ao conectar com o banco de dados.");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    carregarDadosExclusivosSQL();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const obraTemDocumentoMediacao = (obra: any) => {
     const docs = Array.isArray(obra?.documentosNegocio) ? obra.documentosNegocio : [];
     return docs.some((doc: any) => {
@@ -134,20 +361,6 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       const nome = String(doc?.nome || '').toLowerCase();
       return id.includes('mediacao') || nome.includes('medi') || nome.includes('medição');
     }) || Boolean(obra?.finalizadoComMediacao);
-  };
-
-
-  const indexToVersaoAlfabetica = (index: number) => {
-    if (index < 0) return 'A';
-    let value = index;
-    let output = '';
-
-    while (value >= 0) {
-      output = String.fromCharCode((value % 26) + 65) + output;
-      value = Math.floor(value / 26) - 1;
-    }
-
-    return output;
   };
 
   const versaoAlfabeticaToIndex = (versao: string) => {
@@ -291,78 +504,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     return [{ titulo: '', textosAntes: [String(escopo)], tabela: [], textosDepois: [] }];
   };
 
-  const initialServico: Servico = {
-    id: '',
-    tipo: '',
-    categoria: '',
-    embarcacao: '',
-    localExecucao: '',
-    porto: '',
-    prazoDes: '',
-    descricao: '',
-    observacoes: ''
-  };
 
-  const empresasPrestadoras = useMemo(() => {
-    const empresasCadastradas = Array.isArray(config?.empresasPrestadoras)
-      ? config.empresasPrestadoras
-      : [];
-
-    const empresasPadrao = [
-      { id: 'EMP-LINAVE', nome: 'Linave', cnpj: '' },
-      { id: 'EMP-SERVINAVE', nome: 'Servinave', cnpj: '' }
-    ];
-
-    const fallbackNome = config?.empresaNome && config.empresaNome !== 'Linave ERP Demo'
-      ? config.empresaNome
-      : 'Linave';
-
-    const origem = empresasCadastradas.length > 0
-      ? [...empresasCadastradas]
-      : [{ id: 'EMP-LINAVE', nome: fallbackNome }];
-
-    empresasPadrao.forEach((empresaPadrao) => {
-      const jaExiste = origem.some((empresa: any) => {
-        const nomeBase = typeof empresa === 'string'
-          ? empresa
-          : empresa?.nome || empresa?.razaoSocial || empresa?.empresaNome || '';
-
-        return String(nomeBase).trim().toLowerCase() === empresaPadrao.nome.toLowerCase();
-      });
-
-      if (!jaExiste) {
-        origem.push(empresaPadrao);
-      }
-    });
-
-    const empresasUnicas = new Map<string, { id: string; nome: string; cnpj: string }>();
-
-    origem.forEach((empresa: any, index: number) => {
-      const nomeBase = typeof empresa === 'string'
-        ? empresa
-        : empresa?.nome || empresa?.razaoSocial || empresa?.empresaNome || '';
-      const nome = String(nomeBase).trim();
-
-      if (!nome) return;
-
-      const chave = nome.toLowerCase();
-      if (empresasUnicas.has(chave)) return;
-
-      empresasUnicas.set(chave, {
-        id: typeof empresa === 'object' && empresa?.id ? empresa.id : `empresa-${index}`,
-        nome,
-        cnpj: typeof empresa === 'object' ? empresa?.cnpj || empresa?.empresaCnpj || '' : ''
-      });
-    });
-
-    const empresasNormalizadas = Array.from(empresasUnicas.values());
-
-    return empresasNormalizadas.length > 0
-      ? empresasNormalizadas
-      : [{ id: 'EMP-LINAVE', nome: fallbackNome || 'Linave', cnpj: '' }];
-  }, [config?.empresasPrestadoras, config?.empresaNome]);
-
-  const empresaPrestadoraPadrao = empresasPrestadoras[0]?.nome || 'Linave';
 
   const getEmpresaPrestadoraNome = (nome?: string) => {
     const valor = String(nome || '').trim();
@@ -376,75 +518,23 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     return empresaEncontrada?.nome || valor;
   };
 
-    
-
-  const initialForm = {
-    empresaPrestadora: empresaPrestadoraPadrao,
-    nomeNegocio: '',
-    clienteId: '',
-    cnpj: '',
-    origemLead: '',
-    solicitante: '',
-    cargo: '',
-    telefone: '',
-    email: '',
-    dataSolicitacao: new Date().toISOString().split('T')[0],
-    dataPrevistaInicio: '',
-    dataPrevistaFinal: '',
-    servicos: [{ ...initialServico, id: `servico-${Date.now()}` }],
-    fase: 'Pre-Venda' as FaseOS,
-    docs: {
-      requisitos: false,
-      proposta: false,
-      orcamento: false
-    },
-    documentosNegocio: [] as DocumentoNegocio[]
-  };
-
-  const [formData, setFormData] = useState(initialForm);
-
-  useEffect(() => {
-    const empresasDisponiveis = empresasPrestadoras.map((empresa) => empresa.nome);
-
-    if (
-      empresasDisponiveis.length > 0 &&
-      (!formData.empresaPrestadora || !empresasDisponiveis.includes(formData.empresaPrestadora))
-    ) {
-      setFormData((prev) => ({ ...prev, empresaPrestadora: empresasDisponiveis[0] }));
-    }
-  }, [empresasPrestadoras, formData.empresaPrestadora]);
-
-  const handleAddServico = () => {
-    setFormData({
-      ...formData,
-      servicos: [...formData.servicos, { ...initialServico, id: `servico-${Date.now()}` }]
-    });
-  };
-
-  const handleRemoveServico = (idx: number) => {
-    if (formData.servicos.length === 1) {
-      return alert("Você precisa manter pelo menos um serviço.");
-    }
-    setFormData({
-      ...formData,
-      servicos: formData.servicos.filter((_, i) => i !== idx)
-    });
-  };
-
-  const handleUpdateServico = (idx: number, field: string, value: any) => {
-    const updatedServicos = [...formData.servicos];
-    updatedServicos[idx] = { ...updatedServicos[idx], [field]: value };
-    setFormData({ ...formData, servicos: updatedServicos });
-  };
+ useEffect(() => {
+  const empresasDisponiveis = empresasPrestadoras.map((empresa) => empresa.nome);
+  // Só alteramos o estado se houver empresas E o campo atual estiver vazio ou for inválido
+  if (empresasDisponiveis.length > 0 && !empresasDisponiveis.includes(formData.empresaPrestadora)) {
+    setFormData((prev) => ({ ...prev, empresaPrestadora: empresasDisponiveis[0] }));
+  }
+}, [empresasPrestadoras, formData.empresaPrestadora]); // Adicione a dependência para validação segura
 
   const handleClienteChange = (clienteId: string) => {
-    const cliente = (clientes || []).find(c => c.id === clienteId);
+    const cliente = listaClientesCRM.find((c: any) => String(c.id) === String(clienteId));
     setFormData({
       ...formData,
       clienteId,
       cnpj: cliente?.cpfCnpj || ''
     });
   };
+
 
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`;
@@ -465,6 +555,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : 0;
   };
+  
   const getBase64FromUrl = async (url: string): Promise<string | undefined> => {
     try {
       const response = await fetch(url);
@@ -531,8 +622,8 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   const obterCnpjCliente = (cliente: any) => cliente?.cpfCnpj || cliente?.cnpj || '';
 
   const handleAbrirDocumentoMediacao = (obra: any) => {
-    const obraAtual = (obras || []).find((item: any) => item.id === obra.id) || obra;
-    const cliente = (clientes || []).find((item: any) => item.id === obraAtual.clienteId);
+    const obraAtual = (negociosBackend || []).find((item: any) => item.id === obra.id) || obra;
+    const cliente = listaClientesCRM.find((item: any) => item.id === obraAtual.clienteId);
 
     // Usar o ID do projeto diretamente (já tem formato correto: LN-0731/26)
     const idProjetoFormatado = obraAtual.id || 'LN-0001/26';
@@ -552,6 +643,19 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       tabelaItens: [novaLinhaTabelaMediacao()],
       tabelaRecursos: [novaLinhaTabelaRecursosMediacao()]
     });
+    setShowDocumentoMediacaoModal(true);
+  };
+
+  const handleEditarMediacao = (obra: any, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const obraAtual = (negociosBackend || []).find((item: any) => item.id === obra.id) || obra;
+    setSelectedObraDetalhes(obraAtual);
+    if (obraAtual.dadosMediacao) {
+      setDocumentoMediacaoForm(obraAtual.dadosMediacao);
+    } else {
+      handleAbrirDocumentoMediacao(obra);
+      return;
+    }
     setShowDocumentoMediacaoModal(true);
   };
 
@@ -652,7 +756,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
 
     try {
       const obraAtual = (obras || []).find((item: any) => item.id === documentoMediacaoForm.obraId);
-      const clienteAtual = (clientes || []).find((c: any) => c.id === obraAtual?.clienteId);
+      const clienteAtual = listaClientesCRM.find((c: any) => c.id === obraAtual?.clienteId);
 
       console.log("Iniciando geração de PDF de medição...", { documentoMediacaoForm });
 
@@ -692,8 +796,9 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
           ...obraAtual,
           documentosNegocio: [...documentosAtuais, novoDocumento],
           finalizadoComMediacao: true,
+          dadosMediacao: documentoMediacaoForm,
           dataFinalizacaoLocal: new Date().toISOString().split('T')[0],
-          status: 'Finalizado (Medição)'
+          status: 'Finalizado',
         });
       }
 
@@ -733,7 +838,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     }
 
     const ultimaProposta = selectedObraDetalhes.propostas[selectedObraDetalhes.propostas.length - 1];
-    const clienteAtual = (clientes || []).find((c: any) => c.id === selectedObraDetalhes.clienteId);
+    const clienteAtual = listaClientesCRM.find((c: any) => c.id === selectedObraDetalhes.clienteId);
 
     try {
       let logoBase64: string | undefined;
@@ -856,25 +961,44 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     return [];
   };
 
-  const persistirObraAtualizada = (obraAtualizada: any, moverParaTopo = false) => {
-    const listaBase = obras || [];
-    const obrasAtualizadas = moverParaTopo
-      ? [obraAtualizada, ...listaBase.filter((o: any) => o.id !== obraAtualizada.id)]
-      : listaBase.map((o: any) => (o.id === obraAtualizada.id ? obraAtualizada : o));
+  const persistirObraAtualizada = async (obraAtualizada: any, moverParaTopo = false) => {
+    try {
+      // 1. Monta o payload para o Django
+      const payloadUpdate = {
+        categoria: obraAtualizada.categoria,
+        status: obraAtualizada.status,
+      };
 
-    saveEntity('obras', obrasAtualizadas);
+      // 2. Chama a API do Django passando a Chave Primária (negocioBackendId)
+      if (obraAtualizada.negocioBackendId) {
+        await atualizarNegocio(obraAtualizada.negocioBackendId, payloadUpdate);
+      }
 
-    if (selectedObraDetalhes?.id === obraAtualizada.id) {
-      setSelectedObraDetalhes(obraAtualizada);
-    }
-    if (editingObra?.id === obraAtualizada.id) {
-      setEditingObra(obraAtualizada);
-    }
-    if (selectedObraArquivos?.id === obraAtualizada.id) {
-      setSelectedObraArquivos(obraAtualizada);
+      // 3. Atualiza a tela localmente
+      setNegociosBackend(prev => {
+      const listaAtualizada = prev.map(o =>
+        o.id === obraAtualizada.id ? obraAtualizada : o
+      );
+      if (!moverParaTopo) return listaAtualizada;
+      return [
+        obraAtualizada,
+        ...listaAtualizada.filter(o => o.id !== obraAtualizada.id)
+      ];
+    });
+
+      //  Sincroniza qualquer edição/movimentação com as outras telas
+      saveEntity('obras', (obras || []).map(o => o.id === obraAtualizada.id ? obraAtualizada : o));
+
+      if (selectedObraDetalhes?.id === obraAtualizada.id) setSelectedObraDetalhes(obraAtualizada);
+      if (editingObra?.id === obraAtualizada.id) setEditingObra(obraAtualizada);
+      if (selectedObraArquivos?.id === obraAtualizada.id) setSelectedObraArquivos(obraAtualizada);
+
+    } catch (error) {
+      console.error('Erro ao atualizar no banco de dados:', error);
+      toast.error('Erro ao salvar alteração no banco de dados.');
     }
   };
-
+  
   const criarReorcamentoPorAlteracaoArquivos = (obra: any) => {
   const hoje = new Date().toISOString().split('T')[0];
   const orcamentos = normalizarOrcamentosDaObra(obra);
@@ -1089,16 +1213,12 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     setShowArquivosModal(true);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!formData.nomeNegocio.trim() || !formData.clienteId || !formData.solicitante || formData.servicos.length === 0) {
       return alert("Nome do Negócio, Cliente, Solicitante e pelo menos um Serviço são obrigatórios.");
     }
 
-    if (
-      formData.dataPrevistaInicio &&
-      formData.dataPrevistaFinal &&
-      formData.dataPrevistaFinal < formData.dataPrevistaInicio
-    ) {
+    if (formData.dataPrevistaInicio && formData.dataPrevistaFinal && formData.dataPrevistaFinal < formData.dataPrevistaInicio) {
       return alert('A Data Prevista Final não pode ser anterior à Data Prevista de Início.');
     }
 
@@ -1106,71 +1226,81 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       return alert("Pelo menos um serviço deve ter uma descrição.");
     }
 
-    const prefixo = formData.empresaPrestadora === 'Linave' ? 'LN' : 'SN';
-    const anoAtual = new Date().getFullYear().toString().slice(-2); // Ex: '24' ou '26'
-    
-    // Procura todos os negócios deste ano e prefixo para pegar o maior número
-    const obrasDoAno = (obras || []).filter((o: any) => o.id?.startsWith(`${prefixo}-`) && o.id?.endsWith(`/${anoAtual}`));
-    let maiorNumero = 0;
-    
-    obrasDoAno.forEach((o: any) => {
-      // Extrai os 4 dígitos do ID. Ex: de "LN-0731/26", pega "0731"
-      const match = o.id.match(/-(\d+)\//);
-      if (match) {
-        const numero = parseInt(match[1], 10);
-        if (numero > maiorNumero) maiorNumero = numero;
-      }
-    });
-    
-    // Incrementa 1 e formata com zeros à esquerda (Ex: 1 vira "0001", 731 vira "0731")
-    const proximoNumero = (maiorNumero + 1).toString().padStart(4, '0');
-    
-    // NASCE O ID DEFINITIVO DO PROJETO! Ex: LN-0731/26 ou SN-0001/26
-    const novoProjetoId = `${prefixo}-${proximoNumero}/${anoAtual}`;
-    // ====================================================================
-
-    const nomeObra = formData.nomeNegocio.trim();
-    const primeiroServico = formData.servicos[0];
-
-    const novaObra = {
-      id: novoProjetoId, // O id agora já é o correto
-      nome: nomeObra,
-      empresaPrestadora: formData.empresaPrestadora,
-      clienteId: formData.clienteId,
-      status: 'Planejamento',
-      categoria: 'Planejamento' as CategoriaObra,
-      tipo: primeiroServico.tipo || 'Serviço',
-      responsavelTecnico: formData.solicitante,
-      responsavelComercial: formData.solicitante,
+    // 1. Mapeamento para o formato exato que o NegocioSerializer (Django) exige
+    // Não enviamos o 'id', deixamos o MySQL gerar o ID numérico (AUTO_INCREMENT)
+   const payloadDjango = {
+      nome_negocio: formData.nomeNegocio.trim(),
+      cliente: parseInt(formData.clienteId, 10), 
+      empresa_prestadora: formData.empresaPrestadora,
+      categoria: 'Planejamento',
+      status: 'Aguardando orçamento', //  FORÇA O STATUS INICIAL PARA A TELA DE ORÇAMENTOS
       solicitante: formData.solicitante,
+      
+      cargo: formData.cargo,
       telefone: formData.telefone,
-      email: formData.email,
-      dataCadastro: new Date().toISOString().split('T')[0],
-      dataSolicitacao: formData.dataSolicitacao,
-      dataPrevistaInicio: formData.dataPrevistaInicio,
-      dataPrevistaFinal: formData.dataPrevistaFinal,
-      inicioPrevisto: formData.dataPrevistaInicio,
-      fimPrevisto: formData.dataPrevistaFinal,
-      origemOS: true,
-      orcamento: 0,
-      orcamentos: [],
-      propostas: [],
-      documentosNegocio: formData.documentosNegocio,
-      servicos: formData.servicos
+      email: formData.email, 
+      data_solicitacao: formData.dataSolicitacao || null,
+      data_prevista_inicio: formData.dataPrevistaInicio || null,
+      data_prevista_final: formData.dataPrevistaFinal || null,
+
+      //  ADICIONADO: O campo exato que o Django exigiu!
+      // Usamos o tipo do primeiro serviço adicionado na aba "Serviços"
+      tipo_servico: formData.servicos.length > 0 ? formData.servicos[0].tipo : 'Não informado',
+      
+      servicos: formData.servicos.map(s => ({
+        tipo_servico: s.tipo, //  Alterado aqui também por segurança
+        tipo: s.tipo,         // Mantido caso o seu backend use ambos
+        categoria: s.categoria || '',
+        embarcacao: s.embarcacao || '',
+        local_execucao: s.localExecucao || '',
+        porto: s.porto || '',
+        descricao: s.descricao,
+        observacoes: s.observacoes || ''
+      }))
     };
 
-    const workspaceAtual = getCachedWorkspace(userSession?.email || 'admin@modo-teste.com');
-    const obrasAtuais = Array.isArray(workspaceAtual.obras) ? workspaceAtual.obras : [];
+    try {
+          // 2. Dispara a requisição HTTP POST para a API do Django
+          const respostaBackend = await criarNegocio(payloadDjango);
 
-    saveEntity('obras', [...obrasAtuais, novaObra]).then(() => {
-      alert('Negócio criado com sucesso. As OS deverão ser criadas manualmente na aba de OS.');
-      setShowFormNovoNegocio(false);
-      setNovoNegocioTab('dados');
-      setFormData(initialForm);
-    }).catch((error) => {
-      console.error('Erro ao criar negócio:', error);
-      alert('Erro ao salvar negócio. Tente novamente.');
-    });
+          // BLINDAGEM: O Django pode devolver o objeto de duas formas. Isso garante que o React não quebre lendo 'undefined'
+          const dadosNegocio = respostaBackend.negocio || respostaBackend;
+          const dadosServicos = respostaBackend.servicos || formData.servicos;
+
+          // 3. Monta o objeto de forma totalmente segura ANTES de fechar a tela
+          const negocioFormatado = {
+            id: `ID ${dadosNegocio.id || Date.now()}`, 
+            nome: dadosNegocio.nome_negocio || formData.nomeNegocio,
+            clienteId: String(dadosNegocio.cliente || formData.clienteId), 
+            empresaPrestadora: dadosNegocio.empresa_prestadora || formData.empresaPrestadora,
+            categoria: dadosNegocio.categoria || 'Planejamento',
+            status: 'Aguardando orçamento', 
+            requerReorcamento: true,        
+            orcamentoRealizado: false,      
+            solicitante: dadosNegocio.solicitante || formData.solicitante,
+            servicos: dadosServicos || [],
+            negocioBackendId: dadosNegocio.id || Date.now(),
+            orcamentos: [], 
+            propostas: [],
+            documentosNegocio: []
+          };
+
+          toast.success(`${formData.servicos.length} Serviço(s) criado(s) com sucesso no Banco de Dados!`);
+          
+          setShowFormNovoNegocio(false);
+          setNovoNegocioTab('dados');
+          setFormData(initialForm);
+
+          // Atualiza o Kanban imediatamente
+          setNegociosBackend(prev => [...prev, negocioFormatado]);
+
+          // Atualiza a memória global para a tela de Orçamentos enxergar!
+          saveEntity('obras', [...(obras || []), negocioFormatado]);
+
+        } catch (error: any) {
+      console.error('Erro detalhado do Backend:', error);
+      alert('Erro ao salvar novo serviço! Verifique os dados e tente novamente.');
+    }
   };
 
   const handleShowDetalhes = (obra: any) => {
@@ -1186,34 +1316,45 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     setShowEditModal(true);
   };
 
-  const handleSaveEditObra = () => {
+  const handleSaveEditObra = async () => {
     if (!editingObra) return;
-
     const dataInicio = editingObra.dataPrevistaInicio || editingObra.inicioPrevisto;
     const dataFinal = editingObra.dataPrevistaFinal || editingObra.fimPrevisto;
     if (dataInicio && dataFinal && dataFinal < dataInicio) {
       return alert('A Data Prevista Final não pode ser anterior à Data Prevista de Início.');
     }
 
-    const obrasAtualizadas = obras?.map((o: any) => o.id === editingObra.id ? editingObra : o) || [];
-    
-    saveEntity('obras', obrasAtualizadas).then(() => {
-      alert("Negócio atualizado com sucesso!");
-      setShowEditModal(false);
-      setEditingObra(null);
-    }).catch((error) => {
-      console.error('Erro ao atualizar negócio:', error);
-      alert('Erro ao salvar negócio. Tente novamente.');
-    });
+    // Chama a função da API e fecha o modal
+    await persistirObraAtualizada(editingObra);
+    alert("Negócio atualizado com sucesso!");
+    setShowEditModal(false);
+    setEditingObra(null);
   };
 
-  const handleAprovarOrcamento = () => {
+  const handleDeleteNegocio = async (idBackend: number) => {
+    const confirmacao = window.confirm("ATENÇÃO: Tem certeza que deseja excluir permanentemente este negócio? Esta ação não pode ser desfeita.");
+    if (!confirmacao) return;
+
+    try {
+      await excluirNegocio(idBackend);
+      
+      // Remove o negócio da tela instantaneamente sem precisar dar F5
+      setNegociosBackend(prev => prev.filter(n => n.negocioBackendId !== idBackend));
+      
+      toast.success('Negócio excluído com sucesso!');
+      setShowEditModal(false);
+      setEditingObra(null);
+    } catch (error) {
+      toast.error('Erro ao excluir negócio. Verifique o console.');
+    }
+  };
+
+   const handleAprovarOrcamento = async () => {
     if (!selectedObraDetalhes) return;
 
     let proximaCategoria: CategoriaObra = 'Negociação';
     let mensagem = '';
 
-    // Determinar próxima categoria baseado na categoria atual
     if (selectedObraDetalhes.categoria === 'Planejamento') {
       proximaCategoria = 'Negociação';
       mensagem = "Orçamento aprovado! Negócio movido para Negociação.";
@@ -1231,7 +1372,6 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       mensagem = "Orçamento aprovado! Negócio movido para Em Andamento.";
     }
 
-    // Marcar última versão de orçamento como aceita
     const orcamentosAtualizados = selectedObraDetalhes.orcamentos?.map((o: any, idx: number) => 
       idx === selectedObraDetalhes.orcamentos.length - 1 ? { ...o, status: 'aceito' as const } : o
     ) || [];
@@ -1244,19 +1384,17 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       status: proximaCategoria
     };
 
-    const obrasAtualizadas = obras?.map((o: any) => o.id === selectedObraDetalhes.id ? obraAtualizada : o) || [];
-    
-    saveEntity('obras', obrasAtualizadas).then(() => {
-      alert(mensagem);
-      setShowDetalhesObraModal(false);
-      setSelectedObraDetalhes(null);
-    }).catch((error) => {
-      console.error('Erro ao atualizar orçamento:', error);
-      alert('Erro ao salvar mudanças. Tente novamente.');
-    });
+    // Usando await e fechando a função corretamente
+    await persistirObraAtualizada(obraAtualizada);
+    setNegociosBackend(prev => 
+      prev.map(o => o.id === obraAtualizada.id ? obraAtualizada : o)
+    );
+    alert(mensagem);
+    setShowDetalhesObraModal(false);
+    setSelectedObraDetalhes(null);
   };
 
-  const handleRecusarOrcamento = () => {
+  const handleRecusarOrcamento = async () => {
     if (!selectedObraDetalhes) return;
 
     const confirmacao = window.confirm("Tem certeza que deseja recusar este orçamento? O negócio voltará para Aguardando orçamento.");
@@ -1278,7 +1416,6 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
 
     if (orcamentosBase.length === 0) return;
     
-    // Marcar última versão como recusada
     const orcamentosAtualizados = orcamentosBase.map((o: any, idx: number, lista: any[]) => 
       idx === lista.length - 1 ? { ...o, status: 'recusado' as const, dataRecusa } : o
     );
@@ -1292,19 +1429,11 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       status: 'Aguardando orçamento'
     };
 
-    const obrasAtualizadas = [
-      obraAtualizada,
-      ...((obras || []).filter((o: any) => o.id !== selectedObraDetalhes.id))
-    ];
-    
-    saveEntity('obras', obrasAtualizadas).then(() => {
-      alert("Orçamento recusado. Negócio retornou para Aguardando orçamento.");
-      setShowDetalhesObraModal(false);
-      setSelectedObraDetalhes(null);
-    }).catch((error) => {
-      console.error('Erro ao recusar orçamento:', error);
-      alert('Erro ao salvar mudanças. Tente novamente.');
-    });
+    // Usando await e fechando a função corretamente
+    await persistirObraAtualizada(obraAtualizada, true);
+    alert("Orçamento recusado. Negócio retornou para Aguardando orçamento.");
+    setShowDetalhesObraModal(false);
+    setSelectedObraDetalhes(null);
   };
 
   const handleDownloadOSPDF = async () => {
@@ -1313,6 +1442,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     toast.error('Nenhuma OS vinculada a este negócio.');
     return;
   }
+
   
   // Pega a OS Consolidada mais recente, ou a primeira do array, ou usa o próprio selectedObraDetalhes como fallback
   const osPrincipal = [...osDoNegocio].reverse().find((o: any) => o.tipoDocumento === 'consolidada' || (o.aSerIncluido && Object.keys(o.aSerIncluido).length > 0)) || osDoNegocio[0] || selectedObraDetalhes;
@@ -1331,7 +1461,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       
   const ultimoOrcamento = orcamentosBase.length > 0 ? orcamentosBase[orcamentosBase.length - 1] : null;
   const ultimaProposta = propostasBase.length > 0 ? propostasBase[propostasBase.length - 1] : null;
-  const cliente = (clientes || []).find((c: any) => c.id === selectedObraDetalhes?.clienteId);
+  const cliente = listaClientesCRM.find((c: any) => c.id === selectedObraDetalhes?.clienteId);
   
   let logoBase64 = await getBase64FromUrl('/image2.jpg');
   
@@ -1596,44 +1726,46 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     const conteudoDataUrl = doc.output('datauristring');
     doc.save(nomeArquivo);
 
-    if (selectedObraDetalhes && conteudoDataUrl) {
-      const documentosAtuais = Array.isArray(selectedObraDetalhes.documentosNegocio)
-        ? selectedObraDetalhes.documentosNegocio
-        : [];
-      const documentosSemOs = documentosAtuais.filter((docItem: any) => {
-        const id = String(docItem?.id || '').toLowerCase();
-        const nome = String(docItem?.nome || '').toLowerCase();
-        return !(id.includes('doc-os') || nome.includes('_os_') || nome.includes('ordem de serviço') || nome.includes('ordem de servico'));
-      });
+if (selectedObraDetalhes && conteudoDataUrl) {
+        const documentosAtuais = Array.isArray(selectedObraDetalhes.documentosNegocio)
+          ? selectedObraDetalhes.documentosNegocio
+          : [];
+          
+        const documentosSemOs = documentosAtuais.filter((docItem: any) => {
+          const id = String(docItem?.id || '').toLowerCase();
+          const nome = String(docItem?.nome || '').toLowerCase();
+          return !(id.includes('doc-os') || nome.includes('_os_') || nome.includes('ordem de serviço') || nome.includes('ordem de servico'));
+        });
 
-      persistirObraAtualizada({
-        ...selectedObraDetalhes,
-        documentosNegocio: [
-          ...documentosSemOs,
-          {
-            id: `doc-os-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            nome: nomeArquivo,
-            tipo: 'application/pdf',
-            tamanho: Math.max(0, Math.round((conteudoDataUrl.length * 3) / 4)),
-            dataUpload: new Date().toISOString(),
-            conteudo: conteudoDataUrl,
-          },
-        ],
-      });
+        // CHAMADA CORRETA PARA SALVAR O ANEXO NO BANCO
+        await persistirObraAtualizada({
+          ...selectedObraDetalhes,
+          documentosNegocio: [
+            ...documentosSemOs,
+            {
+              id: `doc-os-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              nome: nomeArquivo,
+              tipo: 'application/pdf',
+              tamanho: Math.max(0, Math.round((conteudoDataUrl.length * 3) / 4)),
+              dataUpload: new Date().toISOString(),
+              conteudo: conteudoDataUrl,
+            },
+          ],
+        });
+      }
+      
+      toast.success('OS baixada em PDF com sucesso!');
+    } catch (error) {
+      console.error('Erro ao gerar PDF:', error);
+      toast.error('Erro ao gerar OS em PDF');
     }
-    
-    toast.success('OS baixada em PDF com sucesso!');
-  } catch (error) {
-    console.error('Erro ao gerar PDF:', error);
-    toast.error('Erro ao gerar OS em PDF');
-  }
-};
+  };
 
   const handleDownloadOrcamentoPDF = () => {
     if (!selectedObraDetalhes?.orcamentos || selectedObraDetalhes.orcamentos.length === 0) return;
 
     const ultimoOrcamento = selectedObraDetalhes.orcamentos[selectedObraDetalhes.orcamentos.length - 1];
-    const cliente = (clientes || []).find(c => c.id === selectedObraDetalhes.clienteId);
+    const cliente = listaClientesCRM.find(c => c.id === selectedObraDetalhes.clienteId);
     const obraParam = selectedObraDetalhes;
 
     try {
@@ -2170,6 +2302,37 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     toast.success('OS aprovada com sucesso.');
   };
 
+  const handleArquivarNegocio = async (obra: any, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm(`Arquivar "${obra.nome}"?\n\nO negócio será removido do Kanban e listado em Negócios → Finalizados.`)) return;
+    await persistirObraAtualizada({
+      ...obra,
+      categoria: 'Arquivado',
+      status: 'Arquivado',
+      dataArquivamento: new Date().toISOString().split('T')[0],
+    });
+    toast.success(`"${obra.nome}" arquivado com sucesso.`);
+  };
+
+  const handleAvancarParaFinalizacao = async () => {
+    if (!selectedObraDetalhes) return;
+
+    const podeFinalizar = possuiOSAprovadaParaFinalizacao(selectedObraDetalhes.id);
+    if (!podeFinalizar) {
+      toast.error('Para avançar para Finalização, a OS precisa estar enviada e aprovada.');
+      return;
+    }
+
+    const obraAtualizada = {
+      ...selectedObraDetalhes,
+      categoria: 'Finalização' as CategoriaObra,
+      status: 'Finalização'
+    };
+
+    await persistirObraAtualizada(obraAtualizada);
+    toast.success('Negócio movido para Finalização.');
+  };
+
   const handleUploadAssinaturaAprovacaoOS = async (osId: string, files: FileList | null) => {
     if (!files || files.length === 0) return;
 
@@ -2207,40 +2370,44 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     return osDoNegocio.some((item: any) => (
       item.statusEnvio === 'enviada'
       && item.statusAprovacao === 'aprovada'
+      && Boolean(item.documentoAssinaturaAprovacao?.conteudo || item.documentoAssinaturaAprovacao?.url)
     ));
   };
 
-  const handleAvancarParaFinalizacao = () => {
-    if (!selectedObraDetalhes) return;
 
-    const podeFinalizar = possuiOSAprovadaParaFinalizacao(selectedObraDetalhes.id);
-    if (!podeFinalizar) {
-      return alert('Para avançar para Finalização é obrigatório ter OS enviada e aprovada.');
-    }
+const obrasOrdenadas = useMemo(() => {
+    return negociosBackend.filter((obra: any) => {
+      if (obra.categoria === 'Arquivado') return false;
+      if (!searchQuery) return true;
 
-    const obraAtualizada = {
-      ...selectedObraDetalhes,
-      categoria: 'Finalização' as CategoriaObra,
-      status: 'Finalização'
-    };
+      const termo = searchQuery.toLowerCase();
+      const cliente = listaClientesCRM.find(c => String(c.id) === String(obra.clienteId));
+      
+      return (
+        obra.nome?.toLowerCase().includes(termo) || 
+        obra.id?.toLowerCase().includes(termo) ||
+        cliente?.razaoSocial?.toLowerCase().includes(termo)
+      );
+    }).map((obra: any) => {
+      // 🚀 BLINDAGEM DE CATEGORIA: Corrige o texto que vem do banco para bater com o ID da coluna
+      let categoriaTratada = String(obra.categoria || '').trim();
+      
+      if (categoriaTratada.toLowerCase().includes('andamento')) {
+        categoriaTratada = 'Em Andamento';
+      } else if (categoriaTratada.toLowerCase().includes('negocia')) {
+        categoriaTratada = 'Negociação';
+      } else if (categoriaTratada.toLowerCase().includes('planeja')) {
+        categoriaTratada = 'Planejamento';
+      } else if (categoriaTratada.toLowerCase().includes('finaliza')) {
+        categoriaTratada = 'Finalização';
+      }
 
-    const obrasAtualizadas = (obras || []).map((item: any) => (
-      item.id === selectedObraDetalhes.id ? obraAtualizada : item
-    ));
-
-    saveEntity('obras', obrasAtualizadas);
-    setSelectedObraDetalhes(obraAtualizada);
-    toast.success('Negócio movido para Finalização.');
-  };
-
-  const obrasOrdenadas = (obras || []).filter((obra: any) => {
-    if (obraTemDocumentoMediacao(obra)) return false;
-
-    if (!searchQuery) return true;
-    const termo = searchQuery.toLowerCase();
-    const clienteNome = (clientes || []).find(c => c.id === obra.clienteId)?.razaoSocial?.toLowerCase() || '';
-    return obra.nome.toLowerCase().includes(termo) || clienteNome.includes(termo);
-  });
+      return {
+        ...obra,
+        categoria: categoriaTratada
+      };
+    });
+}, [negociosBackend, searchQuery, listaClientesCRM]);
 
   const inputClass = "w-full bg-[#0b1220] border border-white/10 p-3 rounded-lg text-white text-sm outline-none focus:border-amber-500 transition-all placeholder:text-white/20";
   const labelClass = "text-[9px] font-black text-white/40 uppercase tracking-widest ml-1 mb-1.5 block";
@@ -2306,7 +2473,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
               <div className="space-y-4 flex-1 overflow-y-auto">
                 {obrasNaColuna.length > 0 ? (
                   obrasNaColuna.map((obra: any) => {
-                    const cliente = (clientes || []).find(c => c.id === obra.clienteId);
+                    const cliente = listaClientesCRM.find(c => c.id === obra.clienteId);
                     const ultimaPropostaCard = Array.isArray(obra.propostas) && obra.propostas.length > 0
                       ? obra.propostas[obra.propostas.length - 1]
                       : null;
@@ -2359,10 +2526,11 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                       >
                         {/* Header com Nome e Badge de Status + Editar */}
                                               <div className="mb-2 space-y-2">
-                        <h4 className="font-black text-white text-sm leading-tight line-clamp-2 break-words">
-                          {obra.nome}{idProjeto && !idProjeto.startsWith('PROJ-') ? <span className="text-cyan-400"> • {idProjeto}</span> : null}
+                        <h4 className="font-black text-white text-sm leading-tight line-clamp-2 break-words uppercase">
+                          {obra.nome} 
+                          {obra.id && <span className="text-cyan-400 ml-1">• {String(obra.id).toUpperCase()}</span>}
                         </h4>
-                          {/* Badge + Botão Editar na Direita */}
+                         {/* Badge + Botão Editar na Direita */}
                           <div className="flex flex-wrap items-center gap-1 sm:gap-1.5">
                             {/* Badge Orçado/Pendente em Planejamento */}
                             {coluna.id === 'Planejamento' && (
@@ -2372,9 +2540,17 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                                     <span className="text-emerald-300 text-[10px] font-black">Orçado</span>
                                   </div>
                                 ) : (
-                                  <div className="px-1.5 py-0.5 bg-amber-500/20 border border-amber-500/40 rounded-full whitespace-nowrap">
-                                    <span className="text-amber-300 text-[10px] font-black">Aguard. orçamento</span>
-                                  </div>
+                                  <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation(); //  Impede que o modal abra
+                                    //  CORREÇÃO: Dispara a mudança de tela para o App.tsx escutar
+                                    window.dispatchEvent(new CustomEvent('mudarTelaERP', { detail: 'orcamentos' }));
+                                  }}
+                                  className="px-1.5 py-0.5 bg-amber-500/20 border border-amber-500/40 rounded-full whitespace-nowrap hover:bg-amber-500/40 hover:scale-105 transition-all cursor-pointer"
+                                  title="Clique para orçar este negócio"
+                                >
+                                  <span className="text-amber-300 text-[10px] font-black">Aguard. orçamento</span>
+                                </button>
                                 )}
                               </>
                             )}
@@ -2435,9 +2611,9 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                           </div>
                         </div>
 
-                        {/* Cliente */}
-                        <p className="text-white/70 text-xs font-bold mb-2 truncate">
-                          {cliente?.razaoSocial}
+                       {/* Altere para buscar a propriedade direta e segura que mapeamos: */}
+                        <p className="text-amber-400 text-xs font-bold mb-2 truncate">
+                          {obra.nomeClienteResolvido}
                         </p>
 
                         {/* Prestador */}
@@ -2592,14 +2768,29 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                                 <p className="text-purple-100 text-xs mt-1">{temOS ? `${osAprovadas} aprovada(s)` : 'Nenhuma OS vinculada'}</p>
                               </div>
 
+                              {(obra.dadosMediacao || obra.finalizadoComMediacao) ? (
+                                <button
+                                  onClick={(e) => handleEditarMediacao(obra, e)}
+                                  className="w-full py-2 rounded-lg bg-gradient-to-r from-amber-500/30 to-orange-500/30 hover:from-amber-500/50 hover:to-orange-500/50 border border-amber-400/40 text-amber-200 text-[11px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5"
+                                >
+                                  <Pencil size={13} /> Editar Medição
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleAbrirDocumentoMediacao(obra);
+                                  }}
+                                  className="w-full py-2 rounded-lg bg-gradient-to-r from-emerald-500/30 to-cyan-500/30 hover:from-emerald-500/50 hover:to-cyan-500/50 border border-emerald-400/40 text-emerald-200 text-[11px] font-black uppercase tracking-wider transition-all"
+                                >
+                                  <FileText size={14} className="inline mr-1" /> Criar Documento de Medição
+                                </button>
+                              )}
                               <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleAbrirDocumentoMediacao(obra);
-                                }}
-                                className="w-full py-2 rounded-lg bg-gradient-to-r from-emerald-500/30 to-cyan-500/30 hover:from-emerald-500/50 hover:to-cyan-500/50 border border-emerald-400/40 text-emerald-200 text-[11px] font-black uppercase tracking-wider transition-all"
+                                onClick={(e) => handleArquivarNegocio(obra, e)}
+                                className="w-full py-2 rounded-lg bg-gradient-to-r from-gray-500/20 to-gray-600/20 hover:from-amber-500/20 hover:to-amber-600/20 border border-gray-500/30 hover:border-amber-400/50 text-gray-300 hover:text-amber-200 text-[11px] font-black uppercase tracking-wider transition-all"
                               >
-                                <FileText size={14} className="inline mr-1" /> Criar Documento de Medição
+                                Arquivar Negócio
                               </button>
                             </div>
                           );
@@ -2703,8 +2894,10 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                       value={formData.clienteId}
                       onChange={e => handleClienteChange(e.target.value)}
                     >
-                      <option value="">Selecione um cliente</option>
-                      {(clientes || []).map(c => (
+                      <option value="" disabled>
+                        {clientesLoading ? 'Carregando clientes...' : 'Selecione um cliente'}
+                      </option>
+                      {listaClientesCRM.map(c => (
                         <option key={c.id} value={c.id}>{c.razaoSocial}</option>
                       ))}
                     </select>
@@ -2973,9 +3166,9 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
               </div>
               )}
 
-              {/* BOTÕES */}
-              <div className="flex gap-4 pt-6 border-t border-white/5">
-                <button 
+              {/* Botões */}
+              <div className="flex gap-4 pt-6 border-t border-white/5 flex-wrap">
+                <button
                   onClick={handleSave}
                   className="flex-1 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-white py-3 rounded-lg font-black uppercase text-sm tracking-widest transition-all shadow-lg shadow-emerald-900/30"
                 >
@@ -3023,7 +3216,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
                     <p className="text-white/50 text-xs mb-1">Cliente</p>
-                    <p className="text-white font-bold">{(clientes || []).find(c => c.id === selectedObraDetalhes.clienteId)?.razaoSocial}</p>
+                    <p className="text-white font-bold">{listaClientesCRM.find(c => c.id === selectedObraDetalhes.clienteId)?.razaoSocial}</p>
                   </div>
                   <div>
                     <p className="text-white/50 text-xs mb-1">Responsável</p>
@@ -3534,12 +3727,139 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                     </p>
 
                     {selectedObraDetalhes.categoria === 'Finalização' && (
-                      <button
-                        onClick={() => handleAbrirDocumentoMediacao(selectedObraDetalhes)}
-                        className="w-full bg-gradient-to-r from-emerald-500/30 to-cyan-500/30 hover:from-emerald-500/50 hover:to-cyan-500/50 border border-emerald-400/40 text-emerald-300 hover:text-emerald-100 rounded-lg py-2.5 font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
-                      >
-                        <FileText size={16} /> Criar Documento de Medição
-                      </button>
+                      (selectedObraDetalhes.dadosMediacao || selectedObraDetalhes.finalizadoComMediacao) ? (
+                        <button
+                          onClick={() => handleEditarMediacao(selectedObraDetalhes, { stopPropagation: () => {} } as any)}
+                          className="w-full bg-gradient-to-r from-amber-500/30 to-orange-500/30 hover:from-amber-500/50 hover:to-orange-500/50 border border-amber-400/40 text-amber-300 hover:text-amber-100 rounded-lg py-2.5 font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                        >
+                          <Pencil size={16} /> Editar Medição
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleAbrirDocumentoMediacao(selectedObraDetalhes)}
+                          className="w-full bg-gradient-to-r from-emerald-500/30 to-cyan-500/30 hover:from-emerald-500/50 hover:to-cyan-500/50 border border-emerald-400/40 text-emerald-300 hover:text-emerald-100 rounded-lg py-2.5 font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                        >
+                          <FileText size={16} /> Criar Documento de Medição
+                        </button>
+                      )
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* SEÇÃO FINALIZAÇÃO — dados da medição + download */}
+              {selectedObraDetalhes.dadosMediacao && (() => {
+                const dm = selectedObraDetalhes.dadosMediacao;
+                const docMediacao = (Array.isArray(selectedObraDetalhes.documentosNegocio)
+                  ? selectedObraDetalhes.documentosNegocio
+                  : []
+                ).filter((d: any) => {
+                  const id = String(d?.id || '').toLowerCase();
+                  const nome = String(d?.nome || '').toLowerCase();
+                  return id.includes('mediacao') || nome.includes('medi');
+                }).sort((a: any, b: any) =>
+                  new Date(b?.dataUpload || 0).getTime() - new Date(a?.dataUpload || 0).getTime()
+                )[0] || null;
+
+                return (
+                  <div className="bg-gradient-to-r from-amber-500/10 to-orange-500/10 rounded-xl p-6 border border-amber-500/30 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-amber-400 font-black text-lg">FINALIZAÇÃO / MEDIÇÃO</h3>
+                      <span className="px-2 py-0.5 bg-amber-500/20 border border-amber-500/40 rounded-full text-amber-300 text-[10px] font-black uppercase">
+                        {selectedObraDetalhes.status || 'Finalizado'}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      {[
+                        ['Empresa', dm.empresa],
+                        ['Cliente', dm.cliente],
+                        ['CNPJ', dm.cnpj],
+                        ['Embarcação', dm.embarcacao],
+                        ['Número BM', dm.numeroBM],
+                        ['Período', dm.periodo],
+                        ['Data Emissão', dm.dataEmissao],
+                        ['Rep. Cliente', dm.representanteCliente],
+                        ['Rep. Linave', dm.representanteLinave],
+                      ].filter(([, v]) => v).map(([label, value]) => (
+                        <div key={label as string}>
+                          <p className="text-white/40 text-[10px] uppercase tracking-widest mb-0.5">{label}</p>
+                          <p className="text-white font-bold text-xs">{value}</p>
+                        </div>
+                      ))}
+                    </div>
+
+                    {Array.isArray(dm.tabelaItens) && dm.tabelaItens.length > 0 && (
+                      <div>
+                        <p className="text-white/40 text-[10px] uppercase tracking-widest mb-2">Itens Medidos</p>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs border-collapse">
+                            <thead>
+                              <tr className="text-white/40 border-b border-white/10">
+                                <th className="text-left pb-1 pr-3 font-bold">Descrição</th>
+                                <th className="text-center pb-1 pr-3 font-bold">Unid.</th>
+                                <th className="text-right pb-1 pr-3 font-bold">Qtd Prev.</th>
+                                <th className="text-right pb-1 pr-3 font-bold">Qtd Real.</th>
+                                <th className="text-right pb-1 font-bold">Val. Unit.</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {dm.tabelaItens.map((item: any, i: number) => (
+                                <tr key={item.id || i} className="border-b border-white/5 text-white/70">
+                                  <td className="py-1.5 pr-3">{item.descricao || '-'}</td>
+                                  <td className="py-1.5 pr-3 text-center">{item.unidade || '-'}</td>
+                                  <td className="py-1.5 pr-3 text-right">{item.quantidadePrevista || '-'}</td>
+                                  <td className="py-1.5 pr-3 text-right">{item.quantidadeRealizada || '-'}</td>
+                                  <td className="py-1.5 text-right">{item.valorUnitario || '-'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {Array.isArray(dm.tabelaRecursos) && dm.tabelaRecursos.length > 0 && (
+                      <div>
+                        <p className="text-white/40 text-[10px] uppercase tracking-widest mb-2">Recursos</p>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs border-collapse">
+                            <thead>
+                              <tr className="text-white/40 border-b border-white/10">
+                                <th className="text-left pb-1 pr-3 font-bold">Função</th>
+                                <th className="text-right pb-1 pr-3 font-bold">Período</th>
+                                <th className="text-right pb-1 font-bold">Horas</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {dm.tabelaRecursos.map((rec: any, i: number) => (
+                                <tr key={rec.id || i} className="border-b border-white/5 text-white/70">
+                                  <td className="py-1.5 pr-3">{rec.funcao || '-'}</td>
+                                  <td className="py-1.5 pr-3 text-right">{rec.periodo || '-'}</td>
+                                  <td className="py-1.5 text-right">{rec.horas || '-'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {docMediacao && (
+                      <div className="flex gap-3 pt-3 border-t border-white/10">
+                        <button
+                          onClick={() => handleVerDocumentoNegocio(docMediacao)}
+                          className="flex-1 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/40 text-blue-300 rounded-lg py-2 font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                        >
+                          <Eye size={14} /> Ver PDF
+                        </button>
+                        <button
+                          onClick={() => handleDownloadDocumento(docMediacao)}
+                          className="flex-1 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 rounded-lg py-2 font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                        >
+                          <Download size={14} /> Download
+                        </button>
+                      </div>
                     )}
                   </div>
                 );
@@ -3861,7 +4181,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       {/* MODAL - PROPOSTA COMPLETA */}
       {showPropostaFullModal && selectedObraDetalhes?.propostas && selectedObraDetalhes.propostas.length > 0 && (() => {
         const ultimaProposta = selectedObraDetalhes.propostas[selectedObraDetalhes.propostas.length - 1];
-        const cliente = (clientes || []).find(c => c.id === selectedObraDetalhes.clienteId);
+        const cliente = listaClientesCRM.find(c => c.id === selectedObraDetalhes.clienteId);
         const idProjetoModal = extrairIdProjetoDoNumero(ultimaProposta.numeroProposta || '');
         return (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -3888,7 +4208,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div>
                       <p className="text-white/50 text-xs mb-1">Cliente</p>
-                      <p className="text-white font-bold">{(clientes || []).find(c => c.id === selectedObraDetalhes.clienteId)?.razaoSocial}</p>
+                      <p className="text-white font-bold">{listaClientesCRM.find(c => c.id === selectedObraDetalhes.clienteId)?.razaoSocial}</p>
                     </div>
                     <div>
                       <p className="text-white/50 text-xs mb-1">Negócio</p>
@@ -4143,7 +4463,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div>
                       <p className="text-white/50 text-xs mb-1">Cliente</p>
-                      <p className="text-white font-bold">{(clientes || []).find(c => c.id === selectedObraDetalhes.clienteId)?.razaoSocial}</p>
+                      <p className="text-white font-bold">{listaClientesCRM.find(c => c.id === selectedObraDetalhes.clienteId)?.razaoSocial}</p>
                     </div>
                     <div>
                       <p className="text-white/50 text-xs mb-1">Projeto</p>
@@ -4492,7 +4812,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       {/* MODAL - ORÇAMENTO COMPLETO */}
       {showOrcamentoFullModal && selectedObraDetalhes?.orcamentos && selectedObraDetalhes.orcamentos.length > 0 && (() => {
         const ultimoOrcamento = selectedObraDetalhes.orcamentos[selectedObraDetalhes.orcamentos.length - 1];
-        const cliente = (clientes || []).find(c => c.id === selectedObraDetalhes.clienteId);
+        const cliente = listaClientesCRM.find(c => c.id === selectedObraDetalhes.clienteId);
         const idProjetoOrc = selectedObraDetalhes.id || '';
         return (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -4785,7 +5105,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       )}
 
       {/* MODAL - EDITAR NEGÓCIO (apenas em Planejamento) */}
-      {showEditModal && editingObra && (() => {
+      {showEditModal && editingObra && ((): React.ReactNode => {
         const idProjetoEdit = editingObra.id || '';
         return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -4827,7 +5147,8 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                       type="text"
                       className={`${inputClass} bg-white/5 cursor-not-allowed`}
                       disabled
-                      value={(clientes || []).find(c => c.id === editingObra.clienteId)?.razaoSocial || ''}
+                      //  Correção do String() para não quebrar a busca
+                      value={listaClientesCRM.find(c => String(c.id) === String(editingObra.clienteId))?.razaoSocial || ''}
                     />
                   </div>
 
@@ -4836,7 +5157,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                     <input 
                       type="text"
                       className={inputClass}
-                      value={editingObra.responsavelTecnico}
+                      value={editingObra.responsavelTecnico || ''} // Travas de segurança adicionadas
                       onChange={e => setEditingObra({...editingObra, responsavelTecnico: e.target.value})}
                     />
                   </div>
@@ -4846,7 +5167,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                     <input 
                       type="text"
                       className={inputClass}
-                      value={editingObra.responsavelComercial}
+                      value={editingObra.responsavelComercial || ''} // Travas de segurança adicionadas
                       onChange={e => setEditingObra({...editingObra, responsavelComercial: e.target.value})}
                     />
                   </div>
@@ -4857,7 +5178,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                   <input 
                     type="text"
                     className={inputClass}
-                    value={editingObra.tipo}
+                    value={editingObra.tipo || ''} //  Travas de segurança adicionadas
                     onChange={e => setEditingObra({...editingObra, tipo: e.target.value})}
                   />
                 </div>
@@ -4869,16 +5190,17 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                       type="tel"
                       className={inputClass}
                       placeholder="Telefone"
-                      value={editingObra.telefone}
+                      value={editingObra.telefone || ''} //  Travas de segurança adicionadas
                       onChange={e => setEditingObra({...editingObra, telefone: e.target.value})}
                     />
                     <input 
                       type="email"
                       className={inputClass}
                       placeholder="Email"
-                      value={editingObra.email}
+                      value={editingObra.email || ''} //  Travas de segurança adicionadas
                       onChange={e => setEditingObra({...editingObra, email: e.target.value})}
                     />
+
                   </div>
                 </div>
 
@@ -4946,6 +5268,16 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                 >
                   <FileText size={16} /> Alterar Arquivos
                 </button>
+
+                  {/* BOTÃO DE EXCLUIR ADICIONADO AQUI */}
+                <button 
+                  onClick={() => handleDeleteNegocio(editingObra.negocioBackendId)}
+                  className="px-6 bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300 py-3 rounded-lg font-black uppercase text-sm tracking-widest transition flex items-center gap-2"
+                >
+                  <X size={16} /> Excluir
+                </button>
+                {/* --------------------------------- */}
+
                 <button 
                   onClick={handleSaveEditObra}
                   className="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-400 hover:to-blue-500 text-white py-3 rounded-lg font-black uppercase text-sm tracking-widest transition-all shadow-lg shadow-blue-900/30"
@@ -4963,7 +5295,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
           </div>
         </div>
         );
-      })}
+      })()}
     </div>
   );
 }

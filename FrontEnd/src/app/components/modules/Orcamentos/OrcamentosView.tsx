@@ -1,8 +1,14 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { gerarIdOrcamento, extrairIdProjetoDoNumero, extrairComponentesDoId } from '../../../context/ErpContext';
 import { Plus, X, DollarSign, FileText, Trash2, Lock, Eye, Download } from 'lucide-react';
 import jsPDF from 'jspdf';
+import {
+  buildOrcamentoPayload,
+  createOrcamento
+} from '../../../../services/comercial';
+
+import { getNegocios, getClientes, getOrdensPorNegocio } from '../../../../services/comercialService';
 import { getBackendUrl } from '../../../../services/network';
 
 interface MaoDeObra {
@@ -62,11 +68,83 @@ interface OrcamentosViewProps {
   searchQuery: string;
 }
 
+const parseNumber = (value: any): number => {
+  if (value === null || value === undefined) return NaN;
+  if (typeof value === 'number') return value;
+  let s = String(value).trim();
+  if (!s) return NaN;
+  
+  // Lida com formatos brasileiros: '.' como separador de milhar e ',' como decimal
+  if (s.includes(',') && s.includes('.')) {
+    s = s.replace(/\./g, '').replace(',', '.');
+  } else if (s.includes(',')) {
+    s = s.replace(',', '.');
+  }
+  
+  // Remover espaços residuais
+  s = s.replace(/\s+/g, '');
+  const n = parseFloat(s);
+  return isNaN(n) ? NaN : n;
+};
+
+
 export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
-  const { obras, clientes, saveEntity } = useErp();
-  const listaClientes = Array.isArray(clientes) ? clientes : [];
+  const { obras, saveEntity } = useErp() as any;
+  const [listaClientesOrc, setListaClientesOrc] = useState<any[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [selectedObra, setSelectedObra] = useState<any>(null);
+  const [loadingData, setLoadingData] = useState(false);
+  const [saving, setSaving] = useState(false);
+ 
+
+
+    useEffect(() => {
+    const carregarDadosSQL = async () => {
+      setLoadingData(true);
+      try {
+        // 2. Busca os clientes
+        const clientesBackend = await getClientes();
+        const clientesMapa: any = {};
+        if (Array.isArray(clientesBackend)) {
+          setListaClientesOrc(clientesBackend);
+          clientesBackend.forEach((c: any) => { clientesMapa[c.id] = c; });
+        }
+
+        // 3. Busca os negócios (projetos)
+        const dados = await getNegocios();
+        if (Array.isArray(dados)) {
+          const formatados = dados.map((n: any) => ({
+            id: `ID ${n.id}`,
+            nome: n.nome_negocio,
+            clienteId: n.cliente || n.cliente_id || n.clienteId,
+            nomeCliente: (clientesMapa[n.cliente]?.razaoSocial || clientesMapa[n.cliente]?.razao_social) || '',
+            empresaPrestadora: n.empresa_prestadora || 'Linave',
+            categoria: n.categoria || 'Planejamento',
+            status: n.status || 'Aguardando orçamento',
+            solicitante: n.solicitante,
+            requerReorcamento: n.requer_reorcamento !== undefined ? n.requer_reorcamento : true,
+            orcamentoRealizado: n.orcamento_realizado || false,
+            servicos: n.servicos || [],
+            negocioBackendId: n.id,
+            orcamentos: n.orcamentos || [],
+            propostas: n.propostas || [],
+            documentosNegocio: n.documentos || n.arquivos || [],
+            dataPrevistaInicio: n.data_prevista_inicio || null,
+            dataPrevistaFinal: n.data_prevista_final || null,
+          }));
+
+          // 4. Salva apenas UMA VEZ no contexto global
+          saveEntity('obras', formatados);
+        }
+      } catch (error) {
+        console.error("Erro ao carregar dados do SQL:", error);
+      } finally {
+        setLoadingData(false);
+      }
+    };
+
+    carregarDadosSQL();
+  }, []); // A dependência vazia [] é o que trava a execução apenas para a montagem inicial.
 
   const indexToVersaoAlfabetica = (index: number) => {
     if (index < 0) return 'A';
@@ -125,14 +203,16 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   const getInitialOrcamentoData = () => ({
     numeroOrcamento: `LN-0001A/${new Date().getFullYear().toString().slice(-2)}`,
     solicitante: '',
-    responsavelComercial: '',
     escopoOrcamento: '',
     documentosReferencia: '',
     dadosServicos: [] as ServicoOrcamento[],
-    maoDeObra: [{ id: '1', funcao: 'Encarregado', quantidade: '', dias: '', custoUnitDia: '', valorTotal: '0.00', observacao: '' }],
-    atividades: [{ id: '1', atividade: 'Levantamento / Inspeção', dias: '', observacao: '' }],
-    materiais: [{ id: '1', descricao: 'Consumível ou material', unidade: 'un', quantidade: '', pesoFator: '', custoUnit: '', valorTotal: '0.00', observacao: '', origemTerceiros: 'Nao' as const }] as Material[],
-    terceirizados: [{ id: '1', descricao: 'Jateamento / pintura terceirizada', unidade: 'serv', quantidade: '', pesoFator: '1', custoUnit: '', valorTotal: '0.00', observacao: '' }],
+    equipamento: '',
+    supervisor: '',
+    centroCusto: '',
+    maoDeObra: [{ id: '1', funcao: '', quantidade: '', dias: '', custoUnitDia: '', valorTotal: '0.00', observacao: '' }],
+    atividades: [{ id: '1', atividade: '', dias: '', observacao: '' }],
+    materiais: [{ id: '1', descricao: '', unidade: 'un', quantidade: '', pesoFator: '', custoUnit: '', valorTotal: '0.00', observacao: '', origemTerceiros: 'Nao' as const }] as Material[],
+    terceirizados: [{ id: '1', descricao: '', unidade: 'serv', quantidade: '', pesoFator: '1', custoUnit: '', valorTotal: '0.00', observacao: '' }],
     observacoes: '',
     margem: '15',
     oh: '5',
@@ -188,7 +268,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
         || ultimoOrcamento.status === 'pendente_reorcamento'
         || obra.requerReorcamento;
     })
-    .sort((a: any, b: any) => {
+    .sort((a: any, b: any) => { 
       const ultimoA = obterUltimoOrcamento(a);
       const ultimoB = obterUltimoOrcamento(b);
       const prioridadeA = a.requerReorcamento || ultimoA?.status === 'pendente_reorcamento' ? 0 : (ultimoA?.status === 'recusado' ? 1 : 2);
@@ -211,7 +291,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     );
   });
 
-  const handleSelectObra = (obra: any) => {
+  const handleSelectObra = async (obra: any) => {
     if (!isOrcamentoEditavel(obra)) {
       alert('Este orçamento está imutável. Apenas projetos em Planejamento podem receber novo orçamento.');
       return;
@@ -243,7 +323,8 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       .map((s) => `• Serviço ${s.ordem}: ${s.tipo || 'Sem tipo'}${s.categoria ? ` (${s.categoria})` : ''}${s.localExecucao ? ` em ${s.localExecucao}` : ''}${s.prazoDes ? ` | Prazo: ${s.prazoDes}` : ''}`)
       .join('\n');
     
-    const baseData = reorcamentoPendente && ultimoOrcamento?.data
+    // Sempre aproveita o último orçamento disponível para pré-preencher o formulário
+    const baseData = ultimoOrcamento?.data
       ? { ...getInitialOrcamentoData(), ...ultimoOrcamento.data }
       : getInitialOrcamentoData();
 
@@ -252,6 +333,15 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     const prefixo = componentesId?.prefixo || 'LN';
     const numeroServico = componentesId?.numero || '0001';
 
+    // Busca ordens de serviço vinculadas ao negócio para preencher campos adicionais
+    let ordem = null;
+    try {
+      const ordens = await getOrdensPorNegocio(obra.negocioBackendId || (obra.id && parseInt(String(obra.id).replace(/[^0-9]/g, ''))));
+      if (Array.isArray(ordens) && ordens.length > 0) ordem = ordens[0];
+    } catch (err) {
+      console.warn('Falha ao buscar ordens de serviço para preencher campos extras:', err);
+    }
+
     setOrcamentoData({
       ...baseData,
       numeroOrcamento: reorcamentoPendente
@@ -259,41 +349,240 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
         : gerarIdOrcamento(prefixo, numeroServico, proximaVersao),
       escopoOrcamento: servicosInfo,
       solicitante: obra.solicitante || baseData.solicitante || '',
-      responsavelComercial: obra.responsavelComercial || baseData.responsavelComercial || '',
+      equipamento: ordem?.equipamento || obra.equipamento || baseData.equipamento || '',
+      supervisor: ordem?.supervisor_encarregado || ordem?.supervisor || obra.supervisor || baseData.supervisor || '',
+      centroCusto: ordem?.cc || ordem?.centro_custo || obra.centroCusto || baseData.centroCusto || '',
       dadosServicos
     });
+    // Preencher valores financeiros caso exista último orçamento
+    if (ultimoOrcamento?.valores) {
+      setOrcamentoData(prev => ({
+        ...prev,
+        margem: String(ultimoOrcamento.valores.margem ?? prev.margem),
+        oh: String(ultimoOrcamento.valores.oh ?? prev.oh),
+        impostos: String(ultimoOrcamento.valores.impostos ?? prev.impostos),
+        quantidadeItensProduzidos: String(ultimoOrcamento.valores.quantidadeItensProduzidos ?? prev.quantidadeItensProduzidos)
+      }));
+    }
     
     setShowForm(true);
   };
 
-  const handleSaveOrcamento = () => {
+  const formatApiErrorMessage = (error: any) => {
+    if (!error) return 'Falha na integração com backend.';
+    const responseData = error?.response?.data;
+
+    if (responseData) {
+      if (typeof responseData === 'string') return responseData;
+      if (responseData.detail) return String(responseData.detail);
+      if (responseData.error) return String(responseData.error);
+      if (typeof responseData === 'object') {
+        try {
+          return JSON.stringify(responseData);
+        } catch {
+          return String(responseData);
+        }
+      }
+    }
+
+    return error?.message || 'Falha na integração com backend.';
+  };
+
+  const handleSaveOrcamento = async (finalizar = false) => {
     if (!selectedObra) return alert("Nenhum projeto selecionado.");
     if (!isOrcamentoEditavel(selectedObra)) {
       return alert('Não é possível alterar orçamento após Planejamento.');
     }
 
-    const orcamentosExistentes = normalizarOrcamentos(selectedObra);
-    const ultimoOrcamento = orcamentosExistentes.length > 0 ? orcamentosExistentes[orcamentosExistentes.length - 1] : null;
-    const reorcamentoPendente = Boolean(selectedObra.requerReorcamento && ultimoOrcamento?.status === 'pendente_reorcamento');
-    const proximaVersao = reorcamentoPendente
-      ? formatarVersaoOrcamento(ultimoOrcamento?.versao)
-      : proximaVersaoOrcamento(orcamentosExistentes);
+    // Validações básicas
+    if (!orcamentoData.numeroOrcamento.trim()) {
+      alert("Número do orçamento é obrigatório.");
+      return;
+    }
+    if (!orcamentoData.solicitante.trim()) {
+      alert("Solicitante é obrigatório.");
+      return;
+    }
+    if (!orcamentoData.escopoOrcamento.trim()) {
+      alert("Escopo do orçamento é obrigatório.");
+      return;
+    }
 
-    // Calcular valores
-    const totalMaoDeObra = orcamentoData.maoDeObra.reduce((sum: number, item: any) => sum + (parseDecimal(item.valorTotal) || 0), 0);
-    const totalMateriais = orcamentoData.materiais.reduce((sum: number, item: any) => sum + (parseDecimal(item.valorTotal) || 0), 0);
-    const totalTerceirizados = orcamentoData.terceirizados.reduce((sum: number, item: any) => sum + (parseDecimal(item.valorTotal) || 0), 0);
-    const totalBruto = totalMaoDeObra + totalMateriais + totalTerceirizados;
-    const margemPercentual = parseDecimal(orcamentoData.margem) || 0;
-    const ohPercentual = parseDecimal(orcamentoData.oh) || 0;
-    const impostosPercentual = parseDecimal(orcamentoData.impostos) || 0;
-    const margemValor = (totalBruto * margemPercentual) / 100;
-    const ohValor = (totalBruto * ohPercentual) / 100;
-    const totalSemImposto = totalBruto + margemValor + ohValor;
-    const impostoValor = (totalSemImposto * impostosPercentual) / 100;
-    const precoFinal = totalSemImposto + impostoValor;
-    const quantidadeItensProduzidos = Number(orcamentoData.quantidadeItensProduzidos) || 0;
-    const valorPorUnidade = quantidadeItensProduzidos > 0 ? precoFinal / quantidadeItensProduzidos : 0;
+    // Validar se há pelo menos uma linha em mão de obra
+   // ==========================================
+    // VALIDACAO: MÃO DE OBRA (MDO)
+    // ==========================================
+    if (orcamentoData.maoDeObra.length === 0 || orcamentoData.maoDeObra.every(item => !item.funcao.trim())) {
+      alert("É necessário informar pelo menos uma função de mão de obra.");
+      return;
+    }
+
+  
+
+    console.debug('Validação MDO - estado atual:', orcamentoData.maoDeObra);
+
+    for (const item of orcamentoData.maoDeObra) {
+      const hasFuncao = !!(item.funcao && String(item.funcao).trim());
+      const qVal = parseNumber(item.quantidade);
+      const diasVal = parseNumber(item.dias);
+      const custoVal = parseNumber(item.custoUnitDia);
+
+      // Considera preenchido se tiver função E algum valor numérico populado,
+      // ou se o usuário alterou a função padrão "Encarregado" para outra coisa.
+      const deFatoPreenchido = hasFuncao && (Number.isFinite(qVal) || Number.isFinite(diasVal) || Number.isFinite(custoVal));
+
+      if (deFatoPreenchido || (hasFuncao && item.funcao !== 'Encarregado')) {
+        if (!hasFuncao) {
+          alert("Função é obrigatória para todos os itens de mão de obra preenchidos.");
+          return;
+        }
+        if (!Number.isFinite(qVal) || qVal <= 0) {
+          alert(`Quantidade deve ser um número maior que 0 para a função "${item.funcao}".`);
+          return;
+        }
+        if (!Number.isFinite(diasVal) || diasVal <= 0) {
+          alert(`Dias deve ser um número maior que 0 para a função "${item.funcao}".`);
+          return;
+        }
+        if (!Number.isFinite(custoVal) || custoVal <= 0) {
+          alert(`Custo unitário por dia deve ser um número maior que 0 para a função "${item.funcao}".`);
+          return;
+        }
+      }
+    }
+
+    // ==========================================
+    // VALIDAÇÃO: CONSUMÍVEIS E MATERIAIS
+    // ==========================================
+    for (const item of orcamentoData.materiais) {
+      if (isMaterialRowFilled(item)) {
+        if (!item.descricao.trim()) {
+          alert("Descrição é obrigatória para todos os itens de materiais preenchidos.");
+          return;
+        }
+        if (!item.unidade.trim()) {
+          alert(`A unidade é obrigatória para o material "${item.descricao}".`);
+          return;
+        }
+        const matQ = parseNumber(item.quantidade);
+        if (isNaN(matQ) || matQ <= 0) {
+          alert(`Quantidade deve ser um número maior que 0 para o material "${item.descricao}".`);
+          return;
+        }
+        const matC = parseNumber(item.custoUnit);
+        if (isNaN(matC) || matC <= 0) {
+          alert(`Custo unitário deve ser um número maior que 0 para o material "${item.descricao}".`);
+          return;
+        }
+      }
+    }
+
+    // ==========================================
+    // VALIDAÇÃO: SERVIÇOS TERCEIRIZADOS
+    // ==========================================
+    for (const item of orcamentoData.terceirizados) {
+      if (isTerceirizadoRowFilled(item)) {
+        if (!item.descricao.trim()) {
+          alert("Descrição é obrigatória para todos os itens terceirizados preenchidos.");
+          return;
+        }
+        if (!item.unidade.trim()) {
+          alert(`A unidade é obrigatória para o serviço terceirizado "${item.descricao}".`);
+          return;
+        }
+        const terQ = parseNumber(item.quantidade);
+        if (isNaN(terQ) || terQ <= 0) {
+          alert(`Quantidade deve ser um número maior que 0 para o serviço terceirizado "${item.descricao}".`);
+          return;
+        }
+        const terC = parseNumber(item.custoUnit);
+        if (isNaN(terC) || terC <= 0) {
+          alert(`Custo unitário deve ser um número maior que 0 para o serviço terceirizado "${item.descricao}".`);
+          return;
+        }
+      }
+    }
+
+    // ==========================================
+    // VALIDAÇÃO: ATIVIDADES PREVISTAS
+    // ==========================================
+    for (const item of orcamentoData.atividades) {
+      if (isAtividadeRowFilled(item)) {
+        if (!item.atividade.trim()) {
+          alert("Atividade é obrigatória para todos os itens de atividades preenchidos.");
+          return;
+        }
+        const actDias = parseNumber(item.dias);
+        if (isNaN(actDias) || actDias <= 0) {
+          alert(`Dias deve ser um número maior que 0 para a atividade "${item.atividade}".`);
+          return;
+        }
+      }
+    }
+
+    // Validar itens de materiais
+    for (const item of orcamentoData.materiais) {
+      if (isMaterialRowFilled(item)) {
+        if (!item.descricao.trim()) {
+          alert("Descrição é obrigatória para todos os itens de materiais preenchidos.");
+          return;
+        }
+        if (!item.unidade.trim()) {
+          alert("Unidade é obrigatória para todos os itens de materiais preenchidos.");
+          return;
+        }
+        const matQ = parseNumber(item.quantidade);
+        if (isNaN(matQ) || matQ <= 0) {
+          alert("Quantidade deve ser um número maior que 0 para itens de materiais.");
+          return;
+        }
+        const matC = parseNumber(item.custoUnit);
+        if (isNaN(matC) || matC <= 0) {
+          alert("Custo unitário deve ser um número maior que 0 para itens de materiais.");
+          return;
+        }
+      }
+    }
+
+    setSaving(true);
+    try {
+      // Use the backend IDs that were stored when the negócio was loaded from the DB.
+      // This avoids expensive findOrCreate round-trips and duplicate records.
+      const negocioId = selectedObra.negocioBackendId || extrairIdProjetoDoNumero(selectedObra.id);
+      const clienteId = Number(selectedObra.clienteId);
+
+      if (!negocioId || !clienteId) {
+        alert("Não foi possível identificar o negócio ou cliente no banco. Recarregue a página e tente novamente.");
+        setSaving(false);
+        return;
+      }
+
+      const payloadBase = buildOrcamentoPayload(orcamentoData, selectedObra, negocioId, clienteId);
+      const payloadCompleto = { ...payloadBase, finalizar };
+
+      await createOrcamento(payloadCompleto);
+
+      const orcamentosExistentes = normalizarOrcamentos(selectedObra);
+      const ultimoOrcamento = orcamentosExistentes.length > 0 ? orcamentosExistentes[orcamentosExistentes.length - 1] : null;
+      const reorcamentoPendente = Boolean(selectedObra.requerReorcamento && ultimoOrcamento?.status === 'pendente_reorcamento');
+      const proximaVersao = reorcamentoPendente
+        ? formatarVersaoOrcamento(ultimoOrcamento?.versao)
+        : proximaVersaoOrcamento(orcamentosExistentes);
+
+      const totalMaoDeObra = orcamentoData.maoDeObra.reduce((sum: number, item: any) => sum + (parseDecimal(item.valorTotal) || 0), 0);
+      const totalMateriais = orcamentoData.materiais.reduce((sum: number, item: any) => sum + (parseDecimal(item.valorTotal) || 0), 0);
+      const totalTerceirizados = orcamentoData.terceirizados.reduce((sum: number, item: any) => sum + (parseDecimal(item.valorTotal) || 0), 0);
+      const totalBruto = totalMaoDeObra + totalMateriais + totalTerceirizados;
+      const margemPercentual = parseDecimal(orcamentoData.margem) || 0;
+      const ohPercentual = parseDecimal(orcamentoData.oh) || 0;
+      const impostosPercentual = parseDecimal(orcamentoData.impostos) || 0;
+      const margemValor = (totalBruto * margemPercentual) / 100;
+      const ohValor = (totalBruto * ohPercentual) / 100;
+      const totalSemImposto = totalBruto + margemValor + ohValor;
+      const impostoValor = (totalSemImposto * impostosPercentual) / 100;
+      const precoFinal = totalSemImposto + impostoValor;
+      const quantidadeItensProduzidos = Number(orcamentoData.quantidadeItensProduzidos) || 0;
+      const valorPorUnidade = quantidadeItensProduzidos > 0 ? precoFinal / quantidadeItensProduzidos : 0;
 
     // Criar novo orçamento com versão
     const novoOrcamento = {
@@ -321,27 +610,40 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       }
     };
 
-    // Atualizar a obra com o novo orçamento
-    const obraAtualizada = {
-      ...selectedObra,
-      requerReorcamento: false,
-      orcamentoRealizado: true,
-      orcamentos: reorcamentoPendente
-        ? [...orcamentosExistentes.slice(0, -1), novoOrcamento]
-        : [...orcamentosExistentes, novoOrcamento]
-    };
+      const obraAtualizada = {
+        ...selectedObra,
+        requerReorcamento: false,
+        orcamentoRealizado: true,
+        categoria: finalizar ? 'Negociação' : selectedObra.categoria,
+        status: finalizar ? 'Negociação' : (selectedObra.status || 'Aguardando orçamento'),
+        orcamentos: reorcamentoPendente
+          ? [...orcamentosExistentes.slice(0, -1), novoOrcamento]
+          : [...orcamentosExistentes, novoOrcamento]
+      };
 
-    const obrasAtualizadas = obras?.map((o: any) => o.id === selectedObra.id ? obraAtualizada : o) || [];
-    saveEntity('obras', obrasAtualizadas);
+      const obrasAtualizadas = obras?.map((o: any) => o.id === selectedObra.id ? obraAtualizada : o) || [];
+      saveEntity('obras', obrasAtualizadas);
 
-    alert("Orçamento salvo com sucesso! Projeto mantido em Planejamento.");
-    setShowForm(false);
-    setSelectedObra(null);
-    setOrcamentoData(getInitialOrcamentoData());
+      alert(finalizar ? "Orçamento concluído com sucesso! Negócio movido para Negociação." : "Orçamento salvo com sucesso! Projeto mantido em Planejamento.");
+      setShowForm(false);
+      setSelectedObra(null);
+      setOrcamentoData(getInitialOrcamentoData());
+    } catch (error: any) {
+      console.error("Erro ao salvar orçamento:", error);
+      const errorMessage = formatApiErrorMessage(error);
+      alert(`Erro ao salvar orçamento: ${errorMessage}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSalvarOrcamentoClick = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    await handleSaveOrcamento(false);
   };
 
   const handleConcluirOrcamento = () => {
-    handleSaveOrcamento();
+    handleSaveOrcamento(true);
   };
 
   const abrirDocumentoNegocio = (documento: any) => {
@@ -475,9 +777,9 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
         doc.setTextColor(0, 0, 0);
       };
 
-      // Cabeçalho compacto
+     // Cabeçalho compacto
       let x = margin;
-      const cliente = listaClientes.find(c => c.id === obraParam.clienteId);
+      const cliente = listaClientesOrc.find((c: any) => String(c.id) === String(obraParam.clienteId));
       drawCell(x, y, baseColWidth, cellHeight, 'Cliente:', true);
       x += baseColWidth;
       drawCell(x, y, baseColWidth * 3, cellHeight, cliente?.razaoSocial || '');
@@ -900,9 +1202,43 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   };
 
   const recalcularTerceirizadoItem = (item: Terceirizado): Terceirizado => {
-    const pesoFator = String(item.pesoFator ?? '').trim() === '' ? 1 : parseDecimal(item.pesoFator);
+    const pf = parseDecimal(String(item.pesoFator ?? '').trim());
+    const pesoFator = pf <= 0 ? 1 : pf;
     const total = parseDecimal(item.quantidade) * pesoFator * parseDecimal(item.custoUnit);
     return { ...item, valorTotal: toMoneyString(total) };
+  };
+
+  const isMaterialRowFilled = (item: Material) => {
+    const descricao = String(item.descricao || '').trim();
+    const observacao = String(item.observacao || '').trim();
+    const isPlaceholderDescricao = descricao === 'Consumível ou material';
+    const hasMeaningfulValue =
+      (descricao !== '' && !isPlaceholderDescricao) ||
+      item.quantidade !== '' ||
+      item.custoUnit !== '' ||
+      item.pesoFator !== '' ||
+      observacao !== '';
+
+    return hasMeaningfulValue;
+  };
+
+  const isTerceirizadoRowFilled = (item: Terceirizado) => {
+    const descricao = String(item.descricao || '').trim();
+    const observacao = String(item.observacao || '').trim();
+    const isPlaceholderDescricao = descricao === 'Jateamento / pintura terceirizada';
+    return (descricao !== '' && !isPlaceholderDescricao) ||
+      item.quantidade !== '' ||
+      item.custoUnit !== '' ||
+      observacao !== '';
+  };
+
+  const isAtividadeRowFilled = (item: Atividade) => {
+    const atividade = String(item.atividade || '').trim();
+    const observacao = String(item.observacao || '').trim();
+    const isPlaceholderAtividade = atividade === 'Levantamento / Inspeção';
+    return (atividade !== '' && !isPlaceholderAtividade)
+      || item.dias !== ''
+      || observacao !== '';
   };
 
   const updateMaoDeObraItem = (id: string, changes: Partial<MaoDeObra>) => {
@@ -1031,7 +1367,8 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
             {projetosAOrcar.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {projetosAOrcar.map((obra: any) => {
-                  const cliente = listaClientes.find((c: any) => c.id === obra.clienteId);
+                  const nomeExibicaoCliente = obra.nomeCliente || obra.nome_cliente || obra.cliente_nome || "Cliente Identificado";
+
                   const ultimoOrcamento = obterUltimoOrcamento(obra);
                   const reorcamentoArquivos = obra.requerReorcamento || ultimoOrcamento?.status === 'pendente_reorcamento';
                   const idProjetoOrc = Array.isArray(obra.propostas) && obra.propostas.length > 0
@@ -1047,7 +1384,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                         <div className="flex justify-between items-start gap-3">
                           <div className="flex-1">
                             <h3 className="text-lg font-black text-white uppercase line-clamp-2">{obra.nome} {idProjetoOrc && <span className="text-cyan-400">• {idProjetoOrc}</span>}</h3>
-                            <p className="text-amber-400 text-sm font-bold mt-1">{cliente?.razaoSocial || 'Cliente Desconhecido'}</p>
+                            <p className="text-amber-400 text-sm font-bold mt-1">{nomeExibicaoCliente}</p>
                           </div>
                           <span className="px-3 py-1 bg-blue-500/20 text-blue-400 rounded-full text-xs font-black whitespace-nowrap">
                             {reorcamentoArquivos || ultimoOrcamento?.status === 'recusado' ? 'Reorçar' : 'A Orçar'}
@@ -1109,7 +1446,8 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
               
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {obrasComOrcamentos.map((obra: any) => {
-                  const cliente = listaClientes.find((c: any) => c.id === obra.clienteId);
+                  // Lendo como String para não dar falso negativo
+                  const cliente = listaClientesOrc.find((c: any) => String(c.id) === String(obra.clienteId));
                   const orcamentos = normalizarOrcamentos(obra);
                   const ultimoOrcamento = orcamentos[orcamentos.length - 1];
                   const precoFinalHistorico = Number(ultimoOrcamento?.valores?.precoFinal ?? 0);
@@ -1187,22 +1525,30 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
 
           {/* SECTION 1: LEVANTAMENTO DE ORÇAMENTO */}
           <div className="bg-gradient-to-r from-blue-500/10 to-purple-500/10 rounded-2xl border border-blue-500/20 p-8">
-            <h2 className="text-2xl font-black text-white uppercase mb-6">Levantamento de Orçamento</h2>
+            <div className="mb-6">
+              <h2 className="text-2xl font-black text-white uppercase tracking-tight">
+                Levantamento de Orçamento: <span className="text-amber-400">{selectedObra?.nome}</span>
+              </h2>
+              {/* EXIBE O NOME DO CLIENTE LOGO ABAIXO DO TÍTULO */}
+              <p className="text-amber-500/80 font-bold text-sm uppercase tracking-widest mt-1">
+                Cliente: {selectedObra?.nomeCliente || "Não identificado"}
+              </p>
+            </div>
 
             {/* Dados do Negócio */}
-            <div className="grid grid-cols-5 gap-4 mb-6">
+            <div className="grid grid-cols-4 gap-4 mb-6">
               <div className="space-y-1.5">
                 <label className={labelClass}>Cliente</label>
-                <input type="text" className={inputClass} disabled value={listaClientes.find(c => c.id === selectedObra?.clienteId)?.razaoSocial || ''} />
+                <input type="text" className={inputClass} disabled value={selectedObra?.nomeCliente || ''} />
               </div>
               <div className="space-y-1.5">
                 <label className={labelClass}>Negócio</label>
                 <input type="text" className={inputClass} disabled value={selectedObra?.nome || ''} />
               </div>
               <div className="space-y-1.5">
-                <label className={labelClass}>Solicitante</label>
-                <input 
-                  type="text" 
+                <label className={labelClass}>Solicitante <span className="text-red-400">*</span></label>
+                <input
+                  type="text"
                   className={inputClass}
                   value={orcamentoData.solicitante}
                   onChange={e => setOrcamentoData({...orcamentoData, solicitante: e.target.value})}
@@ -1210,19 +1556,9 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                 />
               </div>
               <div className="space-y-1.5">
-                <label className={labelClass}>Responsável Comercial</label>
-                <input 
-                  type="text" 
-                  className={inputClass}
-                  value={orcamentoData.responsavelComercial}
-                  onChange={e => setOrcamentoData({...orcamentoData, responsavelComercial: e.target.value})}
-                  placeholder="Nome"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label className={labelClass}>Nº Orçamento</label>
-                <input 
-                  type="text" 
+                <label className={labelClass}>Nº Orçamento <span className="text-red-400">*</span></label>
+                <input
+                  type="text"
                   className={inputClass}
                   value={orcamentoData.numeroOrcamento}
                   onChange={e => setOrcamentoData({...orcamentoData, numeroOrcamento: e.target.value})}
@@ -1240,10 +1576,44 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
               </div>
             )}
 
+            {/* Campos adicionais: equipamento, supervisor e centro de custo (auto-preenchidos via OS) */}
+            <div className="grid grid-cols-3 gap-4 mb-6">
+              <div className="space-y-1.5">
+                <label className={labelClass}>Equipamento</label>
+                <input
+                  type="text"
+                  className={inputClass}
+                  value={orcamentoData.equipamento || ''}
+                  onChange={e => setOrcamentoData({...orcamentoData, equipamento: e.target.value})}
+                  placeholder="Ex: Plataforma"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className={labelClass}>Superv./Encarreg.</label>
+                <input
+                  type="text"
+                  className={inputClass}
+                  value={orcamentoData.supervisor || ''}
+                  onChange={e => setOrcamentoData({...orcamentoData, supervisor: e.target.value})}
+                  placeholder="Nome"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className={labelClass}>Centro de Custo (CC)</label>
+                <input
+                  type="text"
+                  className={inputClass}
+                  value={orcamentoData.centroCusto || ''}
+                  onChange={e => setOrcamentoData({...orcamentoData, centroCusto: e.target.value})}
+                  placeholder="Centro de Custo"
+                />
+              </div>
+            </div>
+
             {/* Escopo e Documentos */}
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
-                <label className={labelClass}>Escopo do Orçamento</label>
+                <label className={labelClass}>Escopo do Orçamento <span className="text-red-400">*</span></label>
                 <textarea 
                   className={`${inputClass} h-24 resize-none`}
                   value={orcamentoData.escopoOrcamento}
@@ -1615,7 +1985,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
 
             <div className="grid grid-cols-3 gap-4 mb-6">
               <div className="space-y-1.5">
-                <label className={labelClass}>Margem (%)</label>
+                <label className={labelClass}>Margem (%) <span className="text-red-400">*</span></label>
                 <input 
                   type="number" 
                   className={inputClass}
@@ -1624,7 +1994,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                 />
               </div>
               <div className="space-y-1.5">
-                <label className={labelClass}>O.H (%)</label>
+                <label className={labelClass}>O.H (%) <span className="text-red-400">*</span></label>
                 <input 
                   type="number" 
                   className={inputClass}
@@ -1633,7 +2003,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                 />
               </div>
               <div className="space-y-1.5">
-                <label className={labelClass}>Impostos (%)</label>
+                <label className={labelClass}>Impostos (%) <span className="text-red-400">*</span></label>
                 <input 
                   type="number" 
                   className={inputClass}
@@ -1703,10 +2073,11 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
           {/* SEÇÃO 8: BOTÕES DE AÇÃO */}
           <div className="flex gap-4">
             <button 
-              onClick={handleSaveOrcamento}
-              className="flex-1 bg-white/10 hover:bg-white/20 text-white py-3 rounded-lg font-black uppercase text-sm tracking-widest transition border border-white/20"
+              onClick={handleSalvarOrcamentoClick}
+              disabled={saving}
+              className="flex-1 bg-white/10 hover:bg-white/20 text-white py-3 rounded-lg font-black uppercase text-sm tracking-widest transition border border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Salvar Orçamento
+              {saving ? 'Salvando...' : 'Salvar Orçamento'}
             </button>
             <button 
               onClick={handleConcluirOrcamento}
@@ -1715,14 +2086,15 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
               <Lock size={16} className="inline mr-2" /> Concluir Orçamento
             </button>
           </div>
+
+          <div className="text-center mt-4">
+            <p className="text-white/50 text-xs">
+              <span className="text-red-400">*</span> Campos obrigatórios
+            </p>
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-// Função para abrir o documento gerado
-const visualizarDocumento = (filename: string) => {
-  const url = getBackendUrl(`visualizar/${filename}/`);
-  window.open(url, '_blank');
-};

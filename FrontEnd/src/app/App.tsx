@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect  } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { CadastroCompletoView } from './components/modules/Configuracoes/CadastroCompletoView';
@@ -62,6 +62,13 @@ export default function App() {
   const { userSession, setUserSession, config, loading } = useErp();
   const [activeSection, setActiveSection] = useState('dashboard');
   const [searchQuery, setSearchQuery] = useState('');
+
+  //  Escuta o evento customizado para mudar a tela a partir de qualquer componente
+  useEffect(() => {
+    const handleNavegacao = (e: any) => setActiveSection(e.detail);
+    window.addEventListener('mudarTelaERP', handleNavegacao);
+    return () => window.removeEventListener('mudarTelaERP', handleNavegacao);
+  }, []);
 
   // 1. Tela de Carregamento
   if (loading) {
