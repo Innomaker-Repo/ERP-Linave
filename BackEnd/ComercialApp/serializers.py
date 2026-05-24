@@ -1,10 +1,11 @@
+import re
 from decimal import Decimal
 from rest_framework import serializers
 from .models import (
     Cliente, Negocio, Servico, User,
     Levantamento, MDO, Ativ_prevista, Material, 
     Servico_terceirizado, Orcamento, Resumo_orcamento,
-    OrdenServico, Workspace, normalize_workspace_data,
+    OrdemServico, Workspace, normalize_workspace_data,
     Escopo, PropostaComercial
 )
 
@@ -144,6 +145,7 @@ class PropostaComercialResumoSerializer(serializers.ModelSerializer):
     responsabilidadeContratante = serializers.CharField(source='responsabilidade_contratante', read_only=True)
     condicoesGerais = serializers.CharField(source='condicoes_gerais', read_only=True)
     condicoesPagamento = serializers.CharField(source='condicoes_pagamento', read_only=True)
+    versao = serializers.SerializerMethodField()
 
     class Meta:
         model = PropostaComercial
@@ -152,8 +154,15 @@ class PropostaComercialResumoSerializer(serializers.ModelSerializer):
             'cliente', 'negocio', 'referencias', 'saudacao', 'assunto', 'textoAbertura',
             'responsabilidadeContratada', 'responsabilidadeContratante', 'preco',
             'condicoesGerais', 'condicoesPagamento', 'prazo', 'encerramento',
-            'escopoA', 'escopoBasicoServicos'
+            'escopoA', 'escopoBasicoServicos', 'versao'
         ]
+
+    def get_versao(self, obj):
+        if obj.numero_proposta:
+            match = re.search(r'-\d+([A-Z]+)/', obj.numero_proposta)
+            if match:
+                return match.group(1)
+        return 'A'
 
     def get_escopoA(self, obj):
         first = obj.proposta_escopo.first()
@@ -178,13 +187,18 @@ class PropostaComercialSerializer(serializers.ModelSerializer):
     negocio_detalhes = NegocioResumoSerializer(source='negocio', read_only=True)
     numeroProposta = serializers.CharField(source='numero_proposta', required=False, allow_blank=True)
     status = serializers.CharField(required=False, allow_blank=True)
-    motivoRecusaProposta = serializers.CharField(source='motivo_recusa', required=False, allow_blank=True)
-    referencias = serializers.CharField(source='referencia', required=False, allow_blank=True)
-    textoAbertura = serializers.CharField(source='texto_de_abertura', required=False, allow_blank=True)
-    responsabilidadeContratada = serializers.CharField(source='responsabilidade_contratada', required=False, allow_blank=True)
-    responsabilidadeContratante = serializers.CharField(source='responsabilidade_contratante', required=False, allow_blank=True)
-    condicoesGerais = serializers.CharField(source='condicoes_gerais', required=False, allow_blank=True)
-    condicoesPagamento = serializers.CharField(source='condicoes_pagamento', required=False, allow_blank=True)
+    motivoRecusaProposta = serializers.CharField(source='motivo_recusa', required=False, allow_blank=True, allow_null=True)
+    referencias = serializers.CharField(source='referencia', required=False, allow_blank=True, default='')
+    saudacao = serializers.CharField(required=False, allow_blank=True, default='')
+    assunto = serializers.CharField(required=False, allow_blank=True, default='')
+    textoAbertura = serializers.CharField(source='texto_de_abertura', required=False, allow_blank=True, default='')
+    responsabilidadeContratada = serializers.CharField(source='responsabilidade_contratada', required=False, allow_blank=True, default='')
+    responsabilidadeContratante = serializers.CharField(source='responsabilidade_contratante', required=False, allow_blank=True, default='')
+    preco = serializers.DecimalField(max_digits=15, decimal_places=2, required=False, default=Decimal('0'))
+    condicoesGerais = serializers.CharField(source='condicoes_gerais', required=False, allow_blank=True, default='')
+    condicoesPagamento = serializers.CharField(source='condicoes_pagamento', required=False, allow_blank=True, default='')
+    prazo = serializers.CharField(required=False, allow_blank=True, default='')
+    encerramento = serializers.CharField(required=False, allow_blank=True, default='')
     proposta_escopo = EscopoSerializer(many=True, read_only=True)
     proposta_escopo_input = EscopoSerializer(source='proposta_escopo', many=True, write_only=True, required=False)
 
@@ -362,10 +376,13 @@ class OrcamentoSerializer(serializers.ModelSerializer):
 
 # --------------------- Ordem de Servico (OS) ---------------------
 
-class OrdenServicoSerializer(serializers.ModelSerializer):
+class OrdemServicoSerializer(serializers.ModelSerializer):
     cliente_detalhes = ClienteSerializer(source='cliente', read_only=True)
     negocio_detalhes = NegocioSerializer(source='negocio', read_only=True)
-    
+    local = serializers.CharField(allow_blank=True, default='')
+    supervisor_encarregado = serializers.CharField(allow_blank=True, default='')
+    descricao_geral_servico = serializers.CharField(allow_blank=True, default='')
+
     cliente_id = serializers.PrimaryKeyRelatedField(
         queryset=Cliente.objects.all(),
         source='cliente',
@@ -380,7 +397,7 @@ class OrdenServicoSerializer(serializers.ModelSerializer):
     )
     
     class Meta:
-        model = OrdenServico
+        model = OrdemServico
         fields = [
             'id', 'numero_os', 'data_emissao',
             'cliente', 'cliente_id', 'cliente_detalhes',
@@ -393,7 +410,7 @@ class OrdenServicoSerializer(serializers.ModelSerializer):
             'data_aprovacao', 'documento_assinatura_aprovacao',
             'created_at', 'updated_at'
         ]
-        read_only_fields = ('id', 'numero_os', 'data_emissao', 'created_at', 'updated_at')
+        read_only_fields = ('id', 'numero_os', 'data_emissao', 'created_at', 'updated_at', 'cliente', 'negocio')
     
     def create(self, validated_data):
         from datetime import datetime
@@ -402,7 +419,7 @@ class OrdenServicoSerializer(serializers.ModelSerializer):
         
         contador = 1
         numero_original = numero_os
-        while OrdenServico.objects.filter(numero_os=numero_os).exists():
+        while OrdemServico.objects.filter(numero_os=numero_os).exists():
             numero_os = f"{numero_original}-{contador}"
             contador += 1
         
@@ -419,11 +436,16 @@ class WorkspaceSerializer(serializers.ModelSerializer):
         return normalize_workspace_data(value)
 
     def create(self, validated_data):
-        validated_data['data'] = normalize_workspace_data(validated_data.get('data', {}))
+        validated_data['data'] = normalize_workspace_data(
+            validated_data.get('data', {})
+        )
         return super().create(validated_data)
 
     def update(self, instance, validated_data):
         if 'data' in validated_data:
-            instance.data = normalize_workspace_data(validated_data['data'])
+            instance.data = normalize_workspace_data(
+                validated_data['data']
+            )
             validated_data.pop('data', None)
+
         return super().update(instance, validated_data)

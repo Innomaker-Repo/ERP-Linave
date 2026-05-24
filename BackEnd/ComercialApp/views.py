@@ -5,13 +5,13 @@ from django.db import transaction
 from .models import (
     Cliente, Negocio, Servico, User,
     Levantamento, MDO, Material, Servico_terceirizado, Orcamento, Ativ_prevista, Resumo_orcamento,
-    OrdenServico, Workspace, normalize_workspace_data, Escopo, PropostaComercial
+    OrdemServico, Workspace, normalize_workspace_data, Escopo, PropostaComercial
 )
 from .serializers import (
     ClienteSerializer, NegocioSerializer, ServicoSerializer, UserSerializer,
     OrcamentoSerializer, LevantamentoSerializer, Resumo_orcamentoSerializer,
     MDOSerializer, MaterialSerializer, Ativ_previstaSerializer, ServicosTerceirizadosSerializer,
-    OrdenServicoSerializer, WorkspaceSerializer, EscopoSerializer, PropostaComercialSerializer
+    OrdemServicoSerializer, WorkspaceSerializer, EscopoSerializer, PropostaComercialSerializer
 )
 from django.http import FileResponse
 from django.conf import settings
@@ -24,6 +24,21 @@ logger = logging.getLogger(__name__)
 class ClienteViewSet(viewsets.ModelViewSet):
     queryset = Cliente.objects.all()
     serializer_class = ClienteSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+        print(serializer.errors)
+
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
 
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
@@ -66,30 +81,32 @@ class NegocioViewSet(viewsets.ModelViewSet):
 
     def list(self, request, *args, **kwargs):
         try:
-            return super().list(request, *args, **kwargs)
+            response = super().list(request, *args, **kwargs)
+            print(f"DEBUG: Enviando {len(response.data)} negócios para o React")
+            return response
         except Exception as e:
-            # Isso vai salvar o erro real em um arquivo chamado 'django_debug.log'
             with open('django_debug.log', 'a') as f:
                 f.write(f"ERRO GET NEGOCIOS: {str(e)}\n")
-            raise e # Relança o erro para o Django tratar
+            raise
 
     @transaction.atomic
     def create(self, request, *args, **kwargs):
-        # 1. Pega os serviços da requisição
-        servicos_data = request.data.pop('servicos', [])
-        
-        # 2. Garante que o tipo_servico tenha um valor seguro caso falhe
-        if 'tipo_servico' not in request.data:
-            request.data['tipo_servico'] = servicos_data[0].get('tipo', 'Não informado') if servicos_data else 'Não informado'
+        # 1. Work on a mutable copy so we can pop without touching the original
+        data = request.data.copy()
+        servicos_data = data.pop('servicos', [])
 
-        # 3. Salva o Negócio
-        serializer = self.get_serializer(data=request.data)
+        # 2. Ensure tipo_servico has a safe fallback value
+        if 'tipo_servico' not in data:
+            data['tipo_servico'] = servicos_data[0].get('tipo', 'Não informado') if servicos_data else 'Não informado'
+
+        # 3. Save the Negocio (without servicos — they're handled separately)
+        serializer = self.get_serializer(data=data)
         serializer.is_valid(raise_exception=True)
         negocio = serializer.save()
 
         servicos_objs = []
         for servico in servicos_data:
-            servico['negocio'] = negocio.id
+            servico['negocio'] = negocio.pk
             s_serializer = ServicoSerializer(data=servico)
             s_serializer.is_valid(raise_exception=True)
             s_serializer.save()
@@ -121,12 +138,6 @@ class NegocioViewSet(viewsets.ModelViewSet):
                 
         return Response(serializer.data)
     
-    def list(self, request, *args, **kwargs):
-        response = super().list(request, *args, **kwargs)
-        # DEBUG: Verifique se aparece no terminal do Django quando você abre o CRM
-        print(f"DEBUG: Enviando {len(response.data)} negócios para o React")
-        return response
-    
 #ORÇAMENTOS
 # --- Funções Customizadas ---
 @api_view(['GET'])
@@ -147,42 +158,28 @@ def criar_orcamento(request):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Garantir que campos FK usem os nomes _id do Django
         cliente_id = lev_data.get('cliente_id') or lev_data.get('cliente')
         negocio_id = lev_data.get('negocio_id') or lev_data.get('negocio')
-        levantamento_defaults = {
-            **lev_data,
-            'cliente_id': cliente_id,
-            'negocio_id': negocio_id
-        }
 
-        # Remover campos duplicados que podem gerar conflito
-        levantamento_defaults.pop('cliente', None)
-        levantamento_defaults.pop('negocio', None)
+        if not negocio_id:
+            return Response({'error': 'negocio_id é obrigatório no levantamento.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Busca ou cria o levantamento
         levantamento_instance, _ = Levantamento.objects.get_or_create(
             negocio_id=negocio_id,
-            defaults=levantamento_defaults
+            defaults={'cliente_id': cliente_id, 'negocio_id': negocio_id}
         )
 
-        # 2. Resumo (Sempre cria um novo resumo ou atualiza o vinculado)
-        resumo_data = request.data.get('resumo')
         numero_orcamento = request.data.get('numeroOrcamento') or request.data.get('numero_orcamento') or ''
         versao = request.data.get('versao', 'A')
         status_orcamento = request.data.get('status', 'pendente')
         data_criacao = request.data.get('dataCriacao') or request.data.get('data_criacao')
         data_recusa = request.data.get('dataRecusa') or request.data.get('data_recusa')
+        resumo_data = request.data.get('resumo') or {}
 
-        # 3. Orçamento Pai (ESTA ERA A PARTE QUE TINHA SUMIDO)
+        # 2. Orçamento Pai — criado ANTES do Resumo (FK aponta de Resumo para Orcamento)
         orcamento_instance = Orcamento.objects.filter(levantamento=levantamento_instance).first()
-        
-        if orcamento_instance:
-            # Se já existe, atualizamos o resumo, as observações e metadados
-            res_serializer = Resumo_orcamentoSerializer(orcamento_instance.resumo, data=resumo_data)
-            res_serializer.is_valid(raise_exception=True)
-            resumo_instance = res_serializer.save()
 
+        if orcamento_instance:
             orcamento_instance.numero_orcamento = numero_orcamento or orcamento_instance.numero_orcamento
             orcamento_instance.versao = versao or orcamento_instance.versao
             orcamento_instance.status = status_orcamento or orcamento_instance.status
@@ -192,40 +189,55 @@ def criar_orcamento(request):
                 orcamento_instance.data_recusa = data_recusa
             orcamento_instance.observacoes_setor_orcamento = request.data.get('observacoes', '')
             orcamento_instance.save()
-            
-            # Limpamos os itens antigos
-            orcamento_instance.mao_de_obra.all().delete()
-            orcamento_instance.materiais.all().delete()
-            orcamento_instance.terceirizados.all().delete()
-            orcamento_instance.atividades.all().delete()
         else:
-            # Se não existe, criamos do zero
-            res_serializer = Resumo_orcamentoSerializer(data=resumo_data)
-            res_serializer.is_valid(raise_exception=True)
-            resumo_instance = res_serializer.save()
-            
-            orcamento_instance = Orcamento.objects.create(
-                levantamento=levantamento_instance,
-                resumo=resumo_instance,
-                observacoes_setor_orcamento=request.data.get('observacoes', ''),
-                numero_orcamento=numero_orcamento,
-                versao=versao,
-                status=status_orcamento,
-                data_criacao=data_criacao if data_criacao else None,
-                data_recusa=data_recusa if data_recusa else None
-            )
+            create_kwargs = {
+                'levantamento': levantamento_instance,
+                'observacoes_setor_orcamento': request.data.get('observacoes', ''),
+                'numero_orcamento': numero_orcamento,
+                'versao': versao,
+                'status': status_orcamento,
+            }
+            if data_criacao:
+                create_kwargs['data_criacao'] = data_criacao
+            if data_recusa:
+                create_kwargs['data_recusa'] = data_recusa
+            orcamento_instance = Orcamento.objects.create(**create_kwargs)
 
-        # 4. Itens (Looping para salvar as novas listas)
+        # 3. Resumo — criado/atualizado DEPOIS do Orçamento
+        resumo_defaults = {
+            'margem': resumo_data.get('margem', 0),
+            'OH': resumo_data.get('OH', resumo_data.get('oh', 0)),
+            'impostos': resumo_data.get('impostos', 0),
+            'qnt': resumo_data.get('qnt', resumo_data.get('quantidadeItensProduzidos', 1)),
+        }
+        resumo_instance = getattr(orcamento_instance, 'resumo', None)
+        if resumo_instance:
+            for field, value in resumo_defaults.items():
+                setattr(resumo_instance, field, value)
+            resumo_instance.save()
+        else:
+            Resumo_orcamento.objects.create(orcamento=orcamento_instance, **resumo_defaults)
+
+        # 4. Limpeza e recriação dos itens
+        orcamento_instance.mao_de_obra.all().delete()
+        orcamento_instance.materiais.all().delete()
+        orcamento_instance.terceirizados.all().delete()
+        orcamento_instance.atividades.all().delete()
+
         for item in request.data.get('mao_de_obra', []):
-            MDO.objects.create(orcamento=orcamento_instance, **item)
+            safe = {k: v for k, v in item.items() if k not in ('id', 'orcamento')}
+            MDO.objects.create(orcamento=orcamento_instance, **safe)
         for item in request.data.get('materiais', []):
-            Material.objects.create(orcamento=orcamento_instance, **item)
+            safe = {k: v for k, v in item.items() if k not in ('id', 'orcamento')}
+            Material.objects.create(orcamento=orcamento_instance, **safe)
         for item in request.data.get('terceirizados', []):
-            Servico_terceirizado.objects.create(orcamento=orcamento_instance, **item)
+            safe = {k: v for k, v in item.items() if k not in ('id', 'orcamento')}
+            Servico_terceirizado.objects.create(orcamento=orcamento_instance, **safe)
         for item in request.data.get('atividades', []):
-            if 'duração' in item and 'duracao' not in item:
-                item['duracao'] = item.pop('duração')
-            Ativ_prevista.objects.create(orcamento=orcamento_instance, **item)
+            safe = {k: v for k, v in item.items() if k not in ('id', 'orcamento')}
+            if 'duração' in safe and 'duracao' not in safe:
+                safe['duracao'] = safe.pop('duração')
+            Ativ_prevista.objects.create(orcamento=orcamento_instance, **safe)
 
         finalizar = request.data.get('finalizar', False)
         if isinstance(finalizar, str):
@@ -234,31 +246,32 @@ def criar_orcamento(request):
         if finalizar and negocio_id:
             try:
                 negocio_vinculado = Negocio.objects.get(id=negocio_id)
-                negocio_vinculado.categoria = 'Negociação' # Move o card de coluna
-                negocio_vinculado.status = 'Orçamento Finalizado' # Muda o texto do badge
+                negocio_vinculado.categoria = 'Negociação'
+                negocio_vinculado.status = 'Orçamento Finalizado'
                 negocio_vinculado.orcamento_realizado = True
                 negocio_vinculado.requer_reorcamento = False
                 negocio_vinculado.save()
             except Negocio.DoesNotExist:
                 pass
 
+        orcamento_instance.refresh_from_db()
         response_data = {
             "message": "Orçamento finalizado com sucesso!" if finalizar else "Orçamento salvo com sucesso!",
             "orcamento_id": orcamento_instance.id,
             "orcamento": OrcamentoSerializer(orcamento_instance).data
         }
-        return Response(response_data, status=status.HTTP_200_OK if orcamento_instance else status.HTTP_201_CREATED)
+        return Response(response_data, status=status.HTTP_200_OK)
 
 
 # --------------------- Ordem de Servico (OS) ---------------------
 
-class OrdenServicoViewSet(viewsets.ModelViewSet):
+class OrdemServicoViewSet(viewsets.ModelViewSet):
     """
     ViewSet para gerenciar Ordens de Servico (OS)
     Operações: CREATE, READ, UPDATE, DELETE
     """
-    queryset = OrdenServico.objects.select_related('cliente', 'negocio').all()
-    serializer_class = OrdenServicoSerializer
+    queryset = OrdemServico.objects.select_related('cliente', 'negocio').all()
+    serializer_class = OrdemServicoSerializer
     
     def list(self, request, *args, **kwargs):
         """
@@ -384,9 +397,9 @@ def ordens_servico_por_cliente(request, cliente_id):
     """
     try:
         cliente = Cliente.objects.get(id=cliente_id)
-        ordens_servico = OrdenServico.objects.filter(cliente=cliente).order_by('-created_at')
+        ordens_servico = OrdemServico.objects.filter(cliente=cliente).order_by('-created_at')
         
-        serializer = OrdenServicoSerializer(ordens_servico, many=True)
+        serializer = OrdemServicoSerializer(ordens_servico, many=True)
         return Response(
             {
                 "cliente": ClienteSerializer(cliente).data,
@@ -410,9 +423,9 @@ def ordens_servico_por_negocio(request, negocio_id):
     """
     try:
         negocio = Negocio.objects.get(id=negocio_id)
-        ordens_servico = OrdenServico.objects.filter(negocio=negocio).order_by('-created_at')
+        ordens_servico = OrdemServico.objects.filter(negocio=negocio).order_by('-created_at')
         
-        serializer = OrdenServicoSerializer(ordens_servico, many=True)
+        serializer = OrdemServicoSerializer(ordens_servico, many=True)
         return Response(
             {
                 "negocio": NegocioSerializer(negocio).data,
@@ -440,7 +453,7 @@ def atualizar_status_os(request, pk):
     }
     """
     try:
-        ordem_servico = OrdenServico.objects.get(id=pk)
+        ordem_servico = OrdemServico.objects.get(id=pk)
         
         # Atualizar status se fornecido
         if 'status_os' in request.data:
@@ -455,7 +468,7 @@ def atualizar_status_os(request, pk):
         
         ordem_servico.save()
         
-        serializer = OrdenServicoSerializer(ordem_servico)
+        serializer = OrdemServicoSerializer(ordem_servico)
         return Response(
             {
                 "message": "Status da OS atualizado com sucesso!",
@@ -463,7 +476,7 @@ def atualizar_status_os(request, pk):
             },
             status=status.HTTP_200_OK
         )
-    except OrdenServico.DoesNotExist:
+    except OrdemServico.DoesNotExist:
         return Response(
             {"error": "Ordem de Servico não encontrada"},
             status=status.HTTP_404_NOT_FOUND
@@ -505,8 +518,9 @@ class PropostaComercialViewSet(viewsets.ModelViewSet):
         """
         Criar nova proposta comercial com escopos opcionais
         """
-        escopos_data = request.data.pop('proposta_escopo', [])
-        serializer = self.get_serializer(data=request.data)
+        data = request.data.copy()
+        escopos_data = data.pop('proposta_escopo', [])
+        serializer = self.get_serializer(data=data)
         serializer.is_valid(raise_exception=True)
         proposta = serializer.save()
         
