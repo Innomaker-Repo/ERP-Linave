@@ -763,7 +763,6 @@ const createInitialData = (savedData: any) => {
     users: [],
     pendingUsers: [],
     clientes: [],
-    clientes: [],
     funcionarios: [],
     obras: [],
     financeiro: [],

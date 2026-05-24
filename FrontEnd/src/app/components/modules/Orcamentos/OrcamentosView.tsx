@@ -4,13 +4,12 @@ import { gerarIdOrcamento, extrairIdProjetoDoNumero, extrairComponentesDoId } fr
 import { Plus, X, DollarSign, FileText, Trash2, Lock, Eye, Download } from 'lucide-react';
 import jsPDF from 'jspdf';
 import {
-  findOrCreateCliente,
-  findOrCreateNegocio,
   buildOrcamentoPayload,
   createOrcamento
 } from '../../../../services/comercial';
 
 import { getNegocios, getClientes, getOrdensPorNegocio } from '../../../../services/comercialService';
+import { getBackendUrl } from '../../../../services/network';
 
 interface MaoDeObra {
   id: string;
@@ -69,9 +68,29 @@ interface OrcamentosViewProps {
   searchQuery: string;
 }
 
+const parseNumber = (value: any): number => {
+  if (value === null || value === undefined) return NaN;
+  if (typeof value === 'number') return value;
+  let s = String(value).trim();
+  if (!s) return NaN;
+  
+  // Lida com formatos brasileiros: '.' como separador de milhar e ',' como decimal
+  if (s.includes(',') && s.includes('.')) {
+    s = s.replace(/\./g, '').replace(',', '.');
+  } else if (s.includes(',')) {
+    s = s.replace(',', '.');
+  }
+  
+  // Remover espaços residuais
+  s = s.replace(/\s+/g, '');
+  const n = parseFloat(s);
+  return isNaN(n) ? NaN : n;
+};
+
+
 export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
-  const { obras, clientes, saveEntity, saveCliente } = useErp() as any;
-  const listaClientes = Array.isArray(clientes) ? clientes : [];
+  const { obras, saveEntity } = useErp() as any;
+  const [listaClientesOrc, setListaClientesOrc] = useState<any[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [selectedObra, setSelectedObra] = useState<any>(null);
   const [loadingData, setLoadingData] = useState(false);
@@ -79,36 +98,26 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
  
 
 
-    // 1. Verificação de segurança: Não carregue se já houver dados no contexto
     useEffect(() => {
-    // 1. TRAVA DE SEGURANÇA: 
-    // Impede que o useEffect rode se os dados já existirem no contexto global.
-    // Isso elimina o "pisca-pisca" da interface.
-    if (obras && obras.length > 0) return;
-
     const carregarDadosSQL = async () => {
       setLoadingData(true);
       try {
         // 2. Busca os clientes
         const clientesBackend = await getClientes();
-
-// Se o backend retornou dados, salvamos diretamente via saveCliente
-if (clientesBackend && Array.isArray(clientesBackend)) {
-  await saveCliente(clientesBackend);
-}
+        const clientesMapa: any = {};
+        if (Array.isArray(clientesBackend)) {
+          setListaClientesOrc(clientesBackend);
+          clientesBackend.forEach((c: any) => { clientesMapa[c.id] = c; });
+        }
 
         // 3. Busca os negócios (projetos)
         const dados = await getNegocios();
         if (Array.isArray(dados)) {
-          const clientesMapa: any = {};
-          if (Array.isArray(clientesBackend)) {
-            clientesBackend.forEach((c: any) => { clientesMapa[c.id] = c; });
-          }
-
           const formatados = dados.map((n: any) => ({
             id: `ID ${n.id}`,
             nome: n.nome_negocio,
             clienteId: n.cliente || n.cliente_id || n.clienteId,
+            nomeCliente: (clientesMapa[n.cliente]?.razaoSocial || clientesMapa[n.cliente]?.razao_social) || '',
             empresaPrestadora: n.empresa_prestadora || 'Linave',
             categoria: n.categoria || 'Planejamento',
             status: n.status || 'Aguardando orçamento',
@@ -122,7 +131,6 @@ if (clientesBackend && Array.isArray(clientesBackend)) {
             documentosNegocio: n.documentos || n.arquivos || [],
             dataPrevistaInicio: n.data_prevista_inicio || null,
             dataPrevistaFinal: n.data_prevista_final || null,
-            responsavelComercial: (clientesMapa[n.cliente] && (clientesMapa[n.cliente].razao_social || clientesMapa[n.cliente].razaoSocial)) || ''
           }));
 
           // 4. Salva apenas UMA VEZ no contexto global
@@ -195,14 +203,16 @@ if (clientesBackend && Array.isArray(clientesBackend)) {
   const getInitialOrcamentoData = () => ({
     numeroOrcamento: `LN-0001A/${new Date().getFullYear().toString().slice(-2)}`,
     solicitante: '',
-    responsavelComercial: '',
     escopoOrcamento: '',
     documentosReferencia: '',
     dadosServicos: [] as ServicoOrcamento[],
-    maoDeObra: [{ id: '1', funcao: 'Encarregado', quantidade: '', dias: '', custoUnitDia: '', valorTotal: '0.00', observacao: '' }],
-    atividades: [{ id: '1', atividade: 'Levantamento / Inspeção', dias: '', observacao: '' }],
-    materiais: [{ id: '1', descricao: 'Consumível ou material', unidade: 'un', quantidade: '', pesoFator: '', custoUnit: '', valorTotal: '0.00', observacao: '', origemTerceiros: 'Nao' as const }] as Material[],
-    terceirizados: [{ id: '1', descricao: 'Jateamento / pintura terceirizada', unidade: 'serv', quantidade: '', pesoFator: '1', custoUnit: '', valorTotal: '0.00', observacao: '' }],
+    equipamento: '',
+    supervisor: '',
+    centroCusto: '',
+    maoDeObra: [{ id: '1', funcao: '', quantidade: '', dias: '', custoUnitDia: '', valorTotal: '0.00', observacao: '' }],
+    atividades: [{ id: '1', atividade: '', dias: '', observacao: '' }],
+    materiais: [{ id: '1', descricao: '', unidade: 'un', quantidade: '', pesoFator: '', custoUnit: '', valorTotal: '0.00', observacao: '', origemTerceiros: 'Nao' as const }] as Material[],
+    terceirizados: [{ id: '1', descricao: '', unidade: 'serv', quantidade: '', pesoFator: '1', custoUnit: '', valorTotal: '0.00', observacao: '' }],
     observacoes: '',
     margem: '15',
     oh: '5',
@@ -258,7 +268,7 @@ if (clientesBackend && Array.isArray(clientesBackend)) {
         || ultimoOrcamento.status === 'pendente_reorcamento'
         || obra.requerReorcamento;
     })
-    .sort((a: any, b: any) => {
+    .sort((a: any, b: any) => { 
       const ultimoA = obterUltimoOrcamento(a);
       const ultimoB = obterUltimoOrcamento(b);
       const prioridadeA = a.requerReorcamento || ultimoA?.status === 'pendente_reorcamento' ? 0 : (ultimoA?.status === 'recusado' ? 1 : 2);
@@ -339,7 +349,6 @@ if (clientesBackend && Array.isArray(clientesBackend)) {
         : gerarIdOrcamento(prefixo, numeroServico, proximaVersao),
       escopoOrcamento: servicosInfo,
       solicitante: obra.solicitante || baseData.solicitante || '',
-      responsavelComercial: obra.responsavelComercial || baseData.responsavelComercial || '',
       equipamento: ordem?.equipamento || obra.equipamento || baseData.equipamento || '',
       supervisor: ordem?.supervisor_encarregado || ordem?.supervisor || obra.supervisor || baseData.supervisor || '',
       centroCusto: ordem?.cc || ordem?.centro_custo || obra.centroCusto || baseData.centroCusto || '',
@@ -394,10 +403,6 @@ if (clientesBackend && Array.isArray(clientesBackend)) {
       alert("Solicitante é obrigatório.");
       return;
     }
-    if (!orcamentoData.responsavelComercial.trim()) {
-      alert("Responsável comercial é obrigatório.");
-      return;
-    }
     if (!orcamentoData.escopoOrcamento.trim()) {
       alert("Escopo do orçamento é obrigatório.");
       return;
@@ -412,25 +417,7 @@ if (clientesBackend && Array.isArray(clientesBackend)) {
       return;
     }
 
-    // Cole isto fora de qualquer componente, de preferência nas últimas linhas do arquivo
-const parseNumber = (value: any): number => {
-  if (value === null || value === undefined) return NaN;
-  if (typeof value === 'number') return value;
-  let s = String(value).trim();
-  if (!s) return NaN;
   
-  // Lida com formatos brasileiros: '.' como separador de milhar e ',' como decimal
-  if (s.includes(',') && s.includes('.')) {
-    s = s.replace(/\./g, '').replace(',', '.');
-  } else if (s.includes(',')) {
-    s = s.replace(',', '.');
-  }
-  
-  // Remover espaços residuais
-  s = s.replace(/\s+/g, '');
-  const n = parseFloat(s);
-  return isNaN(n) ? NaN : n;
-};
 
     console.debug('Validação MDO - estado atual:', orcamentoData.maoDeObra);
 
@@ -438,7 +425,7 @@ const parseNumber = (value: any): number => {
       const hasFuncao = !!(item.funcao && String(item.funcao).trim());
       const qVal = parseNumber(item.quantidade);
       const diasVal = parseNumber(item.dias);
-      const custoVal = parseNumber(item.custoUnitDia ?? item.custoUnitDay);
+      const custoVal = parseNumber(item.custoUnitDia);
 
       // Considera preenchido se tiver função E algum valor numérico populado,
       // ou se o usuário alterou a função padrão "Encarregado" para outra coisa.
@@ -557,68 +544,21 @@ const parseNumber = (value: any): number => {
       }
     }
 
-    // Validar itens terceirizados
-    for (const item of orcamentoData.terceirizados) {
-      if (isTerceirizadoRowFilled(item)) {
-        if (!item.descricao.trim()) {
-          alert("Descrição é obrigatória para todos os itens terceirizados preenchidos.");
-          return;
-        }
-        if (!item.unidade.trim()) {
-          alert("Unidade é obrigatória para todos os itens terceirizados preenchidos.");
-          return;
-        }
-        const terQ = parseNumber(item.quantidade);
-        if (isNaN(terQ) || terQ <= 0) {
-          alert("Quantidade deve ser um número maior que 0 para itens terceirizados.");
-          return;
-        }
-        const terC = parseNumber(item.custoUnit);
-        if (isNaN(terC) || terC <= 0) {
-          alert("Custo unitário deve ser um número maior que 0 para itens terceirizados.");
-          return;
-        }
-      }
-    }
-
-    // Validar atividades
-    for (const item of orcamentoData.atividades) {
-      if (isAtividadeRowFilled(item)) {
-        if (!item.atividade.trim()) {
-          alert("Atividade é obrigatória para todos os itens de atividades preenchidos.");
-          return;
-        }
-        const actDias = parseNumber(item.dias);
-        if (isNaN(actDias) || actDias <= 0) {
-          alert("Dias deve ser um número maior que 0 para itens de atividades.");
-          return;
-        }
-      }
-    }
-
     setSaving(true);
     try {
-      const clienteOrigem = listaClientes.find((c: any) => String(c.id) === String(selectedObra.clienteId));
-      const clienteBackend = await findOrCreateCliente(clienteOrigem || {
-        tipoPessoa: 'PJ',
-        razaoSocial: selectedObra.cliente || selectedObra.nome || 'Cliente sem nome',
-        nomeFantasia: selectedObra.cliente || selectedObra.nome || '',
-        cpfCnpj: String(selectedObra.clienteId || selectedObra.id || Date.now()),
-        inscricaoEstadual: '',
-        status: 'Ativo',
-        contato_geral: selectedObra.telefone || 'Não informado',
-        endereco_completo: selectedObra.endereco || 'Não informado'
-      });
+      // Use the backend IDs that were stored when the negócio was loaded from the DB.
+      // This avoids expensive findOrCreate round-trips and duplicate records.
+      const negocioId = selectedObra.negocioBackendId || extrairIdProjetoDoNumero(selectedObra.id);
+      const clienteId = Number(selectedObra.clienteId);
 
-      const negocioBackend = await findOrCreateNegocio(selectedObra, clienteBackend.id);
-      const payloadBase = buildOrcamentoPayload(orcamentoData, selectedObra, negocioBackend.id, clienteBackend.id);
+      if (!negocioId || !clienteId) {
+        alert("Não foi possível identificar o negócio ou cliente no banco. Recarregue a página e tente novamente.");
+        setSaving(false);
+        return;
+      }
 
-      const payloadCompleto = {
-        ...payloadBase,
-        contato_geral: clienteBackend.contato || clienteBackend.contato_geral || 'Não informado',
-        endereco_completo: clienteBackend.endereco || clienteBackend.endereco_completo || 'Não informado',
-        finalizar
-      };
+      const payloadBase = buildOrcamentoPayload(orcamentoData, selectedObra, negocioId, clienteId);
+      const payloadCompleto = { ...payloadBase, finalizar };
 
       await createOrcamento(payloadCompleto);
 
@@ -839,7 +779,7 @@ const parseNumber = (value: any): number => {
 
      // Cabeçalho compacto
       let x = margin;
-      const cliente = listaClientes.find(c => String(c.id) === String(obraParam.clienteId));
+      const cliente = listaClientesOrc.find((c: any) => String(c.id) === String(obraParam.clienteId));
       drawCell(x, y, baseColWidth, cellHeight, 'Cliente:', true);
       x += baseColWidth;
       drawCell(x, y, baseColWidth * 3, cellHeight, cliente?.razaoSocial || '');
@@ -1262,7 +1202,8 @@ const parseNumber = (value: any): number => {
   };
 
   const recalcularTerceirizadoItem = (item: Terceirizado): Terceirizado => {
-    const pesoFator = String(item.pesoFator ?? '').trim() === '' ? 1 : parseDecimal(item.pesoFator);
+    const pf = parseDecimal(String(item.pesoFator ?? '').trim());
+    const pesoFator = pf <= 0 ? 1 : pf;
     const total = parseDecimal(item.quantidade) * pesoFator * parseDecimal(item.custoUnit);
     return { ...item, valorTotal: toMoneyString(total) };
   };
@@ -1285,14 +1226,10 @@ const parseNumber = (value: any): number => {
     const descricao = String(item.descricao || '').trim();
     const observacao = String(item.observacao || '').trim();
     const isPlaceholderDescricao = descricao === 'Jateamento / pintura terceirizada';
-    const hasMeaningfulValue =
-      (descricao !== '' && !isPlaceholderDescricao) ||
+    return (descricao !== '' && !isPlaceholderDescricao) ||
       item.quantidade !== '' ||
       item.custoUnit !== '' ||
-      item.pesoFator !== '' ||
       observacao !== '';
-
-    return hasMeaningfulValue;
   };
 
   const isAtividadeRowFilled = (item: Atividade) => {
@@ -1430,13 +1367,7 @@ const parseNumber = (value: any): number => {
             {projetosAOrcar.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {projetosAOrcar.map((obra: any) => {
-                  const arrayClientesSeguro = (clientes && clientes.length > 0) ? clientes : listaClientes;
-                  
-                  //BUSCA ROBUSTA: Tenta todas as combinações de nomes de chaves
-                  const idParaBusca = obra.clienteId || obra.cliente || (typeof obra.cliente === 'object' ? obra.cliente?.id : null);
-                  const clienteEncontrado = arrayClientesSeguro.find((c: any) => String(c.id) === String(idParaBusca));
-                  
-                  const nomeExibicaoCliente = clienteEncontrado?.razaoSocial || obra.nome_cliente || obra.cliente_nome || "Cliente Identificado";
+                  const nomeExibicaoCliente = obra.nomeCliente || obra.nome_cliente || obra.cliente_nome || "Cliente Identificado";
 
                   const ultimoOrcamento = obterUltimoOrcamento(obra);
                   const reorcamentoArquivos = obra.requerReorcamento || ultimoOrcamento?.status === 'pendente_reorcamento';
@@ -1516,7 +1447,7 @@ const parseNumber = (value: any): number => {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {obrasComOrcamentos.map((obra: any) => {
                   // Lendo como String para não dar falso negativo
-                  const cliente = listaClientes.find((c: any) => String(c.id) === String(obra.clienteId));
+                  const cliente = listaClientesOrc.find((c: any) => String(c.id) === String(obra.clienteId));
                   const orcamentos = normalizarOrcamentos(obra);
                   const ultimoOrcamento = orcamentos[orcamentos.length - 1];
                   const precoFinalHistorico = Number(ultimoOrcamento?.valores?.precoFinal ?? 0);
@@ -1600,20 +1531,15 @@ const parseNumber = (value: any): number => {
               </h2>
               {/* EXIBE O NOME DO CLIENTE LOGO ABAIXO DO TÍTULO */}
               <p className="text-amber-500/80 font-bold text-sm uppercase tracking-widest mt-1">
-                Cliente: {
-                  (clientes && clientes.find((c: any) => String(c.id) === String(selectedObra?.clienteId))?.razaoSocial) || 
-                  "Não identificado"
-                }
+                Cliente: {selectedObra?.nomeCliente || "Não identificado"}
               </p>
             </div>
 
             {/* Dados do Negócio */}
-
-            {/* Dados do Negócio */}
-            <div className="grid grid-cols-5 gap-4 mb-6">
+            <div className="grid grid-cols-4 gap-4 mb-6">
               <div className="space-y-1.5">
                 <label className={labelClass}>Cliente</label>
-                <input type="text" className={inputClass} disabled value={listaClientes.find(c => String(c.id) === String(selectedObra?.clienteId))?.razaoSocial || ''} />
+                <input type="text" className={inputClass} disabled value={selectedObra?.nomeCliente || ''} />
               </div>
               <div className="space-y-1.5">
                 <label className={labelClass}>Negócio</label>
@@ -1621,8 +1547,8 @@ const parseNumber = (value: any): number => {
               </div>
               <div className="space-y-1.5">
                 <label className={labelClass}>Solicitante <span className="text-red-400">*</span></label>
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   className={inputClass}
                   value={orcamentoData.solicitante}
                   onChange={e => setOrcamentoData({...orcamentoData, solicitante: e.target.value})}
@@ -1630,19 +1556,9 @@ const parseNumber = (value: any): number => {
                 />
               </div>
               <div className="space-y-1.5">
-                <label className={labelClass}>Responsável Comercial <span className="text-red-400">*</span></label>
-                <input 
-                  type="text" 
-                  className={inputClass}
-                  value={orcamentoData.responsavelComercial}
-                  onChange={e => setOrcamentoData({...orcamentoData, responsavelComercial: e.target.value})}
-                  placeholder="Nome"
-                />
-              </div>
-              <div className="space-y-1.5">
                 <label className={labelClass}>Nº Orçamento <span className="text-red-400">*</span></label>
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   className={inputClass}
                   value={orcamentoData.numeroOrcamento}
                   onChange={e => setOrcamentoData({...orcamentoData, numeroOrcamento: e.target.value})}
@@ -2182,8 +2098,3 @@ const parseNumber = (value: any): number => {
   );
 }
 
-// Função para abrir o documento gerado
-const visualizarDocumento = (filename: string) => {
-  const url = getBackendUrl(`visualizar/${filename}/`);
-  window.open(url, '_blank');
-};

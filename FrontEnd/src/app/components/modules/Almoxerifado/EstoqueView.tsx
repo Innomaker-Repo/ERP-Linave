@@ -465,8 +465,8 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   
   const [isAllocateModalOpen, setIsAllocateModalOpen] = useState(false);
   const [allocations, setAllocations] = useState<GasAllocation[]>(() => {
-    if (storedStock?.allocations && Array.isArray(storedStock.allocations)) {
-      return storedStock.allocations;
+    if (almoxerifado?.allocations && Array.isArray(almoxerifado.allocations)) {
+      return almoxerifado.allocations;
     }
     return [];
   });

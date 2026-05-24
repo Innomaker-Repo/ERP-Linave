@@ -4,8 +4,8 @@ import { useErp } from '../../../context/ErpContext';
 import { getClientes, createCliente, updateCliente, deleteCliente } from '../../../../services/clientes';
 
 export function ClientesView({ searchQuery }: { searchQuery: string }) {
-  const { clientes, obras, saveEntity, userSession } = useErp();
-  const [listaClientes, setListaClientes] = useState<any[]>(Array.isArray(clientes) ? clientes : []);
+  const { obras, userSession } = useErp();
+  const [listaClientes, setListaClientes] = useState<any[]>([]);
   
  //variáveis que controlam os modais e carregamentos
   const [showForm, setShowForm] = useState(false);
@@ -24,19 +24,16 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
       setLoading(true);
       try {
         const clientesBackend = await getClientes();
-        
-        // Salvar no 'saveEntity' já é o suficiente para atualizar a tela automaticamente!
-       if (clientesBackend && clientesBackend.length > 0) {
-             saveEntity('clientes', clientesBackend); 
-          // Se o aviso persistir, não se preocupe, o importante agora é o dado chegar na tela.
+        if (Array.isArray(clientesBackend)) {
+          setListaClientes(clientesBackend);
         }
       } catch (error) {
         console.error('Erro ao carregar clientes:', error);
-     } finally {
+      } finally {
         setLoading(false);
       }
     };
-    
+
     carregarClientes();
   }, []); 
   // Estado inicial com a estrutura exata solicitada
@@ -105,12 +102,6 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
         setListaClientes((prev) => [...prev, clienteAtualizado]);
       }
 
-      // Sincronizar com o contexto local
-      const listaAuxiliar = editMode
-        ? listaClientes.map((c) => c.id === currentCliente.id ? clienteAtualizado : c)
-        : [...listaClientes, clienteAtualizado];
-      saveEntity('clientes', listaAuxiliar);
-
       alert(`Cliente ${editMode ? 'atualizado' : 'cadastrado'} com sucesso!`);
       setShowForm(false);
       setCurrentCliente(initialClienteState);
@@ -130,9 +121,7 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
     setSaving(true);
     try {
       await deleteCliente(id);
-      const listaAtualizada = listaClientes.filter((c: any) => c.id !== id);
-      setListaClientes(listaAtualizada);
-      saveEntity('clientes', listaAtualizada);
+      setListaClientes((prev: any[]) => prev.filter((c: any) => c.id !== id));
       alert('Cliente excluído com sucesso!');
     } catch (error: any) {
       console.error(error);
