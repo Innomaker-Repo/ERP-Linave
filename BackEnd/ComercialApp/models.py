@@ -167,8 +167,6 @@ class Negocio(models.Model):
     tipo_servico = models.CharField(max_length=100, null=True, blank=True) # Recebe o tipo principal do form
 
     data_solicitacao = models.DateField(auto_now_add=True)
-    data_prevista_inicio = models.DateField(null=True, blank=True)
-    data_prevista_final = models.DateField(null=True, blank=True)
     arquivo_documento = models.FileField(upload_to='documentos_negocios/', null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -180,10 +178,10 @@ class Servico(models.Model):
     id = models.BigAutoField(primary_key=True)
     negocio = models.ForeignKey(Negocio, on_delete=models.CASCADE, related_name='servicos')
     tipo_servico = models.CharField(max_length=100) 
-    categoria = models.CharField(max_length=100)    
-    local_execucao = models.CharField(max_length=150) 
+    categoria = models.CharField(max_length=100, null=True, blank=True)    
+    local_execucao = models.CharField(max_length=150, null=True, blank=True) 
     descricao = models.TextField()                 
-    embarcacao = models.CharField(max_length=100)
+    embarcacao = models.CharField(max_length=100, null=True, blank=True)
     porto = models.CharField(max_length=100, null=True, blank=True)
     observacoes = models.TextField(null=True, blank=True)
 
@@ -410,7 +408,7 @@ class Orcamento(models.Model):
     observacoes_setor_orcamento = models.TextField(blank=True, null=True)
     #resumo = models.OneToOneField(Resumo_orcamento, on_delete=models.CASCADE, related_name='orcamento')
     numero_orcamento = models.CharField(max_length=100, blank=True)
-    versao = models.CharField(max_length=10, default='A', blank=True)
+    versao = models.CharField(max_length=10, default='', blank=True)
     status = models.CharField(max_length=50, default='pendente')
     data_criacao = models.DateField(default=timezone.now)
     data_recusa = models.DateField(null=True, blank=True)

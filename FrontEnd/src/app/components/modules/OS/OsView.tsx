@@ -445,8 +445,6 @@ export function OsView({ searchQuery }: OSViewProps) {
 
     const clienteCtx = (clientes || []).find((item: any) => item.id === obra.clienteId);
     const nomeCliente = obra.nomeCliente || clienteCtx?.razaoSocial || clienteCtx?.razao_social || '';
-    const dataInicioNegocio = obra.dataPrevistaInicio || obra.inicioPrevisto || '';
-    const dataTerminoNegocio = obra.dataPrevistaFinal || obra.fimPrevisto || '';
 
     const resumoConsolidado = {
       negocio: {
@@ -489,8 +487,18 @@ export function OsView({ searchQuery }: OSViewProps) {
       return alert('Selecione uma obra para criar a OS.');
     }
 
-    if (!formData.dataInicioPrevisto || !formData.dataTerminoPrevisto) {
-      return alert('Defina as datas previstas no negócio antes de criar a OS.');
+    if (!formData.dataInicioPrevisto) {
+      return alert('Defina a data inicial prevista da OS.');
+    }
+
+    const totalDiasOrcamento = somarDiasDoOrcamento(formData.resumoConsolidado?.orcamento);
+    if (totalDiasOrcamento <= 0) {
+      return alert('Não foi possível calcular a data final porque o orçamento não informa dias suficientes.');
+    }
+
+    const dataTerminoPrevisto = calcularDataTerminoPrevisto(formData.dataInicioPrevisto, totalDiasOrcamento);
+    if (!dataTerminoPrevisto) {
+      return alert('Não foi possível calcular a data final da OS.');
     }
 
     const jaExisteConsolidada = osConsolidadas.some((item) => item.obraId === formData.obraId);
@@ -510,6 +518,7 @@ export function OsView({ searchQuery }: OSViewProps) {
 
     const novaOS: OsFormData = {
       ...formData,
+      dataTerminoPrevisto,
       id: `OS-CONS-${Date.now()}`,
       statusOs: 'emproducao',
       statusEnvio: 'enviada',
@@ -792,8 +801,17 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className={labelClass}>Data Início Previsto</label>
-                    <input type="date" className={`${inputClass} bg-white/5 cursor-not-allowed`} disabled value={formData.dataInicioPrevisto} />
+                    <label className={labelClass}>Data Início Previsto *</label>
+                    <input
+                      type="date"
+                      className={inputClass}
+                      value={formData.dataInicioPrevisto}
+                      onChange={(e) => setFormData((prev) => ({
+                        ...prev,
+                        dataInicioPrevisto: e.target.value,
+                        dataTerminoPrevisto: calcularDataTerminoPrevisto(e.target.value, somarDiasDoOrcamento(prev.resumoConsolidado?.orcamento))
+                      }))}
+                    />
                   </div>
 
                   <div className="space-y-1.5">

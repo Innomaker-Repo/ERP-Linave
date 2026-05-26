@@ -236,7 +236,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     // Se tem dados antigos, converter para novo formato
     if (obra.orcamentoRealizado && obra.orcamentoData && obra.orcamentoValores && orcamentos.length === 0) {
       return [{
-        versao: 'A',
+        versao: '',
         dataCriacao: obra.dataCadastro,
         status: legadoRecusado ? 'recusado' : 'pendente',
         dataRecusa: legadoRecusado ? (obra.dataCadastro || new Date().toISOString().split('T')[0]) : undefined,

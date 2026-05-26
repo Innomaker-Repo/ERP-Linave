@@ -76,10 +76,10 @@ export const sufixoVersaoParaSequencia = (versao: string): number => {
  * Exemplo: 'LN-0731/26' → { prefixo: 'LN', numero: '0731', ano: '26' }
  */
 export const extrairComponentesDoId = (idProjeto: string): { prefixo: string; numero: string; ano: string } | null => {
-  const match = idProjeto.match(/^([A-Z]+)-(\d+)\/(\d+)$/);
+  const match = idProjeto.match(/^(?:([A-Z]+)-)?(\d+)\/(\d+)$/);
   if (match) {
     return {
-      prefixo: match[1],
+      prefixo: match[1] || '',
       numero: match[2],
       ano: match[3]
     };

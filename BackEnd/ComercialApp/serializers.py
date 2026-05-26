@@ -50,7 +50,7 @@ class NegocioResumoSerializer(serializers.ModelSerializer):
             'solicitante', 'cargo', 'telefone', 'email',
             'categoria', 'status', 'orcamento_realizado',
             'requer_reorcamento', 'tipo_servico',
-            'data_solicitacao', 'data_prevista_inicio', 'data_prevista_final'
+            'data_solicitacao'
         ]
 
 class NegocioSerializer(serializers.ModelSerializer):
@@ -162,7 +162,7 @@ class PropostaComercialResumoSerializer(serializers.ModelSerializer):
             match = re.search(r'-\d+([A-Z]+)/', obj.numero_proposta)
             if match:
                 return match.group(1)
-        return 'A'
+        return ''
 
     def get_escopoA(self, obj):
         first = obj.proposta_escopo.first()
@@ -415,12 +415,12 @@ class OrdemServicoSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         from datetime import datetime
         timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-        numero_os = f"OS-{timestamp}"
+        numero_os = timestamp
         
         contador = 1
         numero_original = numero_os
         while OrdemServico.objects.filter(numero_os=numero_os).exists():
-            numero_os = f"{numero_original}-{contador}"
+            numero_os = f"{numero_original}{contador}"
             contador += 1
         
         validated_data['numero_os'] = numero_os
