@@ -130,6 +130,11 @@ export function PropostaView() {
   const [selectedObra, setSelectedObra] = useState<any>(null);
   const [selectedPropostaVersion, setSelectedPropostaVersion] = useState<number | null>(null);
 
+  const proximaVersao = (v: string): string => {
+    const char = (v || 'A').toUpperCase().slice(-1);
+    return char < 'Z' ? String.fromCharCode(char.charCodeAt(0) + 1) : 'AA';
+  };
+
   useEffect(() => {
     const carregar = async () => {
       const [negociosRaw, clientesRaw] = await Promise.all([getNegocios(), getClientes()]);
@@ -647,6 +652,17 @@ export function PropostaView() {
         status: 'Aguardando orçamento',
         requer_reorcamento: true,
       });
+
+      // Incrementa versaoNegocio no contexto global para o kanban refletir
+      const obrasAtuais: any[] = Array.isArray(obras) ? obras : [];
+      const obrasAtualizadas = obrasAtuais.map((o: any) => {
+        if (o.negocioBackendId === obra.backendId || o.id === `ID ${obra.backendId}`) {
+          return { ...o, versaoNegocio: proximaVersao(o.versaoNegocio || 'A') };
+        }
+        return o;
+      });
+      saveEntity('obras', obrasAtualizadas);
+
       await refreshNegocios();
       if (selectedObra?.backendId === obra.backendId) {
         setSelectedObra(null);
