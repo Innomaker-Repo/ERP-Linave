@@ -20,8 +20,6 @@ type NegocioPayload = {
   cargo?: string;
   telefone?: string;
   email: string;
-  data_prevista_inicio?: string | null;
-  data_prevista_final?: string | null;
   servicos?: any[];
 };
 
@@ -146,8 +144,6 @@ export const findOrCreateNegocio = async (obra: any, clienteId: number) => {
     cargo: String(obra.cargo || obra.responsavelComercial || obra.responsavel_comercial || '').trim() || undefined,
     telefone: String(obra.telefone || '').trim() || undefined,
     email: normalizeEmail(obra.email),
-    data_prevista_inicio: obra.dataPrevistaInicio || obra.inicioPrevisto || null,
-    data_prevista_final: obra.dataPrevistaFinal || obra.fimPrevisto || null,
     servicos
   };
 

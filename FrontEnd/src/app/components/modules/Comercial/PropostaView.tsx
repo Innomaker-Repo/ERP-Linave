@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { extrairComponentesDoId, gerarIdProposta, useErp } from '../../../context/ErpContext';
+import { extrairComponentesDoId, gerarIdProjeto, gerarIdProposta, useErp } from '../../../context/ErpContext';
 import { Plus, X, FileText, CheckCircle, XCircle, ArrowLeft, Save, Download } from 'lucide-react';
 import { handleDownloadPropostaPDF } from '../CRM/handleDownloadPropostaPDF';
 import PizZip from 'pizzip';
@@ -82,7 +82,7 @@ const getBase64FromUrl = async (url: string): Promise<string | undefined> => {
 const mapNegocioToObra = (n: any): any => ({
   backendId: n.id,
   clienteBackendId: n.cliente,
-  id: `LN-${String(n.id).padStart(4, '0')}/${new Date().getFullYear().toString().slice(-2)}`,
+  id: gerarIdProjeto(n.empresa_prestadora || 'LN', String(n.id).padStart(4, '0')),
   nome: n.nome_negocio,
   clienteId: n.cliente,
   categoria: n.categoria,
@@ -98,7 +98,7 @@ const mapNegocioToObra = (n: any): any => ({
   })),
   propostas: (n.propostas || []).map((p: any) => ({
     id: p.id,
-    versao: p.versao || 'A',
+    versao: p.versao || '',
     dataCriacao: p.dataCriacao,
     status: p.status,
     numeroProposta: p.numeroProposta,
@@ -132,7 +132,8 @@ export function PropostaView() {
   const [selectedPropostaVersion, setSelectedPropostaVersion] = useState<number | null>(null);
 
   const proximaVersao = (v: string): string => {
-    const char = (v || 'A').toUpperCase().slice(-1);
+    const char = (v || '').toUpperCase().slice(-1);
+    if (!char) return 'A';
     return char < 'Z' ? String.fromCharCode(char.charCodeAt(0) + 1) : 'AA';
   };
 
@@ -425,7 +426,7 @@ export function PropostaView() {
     const cliente = listaClientesLocal.find((c: any) => c.id === obra.clienteId);
 
     const indexVersao = obra.propostas?.length || 0;
-    const proximaVersaoLetra = indexToVersaoAlfabetica(indexVersao);
+    const proximaVersaoLetra = indexVersao === 0 ? '' : indexToVersaoAlfabetica(indexVersao - 1);
 
     const componentesId = extrairComponentesDoId(obra.id);
     const numeroSequencial = componentesId?.numero || '0001';
@@ -460,7 +461,7 @@ export function PropostaView() {
     if (!selectedObra) return;
 
     const indexVersao = selectedObra.propostas?.length || 0;
-    const proximaVersaoLetra = indexToVersaoAlfabetica(indexVersao);
+    const proximaVersaoLetra = indexVersao === 0 ? '' : indexToVersaoAlfabetica(indexVersao - 1);
 
     const componentesId = extrairComponentesDoId(selectedObra.id);
     const numeroSequencial = componentesId?.numero || String(selectedObra.backendId).padStart(4, '0');
@@ -558,7 +559,7 @@ export function PropostaView() {
       doc.render(dataForTemplate);
       const out = doc.getZip().generate({ type: 'blob' });
       saveAs(out, `${propostaForm.numeroProposta || selectedObra.nome || 'proposta'}.docx`);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Erro gerarDocxTemplate:', err);
       const msg = err?.message ? err.message : String(err);
       const details = err?.stack ? `\n\nStack:\n${err.stack}` : '';
@@ -625,7 +626,7 @@ export function PropostaView() {
       const obrasAtuais: any[] = Array.isArray(obras) ? obras : [];
       const obrasAtualizadas = obrasAtuais.map((o: any) => {
         if (o.negocioBackendId === obra.backendId || o.id === `ID ${obra.backendId}`) {
-          return { ...o, versaoNegocio: proximaVersao(o.versaoNegocio || 'A') };
+          return { ...o, versaoNegocio: proximaVersao(o.versaoNegocio || '') };
         }
         return o;
       });

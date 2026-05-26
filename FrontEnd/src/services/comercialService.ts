@@ -1,5 +1,11 @@
 import api from './api';
 
+const normalizeEmail = (value: any): string => {
+    const email = String(value || '').trim();
+    if (email.includes('@')) return email;
+    return 'comercial@linave.com.br';
+};
+
 /**
  * Funções de busca para o CRM e Módulo Comercial
  */
@@ -22,7 +28,12 @@ export const getNegocios = async () => {
 // Cria um novo negócio no Django (POST)
 export const criarNegocio = async (dadosNegocio) => {
     try {
-        const response = await api.post('negocios/', dadosNegocio);
+        const payload = {
+            ...dadosNegocio,
+            email: normalizeEmail(dadosNegocio?.email),
+        };
+
+        const response = await api.post('negocios/', payload);
         return response.data;
     } catch (error) {
         // Log detalhado do erro que volta do Django (ex: campos obrigatórios faltando)

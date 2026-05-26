@@ -19,17 +19,18 @@ export const gerarIdProjeto = (prefixo: string, numeroSequencial: string): strin
 };
 
 /**
- * Gera o ID de proposta no formato: PREFIX-NUMERO+VERSAO/ANO
- * Exemplo: PREFIX='LN', NUMERO='0731', VERSAO='A' → 'LN-0731A/26'
+ * Gera o ID de proposta no formato: PREFIX-NUMERO/ANO ou PREFIX-NUMERO<VERSAO>/ANO.
+ * A primeira versão sai sem sufixo; revisões usam letras (A, B, C...).
  */
-export const gerarIdProposta = (prefixo: string, numeroSequencial: string, versionLetra: string): string => {
+export const gerarIdProposta = (prefixo: string, numeroSequencial: string, versionLetra: string = ''): string => {
   const anoAtual = new Date().getFullYear().toString().slice(-2);
-  return `${prefixo}-${numeroSequencial}${versionLetra}/${anoAtual}`;
+  const sufixoVersao = versionLetra ? versionLetra : '';
+  return `${prefixo}-${numeroSequencial}${sufixoVersao}/${anoAtual}`;
 };
 
 /**
- * Gera o ID de orçamento no formato: PREFIX-NUMERO+VERSAO/ANO
- * Exemplo: PREFIX='LN', NUMERO='0731', VERSAO='A' → 'LN-0731A/26'
+ * Gera o ID de orçamento no formato: PREFIX-NUMERO/ANO ou PREFIX-NUMERO<VERSAO>/ANO.
+ * A primeira versão sai sem sufixo; revisões usam letras (A, B, C...).
  */
 export const gerarIdOrcamento = (prefixo: string, numeroSequencial: string, versionLetra?: string): string => {
   const anoAtual = new Date().getFullYear().toString().slice(-2);
@@ -42,10 +43,10 @@ export const gerarIdOrcamento = (prefixo: string, numeroSequencial: string, vers
  * Exemplo: 'LN-0731/26' → { prefixo: 'LN', numero: '0731', ano: '26' }
  */
 export const extrairComponentesDoId = (idProjeto: string): { prefixo: string; numero: string; ano: string } | null => {
-  const match = idProjeto.match(/^([A-Z]+)-(\d+)\/(\d+)$/);
+  const match = idProjeto.match(/^(?:([A-Z]+)-)?(\d+)\/(\d+)$/);
   if (match) {
     return {
-      prefixo: match[1],
+      prefixo: match[1] || '',
       numero: match[2],
       ano: match[3]
     };
@@ -59,10 +60,11 @@ export const extrairComponentesDoId = (idProjeto: string): { prefixo: string; nu
  */
 export const extrairIdProjetoDoNumero = (numeroCompleto: string): string => {
   // Remove a versão (letra) se existir
-  // Exemplo: "LN-0731A/26" → "LN-0731/26"
-  const match = numeroCompleto.match(/^([A-Z]+)-(\d+)([A-Z])?\/(\d+)$/);
+  // Exemplo: "LN-0731A/26" → "LN-0731/26" e "0731A/26" → "0731/26"
+  const match = numeroCompleto.match(/^(?:([A-Z]+)-)?(\d+)([A-Z])?\/(\d+)$/);
   if (match) {
-    return `${match[1]}-${match[2]}/${match[4]}`;
+    const prefixo = match[1] ? `${match[1]}-` : '';
+    return `${prefixo}${match[2]}/${match[4]}`;
   }
   return numeroCompleto;
 };

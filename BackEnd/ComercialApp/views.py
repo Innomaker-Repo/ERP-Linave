@@ -170,7 +170,7 @@ def criar_orcamento(request):
         )
 
         numero_orcamento = request.data.get('numeroOrcamento') or request.data.get('numero_orcamento') or ''
-        versao = request.data.get('versao', 'A')
+        versao = request.data.get('versao', '')
         status_orcamento = request.data.get('status', 'pendente')
         data_criacao = request.data.get('dataCriacao') or request.data.get('data_criacao')
         data_recusa = request.data.get('dataRecusa') or request.data.get('data_recusa')

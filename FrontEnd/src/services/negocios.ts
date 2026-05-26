@@ -18,8 +18,6 @@ type NegocioPayload = {
   cargo?: string;
   telefone?: string;
   email: string;
-  data_prevista_inicio?: string | null;
-  data_prevista_final?: string | null;
   servicos?: ServicoPayload[];
 };
 
@@ -32,8 +30,6 @@ type NegocioFrontend = {
   cargo?: string;
   telefone?: string;
   email: string;
-  dataPrevistaInicio?: string;
-  dataPrevistaFinal?: string;
   servicos?: any[];
   dataSolicitacao?: string;
   status?: string;
@@ -56,8 +52,6 @@ export const mapNegocioFrontendToBackend = (negocio: NegocioFrontend, clienteId:
   cargo: String(negocio.cargo || '').trim() || undefined,
   telefone: String(negocio.telefone || '').trim() || undefined,
   email: normalizeEmail(negocio.email),
-  data_prevista_inicio: negocio.dataPrevistaInicio || null,
-  data_prevista_final: negocio.dataPrevistaFinal || null,
   servicos: Array.isArray(negocio.servicos) ? negocio.servicos.map(mapServicoFrontendToBackend) : []
 });
 
@@ -73,8 +67,6 @@ export const mapNegocioBackendToFrontend = (negocio: any): NegocioFrontend => ({
   cargo: negocio.cargo || '',
   telefone: negocio.telefone || '',
   email: negocio.email || '',
-  dataPrevistaInicio: negocio.data_prevista_inicio || '',
-  dataPrevistaFinal: negocio.data_prevista_final || '',
   servicos: negocio.servicos || [],
   dataSolicitacao: negocio.data_solicitacao || '',
   status: 'Ativo' // Backend não tem status, assumimos ativo

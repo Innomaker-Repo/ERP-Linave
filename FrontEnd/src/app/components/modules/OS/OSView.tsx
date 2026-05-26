@@ -29,6 +29,24 @@ const getPrefixoEmpresa = (empresaPrestadora?: string) => {
   return empresaPrestadora.toLowerCase().includes('servinave') ? 'SN' : 'LN';
 };
 
+const somarDiasDoOrcamento = (orcamento: any): number => {
+  const atividades = Array.isArray(orcamento?.atividades) ? orcamento.atividades : [];
+  const maoDeObra = Array.isArray(orcamento?.maoDeObra) ? orcamento.maoDeObra : [];
+
+  const totalAtividades = atividades.reduce((soma: number, item: any) => soma + Number(item?.dias || 0), 0);
+  if (totalAtividades > 0) return totalAtividades;
+
+  return maoDeObra.reduce((soma: number, item: any) => soma + Number(item?.dias || 0), 0);
+};
+
+const calcularDataTerminoPrevisto = (dataInicio: string, totalDias: number): string => {
+  if (!dataInicio || !Number.isFinite(totalDias) || totalDias <= 0) return '';
+  const base = new Date(`${dataInicio}T00:00:00`);
+  if (Number.isNaN(base.getTime())) return '';
+  base.setDate(base.getDate() + Math.floor(totalDias));
+  return base.toISOString().split('T')[0];
+};
+
 const formatarEscopoBasicoParaTexto = (escopo: any) => {
   if (!escopo) {
     return '−';
@@ -588,8 +606,6 @@ export function OsView({ searchQuery }: OSViewProps) {
 
     const clienteCtx = (clientes || []).find((item: any) => item.id === obra.clienteId);
     const nomeCliente = obra.nomeCliente || clienteCtx?.razaoSocial || clienteCtx?.razao_social || '';
-    const dataInicioNegocio = obra.dataPrevistaInicio || obra.inicioPrevisto || '';
-    const dataTerminoNegocio = obra.dataPrevistaFinal || obra.fimPrevisto || '';
 
     let ordemServicoNumero = `OS-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 999)).padStart(3, '0')}`;
     if (Array.isArray(obra.propostas) && obra.propostas.length > 0) {
@@ -627,8 +643,8 @@ export function OsView({ searchQuery }: OSViewProps) {
       cliente: nomeCliente,
       projeto: obra.nome || '',
       local: clienteCtx?.endereco || '',
-      dataInicioPrevisto: dataInicioNegocio,
-      dataTerminoPrevisto: dataTerminoNegocio,
+      dataInicioPrevisto: '',
+      dataTerminoPrevisto: '',
       ordemServicoNumero,
       descricaoGeralServico: gerarDescricaoConsolidada(obra, resumoConsolidado.orcamento, resumoConsolidado.proposta),
       horasTrabalhadasPorServico: (Array.isArray(obra.servicos) ? obra.servicos : []).map((servico: any, index: number) => ({
@@ -645,8 +661,18 @@ export function OsView({ searchQuery }: OSViewProps) {
       return alert('Selecione uma obra para criar a OS.');
     }
 
-    if (!formData.dataInicioPrevisto || !formData.dataTerminoPrevisto) {
-      return alert('Defina as datas previstas no negócio antes de criar a OS.');
+    if (!formData.dataInicioPrevisto) {
+      return alert('Defina a data inicial prevista da OS.');
+    }
+
+    const totalDiasOrcamento = somarDiasDoOrcamento(formData.resumoConsolidado?.orcamento);
+    if (totalDiasOrcamento <= 0) {
+      return alert('Não foi possível calcular a data final porque o orçamento não informa dias suficientes.');
+    }
+
+    const dataTerminoPrevisto = calcularDataTerminoPrevisto(formData.dataInicioPrevisto, totalDiasOrcamento);
+    if (!dataTerminoPrevisto) {
+      return alert('Não foi possível calcular a data final da OS.');
     }
 
     const jaExisteConsolidada = osConsolidadas.some((item) => item.obraId === formData.obraId);
@@ -683,6 +709,7 @@ export function OsView({ searchQuery }: OSViewProps) {
 
     const novaOS: OsFormData = {
       ...formData,
+      dataTerminoPrevisto,
       id: `OS-CONS-${Date.now()}`,
       statusOs: 'emproducao',
       statusEnvio: 'enviada',
@@ -705,7 +732,7 @@ export function OsView({ searchQuery }: OSViewProps) {
           local: formData.local || '',
           cc: formData.cc || '',
           data_inicio_previsto: formData.dataInicioPrevisto,
-          data_termino_previsto: formData.dataTerminoPrevisto,
+          data_termino_previsto: dataTerminoPrevisto,
           supervisor_encarregado: formData.supervisorEncarregado || '',
           descricao_geral_servico: formData.descricaoGeralServico || '',
           a_ser_incluido: formData.aSerIncluido,
@@ -1193,8 +1220,17 @@ export function OsView({ searchQuery }: OSViewProps) {
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className={labelClass}>Data Início Previsto</label>
-                    <input type="date" className={`${inputClass} bg-white/5 cursor-not-allowed`} disabled value={formData.dataInicioPrevisto} />
+                    <label className={labelClass}>Data Início Previsto *</label>
+                    <input
+                      type="date"
+                      className={inputClass}
+                      value={formData.dataInicioPrevisto}
+                      onChange={(e) => setFormData((prev) => ({
+                        ...prev,
+                        dataInicioPrevisto: e.target.value,
+                        dataTerminoPrevisto: calcularDataTerminoPrevisto(e.target.value, somarDiasDoOrcamento(prev.resumoConsolidado?.orcamento))
+                      }))}
+                    />
                   </div>
 
                   <div className="space-y-1.5">

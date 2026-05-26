@@ -177,10 +177,10 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
 
     const versaoNumero = Number(versao);
     if (Number.isFinite(versaoNumero) && versaoNumero > 0) {
-      return indexToVersaoAlfabetica(Math.floor(versaoNumero) - 1);
+      return String(Math.floor(versaoNumero));
     }
 
-    return 'A';
+    return '1';
   };
 
   const proximaVersaoOrcamento = (orcamentos: any[] = []) => {
@@ -201,7 +201,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   };
 
   const getInitialOrcamentoData = () => ({
-    numeroOrcamento: `LN-0001A/${new Date().getFullYear().toString().slice(-2)}`,
+    numeroOrcamento: `LN-0001/${new Date().getFullYear().toString().slice(-2)}`,
     solicitante: '',
     escopoOrcamento: '',
     documentosReferencia: '',
@@ -234,7 +234,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     // Se tem dados antigos, converter para novo formato
     if (obra.orcamentoRealizado && obra.orcamentoData && obra.orcamentoValores && orcamentos.length === 0) {
       return [{
-        versao: 'A',
+        versao: '',
         dataCriacao: obra.dataCadastro,
         status: legadoRecusado ? 'recusado' : 'pendente',
         dataRecusa: legadoRecusado ? (obra.dataCadastro || new Date().toISOString().split('T')[0]) : undefined,

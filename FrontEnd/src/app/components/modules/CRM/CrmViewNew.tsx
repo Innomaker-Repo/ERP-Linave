@@ -225,8 +225,6 @@ const initialServico: Servico = {
     telefone: '',
     email: '',
     dataSolicitacao: new Date().toISOString().split('T')[0],
-    dataPrevistaInicio: '',
-    dataPrevistaFinal: '',
     servicos: [{ ...initialServico, id: `servico-${Date.now()}` }],
     fase: 'Pre-Venda' as FaseOS,
     docs: {
@@ -249,8 +247,6 @@ const initialServico: Servico = {
   telefone: '',
   email: '',
   dataSolicitacao: new Date().toISOString().split('T')[0],
-  dataPrevistaInicio: '',
-  dataPrevistaFinal: '',
   servicos: [{ ...initialServico, id: `servico-${Date.now()}` }],
   fase: 'Pre-Venda' as FaseOS,
   docs: {
@@ -313,7 +309,8 @@ const initialServico: Servico = {
           const obrasContextoAtual: any[] = Array.isArray(obras) ? obras : [];
 
           const formatados = dados.map((n: any) => {
-            const idFormatado = `ID ${n.id}`;
+            const prefixo = String(n.empresa_prestadora || '').toLowerCase().includes('servinave') ? 'SN' : 'LN';
+            const idFormatado = `${prefixo}-${String(n.id).padStart(4, '0')}/${String(new Date().getFullYear()).slice(-2)}`;
             const idClienteStr = String(n.cliente || '');
             // Preserva campos frontend-only (dadosMediacao, finalizadoComMediacao, documentosNegocio, etc.)
             const obraExistente = obrasContextoAtual.find(
@@ -356,7 +353,8 @@ const initialServico: Servico = {
   }, []);
 
   const proximaVersao = (v: string): string => {
-    const char = (v || 'A').toUpperCase().slice(-1);
+    const char = (v || '').toUpperCase().slice(-1);
+    if (!char) return 'A';
     return char < 'Z' ? String.fromCharCode(char.charCodeAt(0) + 1) : 'AA';
   };
 
@@ -367,11 +365,11 @@ const initialServico: Servico = {
     const emp = String(obra.empresaPrestadora || '').toLowerCase();
     const prefixo = emp.includes('servinave') ? 'SN'
       : emp.includes('linave') ? 'LN'
-      : String(obra.empresaPrestadora || 'LN').slice(0, 2).toUpperCase();
+      : getPrefixoEmpresa(obra.empresaPrestadora || 'LN');
     const idPadded = String(numericId).padStart(4, '0');
-    const versao = String(obra.versaoNegocio || 'A').toUpperCase();
+    const versao = String(obra.versaoNegocio || '').toUpperCase();
     const ano = String(new Date().getFullYear()).slice(-2);
-    return `${prefixo}-${idPadded}${versao}/${ano}`;
+    return `${prefixo}-${idPadded}${versao ? versao : ''}/${ano}`;
   };
 
   const obraTemDocumentoMediacao = (obra: any) => {
@@ -401,10 +399,10 @@ const initialServico: Servico = {
 
     const versaoNumero = Number(versao);
     if (Number.isFinite(versaoNumero) && versaoNumero > 0) {
-      return indexToVersaoAlfabetica(Math.floor(versaoNumero) - 1);
+      return String(Math.floor(versaoNumero));
     }
 
-    return 'A';
+    return '1';
   };
 
   const formatarEscopoBasicoParaTexto = (escopo: any) => {
@@ -969,7 +967,7 @@ const initialServico: Servico = {
 
     if (obra?.orcamentoRealizado && obra?.orcamentoData && obra?.orcamentoValores) {
       return [{
-        versao: 'A',
+        versao: '',
         dataCriacao: obra.dataCadastro,
         status: 'pendente',
         numeroOrcamento: obra.orcamentoData.numeroOrcamento,
@@ -981,17 +979,17 @@ const initialServico: Servico = {
     return [];
   };
 
-  const persistirObraAtualizada = async (obraAtualizada: any, moverParaTopo = false) => {
+  const persistirObraAtualizada = async (obraAtualizada: any, moverParaTopo = false, payloadUpdate: Record<string, any> | null = null) => {
     try {
       // 1. Monta o payload para o Django
-      const payloadUpdate = {
+      const payloadParaBackend = payloadUpdate || {
         categoria: obraAtualizada.categoria,
         status: obraAtualizada.status,
       };
 
       // 2. Chama a API do Django passando a Chave Primária (negocioBackendId)
       if (obraAtualizada.negocioBackendId) {
-        await atualizarNegocio(obraAtualizada.negocioBackendId, payloadUpdate);
+        await atualizarNegocio(obraAtualizada.negocioBackendId, payloadParaBackend);
       }
 
       // 3. Atualiza a tela localmente
@@ -1238,10 +1236,6 @@ const initialServico: Servico = {
       return alert("Nome do Negócio, Cliente, Solicitante e pelo menos um Serviço são obrigatórios.");
     }
 
-    if (formData.dataPrevistaInicio && formData.dataPrevistaFinal && formData.dataPrevistaFinal < formData.dataPrevistaInicio) {
-      return alert('A Data Prevista Final não pode ser anterior à Data Prevista de Início.');
-    }
-
     if (!formData.servicos.some(s => s.descricao.trim())) {
       return alert("Pelo menos um serviço deve ter uma descrição.");
     }
@@ -1260,8 +1254,6 @@ const initialServico: Servico = {
       telefone: formData.telefone,
       email: formData.email, 
       data_solicitacao: formData.dataSolicitacao || null,
-      data_prevista_inicio: formData.dataPrevistaInicio || null,
-      data_prevista_final: formData.dataPrevistaFinal || null,
 
       //  ADICIONADO: O campo exato que o Django exigiu!
       // Usamos o tipo do primeiro serviço adicionado na aba "Serviços"
@@ -1289,9 +1281,10 @@ const initialServico: Servico = {
 
           // 3. Monta o objeto de forma totalmente segura ANTES de fechar a tela
           const negocioFormatado = {
-            id: `ID ${dadosNegocio.id || Date.now()}`, 
+            id: `${getPrefixoEmpresa(dadosNegocio.empresa_prestadora || formData.empresaPrestadora)}-${String(dadosNegocio.id || Date.now()).padStart(4, '0')}/${String(new Date().getFullYear()).slice(-2)}`, 
             nome: dadosNegocio.nome_negocio || formData.nomeNegocio,
             clienteId: String(dadosNegocio.cliente || formData.clienteId), 
+            nomeClienteResolvido: listaClientesCRM.find((c: any) => String(c.id) === String(dadosNegocio.cliente || formData.clienteId))?.razaoSocial || 'Cliente Identificado',
             empresaPrestadora: dadosNegocio.empresa_prestadora || formData.empresaPrestadora,
             categoria: dadosNegocio.categoria || 'Planejamento',
             status: 'Aguardando orçamento', 
@@ -1300,7 +1293,7 @@ const initialServico: Servico = {
             solicitante: dadosNegocio.solicitante || formData.solicitante,
             servicos: dadosServicos || [],
             negocioBackendId: dadosNegocio.id || Date.now(),
-            versaoNegocio: 'A',
+            versaoNegocio: '',
             orcamentos: [],
             propostas: [],
             documentosNegocio: []
@@ -1339,14 +1332,28 @@ const initialServico: Servico = {
 
   const handleSaveEditObra = async () => {
     if (!editingObra) return;
-    const dataInicio = editingObra.dataPrevistaInicio || editingObra.inicioPrevisto;
-    const dataFinal = editingObra.dataPrevistaFinal || editingObra.fimPrevisto;
-    if (dataInicio && dataFinal && dataFinal < dataInicio) {
-      return alert('A Data Prevista Final não pode ser anterior à Data Prevista de Início.');
+
+    const nomeNegocio = String(editingObra.nome || '').trim();
+    const empresaPrestadora = String(editingObra.empresaPrestadora || '').trim();
+    const solicitante = String(editingObra.solicitante || '').trim();
+    const email = String(editingObra.email || '').trim() || 'comercial@linave.com.br';
+
+    if (!nomeNegocio || !empresaPrestadora || !solicitante) {
+      return alert('Nome do Negócio, Empresa Prestadora e Solicitante são obrigatórios.');
     }
 
+    const payloadUpdate = {
+      nome_negocio: nomeNegocio,
+      empresa_prestadora: empresaPrestadora,
+      solicitante,
+      cargo: String(editingObra.cargo || '').trim() || null,
+      telefone: String(editingObra.telefone || '').trim() || null,
+      email,
+      tipo_servico: String(editingObra.tipo || editingObra.tipo_servico || '').trim() || null,
+    };
+
     // Chama a função da API e fecha o modal
-    await persistirObraAtualizada(editingObra);
+    await persistirObraAtualizada(editingObra, false, payloadUpdate);
     alert("Negócio atualizado com sucesso!");
     setShowEditModal(false);
     setEditingObra(null);
@@ -1426,7 +1433,7 @@ const initialServico: Servico = {
       ? selectedObraDetalhes.orcamentos
       : (selectedObraDetalhes.orcamentoRealizado && selectedObraDetalhes.orcamentoData && selectedObraDetalhes.orcamentoValores)
         ? [{
-            versao: 'A',
+            versao: '',
             dataCriacao: selectedObraDetalhes.dataCadastro,
             status: 'pendente' as const,
             numeroOrcamento: selectedObraDetalhes.orcamentoData.numeroOrcamento,
@@ -1448,7 +1455,7 @@ const initialServico: Servico = {
       requerReorcamento: false,
       categoria: 'Planejamento' as CategoriaObra,
       status: 'Aguardando orçamento',
-      versaoNegocio: proximaVersao(selectedObraDetalhes.versaoNegocio || 'A'),
+      versaoNegocio: proximaVersao(selectedObraDetalhes.versaoNegocio || ''),
     };
 
     // Usando await e fechando a função corretamente
@@ -2514,7 +2521,7 @@ const obrasOrdenadas = useMemo(() => {
                       const legadoRecusado = obra.requerReorcamento || statusNegocio.includes('aguardando orçamento') || ultimaProposta?.status === 'recusada';
                       temOrcamento = true;
                       ultimoOrcamento = {
-                        versao: 'A',
+                        versao: '',
                         dataCriacao: obra.dataCadastro,
                         status: legadoRecusado ? 'recusado' : 'pendente',
                         numeroOrcamento: obra.orcamentoData.numeroOrcamento,
@@ -3004,26 +3011,6 @@ const obrasOrdenadas = useMemo(() => {
                       className={inputClass}
                       value={formData.dataSolicitacao}
                       onChange={e => setFormData({...formData, dataSolicitacao: e.target.value})}
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className={labelClass}>Data Prevista de Início</label>
-                    <input 
-                      type="date"
-                      className={inputClass}
-                      value={formData.dataPrevistaInicio}
-                      onChange={e => setFormData({...formData, dataPrevistaInicio: e.target.value})}
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className={labelClass}>Data Prevista de Final</label>
-                    <input 
-                      type="date"
-                      className={inputClass}
-                      value={formData.dataPrevistaFinal}
-                      onChange={e => setFormData({...formData, dataPrevistaFinal: e.target.value})}
                     />
                   </div>
                 </div>
@@ -5172,7 +5159,22 @@ const obrasOrdenadas = useMemo(() => {
                 
                 <div className="grid grid-cols-2 gap-6">
                   <div className="space-y-2.5">
-                    <label className={labelClass}>Nome do Negócio</label>
+                    <label className={labelClass}>Empresa Prestadora *</label>
+                    <select
+                      className={inputClass}
+                      value={editingObra.empresaPrestadora || ''}
+                      onChange={e => setEditingObra({...editingObra, empresaPrestadora: e.target.value})}
+                    >
+                      {empresasPrestadoras.map((empresa) => (
+                        <option key={empresa.id} value={empresa.nome}>
+                          {empresa.nome}{empresa.cnpj ? ` - ${empresa.cnpj}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-2.5">
+                    <label className={labelClass}>Nome do Negócio *</label>
                     <input 
                       type="text"
                       className={inputClass}
@@ -5193,22 +5195,22 @@ const obrasOrdenadas = useMemo(() => {
                   </div>
 
                   <div className="space-y-2.5">
-                    <label className={labelClass}>Responsável Técnico</label>
+                    <label className={labelClass}>Solicitante *</label>
                     <input 
                       type="text"
                       className={inputClass}
-                      value={editingObra.responsavelTecnico || ''} // Travas de segurança adicionadas
-                      onChange={e => setEditingObra({...editingObra, responsavelTecnico: e.target.value})}
+                      value={editingObra.solicitante || ''}
+                      onChange={e => setEditingObra({...editingObra, solicitante: e.target.value})}
                     />
                   </div>
 
                   <div className="space-y-2.5">
-                    <label className={labelClass}>Responsável Comercial</label>
+                    <label className={labelClass}>Cargo</label>
                     <input 
                       type="text"
                       className={inputClass}
-                      value={editingObra.responsavelComercial || ''} // Travas de segurança adicionadas
-                      onChange={e => setEditingObra({...editingObra, responsavelComercial: e.target.value})}
+                      value={editingObra.cargo || ''}
+                      onChange={e => setEditingObra({...editingObra, cargo: e.target.value})}
                     />
                   </div>
                 </div>
@@ -5218,8 +5220,8 @@ const obrasOrdenadas = useMemo(() => {
                   <input 
                     type="text"
                     className={inputClass}
-                    value={editingObra.tipo || ''} //  Travas de segurança adicionadas
-                    onChange={e => setEditingObra({...editingObra, tipo: e.target.value})}
+                    value={editingObra.tipo || editingObra.tipo_servico || ''}
+                    onChange={e => setEditingObra({...editingObra, tipo: e.target.value, tipo_servico: e.target.value})}
                   />
                 </div>
 
@@ -5246,52 +5248,24 @@ const obrasOrdenadas = useMemo(() => {
 
                 <div className="grid grid-cols-2 gap-6">
                   <div className="space-y-2.5">
-                    <label className={labelClass}>Data da Solicitação</label>
+                    <label className={labelClass}>Telefone</label>
                     <input 
-                      type="date"
+                      type="tel"
                       className={inputClass}
-                      value={editingObra.dataSolicitacao || ''}
-                      onChange={e => setEditingObra({...editingObra, dataSolicitacao: e.target.value})}
+                      placeholder="Telefone"
+                      value={editingObra.telefone || ''}
+                      onChange={e => setEditingObra({...editingObra, telefone: e.target.value})}
                     />
                   </div>
 
                   <div className="space-y-2.5">
-                    <label className={labelClass}>Data de Cadastro</label>
+                    <label className={labelClass}>Email *</label>
                     <input 
-                      type="date"
-                      className={`${inputClass} bg-white/5 cursor-not-allowed`}
-                      disabled
-                      value={editingObra.dataCadastro || ''}
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-6">
-                  <div className="space-y-2.5">
-                    <label className={labelClass}>Data Prevista de Início</label>
-                    <input
-                      type="date"
+                      type="email"
                       className={inputClass}
-                      value={editingObra.dataPrevistaInicio || editingObra.inicioPrevisto || ''}
-                      onChange={e => setEditingObra({
-                        ...editingObra,
-                        dataPrevistaInicio: e.target.value,
-                        inicioPrevisto: e.target.value
-                      })}
-                    />
-                  </div>
-
-                  <div className="space-y-2.5">
-                    <label className={labelClass}>Data Prevista de Final</label>
-                    <input
-                      type="date"
-                      className={inputClass}
-                      value={editingObra.dataPrevistaFinal || editingObra.fimPrevisto || ''}
-                      onChange={e => setEditingObra({
-                        ...editingObra,
-                        dataPrevistaFinal: e.target.value,
-                        fimPrevisto: e.target.value
-                      })}
+                      placeholder="Email"
+                      value={editingObra.email || ''}
+                      onChange={e => setEditingObra({...editingObra, email: e.target.value})}
                     />
                   </div>
                 </div>
