@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { extrairComponentesDoId, gerarIdProposta } from '../../../context/ErpContext';
+import { extrairComponentesDoId, gerarIdProposta, useErp } from '../../../context/ErpContext';
 import { Plus, X, FileText, CheckCircle, XCircle, ArrowLeft, Save, Download } from 'lucide-react';
 import { handleDownloadPropostaPDF } from '../CRM/handleDownloadPropostaPDF';
 import PizZip from 'pizzip';
@@ -124,11 +124,17 @@ const parsePrecoParaDecimal = (preco: string): number => {
 };
 
 export function PropostaView() {
+  const { obras, saveEntity } = useErp() as any;
   const [listaNegocios, setListaNegocios] = useState<any[]>([]);
   const [listaClientesLocal, setListaClientesLocal] = useState<any[]>([]);
   const [viewMode, setViewMode] = useState<'list' | 'form' | 'historico'>('list');
   const [selectedObra, setSelectedObra] = useState<any>(null);
   const [selectedPropostaVersion, setSelectedPropostaVersion] = useState<number | null>(null);
+
+  const proximaVersao = (v: string): string => {
+    const char = (v || 'A').toUpperCase().slice(-1);
+    return char < 'Z' ? String.fromCharCode(char.charCodeAt(0) + 1) : 'AA';
+  };
 
   useEffect(() => {
     const carregar = async () => {
@@ -614,6 +620,17 @@ export function PropostaView() {
         status: 'Aguardando orçamento',
         requer_reorcamento: true,
       });
+
+      // Incrementa versaoNegocio no contexto global para o kanban refletir
+      const obrasAtuais: any[] = Array.isArray(obras) ? obras : [];
+      const obrasAtualizadas = obrasAtuais.map((o: any) => {
+        if (o.negocioBackendId === obra.backendId || o.id === `ID ${obra.backendId}`) {
+          return { ...o, versaoNegocio: proximaVersao(o.versaoNegocio || 'A') };
+        }
+        return o;
+      });
+      saveEntity('obras', obrasAtualizadas);
+
       await refreshNegocios();
       if (selectedObra?.backendId === obra.backendId) {
         setSelectedObra(null);

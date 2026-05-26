@@ -330,6 +330,7 @@ const initialServico: Servico = {
               categoria: n.categoria || obraExistente.categoria || 'Planejamento',
               status: n.status || obraExistente.status || 'Aguardando orçamento',
               solicitante: n.solicitante,
+              dataSolicitacao: n.data_solicitacao || n.created_at || '',
               servicos: n.servicos || [],
               negocioBackendId: n.id,
               orcamentos: n.orcamentos || [],
@@ -353,6 +354,25 @@ const initialServico: Servico = {
     carregarDadosExclusivosSQL();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const proximaVersao = (v: string): string => {
+    const char = (v || 'A').toUpperCase().slice(-1);
+    return char < 'Z' ? String.fromCharCode(char.charCodeAt(0) + 1) : 'AA';
+  };
+
+  const formatarIdCard = (obra: any): string => {
+    const numericId = obra.negocioBackendId
+      || parseInt(String(obra.id || '').replace(/\D/g, ''), 10)
+      || 0;
+    const emp = String(obra.empresaPrestadora || '').toLowerCase();
+    const prefixo = emp.includes('servinave') ? 'SN'
+      : emp.includes('linave') ? 'LN'
+      : String(obra.empresaPrestadora || 'LN').slice(0, 2).toUpperCase();
+    const idPadded = String(numericId).padStart(4, '0');
+    const versao = String(obra.versaoNegocio || 'A').toUpperCase();
+    const ano = String(new Date().getFullYear()).slice(-2);
+    return `${prefixo}-${idPadded}${versao}/${ano}`;
+  };
 
   const obraTemDocumentoMediacao = (obra: any) => {
     const docs = Array.isArray(obra?.documentosNegocio) ? obra.documentosNegocio : [];
@@ -1280,7 +1300,8 @@ const initialServico: Servico = {
             solicitante: dadosNegocio.solicitante || formData.solicitante,
             servicos: dadosServicos || [],
             negocioBackendId: dadosNegocio.id || Date.now(),
-            orcamentos: [], 
+            versaoNegocio: 'A',
+            orcamentos: [],
             propostas: [],
             documentosNegocio: []
           };
@@ -1426,7 +1447,8 @@ const initialServico: Servico = {
       orcamentoRealizado: false,
       requerReorcamento: false,
       categoria: 'Planejamento' as CategoriaObra,
-      status: 'Aguardando orçamento'
+      status: 'Aguardando orçamento',
+      versaoNegocio: proximaVersao(selectedObraDetalhes.versaoNegocio || 'A'),
     };
 
     // Usando await e fechando a função corretamente
@@ -2528,7 +2550,7 @@ const obrasOrdenadas = useMemo(() => {
                                               <div className="mb-2 space-y-2">
                         <h4 className="font-black text-white text-sm leading-tight line-clamp-2 break-words uppercase">
                           {obra.nome} 
-                          {obra.id && <span className="text-cyan-400 ml-1">• {String(obra.id).toUpperCase()}</span>}
+                          <span className="text-cyan-400 ml-1">• {formatarIdCard(obra)}</span>
                         </h4>
                          {/* Badge + Botão Editar na Direita */}
                           <div className="flex flex-wrap items-center gap-1 sm:gap-1.5">
@@ -3228,7 +3250,11 @@ const obrasOrdenadas = useMemo(() => {
                   </div>
                   <div>
                     <p className="text-white/50 text-xs mb-1">Data da Solicitação</p>
-                    <p className="text-white font-bold">{selectedObraDetalhes.dataSolicitacao}</p>
+                    <p className="text-white font-bold">
+                      {selectedObraDetalhes.dataSolicitacao
+                        ? new Date(selectedObraDetalhes.dataSolicitacao).toLocaleDateString('pt-BR')
+                        : '—'}
+                    </p>
                   </div>
                 </div>
               </div>
@@ -3237,15 +3263,29 @@ const obrasOrdenadas = useMemo(() => {
               {selectedObraDetalhes.servicos && selectedObraDetalhes.servicos.length > 0 && (
                 <div className="bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-xl p-4 border border-purple-500/20 space-y-3">
                   <h3 className="text-purple-400 font-black">SERVIÇOS ({selectedObraDetalhes.servicos.length})</h3>
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     {selectedObraDetalhes.servicos.map((servico: any, idx: number) => (
-                      <div key={idx} className="bg-[#0b1220] p-3 rounded text-xs border border-white/5">
-                        <p className="text-white font-bold mb-2">{servico.tipo} {servico.categoria && `- ${servico.categoria}`}</p>
-                        <p className="text-white/70 mb-2">{servico.descricao}</p>
-                        <div className="grid grid-cols-3 gap-2 text-white/50 text-xs">
-                          {servico.embarcacao && <span>{servico.embarcacao}</span>}
-                          {servico.localExecucao && <span>{servico.localExecucao}</span>}
-                          {servico.porto && <span>{servico.porto}</span>}
+                      <div key={idx} className="bg-[#0b1220] rounded-xl border border-purple-500/20 overflow-hidden">
+                        <div className="px-4 py-2 bg-purple-500/10 border-b border-purple-500/20">
+                          <span className="text-purple-300 font-black text-xs uppercase tracking-widest">
+                            Serviço {selectedObraDetalhes.servicos.length > 1 ? idx + 1 : ''}
+                          </span>
+                        </div>
+                        <div className="p-4 grid grid-cols-2 gap-x-6 gap-y-3">
+                          {[
+                            ['Tipo',           servico.tipo          || servico.tipo_servico],
+                            ['Categoria',      servico.categoria],
+                            ['Local de Execução', servico.localExecucao || servico.local_execucao],
+                            ['Embarcação',     servico.embarcacao],
+                            ['Porto',          servico.porto],
+                            ['Descrição',      servico.descricao],
+                            ['Observações',    servico.observacoes   || servico.observacao],
+                          ].map(([label, value]) => (
+                            <div key={label as string} className={label === 'Descrição' || label === 'Observações' ? 'col-span-2' : ''}>
+                              <p className="text-white/35 text-[10px] font-black uppercase tracking-widest mb-0.5">{label}</p>
+                              <p className="text-white/80 text-xs font-semibold">{(value as string) || <span className="text-white/20 italic font-normal">—</span>}</p>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     ))}
