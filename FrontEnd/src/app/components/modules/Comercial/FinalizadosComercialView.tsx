@@ -210,7 +210,7 @@ export function FinalizadosComercialView({ searchQuery }: FinalizadosComercialVi
                     <div className="flex items-center gap-2 text-emerald-300 text-xs font-black uppercase tracking-widest">
                       <ClipboardList size={14} /> Orçamento
                     </div>
-                    <p className="text-white/70 text-xs">Versão: {ultimoOrcamento?.versao || 'A'}</p>
+                    <p className="text-white/70 text-xs">Versão: {ultimoOrcamento?.versao || '-'}</p>
                     <p className="text-emerald-200 font-black text-sm">R$ {valorOrcamento.toFixed(2)}</p>
                     <button
                       onClick={() => handleDownloadDocumento(docOrcamento, obra.id, `orcamento-${obra.id}.pdf`)}
@@ -237,7 +237,7 @@ export function FinalizadosComercialView({ searchQuery }: FinalizadosComercialVi
                       <FileText size={14} /> Proposta
                     </div>
                     <p className="text-white/70 text-xs">Status: {ultimaProposta?.status || '-'}</p>
-                    <p className="text-white/70 text-xs">Versão: {ultimaProposta?.versao || 'A'}</p>
+                    <p className="text-white/70 text-xs">Versão: {ultimaProposta?.versao || '-'}</p>
                     <button
                       onClick={() => handleDownloadDocumento(docProposta, obra.id, `proposta-${obra.id}.pdf`)}
                       disabled={!isDocumentoValido(docProposta)}

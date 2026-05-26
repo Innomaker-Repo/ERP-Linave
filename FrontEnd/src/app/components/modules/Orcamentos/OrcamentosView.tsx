@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { gerarIdOrcamento, extrairIdProjetoDoNumero, extrairComponentesDoId } from '../../../context/ErpContext';
 import { Plus, X, DollarSign, FileText, Trash2, Lock, Eye, Download } from 'lucide-react';
@@ -63,14 +63,14 @@ interface OrcamentosViewProps {
 }
 
 export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
-  const { obras, clientes, saveEntity } = useErp();
+  const { obras, clientes, saveEntity, saveDraft, loadDraft, clearDraft } = useErp();
   const listaClientes = Array.isArray(clientes) ? clientes : [];
   const [showForm, setShowForm] = useState(false);
   const [selectedObra, setSelectedObra] = useState<any>(null);
 
   const indexToVersaoAlfabetica = (index: number) => {
-    if (index < 0) return 'A';
-    let value = index;
+    if (index <= 0) return '';
+    let value = index - 1;
     let output = '';
 
     while (value >= 0) {
@@ -83,35 +83,39 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
 
   const versaoAlfabeticaToIndex = (versao: string) => {
     const cleaned = versao.toUpperCase().replace(/[^A-Z]/g, '');
-    if (!cleaned) return -1;
+    if (!cleaned) return 0;
 
     let index = 0;
     for (let i = 0; i < cleaned.length; i += 1) {
       index = (index * 26) + (cleaned.charCodeAt(i) - 64);
     }
-    return index - 1;
+    return index;
   };
 
   const formatarVersaoOrcamento = (versao: any) => {
-    if (typeof versao === 'string' && /^[A-Za-z]+$/.test(versao.trim())) {
-      return versao.trim().toUpperCase();
+    if (typeof versao === 'string') {
+      const cleaned = versao.trim().toUpperCase();
+      if (!cleaned) return '';
+      if (/^[A-Z]+$/.test(cleaned)) {
+        return cleaned;
+      }
     }
 
     const versaoNumero = Number(versao);
     if (Number.isFinite(versaoNumero) && versaoNumero > 0) {
-      return indexToVersaoAlfabetica(Math.floor(versaoNumero) - 1);
+      return indexToVersaoAlfabetica(Math.floor(versaoNumero));
     }
 
-    return 'A';
+    return '';
   };
 
   const proximaVersaoOrcamento = (orcamentos: any[] = []) => {
-    if (orcamentos.length === 0) return 'A';
+    if (orcamentos.length === 0) return '';
 
     const ultimoIndice = orcamentos.reduce((maior, orcamento) => {
       const indice = versaoAlfabeticaToIndex(formatarVersaoOrcamento(orcamento?.versao));
       return Math.max(maior, indice);
-    }, -1);
+    }, 0);
 
     return indexToVersaoAlfabetica(ultimoIndice + 1);
   };
@@ -123,7 +127,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   };
 
   const getInitialOrcamentoData = () => ({
-    numeroOrcamento: `LN-0001A/${new Date().getFullYear().toString().slice(-2)}`,
+    numeroOrcamento: `LN-0001/${new Date().getFullYear().toString().slice(-2)}`,
     solicitante: '',
     responsavelComercial: '',
     escopoOrcamento: '',
@@ -263,6 +267,9 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       dadosServicos
     });
     
+    const draft = loadDraft(`orcamento:${obra.id}`);
+    if (draft) setOrcamentoData(prev => ({ ...prev, ...draft }));
+
     setShowForm(true);
   };
 
@@ -338,7 +345,24 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     setShowForm(false);
     setSelectedObra(null);
     setOrcamentoData(getInitialOrcamentoData());
+    void clearDraft(`orcamento:${selectedObra.id}`);
   };
+
+  // Auto-save drafts
+  const autoSaveTimer = useRef<any>(null);
+  useEffect(() => {
+    if (!showForm || !selectedObra) return;
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(() => {
+      try {
+        saveDraft(`orcamento:${selectedObra.id}`, orcamentoData);
+      } catch (err) {
+        console.warn('Erro ao salvar rascunho de orçamento', err);
+      }
+    }, 1000);
+
+    return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
+  }, [orcamentoData, showForm, selectedObra?.id]);
 
   const handleConcluirOrcamento = () => {
     handleSaveOrcamento();
@@ -862,7 +886,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       doc.rect(x, y, baseColWidth * 5, cellHeight);
 
       // Download
-      doc.save(`Orcamento_${orcamento.numeroOrcamento}_v${formatarVersaoOrcamento(orcamento.versao)}.pdf`);
+      doc.save(`Orcamento_${orcamento.numeroOrcamento.replace(/[/\\]/g, '-')}.pdf`);
     } catch (error) {
       console.error('Erro ao gerar PDF:', error);
       alert('Erro ao gerar PDF do orçamento');

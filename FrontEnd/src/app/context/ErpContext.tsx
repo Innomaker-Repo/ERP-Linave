@@ -19,21 +19,55 @@ export const gerarIdProjeto = (prefixo: string, numeroSequencial: string): strin
 
 /**
  * Gera o ID de proposta no formato: PREFIX-NUMERO+VERSAO/ANO
- * Exemplo: PREFIX='LN', NUMERO='0731', VERSAO='A' → 'LN-0731A/26'
+ * Exemplo: PREFIX='LN', NUMERO='0731', VERSAO='' → 'LN-0731/26'
  */
-export const gerarIdProposta = (prefixo: string, numeroSequencial: string, versionLetra: string): string => {
+export const gerarIdProposta = (prefixo: string, numeroSequencial: string, versionLetra: string = ''): string => {
   const anoAtual = new Date().getFullYear().toString().slice(-2);
-  return `${prefixo}-${numeroSequencial}${versionLetra}/${anoAtual}`;
+  return `${prefixo}-${numeroSequencial}${versionLetra || ''}/${anoAtual}`;
 };
 
 /**
  * Gera o ID de orçamento no formato: PREFIX-NUMERO+VERSAO/ANO
- * Exemplo: PREFIX='LN', NUMERO='0731', VERSAO='A' → 'LN-0731A/26'
+ * Exemplo: PREFIX='LN', NUMERO='0731', VERSAO='' → 'LN-0731/26'
  */
 export const gerarIdOrcamento = (prefixo: string, numeroSequencial: string, versionLetra?: string): string => {
   const anoAtual = new Date().getFullYear().toString().slice(-2);
   const versao = versionLetra ? versionLetra : '';
   return `${prefixo}-${numeroSequencial}${versao}/${anoAtual}`;
+};
+
+/**
+ * Converte a posição sequencial da versão para o sufixo exibido.
+ * 0 => '' (primeira versão), 1 => 'A', 2 => 'B'
+ */
+export const sequenciaParaSufixoVersao = (indice: number): string => {
+  if (indice <= 0) return '';
+
+  let value = indice - 1;
+  let output = '';
+
+  while (value >= 0) {
+    output = String.fromCharCode((value % 26) + 65) + output;
+    value = Math.floor(value / 26) - 1;
+  }
+
+  return output;
+};
+
+/**
+ * Converte um sufixo de versão para a posição sequencial.
+ * '' => 0, 'A' => 1, 'B' => 2
+ */
+export const sufixoVersaoParaSequencia = (versao: string): number => {
+  const cleaned = String(versao || '').trim().toUpperCase().replace(/[^A-Z]/g, '');
+  if (!cleaned) return 0;
+
+  let index = 0;
+  for (let i = 0; i < cleaned.length; i += 1) {
+    index = (index * 26) + (cleaned.charCodeAt(i) - 64);
+  }
+
+  return index;
 };
 
 /**
@@ -53,15 +87,13 @@ export const extrairComponentesDoId = (idProjeto: string): { prefixo: string; nu
 };
 
 /**
- * Extrai o ID do projeto a partir do ID de proposta/orçamento
- * Exemplo: 'LN-0731A/26' → 'LN-0731/26'
+ * Normaliza o código do projeto a partir do número de proposta/orçamento.
+ * Exemplo: 'LN-0731A/26' → 'LN-0731A/26'
  */
 export const extrairIdProjetoDoNumero = (numeroCompleto: string): string => {
-  // Remove a versão (letra) se existir
-  // Exemplo: "LN-0731A/26" → "LN-0731/26"
-  const match = numeroCompleto.match(/^([A-Z]+)-(\d+)([A-Z])?\/(\d+)$/);
+  const match = numeroCompleto.match(/^([A-Z]+)-(\d+)([A-Z]?)\/(\d+)$/);
   if (match) {
-    return `${match[1]}-${match[2]}/${match[4]}`;
+    return `${match[1]}-${match[2]}${match[3] || ''}/${match[4]}`;
   }
   return numeroCompleto;
 };
@@ -96,7 +128,7 @@ const SEVEN_OCEAN_TERCEIRIZADOS = [
   { descricao: 'transporte cabine jato', unidade: 'frete', quantidade: '2', valorUnitario: '800,00', valorTotal: '1600.00' }
 ];
 
-const SEVEN_OCEAN_ORCAMENTO_PREVIEW = `ORCAMENTO LN-0731A/26
+const SEVEN_OCEAN_ORCAMENTO_PREVIEW = `ORCAMENTO LN-0731/26
 Cliente: SUBSEA 7
 Projeto / Navio: SEVEN OCEAN
 Escopo: SUBSTITUICAO LINHA SEWAGE
@@ -124,7 +156,7 @@ ${SEVEN_OCEAN_MATERIAIS.map((item) => `- ${item.descricao} (${item.quantidade} $
 Terceirizados
 ${SEVEN_OCEAN_TERCEIRIZADOS.map((item) => `- ${item.descricao} (${item.quantidade} ${item.unidade}) = R$ ${item.valorTotal}`).join('\n')}`;
 
-const SEVEN_OCEAN_PROPOSTA_PREVIEW = `PROPOSTA LN-0731A/26
+const SEVEN_OCEAN_PROPOSTA_PREVIEW = `PROPOSTA LN-0731/26
 Niteroi, 01 de fevereiro de 2026
 Ref.: Seven Ocean - UBU
 Solicitacoes: Request SOS26M0047 | Request SOS26M0046
@@ -154,11 +186,11 @@ Assinatura
 
 // (HTML preview constants defined later) 
 
-const SEVEN_OCEAN_OS_PREVIEW = `OS 0731A
+const SEVEN_OCEAN_OS_PREVIEW = `OS 0731
 Data emissao: 02/02/2026
 Cliente: SUBSEA7
 Projeto: SEVEN OCEAN
-CC: LN-0731A/26
+CC: LN-0731/26
 Data termino previsto: 24/02/2026
 HH total: 624
 
@@ -192,7 +224,7 @@ const SEVEN_OCEAN_SERVICOS = [
     porto: 'UBU-ES / Niterói-RJ',
     prazoDes: '2026-02-24',
     descricao: 'Fabricação e fornecimento dos spools das linhas de Sewage de bordo, considerando todo fornecimento de todo material.',
-    observacoes: 'Escopo técnico-comercial da proposta LN-0731A/26.'
+    observacoes: 'Escopo técnico-comercial da proposta LN-0731/26.'
   },
   {
     id: 'srv-002',
@@ -303,7 +335,7 @@ const buildOrcamentoData = (
     ],
     materiais: cloneDeep(SEVEN_OCEAN_MATERIAIS),
     terceirizados: cloneDeep(SEVEN_OCEAN_TERCEIRIZADOS),
-    observacoes: 'Projeto LN-0731A/26 com base nos documentos orçamento, proposta e OS.'
+    observacoes: 'Projeto LN-0731/26 com base nos documentos orçamento, proposta e OS.'
   },
   valores: buildOrcamentoValores(precoFinal)
 });
@@ -328,7 +360,7 @@ const buildProposta = (
   referencia: 'Seven Ocean - UBU',
   saudacao: 'Prezado XXXXX,',
   assunto,
-  textoAbertura: 'Vimos através desta apresentar nossa Proposta Técnica-Comercial revisada nº LN-0731A/26, para serviços de fabricação e fornecimento dos spools da linha de sewage do Seven Ocean, conforme escopo e delineamento realizado a bordo, conforme solicitado para vossa avaliação e aprovação.',
+  textoAbertura: 'Vimos através desta apresentar nossa Proposta Técnica-Comercial revisada nº LN-0731/26, para serviços de fabricação e fornecimento dos spools da linha de sewage do Seven Ocean, conforme escopo e delineamento realizado a bordo, conforme solicitado para vossa avaliação e aprovação.',
   escopoA: 'A – ESCOPO BASICO DE SERVIÇOS',
   escopoBasicoServicos: '1- Fabricação e fornecimento dos spools das linhas de Sewage de bordo, considerando todo fornecimento de todo material.\na. Fabricação dos spools em aço carbono ASTM A106 Gr. B Sch 40, da linha de sewage de bordo do Seven Ocean na Base de UBU.\nb. Providenciar transporte dos spools removidos de UBU-ES para base da Contratada em Niterói – RJ.\nc. Fabricar novos spools usando como base os spools removidos de bordo.\nd. Após fabricação na oficina, efetuar a galvanização a quente dos spools para posterior entrega.\ne. Efetuar o transporte dos novos spools para base da Subsea na Ilha da Conceição – Niteroi.',
   responsabilidadeContratada: 'Fornecimento de toda mão de obra qualificada\nMobilização da equipe até a Base de UBU – ES para inspeção\nFornecimento de todo material, tubos, conexões\nDescarte da sucata metálica\nGalvanização a quente de todos os spools',
@@ -671,16 +703,16 @@ const SEVEN_OCEAN_OS_BASE = {
   ],
   statusEnvio: 'enviada',
   tipoDocumento: 'consolidada',
-  resumoConsolidado: 'OS do projeto Seven Ocean / LN-0731A/26'
+  resumoConsolidado: 'OS do projeto Seven Ocean / LN-0731/26'
 };
 
 const SEVEN_OCEAN_OS_ORCAMENTO = {
   versao: 'A',
   dataCriacao: '2026-01-29',
   status: 'aceito',
-  numeroOrcamento: 'LN-0731A/26',
+  numeroOrcamento: 'LN-0731/26',
   data: buildOrcamentoData(
-    'LN-0731A/26',
+    'LN-0731/26',
     'Subsea 7',
     'Diretoria Comercial',
     'Substituição da linha Sewage do Seven Ocean',
@@ -692,7 +724,7 @@ const SEVEN_OCEAN_OS_ORCAMENTO = {
 };
 
 const SEVEN_OCEAN_OS_PROPOSTA = buildProposta(
-  'LN-0731A/26',
+  'LN-0731/26',
   'Subsea 7',
   'XXXX',
   'Diretoria Comercial',
@@ -921,6 +953,10 @@ interface ErpContextData {
   saveListas: (novasListas: any) => Promise<void>;
   saveConfig: (novaConfig: any) => Promise<void>;
   uploadFileToDrive: (file: File) => Promise<string | null>;
+  // Drafts (autosave) API
+  saveDraft: (key: string, payload: any) => Promise<void>;
+  loadDraft: (key: string) => any;
+  clearDraft: (key: string) => Promise<void>;
 }
 
 const ErpContext = createContext<ErpContextData>({} as ErpContextData);
@@ -1014,6 +1050,53 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     return result;
   };
 
+  // Drafts: salvar/ler rascunhos por chave dentro do workspace (campo _drafts)
+  const saveDraft = async (key: string, payload: any) => {
+    try {
+      const adminEmail = userSession?.email || 'admin@modo-teste.com';
+      setActiveAdminEmail(adminEmail);
+      const currentWorkspace = getCachedWorkspace(adminEmail);
+      const drafts = { ...(currentWorkspace._drafts || {}) };
+      drafts[key] = payload;
+      const nextWorkspace = { ...currentWorkspace, _drafts: drafts };
+      setCachedWorkspace(adminEmail, nextWorkspace);
+      setData(nextWorkspace);
+      // persist async
+      void saveWorkspace(adminEmail, nextWorkspace);
+    } catch (err) {
+      console.error('Erro ao salvar rascunho', err);
+    }
+  };
+
+  const loadDraft = (key: string) => {
+    try {
+      const adminEmail = userSession?.email || 'admin@modo-teste.com';
+      const currentWorkspace = getCachedWorkspace(adminEmail);
+      const drafts = (currentWorkspace._drafts || {}) as Record<string, any>;
+      return drafts[key] ?? null;
+    } catch (err) {
+      return null;
+    }
+  };
+
+  const clearDraft = async (key: string) => {
+    try {
+      const adminEmail = userSession?.email || 'admin@modo-teste.com';
+      setActiveAdminEmail(adminEmail);
+      const currentWorkspace = getCachedWorkspace(adminEmail);
+      const drafts = { ...(currentWorkspace._drafts || {}) };
+      if (drafts && Object.prototype.hasOwnProperty.call(drafts, key)) {
+        delete drafts[key];
+        const nextWorkspace = { ...currentWorkspace, _drafts: drafts };
+        setCachedWorkspace(adminEmail, nextWorkspace);
+        setData(nextWorkspace);
+        void saveWorkspace(adminEmail, nextWorkspace);
+      }
+    } catch (err) {
+      console.error('Erro ao limpar rascunho', err);
+    }
+  };
+
   // Simula upload de arquivo - sem enviar para nenhum lugar
   const uploadFileToDrive = async (file: File): Promise<string | null> => {
     showTestAlert('Upload de Arquivo');
@@ -1030,7 +1113,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
 
  
   return (
-    <ErpContext.Provider value={{ userSession, setUserSession, loading, loginComGoogle, loginDireto, logout, saveEntity, saveListas, saveConfig, uploadFileToDrive, ...data }}>
+    <ErpContext.Provider value={{ userSession, setUserSession, loading, loginComGoogle, loginDireto, logout, saveEntity, saveListas, saveConfig, uploadFileToDrive, saveDraft, loadDraft, clearDraft, ...data }}>
       {children}
     </ErpContext.Provider>
   );

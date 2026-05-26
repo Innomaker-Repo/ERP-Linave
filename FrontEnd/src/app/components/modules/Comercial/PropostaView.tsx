@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useErp, extrairComponentesDoId, gerarIdProposta } from '../../../context/ErpContext';
 import { Plus, X, FileText, CheckCircle, XCircle, ArrowLeft, Save, Download } from 'lucide-react';
 import { handleDownloadPropostaPDF } from '../CRM/handleDownloadPropostaPDF';
@@ -43,8 +43,8 @@ interface PropostaFormData {
 }
 
 const indexToVersaoAlfabetica = (index: number) => {
-  if (index < 0) return 'A';
-  let value = index;
+  if (index <= 0) return '';
+  let value = index - 1;
   let output = '';
   while (value >= 0) {
     output = String.fromCharCode((value % 26) + 65) + output;
@@ -78,7 +78,7 @@ const getBase64FromUrl = async (url: string): Promise<string | undefined> => {
 
 
 export function PropostaView() {
-  const { obras, clientes, saveEntity } = useErp();
+  const { obras, clientes, saveEntity, saveDraft, loadDraft, clearDraft } = useErp();
   const listaClientes = Array.isArray(clientes) ? clientes : [];
   const [viewMode, setViewMode] = useState<'list' | 'form' | 'historico'>('list');
   const [selectedObra, setSelectedObra] = useState<any>(null);
@@ -106,6 +106,7 @@ export function PropostaView() {
   });
 
   const [propostaForm, setPropostaForm] = useState<PropostaFormData>(getInitialPropostaForm);
+  const autoSaveTimer = useRef<any>(null);
   const [novaColunaPorEscopo, setNovaColunaPorEscopo] = useState<Record<string, string>>({});
 
   // Negócios em Negociação
@@ -357,7 +358,7 @@ export function PropostaView() {
     // Pré-preencher dados
     const cliente = listaClientes.find(c => c.id === obra.clienteId);
     
-    // Descobrir a versão alfabética (Ex: A, B, C...)
+    // Descobrir a versão alfabética: primeira emissão fica sem sufixo.
     const indexVersao = obra.propostas?.length || 0;
     const proximaVersaoLetra = indexToVersaoAlfabetica(indexVersao);
     
@@ -366,16 +367,23 @@ export function PropostaView() {
     const numeroSequencial = componentesId?.numero || '0001';
     const anoAtual = new Date().getFullYear().toString().slice(-2);
          
+    const key = `proposta:${obra.id}`;
+    const draft = loadDraft(key);
+
     setPropostaForm(prev => ({
       ...getInitialPropostaForm(),
       dataProposta: new Date().toISOString().split('T')[0],
       cliente: cliente?.razaoSocial || '',
       atribuidoA: obra.responsavelComercial || '',
       cargoContato: obra.tipo || '',
-      // Gera ID no formato: LN-0731A/26 (numero + versão + ano)
+      // Gera ID no formato: LN-0731/26 na primeira emissão e LN-0731A/26 nas seguintes.
       numeroProposta: gerarIdProposta(componentesId?.prefixo || 'LN', numeroSequencial, proximaVersaoLetra),
       escopoBasicoServicos: criarEscopoBasicoServicos(obra)
     }));
+
+    if (draft) {
+      setPropostaForm((prev) => ({ ...prev, ...draft }));
+    }
     setNovaColunaPorEscopo({});
          
     setViewMode('form');
@@ -384,7 +392,7 @@ export function PropostaView() {
   const handleSaveProposta = () => {
     if (!selectedObra) return;
     
-    // Aqui está o segredo: Calcular a versão em LETRA na hora de salvar!
+    // A primeira versão fica sem sufixo; as próximas entram como A, B, C...
     const indexVersao = selectedObra.propostas?.length || 0;
     const proximaVersaoLetra = indexToVersaoAlfabetica(indexVersao);
     
@@ -393,7 +401,7 @@ export function PropostaView() {
       : propostaForm.escopoA;
            
     const novaProposta = {
-      versao: proximaVersaoLetra, // <-- Agora salva como 'A', 'B', 'C', etc.
+      versao: proximaVersaoLetra,
       dataCriacao: new Date().toISOString().split('T')[0],
       status: 'pendente' as const,
       ...propostaForm,
@@ -417,6 +425,8 @@ export function PropostaView() {
     setSelectedObra(null);
     setPropostaForm(getInitialPropostaForm());
     setNovaColunaPorEscopo({});
+    // limpar rascunho
+    void clearDraft(`proposta:${selectedObra.id}`);
   };
 
   const handleSalvarRascunho = () => {
@@ -445,7 +455,24 @@ export function PropostaView() {
     // Mantém o usuário na mesma tela para continuar edição
     setSelectedObra(obraAtualizada);
     alert('Proposta salva como rascunho. (Não alterou versão)');
+    // limpar rascunho salvo automatico
+    void clearDraft(`proposta:${selectedObra.id}`);
   };
+
+  // Auto-save draft when editing
+  useEffect(() => {
+    if (viewMode !== 'form' || !selectedObra) return;
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(() => {
+      try {
+        saveDraft(`proposta:${selectedObra.id}`, propostaForm);
+      } catch (err) {
+        console.warn('Falha ao salvar rascunho da proposta', err);
+      }
+    }, 1000);
+
+    return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
+  }, [propostaForm, viewMode, selectedObra?.id]);
 
   // Gera DOCX a partir de template .docx (deve existir em /public/templates/LINAVE.docx e SERVINAVE.docx)
   const gerarDocxTemplate = async () => {

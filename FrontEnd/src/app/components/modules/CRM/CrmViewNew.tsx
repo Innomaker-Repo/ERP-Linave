@@ -97,8 +97,8 @@ export const getPrefixoEmpresa = (empresaPrestadora?: string) => {
 };
 
 export const indexToVersaoAlfabetica = (index: number) => {
-  if (index < 0) return 'A';
-  let value = index;
+  if (index <= 0) return '';
+  let value = index - 1;
   let output = '';
   while (value >= 0) {
     output = String.fromCharCode((value % 26) + 65) + output;
@@ -108,7 +108,7 @@ export const indexToVersaoAlfabetica = (index: number) => {
 };
 
 export function CrmViewNew({ searchQuery }: CrmViewProps) {
-  const { obras, os, clientes, saveEntity, userSession, config } = useErp();
+  const { obras, os, clientes, saveEntity, userSession, config, saveDraft, loadDraft, clearDraft } = useErp();
   const [showFormNovoNegocio, setShowFormNovoNegocio] = useState(false);
   const [novoNegocioTab, setNovoNegocioTab] = useState<'dados' | 'servicos' | 'documentos'>('dados');
   const [selectedObraDetalhes, setSelectedObraDetalhes] = useState<any>(null);
@@ -138,8 +138,8 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
 
 
   const indexToVersaoAlfabetica = (index: number) => {
-    if (index < 0) return 'A';
-    let value = index;
+    if (index <= 0) return '';
+    let value = index - 1;
     let output = '';
 
     while (value >= 0) {
@@ -152,26 +152,30 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
 
   const versaoAlfabeticaToIndex = (versao: string) => {
     const cleaned = versao.toUpperCase().replace(/[^A-Z]/g, '');
-    if (!cleaned) return -1;
+    if (!cleaned) return 0;
 
     let index = 0;
     for (let i = 0; i < cleaned.length; i += 1) {
       index = (index * 26) + (cleaned.charCodeAt(i) - 64);
     }
-    return index - 1;
+    return index;
   };
 
   const formatarVersaoOrcamento = (versao: any) => {
-    if (typeof versao === 'string' && /^[A-Za-z]+$/.test(versao.trim())) {
-      return versao.trim().toUpperCase();
+    if (typeof versao === 'string') {
+      const cleaned = versao.trim().toUpperCase();
+      if (!cleaned) return '';
+      if (/^[A-Z]+$/.test(cleaned)) {
+        return cleaned;
+      }
     }
 
     const versaoNumero = Number(versao);
     if (Number.isFinite(versaoNumero) && versaoNumero > 0) {
-      return indexToVersaoAlfabetica(Math.floor(versaoNumero) - 1);
+      return indexToVersaoAlfabetica(Math.floor(versaoNumero));
     }
 
-    return 'A';
+    return '';
   };
 
   const formatarEscopoBasicoParaTexto = (escopo: any) => {
@@ -533,12 +537,23 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   const handleAbrirDocumentoMediacao = (obra: any) => {
     const obraAtual = (obras || []).find((item: any) => item.id === obra.id) || obra;
     const cliente = (clientes || []).find((item: any) => item.id === obraAtual.clienteId);
+    const ultimaProposta = Array.isArray(obraAtual.propostas) && obraAtual.propostas.length > 0
+      ? obraAtual.propostas[obraAtual.propostas.length - 1]
+      : null;
+    const ultimoOrcamento = Array.isArray(obraAtual.orcamentos) && obraAtual.orcamentos.length > 0
+      ? obraAtual.orcamentos[obraAtual.orcamentos.length - 1]
+      : null;
 
-    // Usar o ID do projeto diretamente (já tem formato correto: LN-0731/26)
-    const idProjetoFormatado = obraAtual.id || 'LN-0001/26';
+    // Preferir o número mais recente do fluxo para carregar a medição com a mesma versão do negócio.
+    const idProjetoFormatado = extrairIdProjetoDoNumero(
+      ultimaProposta?.numeroProposta
+      || ultimoOrcamento?.numeroOrcamento
+      || obraAtual.id
+      || 'LN-0001/26'
+    );
 
     setSelectedObraDetalhes(obraAtual);
-    setDocumentoMediacaoForm({
+    const initial = {
       obraId: obraAtual.id,
       empresa: obraAtual.empresaPrestadora || empresaPrestadoraPadrao,
       cliente: cliente?.razaoSocial || '',
@@ -547,11 +562,15 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       embarcacao: '',
       numeroBM: idProjetoFormatado,
       periodo: montarPeriodoMediacao(obraAtual),
-      representanteCliente: cliente?.razaoSocial || '', // Sugestão inicial
-      representanteLinave: 'Linave', // Sugestão inicial
+      representanteCliente: cliente?.razaoSocial || '',
+      representanteLinave: 'Linave',
       tabelaItens: [novaLinhaTabelaMediacao()],
       tabelaRecursos: [novaLinhaTabelaRecursosMediacao()]
-    });
+    } as DocumentoMediacaoForm;
+    const draft = loadDraft(`medicao:${obraAtual.id}`);
+
+    setDocumentoMediacaoForm(draft ? { ...initial, ...draft } : initial);
+    
     setShowDocumentoMediacaoModal(true);
   };
 
@@ -696,8 +715,9 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
           status: 'Finalizado (Medição)'
         });
       }
-
       toast.success('Documento de medição gerado e baixado com sucesso!');
+      // limpar rascunho
+      if (documentoMediacaoForm?.obraId) void clearDraft(`medicao:${documentoMediacaoForm.obraId}`);
       setShowDocumentoMediacaoModal(false);
       
     } catch (error: any) {
@@ -706,6 +726,23 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       toast.error('Erro ao gerar o documento de medição.');
     }
   };
+
+  // Auto-save drafts for medição
+  const autoSaveMedicaoTimer = React.useRef<any>(null);
+  useEffect(() => {
+    if (!showDocumentoMediacaoModal || !documentoMediacaoForm) return;
+    if (!documentoMediacaoForm.obraId) return;
+    if (autoSaveMedicaoTimer.current) clearTimeout(autoSaveMedicaoTimer.current);
+    autoSaveMedicaoTimer.current = setTimeout(() => {
+      try {
+        saveDraft(`medicao:${documentoMediacaoForm.obraId}`, documentoMediacaoForm);
+      } catch (err) {
+        console.warn('Erro ao salvar rascunho de medição', err);
+      }
+    }, 1000);
+
+    return () => { if (autoSaveMedicaoTimer.current) clearTimeout(autoSaveMedicaoTimer.current); };
+  }, [documentoMediacaoForm, showDocumentoMediacaoModal]);
   
   const handleVerDocumentoNegocio = (doc: any) => {
     const href = getDocumentHref(doc);
@@ -2094,7 +2131,11 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       doc.setTextColor(0, 0, 0);
       doc.rect(x, y, baseColWidth * 5, cellHeight);
 
-      const nomeArquivo = `Orcamento_${ultimoOrcamento.numeroOrcamento}_v${formatarVersaoOrcamento(ultimoOrcamento.versao)}.pdf`;
+      const numeroOrcamentoSanitizado = String(ultimoOrcamento.numeroOrcamento || 'orcamento').replace(/[/\\]/g, '-');
+      const versaoOrcamento = formatarVersaoOrcamento(ultimoOrcamento.versao);
+      const nomeArquivo = versaoOrcamento
+        ? `Orcamento_${numeroOrcamentoSanitizado}_v${versaoOrcamento}.pdf`
+        : `Orcamento_${numeroOrcamentoSanitizado}.pdf`;
       const conteudoDataUrl = doc.output('datauristring');
       doc.save(nomeArquivo);
 
@@ -4165,7 +4206,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                     <div>
                       <p className="text-white/50 text-xs mb-1">CC</p>
-                      <p className="text-white font-bold">{osPrincipal?.cc || 'LN-0731A/26'}</p>
+                      <p className="text-white font-bold">{osPrincipal?.cc || 'LN-0731/26'}</p>
                     </div>
                     <div>
                       <p className="text-white/50 text-xs mb-1">Número OS</p>

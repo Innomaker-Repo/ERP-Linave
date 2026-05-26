@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { extrairIdProjetoDoNumero } from '../../../context/ErpContext';
 import { Plus, X, Check, Clock, Zap, Download, Eye, FileText } from 'lucide-react';
@@ -380,11 +380,36 @@ const criarInitialOsData = (): OsFormData => ({
 });
 
 export function OsView({ searchQuery }: OSViewProps) {
-  const { obras, clientes, os, saveEntity } = useErp();
+  const { obras, clientes, os, saveEntity, saveDraft, loadDraft, clearDraft } = useErp();
   const [showFormNovaOS, setShowFormNovaOS] = useState(false);
   const [showDetalhesOS, setShowDetalhesOS] = useState(false);
   const [selectedOS, setSelectedOS] = useState<OsFormData | null>(null);
   const [formData, setFormData] = useState<OsFormData>(criarInitialOsData());
+  const autoSaveTimer = useRef<any>(null);
+
+  // Load draft when opening new OS form
+  useEffect(() => {
+    if (!showFormNovaOS) return;
+    if (!formData?.obraId) return;
+    const draft = loadDraft(`os:${formData.obraId}`);
+    if (draft) setFormData(prev => ({ ...prev, ...draft }));
+  }, [showFormNovaOS, formData?.obraId]);
+
+  // Auto-save draft for OS
+  useEffect(() => {
+    if (!showFormNovaOS) return;
+    if (!formData?.obraId) return;
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(() => {
+      try {
+        saveDraft(`os:${formData.obraId}`, formData);
+      } catch (err) {
+        console.warn('Erro ao salvar rascunho de OS', err);
+      }
+    }, 1000);
+
+    return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
+  }, [formData, showFormNovaOS, formData?.obraId]);
 
   const inputClass = 'w-full bg-[#0b1220] border border-white/10 p-3 rounded-lg text-white text-sm outline-none focus:border-amber-500 transition-all placeholder:text-white/20';
   const labelClass = 'text-[9px] font-black text-white/40 uppercase tracking-widest ml-1 mb-1.5 block';
@@ -693,6 +718,7 @@ export function OsView({ searchQuery }: OSViewProps) {
     saveEntity('os', [...listaOS, novaOS]);
     setShowFormNovaOS(false);
     setFormData(criarInitialOsData());
+    void clearDraft(`os:${novaOS.obraId}`);
     alert('OS consolidada criada e enviada para produção com sucesso!');
   };
 
