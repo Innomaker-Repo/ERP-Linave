@@ -40,6 +40,7 @@ type OrcamentoPayload = {
   atividades: any[];
   observacoes?: string;
   finalizar?: boolean;
+  versao?: string;
 };
 
 const parseDecimal = (value: any): number => {

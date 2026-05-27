@@ -333,6 +333,8 @@ const initialServico: Servico = {
               status: n.status || obraExistente.status || 'Aguardando orçamento',
               solicitante: n.solicitante,
               dataSolicitacao: n.data_solicitacao || n.created_at || '',
+              tipo: n.tipo_servico || (n.servicos?.[0]?.tipo_servico) || '',
+              responsavelTecnico: n.solicitante || '',
               servicos: n.servicos || [],
               negocioBackendId: n.id,
               orcamentos: n.orcamentos || [],
@@ -3040,10 +3042,10 @@ const obrasOrdenadas = useMemo(() => {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 gap-4">
                   <div className="space-y-1.5">
                     <label className={labelClass}>Data da Solicitação</label>
-                    <input 
+                    <input
                       type="date"
                       className={inputClass}
                       value={formData.dataSolicitacao}
@@ -3234,8 +3236,7 @@ const obrasOrdenadas = useMemo(() => {
 
       {/* MODAL - DETALHES DA OBRA */}
       {showDetalhesObraModal && selectedObraDetalhes && (() => {
-        // Usar ID do projeto diretamente
-        const idProjetoDetalhes = selectedObraDetalhes.id || '';
+        const idProjetoDetalhes = formatarIdCard(selectedObraDetalhes);
 
         return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
