@@ -45,7 +45,16 @@ type OrcamentoPayload = {
 
 const parseDecimal = (value: any): number => {
   if (value === undefined || value === null || value === '') return 0;
-  const normalized = String(value).replace(/\./g, '').replace(/,/g, '.');
+  const text = String(value).trim().replace(/\s+/g, '');
+  if (!text) return 0;
+
+  let normalized = text;
+  if (normalized.includes(',') && normalized.includes('.')) {
+    normalized = normalized.replace(/\./g, '').replace(',', '.');
+  } else if (normalized.includes(',')) {
+    normalized = normalized.replace(',', '.');
+  }
+
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : 0;
 };
