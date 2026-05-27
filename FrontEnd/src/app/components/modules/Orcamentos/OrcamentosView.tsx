@@ -8,7 +8,7 @@ import {
   createOrcamento
 } from '../../../../services/comercial';
 
-import { getNegocios, getClientes, getOrdensPorNegocio } from '../../../../services/comercialService';
+import { getNegocios, getClientes, getOrdensPorNegocio, atualizarNegocio } from '../../../../services/comercialService';
 import { getBackendUrl } from '../../../../services/network';
 
 interface MaoDeObra {
@@ -121,7 +121,9 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
             empresaPrestadora: n.empresa_prestadora || 'Linave',
             categoria: n.categoria || 'Planejamento',
             status: n.status || 'Aguardando orçamento',
-            solicitante: n.solicitante,
+            solicitante: n.solicitante || '',
+            responsavelTecnico: n.solicitante || '',
+            tipo: (n.servicos?.[0]?.tipo_servico) || n.tipo_servico || '',
             requerReorcamento: n.requer_reorcamento !== undefined ? n.requer_reorcamento : true,
             orcamentoRealizado: n.orcamento_realizado || false,
             servicos: n.servicos || [],
@@ -258,7 +260,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
 
   const isOrcamentoEditavel = (obra: any) => obra?.categoria === 'Planejamento';
 
-  // Topo: apenas negócios aguardando orçamento (sem orçamento ou com última versão recusada).
+  // Topo: negócios sem orçamento, com orçamento recusado, pendente de reorçamento, ou com rascunho.
   const projetosAOrcar = (obras || [])
     .filter((obra: any) => {
       if (obra.categoria !== 'Planejamento') return false;
@@ -266,6 +268,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       return !ultimoOrcamento
         || ultimoOrcamento.status === 'recusado'
         || ultimoOrcamento.status === 'pendente_reorcamento'
+        || ultimoOrcamento.status === 'rascunho'
         || obra.requerReorcamento;
     })
     .sort((a: any, b: any) => { 
@@ -280,14 +283,23 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       return dataB - dataA;
     });
 
-  // Histórico: apenas negócios cujo último orçamento não está recusado.
+  // Aguardando aprovação interna: negócios em Planejamento com orçamento pendente.
+  const projetosAguardandoAprovacao = (obras || []).filter((obra: any) => {
+    if (obra.categoria !== 'Planejamento') return false;
+    const ultimoOrcamento = obterUltimoOrcamento(obra);
+    return ultimoOrcamento?.status === 'pendente';
+  });
+
+  // Histórico: negócios com orçamento aprovado (fora do Planejamento).
   const obrasComOrcamentos = (obras || []).filter((obra: any) => {
     const ultimoOrcamento = obterUltimoOrcamento(obra);
     if (obra.requerReorcamento) return false;
+    if (obra.categoria === 'Planejamento') return false;
     return Boolean(
       ultimoOrcamento
       && ultimoOrcamento.status !== 'recusado'
       && ultimoOrcamento.status !== 'pendente_reorcamento'
+      && ultimoOrcamento.status !== 'rascunho'
     );
   });
 
@@ -300,8 +312,9 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     setSelectedObra(obra);
     const orcamentosExistentes = normalizarOrcamentos(obra);
     const ultimoOrcamento = orcamentosExistentes.length > 0 ? orcamentosExistentes[orcamentosExistentes.length - 1] : null;
+    const ultimoEhRascunho = ultimoOrcamento?.status === 'rascunho';
     const reorcamentoPendente = Boolean(obra.requerReorcamento && ultimoOrcamento?.status === 'pendente_reorcamento');
-    const proximaVersao = reorcamentoPendente
+    const proximaVersao = (reorcamentoPendente || ultimoEhRascunho)
       ? formatarVersaoOrcamento(ultimoOrcamento?.versao)
       : proximaVersaoOrcamento(orcamentosExistentes);
 
@@ -323,10 +336,73 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       .map((s) => `• Serviço ${s.ordem}: ${s.tipo || 'Sem tipo'}${s.categoria ? ` (${s.categoria})` : ''}${s.localExecucao ? ` em ${s.localExecucao}` : ''}${s.prazoDes ? ` | Prazo: ${s.prazoDes}` : ''}`)
       .join('\n');
     
+    // Normaliza itens vindos do backend (campo snake_case) para o formato esperado pelo formulário
+    const normMateriais = (arr: any[]): Material[] =>
+      (arr || []).map((item: any) => ({
+        id: String(item.id || Date.now() + Math.random()),
+        descricao: item.descricao || item.item || '',
+        unidade: item.unidade || '',
+        quantidade: String(item.quantidade ?? item.qnt ?? ''),
+        pesoFator: String(item.pesoFator ?? item.peso ?? ''),
+        custoUnit: String(item.custoUnit ?? item.custo_unit ?? ''),
+        valorTotal: String(item.valorTotal ?? '0.00'),
+        observacao: item.observacao || '',
+        origemTerceiros: (item.origemTerceiros || (item.terceirizado ? 'Sim' : 'Nao')) as 'Sim' | 'Nao',
+      }));
+
+    const normTerceirizados = (arr: any[]) =>
+      (arr || []).map((item: any) => ({
+        id: String(item.id || Date.now() + Math.random()),
+        descricao: item.descricao || '',
+        unidade: item.unidade || '',
+        quantidade: String(item.quantidade ?? item.qnt ?? ''),
+        pesoFator: String(item.pesoFator ?? item.peso ?? '1'),
+        custoUnit: String(item.custoUnit ?? item.valor_unit ?? ''),
+        valorTotal: String(item.valorTotal ?? '0.00'),
+        observacao: item.observacao || '',
+      }));
+
+    const normMaoDeObra = (arr: any[]): MaoDeObra[] =>
+      (arr || []).map((item: any) => ({
+        id: String(item.id || Date.now() + Math.random()),
+        funcao: item.funcao || item.fnc || '',
+        quantidade: String(item.quantidade ?? item.qnt ?? ''),
+        dias: String(item.dias ?? ''),
+        custoUnitDia: String(item.custoUnitDia ?? item.custo_unit_dia ?? ''),
+        valorTotal: String(item.valorTotal ?? '0.00'),
+        observacao: item.observacao || '',
+      }));
+
+    const normAtividades = (arr: any[]): Atividade[] =>
+      (arr || []).map((item: any) => ({
+        id: String(item.id || Date.now() + Math.random()),
+        atividade: item.atividade || '',
+        dias: String(item.dias ?? item.duracao ?? ''),
+        observacao: item.observacao || '',
+      }));
+
     // Sempre aproveita o último orçamento disponível para pré-preencher o formulário
-    const baseData = ultimoOrcamento?.data
-      ? { ...getInitialOrcamentoData(), ...ultimoOrcamento.data }
-      : getInitialOrcamentoData();
+    const initialDefaults = getInitialOrcamentoData();
+    const rawBase = ultimoOrcamento?.data
+      ? { ...initialDefaults, ...ultimoOrcamento.data }
+      : initialDefaults;
+
+    // Normaliza campos do backend e garante ao menos uma linha em cada seção
+    const baseData = {
+      ...rawBase,
+      materiais: rawBase.materiais?.length
+        ? normMateriais(rawBase.materiais)
+        : initialDefaults.materiais,
+      terceirizados: rawBase.terceirizados?.length
+        ? normTerceirizados(rawBase.terceirizados)
+        : initialDefaults.terceirizados,
+      atividades: rawBase.atividades?.length
+        ? normAtividades(rawBase.atividades)
+        : initialDefaults.atividades,
+      maoDeObra: rawBase.maoDeObra?.length
+        ? normMaoDeObra(rawBase.maoDeObra)
+        : initialDefaults.maoDeObra,
+    };
 
     // Extrair componentes do ID do projeto (já tem formato correto: LN-0731/26 ou SN-0001/26)
     const componentesId = extrairComponentesDoId(obra.id);
@@ -388,262 +464,223 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     return error?.message || 'Falha na integração com backend.';
   };
 
-  const handleSaveOrcamento = async (finalizar = false) => {
+  // Calcula os totais do orçamento atual (sem depender de parseDecimal definido abaixo,
+  // pois este helper é chamado em runtime, não em tempo de definição)
+  const calcularValoresOrcamento = () => {
+    const pd = (v: any) => { const n = parseFloat(String(v ?? '').replace(',', '.')); return isNaN(n) ? 0 : n; };
+    const totalMDO = orcamentoData.maoDeObra.reduce((s: number, i: any) => s + pd(i.valorTotal), 0);
+    const totalMat = orcamentoData.materiais.reduce((s: number, i: any) => s + pd(i.valorTotal), 0);
+    const totalTer = orcamentoData.terceirizados.reduce((s: number, i: any) => s + pd(i.valorTotal), 0);
+    const totalBruto = totalMDO + totalMat + totalTer;
+    const margemPct = pd(orcamentoData.margem);
+    const ohPct = pd(orcamentoData.oh);
+    const impostosPct = pd(orcamentoData.impostos);
+    const margemVal = (totalBruto * margemPct) / 100;
+    const ohVal = (totalBruto * ohPct) / 100;
+    const semImposto = totalBruto + margemVal + ohVal;
+    const impostoVal = (semImposto * impostosPct) / 100;
+    const precoFinal = semImposto + impostoVal;
+    const qtd = Number(orcamentoData.quantidadeItensProduzidos) || 0;
+    return {
+      totalMaoDeObra: totalMDO, totalMateriais: totalMat, totalTerceirizados: totalTer,
+      totalBruto, totalSemImposto: semImposto, subtotal: totalBruto,
+      margem: margemPct, oh: ohPct, impostos: impostosPct,
+      valorMargem: margemVal, valorOH: ohVal, valorImpostos: impostoVal,
+      precoFinal, quantidadeItensProduzidos: qtd,
+      valorPorUnidade: qtd > 0 ? precoFinal / qtd : 0,
+    };
+  };
+
+  const construirNovoOrcamento = (statusOrc: string) => {
+    const orcamentosExistentes = normalizarOrcamentos(selectedObra);
+    const ultimoOrc = orcamentosExistentes.length > 0 ? orcamentosExistentes[orcamentosExistentes.length - 1] : null;
+    const ultimoEhRascunho = ultimoOrc?.status === 'rascunho';
+    const reorcPendente = Boolean(selectedObra?.requerReorcamento && ultimoOrc?.status === 'pendente_reorcamento');
+    const proxVersao = (reorcPendente || ultimoEhRascunho)
+      ? formatarVersaoOrcamento(ultimoOrc?.versao)
+      : proximaVersaoOrcamento(orcamentosExistentes);
+    return {
+      novoOrcamento: {
+        versao: proxVersao,
+        dataCriacao: new Date().toISOString().split('T')[0],
+        status: statusOrc,
+        numeroOrcamento: orcamentoData.numeroOrcamento,
+        data: { ...orcamentoData },
+        valores: calcularValoresOrcamento(),
+      },
+      orcamentosExistentes,
+      reorcPendente,
+      ultimoEhRascunho,
+    };
+  };
+
+  // SALVAR RASCUNHO — sem validações rígidas, mantém o negócio em Planejamento
+  const handleSalvarOrcamentoClick = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
     if (!selectedObra) return alert("Nenhum projeto selecionado.");
-    if (!isOrcamentoEditavel(selectedObra)) {
-      return alert('Não é possível alterar orçamento após Planejamento.');
-    }
 
-    // Validações básicas
-    if (!orcamentoData.numeroOrcamento.trim()) {
-      alert("Número do orçamento é obrigatório.");
+    const negocioId = selectedObra.negocioBackendId || extrairIdProjetoDoNumero(selectedObra.id);
+    const clienteId = Number(selectedObra.clienteId);
+    if (!negocioId || !clienteId) {
+      alert("Não foi possível identificar o negócio ou cliente. Recarregue a página.");
       return;
-    }
-    if (!orcamentoData.solicitante.trim()) {
-      alert("Solicitante é obrigatório.");
-      return;
-    }
-    if (!orcamentoData.escopoOrcamento.trim()) {
-      alert("Escopo do orçamento é obrigatório.");
-      return;
-    }
-
-    // Validar se há pelo menos uma linha em mão de obra
-   // ==========================================
-    // VALIDACAO: MÃO DE OBRA (MDO)
-    // ==========================================
-    if (orcamentoData.maoDeObra.length === 0 || orcamentoData.maoDeObra.every(item => !item.funcao.trim())) {
-      alert("É necessário informar pelo menos uma função de mão de obra.");
-      return;
-    }
-
-  
-
-    console.debug('Validação MDO - estado atual:', orcamentoData.maoDeObra);
-
-    for (const item of orcamentoData.maoDeObra) {
-      const hasFuncao = !!(item.funcao && String(item.funcao).trim());
-      const qVal = parseNumber(item.quantidade);
-      const diasVal = parseNumber(item.dias);
-      const custoVal = parseNumber(item.custoUnitDia);
-
-      // Considera preenchido se tiver função E algum valor numérico populado,
-      // ou se o usuário alterou a função padrão "Encarregado" para outra coisa.
-      const deFatoPreenchido = hasFuncao && (Number.isFinite(qVal) || Number.isFinite(diasVal) || Number.isFinite(custoVal));
-
-      if (deFatoPreenchido || (hasFuncao && item.funcao !== 'Encarregado')) {
-        if (!hasFuncao) {
-          alert("Função é obrigatória para todos os itens de mão de obra preenchidos.");
-          return;
-        }
-        if (!Number.isFinite(qVal) || qVal <= 0) {
-          alert(`Quantidade deve ser um número maior que 0 para a função "${item.funcao}".`);
-          return;
-        }
-        if (!Number.isFinite(diasVal) || diasVal <= 0) {
-          alert(`Dias deve ser um número maior que 0 para a função "${item.funcao}".`);
-          return;
-        }
-        if (!Number.isFinite(custoVal) || custoVal <= 0) {
-          alert(`Custo unitário por dia deve ser um número maior que 0 para a função "${item.funcao}".`);
-          return;
-        }
-      }
-    }
-
-    // ==========================================
-    // VALIDAÇÃO: CONSUMÍVEIS E MATERIAIS
-    // ==========================================
-    for (const item of orcamentoData.materiais) {
-      if (isMaterialRowFilled(item)) {
-        if (!item.descricao.trim()) {
-          alert("Descrição é obrigatória para todos os itens de materiais preenchidos.");
-          return;
-        }
-        if (!item.unidade.trim()) {
-          alert(`A unidade é obrigatória para o material "${item.descricao}".`);
-          return;
-        }
-        const matQ = parseNumber(item.quantidade);
-        if (isNaN(matQ) || matQ <= 0) {
-          alert(`Quantidade deve ser um número maior que 0 para o material "${item.descricao}".`);
-          return;
-        }
-        const matC = parseNumber(item.custoUnit);
-        if (isNaN(matC) || matC <= 0) {
-          alert(`Custo unitário deve ser um número maior que 0 para o material "${item.descricao}".`);
-          return;
-        }
-      }
-    }
-
-    // ==========================================
-    // VALIDAÇÃO: SERVIÇOS TERCEIRIZADOS
-    // ==========================================
-    for (const item of orcamentoData.terceirizados) {
-      if (isTerceirizadoRowFilled(item)) {
-        if (!item.descricao.trim()) {
-          alert("Descrição é obrigatória para todos os itens terceirizados preenchidos.");
-          return;
-        }
-        if (!item.unidade.trim()) {
-          alert(`A unidade é obrigatória para o serviço terceirizado "${item.descricao}".`);
-          return;
-        }
-        const terQ = parseNumber(item.quantidade);
-        if (isNaN(terQ) || terQ <= 0) {
-          alert(`Quantidade deve ser um número maior que 0 para o serviço terceirizado "${item.descricao}".`);
-          return;
-        }
-        const terC = parseNumber(item.custoUnit);
-        if (isNaN(terC) || terC <= 0) {
-          alert(`Custo unitário deve ser um número maior que 0 para o serviço terceirizado "${item.descricao}".`);
-          return;
-        }
-      }
-    }
-
-    // ==========================================
-    // VALIDAÇÃO: ATIVIDADES PREVISTAS
-    // ==========================================
-    for (const item of orcamentoData.atividades) {
-      if (isAtividadeRowFilled(item)) {
-        if (!item.atividade.trim()) {
-          alert("Atividade é obrigatória para todos os itens de atividades preenchidos.");
-          return;
-        }
-        const actDias = parseNumber(item.dias);
-        if (isNaN(actDias) || actDias <= 0) {
-          alert(`Dias deve ser um número maior que 0 para a atividade "${item.atividade}".`);
-          return;
-        }
-      }
-    }
-
-    // Validar itens de materiais
-    for (const item of orcamentoData.materiais) {
-      if (isMaterialRowFilled(item)) {
-        if (!item.descricao.trim()) {
-          alert("Descrição é obrigatória para todos os itens de materiais preenchidos.");
-          return;
-        }
-        if (!item.unidade.trim()) {
-          alert("Unidade é obrigatória para todos os itens de materiais preenchidos.");
-          return;
-        }
-        const matQ = parseNumber(item.quantidade);
-        if (isNaN(matQ) || matQ <= 0) {
-          alert("Quantidade deve ser um número maior que 0 para itens de materiais.");
-          return;
-        }
-        const matC = parseNumber(item.custoUnit);
-        if (isNaN(matC) || matC <= 0) {
-          alert("Custo unitário deve ser um número maior que 0 para itens de materiais.");
-          return;
-        }
-      }
     }
 
     setSaving(true);
     try {
-      // Use the backend IDs that were stored when the negócio was loaded from the DB.
-      // This avoids expensive findOrCreate round-trips and duplicate records.
-      const negocioId = selectedObra.negocioBackendId || extrairIdProjetoDoNumero(selectedObra.id);
-      const clienteId = Number(selectedObra.clienteId);
-
-      if (!negocioId || !clienteId) {
-        alert("Não foi possível identificar o negócio ou cliente no banco. Recarregue a página e tente novamente.");
-        setSaving(false);
-        return;
-      }
-
-      const payloadBase = buildOrcamentoPayload(orcamentoData, selectedObra, negocioId, clienteId);
-      const payloadCompleto = { ...payloadBase, finalizar };
-
-      await createOrcamento(payloadCompleto);
-
-      const orcamentosExistentes = normalizarOrcamentos(selectedObra);
-      const ultimoOrcamento = orcamentosExistentes.length > 0 ? orcamentosExistentes[orcamentosExistentes.length - 1] : null;
-      const reorcamentoPendente = Boolean(selectedObra.requerReorcamento && ultimoOrcamento?.status === 'pendente_reorcamento');
-      const proximaVersao = reorcamentoPendente
-        ? formatarVersaoOrcamento(ultimoOrcamento?.versao)
-        : proximaVersaoOrcamento(orcamentosExistentes);
-
-      const totalMaoDeObra = orcamentoData.maoDeObra.reduce((sum: number, item: any) => sum + (parseDecimal(item.valorTotal) || 0), 0);
-      const totalMateriais = orcamentoData.materiais.reduce((sum: number, item: any) => sum + (parseDecimal(item.valorTotal) || 0), 0);
-      const totalTerceirizados = orcamentoData.terceirizados.reduce((sum: number, item: any) => sum + (parseDecimal(item.valorTotal) || 0), 0);
-      const totalBruto = totalMaoDeObra + totalMateriais + totalTerceirizados;
-      const margemPercentual = parseDecimal(orcamentoData.margem) || 0;
-      const ohPercentual = parseDecimal(orcamentoData.oh) || 0;
-      const impostosPercentual = parseDecimal(orcamentoData.impostos) || 0;
-      const margemValor = (totalBruto * margemPercentual) / 100;
-      const ohValor = (totalBruto * ohPercentual) / 100;
-      const totalSemImposto = totalBruto + margemValor + ohValor;
-      const impostoValor = (totalSemImposto * impostosPercentual) / 100;
-      const precoFinal = totalSemImposto + impostoValor;
-      const quantidadeItensProduzidos = Number(orcamentoData.quantidadeItensProduzidos) || 0;
-      const valorPorUnidade = quantidadeItensProduzidos > 0 ? precoFinal / quantidadeItensProduzidos : 0;
-
-    // Criar novo orçamento com versão
-    const novoOrcamento = {
-      versao: proximaVersao,
-      dataCriacao: new Date().toISOString().split('T')[0],
-      status: 'pendente' as const,
-      numeroOrcamento: orcamentoData.numeroOrcamento,
-      data: orcamentoData,
-      valores: {
-        totalMaoDeObra,
-        totalMateriais,
-        totalTerceirizados,
-        totalBruto,
-        totalSemImposto,
-        subtotal: totalBruto,
-        margem: margemPercentual,
-        oh: ohPercentual,
-        impostos: impostosPercentual,
-        valorMargem: margemValor,
-        valorOH: ohValor,
-        valorImpostos: impostoValor,
-        precoFinal,
-        quantidadeItensProduzidos,
-        valorPorUnidade
-      }
-    };
+      const { novoOrcamento, orcamentosExistentes, reorcPendente, ultimoEhRascunho } = construirNovoOrcamento('rascunho');
 
       const obraAtualizada = {
         ...selectedObra,
-        requerReorcamento: false,
-        orcamentoRealizado: true,
-        categoria: finalizar ? 'Negociação' : selectedObra.categoria,
-        status: finalizar ? 'Negociação' : (selectedObra.status || 'Aguardando orçamento'),
-        orcamentos: reorcamentoPendente
+        orcamentos: (reorcPendente || ultimoEhRascunho)
           ? [...orcamentosExistentes.slice(0, -1), novoOrcamento]
-          : [...orcamentosExistentes, novoOrcamento]
+          : [...orcamentosExistentes, novoOrcamento],
       };
-
-      const obrasAtualizadas = obras?.map((o: any) => o.id === selectedObra.id ? obraAtualizada : o) || [];
+      const obrasAtualizadas = (obras || []).map((o: any) => o.id === selectedObra.id ? obraAtualizada : o);
       saveEntity('obras', obrasAtualizadas);
 
-      alert(finalizar ? "Orçamento concluído com sucesso! Negócio movido para Negociação." : "Orçamento salvo com sucesso! Projeto mantido em Planejamento.");
+      // Tenta persistir no backend sem bloquear em caso de erro
+      try {
+        const payload = buildOrcamentoPayload(orcamentoData, selectedObra, negocioId, clienteId);
+        await createOrcamento({ ...payload, finalizar: false, versao: novoOrcamento.versao });
+      } catch (backendErr) {
+        console.warn('Rascunho salvo localmente; erro no backend:', backendErr);
+      }
+
+      alert("Rascunho salvo! O negócio permanece em Planejamento.");
       setShowForm(false);
       setSelectedObra(null);
       setOrcamentoData(getInitialOrcamentoData());
-    } catch (error: any) {
-      console.error("Erro ao salvar orçamento:", error);
-      const errorMessage = formatApiErrorMessage(error);
-      alert(`Erro ao salvar orçamento: ${errorMessage}`);
     } finally {
       setSaving(false);
     }
   };
 
-  const handleSalvarOrcamentoClick = async (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    await handleSaveOrcamento(false);
+  // CONCLUIR ORÇAMENTO — validação completa + move para Negociação
+  const handleConcluirOrcamento = async () => {
+    if (!selectedObra) return alert("Nenhum projeto selecionado.");
+    if (!isOrcamentoEditavel(selectedObra)) return alert('Não é possível alterar orçamento após Planejamento.');
+
+    if (!orcamentoData.numeroOrcamento.trim()) { alert("Número do orçamento é obrigatório."); return; }
+    if (!orcamentoData.solicitante.trim()) { alert("Solicitante é obrigatório."); return; }
+    if (!orcamentoData.escopoOrcamento.trim()) { alert("Escopo do orçamento é obrigatório."); return; }
+    const qtdItens = Number(orcamentoData.quantidadeItensProduzidos);
+    if (!qtdItens || qtdItens < 1) { alert("Quantidade de itens produzidos é obrigatória para concluir o orçamento."); return; }
+
+    // Mão de obra: pelo menos um item com funcao preenchida
+    const mdoPreenchido = orcamentoData.maoDeObra.filter((item: MaoDeObra) => item.funcao?.trim());
+    if (mdoPreenchido.length === 0) {
+      alert("É necessário informar pelo menos uma função de mão de obra para concluir o orçamento.");
+      return;
+    }
+    for (const item of mdoPreenchido) {
+      const qVal = parseNumber(item.quantidade);
+      const diasVal = parseNumber(item.dias);
+      const custoVal = parseNumber(item.custoUnitDia);
+      if (!Number.isFinite(qVal) || qVal <= 0) { alert(`Quantidade inválida para a função "${item.funcao}".`); return; }
+      if (!Number.isFinite(diasVal) || diasVal <= 0) { alert(`Dias inválido para a função "${item.funcao}".`); return; }
+      if (!Number.isFinite(custoVal) || custoVal <= 0) { alert(`Custo por dia inválido para a função "${item.funcao}".`); return; }
+    }
+
+    // Validar apenas linhas de materiais que foram preenchidas
+    for (const item of orcamentoData.materiais) {
+      if (!isMaterialRowFilled(item)) continue;
+      if (!item.descricao.trim()) { alert("Descrição obrigatória para materiais preenchidos."); return; }
+      const q = parseNumber(item.quantidade); if (isNaN(q) || q <= 0) { alert(`Quantidade inválida para o material "${item.descricao}".`); return; }
+      const c = parseNumber(item.custoUnit); if (isNaN(c) || c <= 0) { alert(`Custo unitário inválido para o material "${item.descricao}".`); return; }
+    }
+
+    // Validar apenas linhas de terceirizados que foram preenchidas
+    for (const item of orcamentoData.terceirizados) {
+      if (!isTerceirizadoRowFilled(item)) continue;
+      if (!item.descricao.trim()) { alert("Descrição obrigatória para terceirizados preenchidos."); return; }
+      const q = parseNumber(item.quantidade); if (isNaN(q) || q <= 0) { alert(`Quantidade inválida para "${item.descricao}".`); return; }
+      const c = parseNumber(item.custoUnit); if (isNaN(c) || c <= 0) { alert(`Custo inválido para "${item.descricao}".`); return; }
+    }
+
+    // Validar apenas linhas de atividades que foram preenchidas
+    for (const item of orcamentoData.atividades) {
+      if (!isAtividadeRowFilled(item)) continue;
+      if (!item.atividade.trim()) { alert("Nome da atividade obrigatório."); return; }
+      const d = parseNumber(item.dias); if (isNaN(d) || d <= 0) { alert(`Dias inválido para a atividade "${item.atividade}".`); return; }
+    }
+
+    const negocioId = selectedObra.negocioBackendId || extrairIdProjetoDoNumero(selectedObra.id);
+    const clienteId = Number(selectedObra.clienteId);
+    if (!negocioId || !clienteId) {
+      alert("Não foi possível identificar o negócio ou cliente. Recarregue a página.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      // Constrói antes do backend para ter a versão correta disponível no payload
+      const { novoOrcamento, orcamentosExistentes, reorcPendente, ultimoEhRascunho } = construirNovoOrcamento('pendente');
+
+      const payload = buildOrcamentoPayload(orcamentoData, selectedObra, negocioId, clienteId);
+      await createOrcamento({ ...payload, finalizar: true, versao: novoOrcamento.versao });
+
+      const obraAtualizada = {
+        ...selectedObra,
+        requerReorcamento: false,
+        orcamentoRealizado: true,
+        categoria: 'Planejamento',
+        orcamentos: (reorcPendente || ultimoEhRascunho)
+          ? [...orcamentosExistentes.slice(0, -1), novoOrcamento]
+          : [...orcamentosExistentes, novoOrcamento],
+      };
+      const obrasAtualizadas = (obras || []).map((o: any) => o.id === selectedObra.id ? obraAtualizada : o);
+      saveEntity('obras', obrasAtualizadas);
+
+      alert("Orçamento enviado para aprovação!");
+      setShowForm(false);
+      setSelectedObra(null);
+      setOrcamentoData(getInitialOrcamentoData());
+    } catch (error: any) {
+      console.error("Erro ao concluir orçamento:", error);
+      alert(`Erro ao concluir orçamento: ${formatApiErrorMessage(error)}`);
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleConcluirOrcamento = () => {
-    handleSaveOrcamento(true);
+  const handleAprovarOrcamento = async (obra: any) => {
+    if (!window.confirm(`Confirma a APROVAÇÃO do orçamento de "${obra.nome}"?\n\nApós aprovado, o negócio avançará para Proposta.`)) return;
+    const orcamentosExistentes = normalizarOrcamentos(obra);
+    const ultimoOrcamento = orcamentosExistentes[orcamentosExistentes.length - 1];
+    if (!ultimoOrcamento) return;
+    const orcamentoAtualizado = { ...ultimoOrcamento, status: 'aprovado' };
+    const novosOrcamentos = [...orcamentosExistentes.slice(0, -1), orcamentoAtualizado];
+    const obraAtualizada = { ...obra, categoria: 'Negociação', status: 'Negociação', orcamentos: novosOrcamentos };
+    try {
+      const negocioId = obra.negocioBackendId || extrairIdProjetoDoNumero(obra.id);
+      if (negocioId) await atualizarNegocio(negocioId, { categoria: 'Negociação', status: 'Negociação' });
+    } catch (err) {
+      console.error("Erro ao atualizar negócio no backend:", err);
+    }
+    const obrasAtualizadas = (obras || []).map((o: any) => o.id === obra.id ? obraAtualizada : o);
+    saveEntity('obras', obrasAtualizadas);
+    alert("Orçamento aprovado! Negócio avançado para Proposta.");
+  };
+
+  const handleRecusarOrcamento = async (obra: any) => {
+    const motivo = window.prompt('Informe o motivo da recusa do orçamento:');
+    if (motivo === null) return;
+    if (!motivo.trim()) { alert('O motivo da recusa é obrigatório.'); return; }
+    const orcamentosExistentes = normalizarOrcamentos(obra);
+    const ultimoOrcamento = orcamentosExistentes[orcamentosExistentes.length - 1];
+    if (!ultimoOrcamento) return;
+    const orcamentoAtualizado = {
+      ...ultimoOrcamento,
+      status: 'recusado',
+      dataRecusa: new Date().toISOString().split('T')[0],
+      motivoRecusa: motivo.trim(),
+    };
+    const novosOrcamentos = [...orcamentosExistentes.slice(0, -1), orcamentoAtualizado];
+    const obraAtualizada = { ...obra, categoria: 'Planejamento', requerReorcamento: true, orcamentos: novosOrcamentos };
+    const obrasAtualizadas = (obras || []).map((o: any) => o.id === obra.id ? obraAtualizada : o);
+    saveEntity('obras', obrasAtualizadas);
+    alert("Orçamento recusado. Projeto retornou para reorçamento.");
   };
 
   const abrirDocumentoNegocio = (documento: any) => {
@@ -1322,7 +1359,10 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   const totalMaoDeObra = orcamentoData.maoDeObra.reduce((sum, item) => sum + (parseDecimal(item.valorTotal) || 0), 0);
   const totalMateriais = orcamentoData.materiais.reduce((sum, item) => sum + (parseDecimal(item.valorTotal) || 0), 0);
   const totalTerceirizados = orcamentoData.terceirizados.reduce((sum, item) => sum + (parseDecimal(item.valorTotal) || 0), 0);
-  const totalDiasAtividades = orcamentoData.atividades.reduce((sum, item) => sum + parseDecimal(item.dias), 0);
+  const totalDiasAtividades = [
+    ...orcamentoData.atividades.map(item => parseDecimal(item.dias)),
+    ...orcamentoData.maoDeObra.map(item => parseDecimal(item.dias)),
+  ].reduce((sum, d) => sum + d, 0);
   const totalBruto = totalMaoDeObra + totalMateriais + totalTerceirizados;
   const margemPercentual = parseFloat(orcamentoData.margem) || 0;
   const ohPercentual = parseFloat(orcamentoData.oh) || 0;
@@ -1370,45 +1410,52 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                   const nomeExibicaoCliente = obra.nomeCliente || obra.nome_cliente || obra.cliente_nome || "Cliente Identificado";
 
                   const ultimoOrcamento = obterUltimoOrcamento(obra);
+                  const ehRascunho = ultimoOrcamento?.status === 'rascunho';
                   const reorcamentoArquivos = obra.requerReorcamento || ultimoOrcamento?.status === 'pendente_reorcamento';
                   const idProjetoOrc = Array.isArray(obra.propostas) && obra.propostas.length > 0
                     ? extrairIdProjetoDoNumero(obra.propostas[obra.propostas.length - 1].numeroProposta || '')
                     : '';
-                  
+
                   return (
-                    <div 
+                    <div
                       key={obra.id}
-                      className="bg-[#101f3d] border border-white/10 rounded-2xl p-6 hover:border-amber-500/30 hover:shadow-lg hover:shadow-amber-900/20 transition-all"
+                      className={`bg-[#101f3d] border rounded-2xl p-6 transition-all hover:shadow-lg ${ehRascunho ? 'border-yellow-500/40 hover:border-yellow-400/60 hover:shadow-yellow-900/20' : 'border-white/10 hover:border-amber-500/30 hover:shadow-amber-900/20'}`}
                     >
                       <div className="space-y-4">
-                        <div className="flex justify-between items-start gap-3">
-                          <div className="flex-1">
-                            <h3 className="text-lg font-black text-white uppercase line-clamp-2">{obra.nome} {idProjetoOrc && <span className="text-cyan-400">• {idProjetoOrc}</span>}</h3>
-                            <p className="text-amber-400 text-sm font-bold mt-1">{nomeExibicaoCliente}</p>
-                          </div>
-                          <span className="px-3 py-1 bg-blue-500/20 text-blue-400 rounded-full text-xs font-black whitespace-nowrap">
-                            {reorcamentoArquivos || ultimoOrcamento?.status === 'recusado' ? 'Reorçar' : 'A Orçar'}
-                          </span>
+                        <div className="flex-1">
+                          <h3 className="text-lg font-black text-white uppercase line-clamp-2">{obra.nome} {idProjetoOrc && <span className="text-cyan-400">• {idProjetoOrc}</span>}</h3>
+                          <p className="text-amber-400 text-sm font-bold mt-1">{nomeExibicaoCliente}</p>
                         </div>
 
                         <div className="bg-[#0b1220] rounded-xl p-4 space-y-2.5 text-sm">
                           <div className="flex justify-between">
                             <span className="text-white/50">Tipo:</span>
-                            <span className="text-white font-bold">{obra.tipo}</span>
+                            <span className="text-white font-bold">{obra.tipo || '—'}</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-white/50">Responsável:</span>
-                            <span className="text-white font-bold">{obra.responsavelTecnico}</span>
+                            <span className="text-white font-bold">{obra.responsavelTecnico || obra.solicitante || '—'}</span>
                           </div>
-                          {(ultimoOrcamento?.status === 'recusado' || reorcamentoArquivos) && (
-                            <div className="flex justify-between">
-                              <span className="text-white/50">Última versão:</span>
-                              <span className="text-red-300 font-bold">
-                                {reorcamentoArquivos ? `${formatarVersaoOrcamento(ultimoOrcamento?.versao)} aguardando revisão` : `${formatarVersaoOrcamento(ultimoOrcamento.versao)} recusada`}
+                          <div className="flex justify-between">
+                            <span className="text-white/50">Status:</span>
+                            {ehRascunho ? (
+                              <span className="text-yellow-300 font-bold">
+                                v{formatarVersaoOrcamento(ultimoOrcamento.versao)} em edição
                               </span>
-                            </div>
-                          )}
-
+                            ) : !ultimoOrcamento ? (
+                              <span className="text-blue-300 font-bold">Aguardando orçamento</span>
+                            ) : reorcamentoArquivos ? (
+                              <span className="text-orange-300 font-bold">
+                                v{formatarVersaoOrcamento(ultimoOrcamento?.versao)} aguardando revisão
+                              </span>
+                            ) : ultimoOrcamento?.status === 'recusado' ? (
+                              <span className="text-red-300 font-bold">
+                                v{formatarVersaoOrcamento(ultimoOrcamento.versao)} recusada
+                              </span>
+                            ) : (
+                              <span className="text-blue-300 font-bold">Aguardando orçamento</span>
+                            )}
+                          </div>
                           {obra.motivoRecusaProposta && (
                             <div className="pt-2 border-t border-white/10 space-y-1">
                               <p className="text-white/50 text-[11px] font-black uppercase tracking-widest">Motivo da recusa da proposta</p>
@@ -1420,11 +1467,11 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                           )}
                         </div>
 
-                        <button 
+                        <button
                           onClick={() => handleSelectObra(obra)}
-                          className="w-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-[#0b1220] py-3 rounded-lg font-black uppercase text-xs tracking-widest transition-all shadow-lg shadow-amber-900/30"
+                          className={`w-full py-3 rounded-lg font-black uppercase text-xs tracking-widest transition-all shadow-lg ${ehRascunho ? 'bg-gradient-to-r from-yellow-500 to-amber-500 hover:from-yellow-400 hover:to-amber-400 text-[#0b1220] shadow-yellow-900/30' : 'bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-[#0b1220] shadow-amber-900/30'}`}
                         >
-                          Fazer Orçamento
+                          {ehRascunho ? 'Continuar Rascunho' : 'Fazer Orçamento'}
                         </button>
                       </div>
                     </div>
@@ -1439,14 +1486,100 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
             )}
           </div>
 
-          {/* SEÇÃO 2: HISTÓRICO DE ORÇAMENTOS */}
+          {/* SEÇÃO 2: AGUARDANDO APROVAÇÃO */}
+          {projetosAguardandoAprovacao.length > 0 && (
+            <div className="border-t border-white/10 pt-8">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-2 h-8 bg-blue-500 rounded-full" />
+                <h2 className="text-2xl font-black text-white uppercase">Aguardando Aprovação</h2>
+                <span className="px-2.5 py-1 bg-blue-500/20 text-blue-400 rounded-full text-xs font-black">
+                  {projetosAguardandoAprovacao.length}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {projetosAguardandoAprovacao.map((obra: any) => {
+                  const orcamentos = normalizarOrcamentos(obra);
+                  const ultimoOrcamento = orcamentos[orcamentos.length - 1];
+                  const versao = formatarVersaoOrcamento(ultimoOrcamento?.versao);
+                  const precoFinal = Number(ultimoOrcamento?.valores?.precoFinal ?? 0);
+                  const nomeCliente = obra.nomeCliente || obra.nome_cliente || obra.cliente_nome || 'Cliente';
+
+                  return (
+                    <div
+                      key={obra.id}
+                      className="bg-[#101f3d] border border-blue-500/30 rounded-2xl p-6 hover:border-blue-400/50 hover:shadow-lg hover:shadow-blue-900/20 transition-all"
+                    >
+                      <div className="space-y-4">
+                        <div className="flex justify-between items-start gap-3">
+                          <div className="flex-1">
+                            <h3 className="text-lg font-black text-white uppercase line-clamp-2">{obra.nome}</h3>
+                            <p className="text-amber-400 text-sm font-bold mt-1">{nomeCliente}</p>
+                          </div>
+                          <span className="px-3 py-1 bg-blue-500/20 text-blue-300 rounded-full text-xs font-black whitespace-nowrap">
+                            v{versao}
+                          </span>
+                        </div>
+
+                        <div className="bg-[#0b1220] rounded-xl p-4 space-y-2.5 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-white/50">Responsável:</span>
+                            <span className="text-white font-bold">{obra.responsavelTecnico || obra.solicitante || '—'}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-white/50">Valor Total:</span>
+                            <span className="text-emerald-400 font-black">R$ {precoFinal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-white/50">Enviado em:</span>
+                            <span className="text-white font-bold text-xs">
+                              {ultimoOrcamento?.dataCriacao ? new Date(ultimoOrcamento.dataCriacao).toLocaleDateString('pt-BR') : '—'}
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center pt-1">
+                            <span className="text-white/50">Status:</span>
+                            <span className="px-2 py-0.5 bg-blue-500/20 text-blue-300 rounded text-[11px] font-black uppercase tracking-widest">
+                              Aguardando Aprovação
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleDownloadOrcamentoPDF(ultimoOrcamento, obra)}
+                            title="Download PDF"
+                            className="p-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-white/60 hover:text-white transition"
+                          >
+                            <Download size={16} />
+                          </button>
+                          <button
+                            onClick={() => handleRecusarOrcamento(obra)}
+                            className="flex-1 py-2.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 hover:text-red-300 rounded-lg font-black uppercase text-xs tracking-widest transition-all"
+                          >
+                            Recusar
+                          </button>
+                          <button
+                            onClick={() => handleAprovarOrcamento(obra)}
+                            className="flex-1 py-2.5 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 hover:text-emerald-300 rounded-lg font-black uppercase text-xs tracking-widest transition-all"
+                          >
+                            Aprovar
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* SEÇÃO 3: HISTÓRICO DE ORÇAMENTOS */}
           {obrasComOrcamentos.length > 0 && (
             <div className="border-t border-white/10 pt-8">
               <h2 className="text-2xl font-black text-white uppercase mb-4">Histórico de Orçamentos</h2>
               
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {obrasComOrcamentos.map((obra: any) => {
-                  // Lendo como String para não dar falso negativo
                   const cliente = listaClientesOrc.find((c: any) => String(c.id) === String(obra.clienteId));
                   const orcamentos = normalizarOrcamentos(obra);
                   const ultimoOrcamento = orcamentos[orcamentos.length - 1];
@@ -1455,27 +1588,33 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                   const idProjetoHistorico = Array.isArray(obra.propostas) && obra.propostas.length > 0
                     ? extrairIdProjetoDoNumero(obra.propostas[obra.propostas.length - 1].numeroProposta || '')
                     : '';
-                  
+                  const versaoAtiva = formatarVersaoOrcamento(ultimoOrcamento.versao);
+                  const temRevisoes = orcamentos.length > 1;
+
                   return (
-                    <div 
+                    <div
                       key={obra.id}
                       className="bg-[#101f3d] border border-white/10 rounded-2xl p-6 hover:border-emerald-500/30 hover:shadow-lg hover:shadow-emerald-900/20 transition-all"
                     >
                       <div className="space-y-4">
+                        {/* Cabeçalho */}
                         <div className="flex justify-between items-start gap-3">
                           <div className="flex-1">
-                            <h3 className="text-lg font-black text-white uppercase line-clamp-2">{obra.nome} {idProjetoHistorico && <span className="text-cyan-400">• {idProjetoHistorico}</span>}</h3>
+                            <h3 className="text-lg font-black text-white uppercase line-clamp-2">
+                              {obra.nome} {idProjetoHistorico && <span className="text-cyan-400">• {idProjetoHistorico}</span>}
+                            </h3>
                             <p className="text-amber-400 text-sm font-bold mt-1">{cliente?.razaoSocial || 'Cliente Desconhecido'}</p>
                           </div>
                           <span className="px-3 py-1 bg-emerald-500/20 text-emerald-400 rounded-full text-xs font-black whitespace-nowrap">
-                            Orçado
+                            v{versaoAtiva}
                           </span>
                         </div>
 
+                        {/* Dados da versão ativa */}
                         <div className="bg-[#0b1220] rounded-xl p-4 space-y-2.5 text-sm">
-                          <div className="flex justify-between">
-                            <span className="text-white/50">Versão:</span>
-                            <span className="text-white font-bold">{formatarVersaoOrcamento(ultimoOrcamento.versao)}</span>
+                          <div className="flex justify-between items-center">
+                            <span className="text-white/50">Versão ativa:</span>
+                            <span className="text-emerald-400 font-black">{versaoAtiva}</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-white/50">Preço Final:</span>
@@ -1483,19 +1622,72 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                           </div>
                           <div className="flex justify-between">
                             <span className="text-white/50">Criado em:</span>
-                            <span className="text-white font-bold text-xs">{new Date(ultimoOrcamento.dataCriacao).toLocaleDateString('pt-BR')}</span>
+                            <span className="text-white font-bold text-xs">
+                              {ultimoOrcamento.dataCriacao ? new Date(ultimoOrcamento.dataCriacao).toLocaleDateString('pt-BR') : '—'}
+                            </span>
                           </div>
                         </div>
 
-                        <button
-                          onClick={() => handleDownloadOrcamentoPDF(ultimoOrcamento, obra)}
-                          className="w-full bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 py-2 rounded-lg font-black uppercase text-xs tracking-widest transition-all flex items-center justify-center gap-2"
-                        >
-                          <Download size={14} /> Download Orçamento
-                        </button>
+                        {/* Histórico de versões (quando há mais de uma) */}
+                        {temRevisoes && (
+                          <div className="bg-[#0b1220] rounded-xl p-3">
+                            <p className="text-white/40 text-[10px] font-black uppercase tracking-widest mb-2">
+                              Histórico de Revisões ({orcamentos.length} versões)
+                            </p>
+                            <div className="space-y-1.5">
+                              {orcamentos.map((orc: any, idx: number) => {
+                                const isAtivo = idx === orcamentos.length - 1;
+                                const versao = formatarVersaoOrcamento(orc.versao);
+                                const preco = Number(orc.valores?.precoFinal ?? 0);
+                                const statusLabel =
+                                  orc.status === 'recusado' ? 'Recusado' :
+                                  orc.status === 'pendente' ? 'Ativo' :
+                                  orc.status === 'rascunho' ? 'Rascunho' : orc.status;
+                                const statusClass =
+                                  orc.status === 'recusado' ? 'bg-red-500/20 text-red-400' :
+                                  orc.status === 'pendente' ? 'bg-emerald-500/20 text-emerald-400' :
+                                  'bg-white/10 text-white/50';
+                                return (
+                                  <div key={idx} className={`flex items-center justify-between text-xs rounded-lg px-2 py-1.5 ${isAtivo ? 'bg-emerald-500/10 border border-emerald-500/20' : ''}`}>
+                                    <div className="flex items-center gap-2">
+                                      <span className={`font-black text-sm ${isAtivo ? 'text-emerald-400' : 'text-white/40'}`}>
+                                        v{versao}
+                                      </span>
+                                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-black ${statusClass}`}>
+                                        {statusLabel}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <span className={`font-bold ${isAtivo ? 'text-white' : 'text-white/40'}`}>
+                                        R$ {preco.toFixed(2)}
+                                      </span>
+                                      <button
+                                        onClick={() => handleDownloadOrcamentoPDF(orc, obra)}
+                                        title={`Download v${versao}`}
+                                        className="p-1 rounded hover:bg-emerald-500/20 text-emerald-400/60 hover:text-emerald-300 transition"
+                                      >
+                                        <Download size={12} />
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Download da versão ativa (quando há apenas uma versão) */}
+                        {!temRevisoes && (
+                          <button
+                            onClick={() => handleDownloadOrcamentoPDF(ultimoOrcamento, obra)}
+                            className="w-full bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 py-2 rounded-lg font-black uppercase text-xs tracking-widest transition-all flex items-center justify-center gap-2"
+                          >
+                            <Download size={14} /> Download Orçamento
+                          </button>
+                        )}
 
                         {podeNovoOrcamento ? (
-                          <button 
+                          <button
                             onClick={() => handleSelectObra(obra)}
                             className="w-full bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-400 hover:to-blue-500 text-white py-3 rounded-lg font-black uppercase text-xs tracking-widest transition-all"
                           >
@@ -1959,7 +2151,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
             <div className="mt-4 pt-4 border-t border-white/10 flex justify-end">
               <div className="bg-[#0b1220] border border-white/10 rounded-lg px-4 py-2.5">
                 <p className="text-white/60 text-[10px] font-black uppercase tracking-widest">Total de dias previstos</p>
-                <p className="text-amber-400 font-black text-lg text-right">{totalDiasAtividades.toFixed(2)} dias</p>
+                <p className="text-amber-400 font-black text-lg text-right">{Number.isInteger(totalDiasAtividades) ? totalDiasAtividades : totalDiasAtividades.toFixed(2)} dias</p>
               </div>
             </div>
           </div>
@@ -2049,17 +2241,24 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
-              <div className="bg-[#101f3d] rounded-lg p-4 border border-white/5 space-y-2.5">
-                <label className={labelClass}>Quantidade de itens produzidos</label>
+              <div className={`rounded-lg p-4 border space-y-2.5 ${Number(orcamentoData.quantidadeItensProduzidos) < 1 ? 'bg-red-500/5 border-red-500/30' : 'bg-[#101f3d] border-white/5'}`}>
+                <label className={labelClass}>
+                  Quantidade de itens produzidos <span className="text-red-400">*</span>
+                </label>
                 <input
                   type="number"
-                  min="0"
+                  min="1"
                   step="1"
-                  className={inputClass}
+                  className={`${inputClass} ${Number(orcamentoData.quantidadeItensProduzidos) < 1 ? 'border-red-500/50' : ''}`}
                   value={orcamentoData.quantidadeItensProduzidos}
                   onChange={e => setOrcamentoData({ ...orcamentoData, quantidadeItensProduzidos: e.target.value })}
-                  placeholder="0"
+                  placeholder="Obrigatório para concluir"
                 />
+                {Number(orcamentoData.quantidadeItensProduzidos) < 1 && (
+                  <p className="text-red-400 text-[10px] font-black uppercase tracking-widest">
+                    Obrigatório para concluir o orçamento
+                  </p>
+                )}
               </div>
               <div className="bg-[#101f3d] rounded-lg p-4 border border-white/5 space-y-2.5">
                 <p className={labelClass}>Valor por unidade</p>
@@ -2079,9 +2278,11 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
             >
               {saving ? 'Salvando...' : 'Salvar Orçamento'}
             </button>
-            <button 
+            <button
               onClick={handleConcluirOrcamento}
-              className="flex-1 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-[#0b1220] py-3 rounded-lg font-black uppercase text-sm tracking-widest transition-all shadow-lg shadow-amber-900/30"
+              disabled={saving || Number(orcamentoData.quantidadeItensProduzidos) < 1}
+              title={Number(orcamentoData.quantidadeItensProduzidos) < 1 ? 'Informe a quantidade de itens produzidos para concluir' : ''}
+              className="flex-1 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-[#0b1220] py-3 rounded-lg font-black uppercase text-sm tracking-widest transition-all shadow-lg shadow-amber-900/30 disabled:opacity-40 disabled:cursor-not-allowed disabled:from-amber-500 disabled:to-orange-500"
             >
               <Lock size={16} className="inline mr-2" /> Concluir Orçamento
             </button>
