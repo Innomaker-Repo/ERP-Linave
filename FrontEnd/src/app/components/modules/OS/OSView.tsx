@@ -31,12 +31,9 @@ const getPrefixoEmpresa = (empresaPrestadora?: string) => {
 
 const somarDiasDoOrcamento = (orcamento: any): number => {
   const atividades = Array.isArray(orcamento?.atividades) ? orcamento.atividades : [];
-  const maoDeObra = Array.isArray(orcamento?.maoDeObra) ? orcamento.maoDeObra : [];
 
   const totalAtividades = atividades.reduce((soma: number, item: any) => soma + Number(item?.dias || 0), 0);
-  if (totalAtividades > 0) return totalAtividades;
-
-  return maoDeObra.reduce((soma: number, item: any) => soma + Number(item?.dias || 0), 0);
+  return totalAtividades;
 };
 
 const calcularDataTerminoPrevisto = (dataInicio: string, totalDias: number): string => {

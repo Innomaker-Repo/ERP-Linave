@@ -246,11 +246,9 @@ def criar_orcamento(request):
         if finalizar and negocio_id:
             try:
                 negocio_vinculado = Negocio.objects.get(id=negocio_id)
-                negocio_vinculado.categoria = 'Negociação'
-                negocio_vinculado.status = 'Orçamento Finalizado'
                 negocio_vinculado.orcamento_realizado = True
                 negocio_vinculado.requer_reorcamento = False
-                negocio_vinculado.save()
+                negocio_vinculado.save(update_fields=['orcamento_realizado', 'requer_reorcamento'])
             except Negocio.DoesNotExist:
                 pass
 

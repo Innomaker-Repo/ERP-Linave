@@ -95,6 +95,13 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   const [selectedObra, setSelectedObra] = useState<any>(null);
   const [loadingData, setLoadingData] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  const getRascunhoKey = (obraId: string | number) => `orcamento_rascunho_${obraId}`;
+
+  const fecharOrcamentoComoX = () => {
+    setShowForm(false);
+    setSelectedObra(null);
+  };
  
 
 
@@ -173,23 +180,38 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   };
 
   const formatarVersaoOrcamento = (versao: any) => {
-    if (typeof versao === 'string' && /^[A-Za-z]+$/.test(versao.trim())) {
-      return versao.trim().toUpperCase();
+    if (versao === null || versao === undefined) return '';
+
+    const texto = String(versao).trim();
+    if (!texto) return '';
+    if (/^[A-Za-z]+$/.test(texto)) {
+      return texto.toUpperCase();
     }
 
-    const versaoNumero = Number(versao);
+    const versaoNumero = Number(texto);
     if (Number.isFinite(versaoNumero) && versaoNumero > 0) {
       return String(Math.floor(versaoNumero));
     }
 
-    return '1';
+    return texto;
+  };
+
+  const labelVersaoOrcamento = (versao: any) => {
+    const versaoNormalizada = formatarVersaoOrcamento(versao);
+    return versaoNormalizada ? `v${versaoNormalizada}` : 'Original';
   };
 
   const proximaVersaoOrcamento = (orcamentos: any[] = []) => {
-    if (orcamentos.length === 0) return 'A';
+    const versoesAlfabeticas = orcamentos
+      .map((orcamento) => formatarVersaoOrcamento(orcamento?.versao))
+      .filter((versao) => /^[A-Z]+$/.test(versao));
 
-    const ultimoIndice = orcamentos.reduce((maior, orcamento) => {
-      const indice = versaoAlfabeticaToIndex(formatarVersaoOrcamento(orcamento?.versao));
+    if (versoesAlfabeticas.length === 0) {
+      return orcamentos.length === 0 ? '' : 'A';
+    }
+
+    const ultimoIndice = versoesAlfabeticas.reduce((maior, versao) => {
+      const indice = versaoAlfabeticaToIndex(versao);
       return Math.max(maior, indice);
     }, -1);
 
@@ -223,6 +245,26 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   });
 
   const [orcamentoData, setOrcamentoData] = useState(getInitialOrcamentoData);
+
+  useEffect(() => {
+    if (!showForm || !selectedObra) return;
+
+    try {
+      localStorage.setItem(getRascunhoKey(selectedObra.id), JSON.stringify(orcamentoData));
+    } catch (error) {
+      console.warn('Não foi possível salvar o rascunho do orçamento:', error);
+    }
+  }, [orcamentoData, selectedObra, showForm]);
+
+  useEffect(() => {
+    const handleFecharSolicitado = () => {
+      if (!showForm) return;
+      fecharOrcamentoComoX();
+    };
+
+    window.addEventListener('fecharOrcamentoSolicitado', handleFecharSolicitado);
+    return () => window.removeEventListener('fecharOrcamentoSolicitado', handleFecharSolicitado);
+  }, [showForm]);
 
   // Função para converter dados antigos em novo formato
   const normalizarOrcamentos = (obra: any) => {
@@ -418,7 +460,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       console.warn('Falha ao buscar ordens de serviço para preencher campos extras:', err);
     }
 
-    setOrcamentoData({
+    const formularioBase = {
       ...baseData,
       numeroOrcamento: reorcamentoPendente
         ? (ultimoOrcamento?.numeroOrcamento || gerarIdOrcamento(prefixo, numeroServico, proximaVersao))
@@ -429,7 +471,25 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       supervisor: ordem?.supervisor_encarregado || ordem?.supervisor || obra.supervisor || baseData.supervisor || '',
       centroCusto: ordem?.cc || ordem?.centro_custo || obra.centroCusto || baseData.centroCusto || '',
       dadosServicos
-    });
+    };
+
+    try {
+      const salvo = localStorage.getItem(getRascunhoKey(obra.id));
+      if (salvo) {
+        const rascunho = JSON.parse(salvo);
+        setOrcamentoData({
+          ...formularioBase,
+          ...rascunho,
+          dadosServicos: Array.isArray(rascunho?.dadosServicos) && rascunho.dadosServicos.length > 0
+            ? rascunho.dadosServicos
+            : formularioBase.dadosServicos,
+        });
+      } else {
+        setOrcamentoData(formularioBase);
+      }
+    } catch {
+      setOrcamentoData(formularioBase);
+    }
     // Preencher valores financeiros caso exista último orçamento
     if (ultimoOrcamento?.valores) {
       setOrcamentoData(prev => ({
@@ -495,7 +555,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     const orcamentosExistentes = normalizarOrcamentos(selectedObra);
     const ultimoOrc = orcamentosExistentes.length > 0 ? orcamentosExistentes[orcamentosExistentes.length - 1] : null;
     const ultimoEhRascunho = ultimoOrc?.status === 'rascunho';
-    const reorcPendente = Boolean(selectedObra?.requerReorcamento && ultimoOrc?.status === 'pendente_reorcamento');
+    const reorcPendente = Boolean(selectedObra?.requerReorcamento && ultimoOrc && !ultimoEhRascunho);
     const proxVersao = (reorcPendente || ultimoEhRascunho)
       ? formatarVersaoOrcamento(ultimoOrc?.versao)
       : proximaVersaoOrcamento(orcamentosExistentes);
@@ -547,9 +607,14 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
         console.warn('Rascunho salvo localmente; erro no backend:', backendErr);
       }
 
+      try {
+        localStorage.removeItem(getRascunhoKey(selectedObra.id));
+      } catch {
+        // ignore
+      }
+
       alert("Rascunho salvo! O negócio permanece em Planejamento.");
-      setShowForm(false);
-      setSelectedObra(null);
+      fecharOrcamentoComoX();
       setOrcamentoData(getInitialOrcamentoData());
     } finally {
       setSaving(false);
@@ -632,9 +697,14 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       const obrasAtualizadas = (obras || []).map((o: any) => o.id === selectedObra.id ? obraAtualizada : o);
       saveEntity('obras', obrasAtualizadas);
 
+      try {
+        localStorage.removeItem(getRascunhoKey(selectedObra.id));
+      } catch {
+        // ignore
+      }
+
       alert("Orçamento enviado para aprovação!");
-      setShowForm(false);
-      setSelectedObra(null);
+      fecharOrcamentoComoX();
       setOrcamentoData(getInitialOrcamentoData());
     } catch (error: any) {
       console.error("Erro ao concluir orçamento:", error);
@@ -1201,7 +1271,8 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       doc.rect(x, y, baseColWidth * 5, cellHeight);
 
       // Download
-      doc.save(`Orcamento_${orcamento.numeroOrcamento}_v${formatarVersaoOrcamento(orcamento.versao)}.pdf`);
+      const versaoArquivo = formatarVersaoOrcamento(orcamento.versao);
+      doc.save(`Orcamento_${orcamento.numeroOrcamento}${versaoArquivo ? `_v${versaoArquivo}` : ''}.pdf`);
     } catch (error) {
       console.error('Erro ao gerar PDF:', error);
       alert('Erro ao gerar PDF do orçamento');
@@ -1359,10 +1430,9 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   const totalMaoDeObra = orcamentoData.maoDeObra.reduce((sum, item) => sum + (parseDecimal(item.valorTotal) || 0), 0);
   const totalMateriais = orcamentoData.materiais.reduce((sum, item) => sum + (parseDecimal(item.valorTotal) || 0), 0);
   const totalTerceirizados = orcamentoData.terceirizados.reduce((sum, item) => sum + (parseDecimal(item.valorTotal) || 0), 0);
-  const totalDiasAtividades = [
-    ...orcamentoData.atividades.map(item => parseDecimal(item.dias)),
-    ...orcamentoData.maoDeObra.map(item => parseDecimal(item.dias)),
-  ].reduce((sum, d) => sum + d, 0);
+  const totalDiasAtividades = orcamentoData.atividades
+    .map((item) => parseDecimal(item.dias))
+    .reduce((sum, d) => sum + d, 0);
   const totalBruto = totalMaoDeObra + totalMateriais + totalTerceirizados;
   const margemPercentual = parseFloat(orcamentoData.margem) || 0;
   const ohPercentual = parseFloat(orcamentoData.oh) || 0;
@@ -1440,17 +1510,17 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                             <span className="text-white/50">Status:</span>
                             {ehRascunho ? (
                               <span className="text-yellow-300 font-bold">
-                                v{formatarVersaoOrcamento(ultimoOrcamento.versao)} em edição
+                                {labelVersaoOrcamento(ultimoOrcamento.versao)} em edição
                               </span>
                             ) : !ultimoOrcamento ? (
                               <span className="text-blue-300 font-bold">Aguardando orçamento</span>
                             ) : reorcamentoArquivos ? (
                               <span className="text-orange-300 font-bold">
-                                v{formatarVersaoOrcamento(ultimoOrcamento?.versao)} aguardando revisão
+                                {labelVersaoOrcamento(ultimoOrcamento?.versao)} aguardando revisão
                               </span>
                             ) : ultimoOrcamento?.status === 'recusado' ? (
                               <span className="text-red-300 font-bold">
-                                v{formatarVersaoOrcamento(ultimoOrcamento.versao)} recusada
+                                {labelVersaoOrcamento(ultimoOrcamento.versao)} recusada
                               </span>
                             ) : (
                               <span className="text-blue-300 font-bold">Aguardando orçamento</span>
@@ -1501,7 +1571,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                 {projetosAguardandoAprovacao.map((obra: any) => {
                   const orcamentos = normalizarOrcamentos(obra);
                   const ultimoOrcamento = orcamentos[orcamentos.length - 1];
-                  const versao = formatarVersaoOrcamento(ultimoOrcamento?.versao);
+                  const versao = labelVersaoOrcamento(ultimoOrcamento?.versao);
                   const precoFinal = Number(ultimoOrcamento?.valores?.precoFinal ?? 0);
                   const nomeCliente = obra.nomeCliente || obra.nome_cliente || obra.cliente_nome || 'Cliente';
 
@@ -1517,7 +1587,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                             <p className="text-amber-400 text-sm font-bold mt-1">{nomeCliente}</p>
                           </div>
                           <span className="px-3 py-1 bg-blue-500/20 text-blue-300 rounded-full text-xs font-black whitespace-nowrap">
-                            v{versao}
+                            {versao}
                           </span>
                         </div>
 
@@ -1588,7 +1658,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                   const idProjetoHistorico = Array.isArray(obra.propostas) && obra.propostas.length > 0
                     ? extrairIdProjetoDoNumero(obra.propostas[obra.propostas.length - 1].numeroProposta || '')
                     : '';
-                  const versaoAtiva = formatarVersaoOrcamento(ultimoOrcamento.versao);
+                  const versaoAtiva = labelVersaoOrcamento(ultimoOrcamento.versao);
                   const temRevisoes = orcamentos.length > 1;
 
                   return (
@@ -1606,7 +1676,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                             <p className="text-amber-400 text-sm font-bold mt-1">{cliente?.razaoSocial || 'Cliente Desconhecido'}</p>
                           </div>
                           <span className="px-3 py-1 bg-emerald-500/20 text-emerald-400 rounded-full text-xs font-black whitespace-nowrap">
-                            v{versaoAtiva}
+                            {versaoAtiva}
                           </span>
                         </div>
 
@@ -1637,7 +1707,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                             <div className="space-y-1.5">
                               {orcamentos.map((orc: any, idx: number) => {
                                 const isAtivo = idx === orcamentos.length - 1;
-                                const versao = formatarVersaoOrcamento(orc.versao);
+                                const versao = labelVersaoOrcamento(orc.versao);
                                 const preco = Number(orc.valores?.precoFinal ?? 0);
                                 const statusLabel =
                                   orc.status === 'recusado' ? 'Recusado' :
@@ -1710,7 +1780,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
         // FORMULÁRIO DE LEVANTAMENTO DE ORÇAMENTO
         <div className="space-y-6 animate-in fade-in">
           <div className="flex justify-end">
-            <button onClick={() => setShowForm(false)} className="p-2 bg-white/5 rounded-full hover:bg-white/10">
+            <button onClick={fecharOrcamentoComoX} className="p-2 bg-white/5 rounded-full hover:bg-white/10">
               <X size={24} className="text-white/60" />
             </button>
           </div>

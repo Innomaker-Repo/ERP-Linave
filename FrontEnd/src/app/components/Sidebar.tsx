@@ -199,7 +199,10 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
                     return (
                       <button
                         key={item.id}
-                        onClick={() => setActiveSection(item.id)}
+                        onClick={() => {
+                          window.dispatchEvent(new CustomEvent('fecharOrcamentoSolicitado'));
+                          setActiveSection(item.id);
+                        }}
                         className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all relative overflow-hidden group
                           ${isActive 
                             ? 'bg-amber-500/10 text-amber-500 font-bold shadow-[inset_4px_0_0_0_#d97706]' 

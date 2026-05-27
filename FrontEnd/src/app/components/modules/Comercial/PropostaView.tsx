@@ -38,6 +38,7 @@ interface PropostaFormData {
   responsabilidadeContratada: string;
   escopoC: string;
   preco: string;
+  precoItens?: Array<{ id: string; nome?: string; quantidade: number; precoUnitario: number; total: number }>;
   condicoesGerais: string;
   condicoesPagamento: string;
   prazo: string;
@@ -118,8 +119,12 @@ const mapNegocioToObra = (n: any): any => ({
 });
 
 const parsePrecoParaDecimal = (preco: string): number => {
-  const cleaned = preco.replace(/[^0-9,.]/g, '').replace(',', '.');
-  const parsed = parseFloat(cleaned);
+  if (!preco) return 0;
+  // Remover tudo que não seja dígito, ponto ou vírgula, remover pontos de milhares e converter vírgula para ponto
+  const onlyNums = String(preco).replace(/[^0-9.,]/g, '');
+  const withoutThousands = onlyNums.replace(/\./g, '');
+  const normalized = withoutThousands.replace(/,/g, '.');
+  const parsed = parseFloat(normalized);
   return isNaN(parsed) ? 0 : parsed;
 };
 
@@ -163,6 +168,7 @@ export function PropostaView() {
     textoAbertura: `Vimos através desta apresentar nossa Proposta Técnica-Comercial, para serviços, conforme escopo e delineamento realizado a bordo, conforme solicitado para vossa avaliação e aprovação.\n\n\nEstamos à disposição para quaisquer esclarecimentos que se façam necessários.\n\n\nAtenciosamente,\n\n\nDiretoria Comercial`,
     escopoA: '',
     escopoBasicoServicos: [],
+    precoItens: [],
     responsabilidadeContratada: '',
     escopoC: '',
     preco: '',
@@ -174,6 +180,55 @@ export function PropostaView() {
 
   const [propostaForm, setPropostaForm] = useState<PropostaFormData>(getInitialPropostaForm);
   const [novaColunaPorEscopo, setNovaColunaPorEscopo] = useState<Record<string, string>>({});
+
+  // Preço - itens editáveis (nome, quantidade, preço unitário, total)
+  const criarPrecoItem = (override?: Partial<{ id: string; nome?: string; quantidade: number; precoUnitario: number; total: number }>) => ({
+    id: `preco-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
+    nome: override?.nome || '',
+    quantidade: override?.quantidade ?? 1,
+    precoUnitario: override?.precoUnitario ?? 0,
+    total: override?.total ?? 0
+  });
+
+  const adicionarPrecoItem = (item?: any) => {
+    const novo = criarPrecoItem(item);
+    setPropostaForm(prev => ({ ...prev, precoItens: [...(prev.precoItens || []), novo] }));
+  };
+
+  const removerPrecoItem = (id: string) => {
+    setPropostaForm(prev => ({ ...prev, precoItens: (prev.precoItens || []).filter((it) => it.id !== id) }));
+  };
+
+  const atualizarPrecoItem = (id: string, campo: 'nome' | 'quantidade' | 'precoUnitario', valor: any) => {
+    setPropostaForm(prev => {
+      const itens = (prev.precoItens || []).map((it) => {
+        if (it.id !== id) return it;
+        const updated = { ...it } as any;
+        if (campo === 'nome') updated.nome = String(valor || '');
+        if (campo === 'quantidade') updated.quantidade = parseInt(String(valor)) || 0;
+        if (campo === 'precoUnitario') {
+          const cleaned = String(valor).replace(/[^0-9.,]/g, '').replace(',', '.');
+          updated.precoUnitario = parseFloat(cleaned) || 0;
+        }
+        updated.total = (Number(updated.quantidade) || 0) * (Number(updated.precoUnitario) || 0);
+        return updated;
+      });
+      return { ...prev, precoItens: itens };
+    });
+  };
+
+  const calcularSomaPreco = (itens: NonNullable<PropostaFormData['precoItens']>) => {
+    const soma = (itens || []).reduce((acc, it) => acc + (Number(it.total) || 0), 0);
+    return soma;
+  };
+
+  useEffect(() => {
+    // atualiza campo `preco` formatado sempre que itens mudarem
+    const itens = propostaForm.precoItens || [];
+    const soma = calcularSomaPreco(itens as any);
+    const formatted = soma.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    setPropostaForm(prev => ({ ...prev, preco: `R$ ${formatted}` }));
+  }, [propostaForm.precoItens]);
 
   // Negócios em Negociação
   const negociosNegociacao = listaNegocios.filter((obra: any) => obra.categoria === 'Negociação');
@@ -440,6 +495,27 @@ export function PropostaView() {
       numeroProposta: gerarIdProposta(componentesId?.prefixo || 'LN', numeroSequencial, proximaVersaoLetra),
       escopoBasicoServicos: criarEscopoBasicoServicos(obra)
     };
+
+    // Inicializa itens de preço a partir dos valores do orçamento, quando existirem
+    try {
+      const orc = obra.orcamentoValores || null;
+      if (orc) {
+        const precoFinal = Number(orc.precoFinal ?? orc.valorTotalServico ?? 0) || 0;
+        const qnt = Number(orc.qnt ?? orc.quantidade ?? 1) || 1;
+        const unit = qnt > 0 ? precoFinal / qnt : precoFinal;
+        const itemInit = {
+          id: `preco-orcamento-${Date.now()}`,
+          nome: 'Orçamento',
+          quantidade: qnt,
+          precoUnitario: unit,
+          total: precoFinal
+        };
+        base.precoItens = [itemInit];
+        base.preco = `R$ ${precoFinal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      }
+    } catch (e) {
+      // ignore
+    }
 
     // Restaura rascunho salvo se existir
     try {
@@ -1246,11 +1322,68 @@ export function PropostaView() {
         <h3 className="text-base font-black text-white uppercase mb-4">D - Preço</h3>
         <div className="space-y-1.5">
           <label className={labelClass}>Preço</label>
-          <textarea 
-            className={`${inputClass} h-20`}
-            value={propostaForm.preco}
-            onChange={e => setPropostaForm({...propostaForm, preco: e.target.value})}
-          />
+          <div className="bg-[#071122] p-3 rounded-lg">
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs border border-white/10 rounded-lg overflow-hidden">
+                <thead>
+                  <tr className="bg-white/5 border-b border-white/10">
+                    <th className="px-3 py-2 text-left text-white font-black">Nome</th>
+                    <th className="px-3 py-2 text-left text-white font-black w-28">Quantidade</th>
+                    <th className="px-3 py-2 text-left text-white font-black w-40">Preço Unit.</th>
+                    <th className="px-3 py-2 text-left text-white font-black w-40">Total</th>
+                    <th className="px-3 py-2 text-center text-white font-black w-16"> </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(propostaForm.precoItens || []).map((it) => (
+                    <tr key={it.id} className="border-b border-white/5">
+                      <td className="px-3 py-2">
+                        <input
+                          type="text"
+                          className="w-full bg-[#101f3d] border border-white/10 p-2 rounded text-white text-xs outline-none"
+                          value={it.nome || ''}
+                          onChange={(e) => atualizarPrecoItem(it.id, 'nome', e.target.value)}
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="number"
+                          min="0"
+                          className="w-full bg-[#101f3d] border border-white/10 p-2 rounded text-white text-xs outline-none"
+                          value={String(it.quantidade || 0)}
+                          onChange={(e) => atualizarPrecoItem(it.id, 'quantidade', e.target.value)}
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="text"
+                          className="w-full bg-[#101f3d] border border-white/10 p-2 rounded text-white text-xs outline-none"
+                          value={String(it.precoUnitario || '')}
+                          onChange={(e) => atualizarPrecoItem(it.id, 'precoUnitario', e.target.value)}
+                        />
+                      </td>
+                      <td className="px-3 py-2 text-white font-black">R$ {(Number(it.total) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td className="px-3 py-2 text-center">
+                        <button type="button" onClick={() => removerPrecoItem(it.id)} className="text-red-300 p-1"><X size={14} /></button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex items-center justify-between mt-3">
+              <div className="flex gap-2">
+                <button type="button" onClick={() => adicionarPrecoItem()} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-black text-xs uppercase">
+                  <Plus size={12} className="inline mr-1" /> Adicionar Item
+                </button>
+              </div>
+              <div className="text-right">
+                <div className="text-white/70 text-xs">Total</div>
+                <div className="text-white font-black">{propostaForm.preco || 'R$ 0,00'}</div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
