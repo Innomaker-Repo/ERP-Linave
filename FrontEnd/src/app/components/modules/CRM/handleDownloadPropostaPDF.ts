@@ -213,7 +213,7 @@ export const handleDownloadPropostaPDF = (
 
     if (propostaForm.contato) writeText(`ATT.: ${propostaForm.contato}`, 11, true, 'left', 0, 2);
     if (propostaForm.referencia) writeText(`Ref.: ${propostaForm.referencia}`, 11, true, 'left', 0, 2);
-    if (propostaForm.assunto) writeText(`Subject: ${propostaForm.assunto}`, 11, true, 'left', 0, 10);
+    if (propostaForm.assunto) writeText(`Assunto: ${propostaForm.assunto}`, 11, true, 'left', 0, 10);
     if (propostaForm.saudacao) writeText(propostaForm.saudacao, 11, false, 'left', 0, 4);
     if (propostaForm.textoAbertura) {writeText(propostaForm.textoAbertura, 11, false, 'justify', 0, 10); doc.addPage(); y = drawHeader();}
 
@@ -298,7 +298,8 @@ export const handleDownloadPropostaPDF = (
     }
 
     writeText(propostaForm.encerramento || 'Atenciosamente,', 11, false, 'left', 0, 6);
-    writeText(propostaForm.assinaturaNome || 'Servinave Eng. e Rep. Navais', 11, true, 'left', 0, 1);
+    const assinaturaPadrao = propostaForm.assinaturaNome || propostaForm.empresaNome || (isLinave ? 'Linave' : 'VTS - Servinave Engenharia e Reparos Navais');
+    writeText(assinaturaPadrao, 11, true, 'left', 0, 1);
     writeText(propostaForm.assinaturaCargo || 'Setor Comercial', 11, false, 'left', 0, 10);
 
     if (isLinave) {
