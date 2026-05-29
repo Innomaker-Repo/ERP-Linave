@@ -1298,6 +1298,7 @@ const initialServico: Servico = {
             versaoNegocio: 'A',
             tipo: dadosNegocio.tipo_servico || (dadosServicos?.[0]?.tipo) || '',
             responsavelTecnico: dadosNegocio.solicitante || formData.solicitante || '',
+            dataSolicitacao: dadosNegocio.data_solicitacao || formData.dataSolicitacao || new Date().toISOString().split('T')[0],
             orcamentos: [],
             propostas: [],
             documentosNegocio: []
@@ -2710,7 +2711,7 @@ const obrasOrdenadas = useMemo(() => {
                                   {ultimaProposta.status === 'aceita' && 'Proposta Aceita'}
                                   {ultimaProposta.status === 'recusada' && 'Proposta Recusada'}
                                 </p>
-                                <span className="text-xs font-black">v{ultimaProposta.versao}</span>
+                                <span className="text-xs font-black">v{ultimaProposta.versao || ultimaProposta.numeroProposta?.match(/[A-Z]+$/)?.[0] || 'A'}</span>
                               </div>
                               <div className="mt-2.5 pt-2 border-t border-white/10 space-y-2">
                                 <div className="flex items-center justify-between">
@@ -2739,10 +2740,11 @@ const obrasOrdenadas = useMemo(() => {
                         {coluna.id === 'Em Andamento' && obra.propostas && obra.propostas.length > 0 && (() => {
                           const ultimaProposta = obra.propostas[obra.propostas.length - 1];
                           const possuiDocumentoCliente = Boolean(obra.documentoClienteAssinado?.conteudo || obra.documentoClienteAssinado?.url);
+                          const versaoProposta = ultimaProposta.versao || ultimaProposta.numeroProposta?.match(/[A-Z]+$/)?.[0] || 'A';
                           return (
                             <div className="rounded-lg p-2.5 mb-3 border bg-purple-500/15 border-purple-500/30">
                               <div className="flex justify-between items-center">
-                                <p className="text-xs font-black uppercase text-purple-200">Proposta v{ultimaProposta.versao}</p>
+                                <p className="text-xs font-black uppercase text-purple-200">Proposta v{versaoProposta}</p>
                                 <span className={`text-[10px] font-black ${
                                   ultimaProposta.status === 'aceita'
                                     ? 'text-emerald-300'
@@ -2787,7 +2789,7 @@ const obrasOrdenadas = useMemo(() => {
                                 <div className="rounded-lg p-2.5 border bg-cyan-500/15 border-cyan-500/30">
                                   <div className="flex justify-between items-center text-xs">
                                     <span className="text-cyan-200 font-black uppercase">Proposta</span>
-                                    <span className="text-cyan-300 font-black">v{ultimaProposta.versao || '-'}</span>
+                                    <span className="text-cyan-300 font-black">v{ultimaProposta.versao || ultimaProposta.numeroProposta?.match(/[A-Z]+$/)?.[0] || 'A'}</span>
                                   </div>
                                   <p className="text-cyan-100 text-xs mt-1">{ultimaProposta.numeroProposta || 'Sem numero'} • {String(ultimaProposta.status || 'pendente').toUpperCase()}</p>
                                 </div>
@@ -3492,7 +3494,7 @@ const obrasOrdenadas = useMemo(() => {
                         {ultimaProposta.status === 'aceita' && 'PROPOSTA ACEITA'}
                         {ultimaProposta.status === 'recusada' && 'PROPOSTA RECUSADA'}
                       </h3>
-                      <span className="text-white font-black text-sm">v{ultimaProposta.versao}</span>
+                      <span className="text-white font-black text-sm">v{ultimaProposta.versao || ultimaProposta.numeroProposta?.match(/[A-Z]+$/)?.[0] || 'A'}</span>
                     </div>
                     
                     <div className="bg-[#0b1220] rounded-lg p-4 border border-white/5 space-y-3 text-sm">
@@ -4220,7 +4222,7 @@ const obrasOrdenadas = useMemo(() => {
               <div className="sticky top-0 z-40 bg-gradient-to-r from-blue-500/40 to-cyan-500/40 backdrop-blur-md p-8 border-b border-white/10 flex justify-between items-center">
                 <div>
                   <h2 className="text-2xl font-black text-white">PROPOSTA COMERCIAL - DETALHES COMPLETOS</h2>
-                  <p className="text-white/50 text-sm mt-2">Versão {ultimaProposta.versao} • {ultimaProposta.numeroProposta}</p>
+                  <p className="text-white/50 text-sm mt-2">Versão {ultimaProposta.versao || ultimaProposta.numeroProposta?.match(/[A-Z]+$/)?.[0] || 'A'} • {ultimaProposta.numeroProposta}</p>
                 </div>
                 <button 
                   onClick={() => setShowPropostaFullModal(false)}
@@ -4670,7 +4672,7 @@ const obrasOrdenadas = useMemo(() => {
                   <div className="flex items-center justify-between gap-3">
                     <h3 className="text-cyan-300 font-black text-lg uppercase">Proposta</h3>
                     <span className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-cyan-500/20 border border-cyan-500/40 text-cyan-300">
-                      {ultimaProposta ? `v${ultimaProposta.versao}` : 'Sem proposta'}
+                      {ultimaProposta ? `v${ultimaProposta.versao || ultimaProposta.numeroProposta?.match(/[A-Z]+$/)?.[0] || 'A'}` : 'Sem proposta'}
                     </span>
                   </div>
                   {ultimaProposta ? (
