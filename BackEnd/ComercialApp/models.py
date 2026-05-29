@@ -166,7 +166,7 @@ class Negocio(models.Model):
     requer_reorcamento = models.BooleanField(default=True)
     tipo_servico = models.CharField(max_length=100, null=True, blank=True) # Recebe o tipo principal do form
 
-    data_solicitacao = models.DateField(auto_now_add=True)
+    data_solicitacao = models.DateField(null=True, blank=True)
     arquivo_documento = models.FileField(upload_to='documentos_negocios/', null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
