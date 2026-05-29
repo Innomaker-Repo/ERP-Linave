@@ -45,7 +45,9 @@ function getAbaForSection(section: string): { aba: string; item: string } {
     // Almoxerifado
     'estoquePublico': { aba: 'almoxerifado', item: 'estoquePublico' },
     'estoque': { aba: 'almoxerifado', item: 'estoque' },
+    'itensAdicionar': { aba: 'almoxerifado', item: 'itensAdicionar' },
     'historicoBaixa': { aba: 'almoxerifado', item: 'historicoBaixa' },
+    'historicoRomaneio': { aba: 'almoxerifado', item: 'historicoRomaneio' },
     'alocadosPorOS': { aba: 'almoxerifado', item: 'alocadosPorOS' },
     
     // Configurações

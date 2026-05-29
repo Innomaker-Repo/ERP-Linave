@@ -16,6 +16,26 @@ interface AllocationRow {
   details?: string;
 }
 
+interface AllocationHistoricoItem {
+  id: string;
+  action: 'alocar' | 'desalocar';
+  kind: 'gases' | 'equipamentos' | 'materiais' | 'alugaveis' | 'outros';
+  dataEvento: string;
+  osId: string;
+  osLabel: string;
+  itemLabel: string;
+  tableName: string;
+  quantity?: number;
+  local?: string;
+  gasName?: string;
+}
+
+interface OsOptionItem {
+  key: string;
+  value: string;
+  label: string;
+}
+
 const cleanValue = (value: unknown) => {
   if (value === null || value === undefined) return '';
   return String(value).replace(/\s+/g, ' ').trim();
@@ -58,70 +78,78 @@ export function AlocadosPorOSView({ searchQuery }: AlocadosPorOSViewProps) {
   }, []);
 
   const availableOS = useMemo(() => {
-    const merged: any[] = [];
+    const merged: OsOptionItem[] = [];
     const seen = new Set<string>();
     const source = [...(Array.isArray(backendOS) ? backendOS : []), ...(Array.isArray(os) ? os : [])];
 
     source.forEach((entry) => {
       if (!isOsAlvo(entry)) return;
-      const value = getOsOptionValue(entry as OrdemServicoResumo) || String(entry?.id || '');
+      const value = cleanValue(getOsOptionValue(entry as OrdemServicoResumo) || String(entry?.id || ''));
       if (!value || seen.has(value)) return;
       seen.add(value);
-      merged.push(entry);
+      merged.push({
+        key: value,
+        value,
+        label: getOsOptionLabel(entry as OrdemServicoResumo)
+      });
     });
 
+    const historySource = Array.isArray(almoxerifado?.alocacoesHistorico)
+      ? (almoxerifado.alocacoesHistorico as AllocationHistoricoItem[])
+      : [];
+
+    historySource
+      .filter((entry) => entry?.action === 'alocar')
+      .forEach((entry) => {
+        const value = cleanValue(entry.osId || entry.osLabel);
+        if (!value || seen.has(value)) return;
+        seen.add(value);
+        merged.push({
+          key: value,
+          value,
+          label: entry.osLabel || entry.osId
+        });
+      });
+
     return merged;
-  }, [backendOS, os]);
+  }, [backendOS, os, almoxerifado?.alocacoesHistorico]);
 
   useEffect(() => {
     if (!selectedOs && availableOS.length > 0) {
-      setSelectedOs(getOsOptionValue(availableOS[0] as OrdemServicoResumo));
+      setSelectedOs(availableOS[0].value);
     }
   }, [availableOS, selectedOs]);
 
   const selectedOsLabel = useMemo(() => {
-    const found = availableOS.find((entry) => getOsOptionValue(entry as OrdemServicoResumo) === selectedOs);
-    return found ? getOsOptionLabel(found as OrdemServicoResumo) : selectedOs;
+    const found = availableOS.find((entry) => entry.value === selectedOs);
+    return found ? found.label : selectedOs;
   }, [availableOS, selectedOs]);
 
   const currentAllocations = useMemo(() => {
     const termo = (filtro || searchQuery || '').toLowerCase().trim();
     const selectedTerm = normalizeKey(selectedOs);
 
-    const tableAllocations = (Array.isArray(almoxerifado?.tables) ? almoxerifado.tables : []).flatMap((table: any) => {
-      if (!Array.isArray(table?.rows)) return [];
-
-      return table.rows
-        .filter((row: any) => {
-          const serviceOs = cleanValue(row?.values?.serviceOS);
-          return serviceOs && normalizeKey(serviceOs).includes(selectedTerm);
-        })
-        .map((row: any) => ({
-          id: row.id,
-          itemLabel: row?.values?.material || row?.values?.equipamento || row?.values?.modelo || row?.values?.item || 'Item',
-          tableName: table?.name || 'Tabela',
-          type: table?.name === 'Alugados - Equipamentos' ? 'equipamentos' : table?.name === 'Materiais' ? 'materiais' : 'outros',
-          osLabel: cleanValue(row?.values?.serviceOS),
-          local: cleanValue(row?.values?.localizacao),
-          quantity: cleanValue(row?.values?.quantidade || row?.values?.qtd || row?.values?.total),
-          details: [row?.values?.status, row?.values?.fornecedor].filter(Boolean).join(' • ')
-        })) as AllocationRow[];
-    });
-
-    const gasAllocations = (Array.isArray(almoxerifado?.allocations) ? almoxerifado.allocations : [])
-      .filter((allocation: any) => normalizeKey(allocation?.serviceOS || '').includes(selectedTerm))
-      .map((allocation: any) => ({
-        id: allocation.id,
-        itemLabel: allocation.gasName,
-        tableName: 'Alugados - Gases',
-        type: 'gases',
-        osLabel: cleanValue(allocation.serviceOS),
-        local: cleanValue(allocation.local),
-        quantity: String(allocation.quantity),
-        details: `Fornecedor: ${allocation.supplierRowId || '—'}`
+    const historicalAllocations = (Array.isArray(almoxerifado?.alocacoesHistorico)
+      ? (almoxerifado.alocacoesHistorico as AllocationHistoricoItem[])
+      : [])
+      .filter((entry) => entry.action === 'alocar')
+      .filter((entry) => {
+        const osId = normalizeKey(entry.osId || '');
+        const osLabel = normalizeKey(entry.osLabel || '');
+        return !selectedTerm || osId.includes(selectedTerm) || osLabel.includes(selectedTerm);
+      })
+      .map((entry) => ({
+        id: entry.id,
+        itemLabel: cleanValue(entry.itemLabel || entry.gasName || 'Item'),
+        tableName: cleanValue(entry.tableName || 'Tabela'),
+        type: entry.kind || 'outros',
+        osLabel: cleanValue(entry.osLabel || entry.osId),
+        local: cleanValue(entry.local),
+        quantity: entry.quantity !== undefined ? String(entry.quantity) : undefined,
+        details: `Evento: ${new Date(entry.dataEvento).toLocaleString('pt-BR')}`
       })) as AllocationRow[];
 
-    const merged = [...gasAllocations, ...tableAllocations];
+    const merged = historicalAllocations;
 
     if (!termo) return merged;
 
@@ -129,16 +157,16 @@ export function AlocadosPorOSView({ searchQuery }: AlocadosPorOSViewProps) {
       const searchable = [item.itemLabel, item.tableName, item.osLabel, item.local, item.quantity, item.details].filter(Boolean).join(' ').toLowerCase();
       return searchable.includes(termo);
     });
-  }, [almoxerifado?.tables, almoxerifado?.allocations, filtro, searchQuery, selectedOs]);
+  }, [almoxerifado?.alocacoesHistorico, filtro, searchQuery, selectedOs]);
 
   return (
     <div className="flex h-full flex-col gap-6 p-8 animate-in fade-in duration-300">
       <div className="flex flex-col gap-2">
         <div className="inline-flex items-center gap-2 text-cyan-300 text-[10px] font-black uppercase tracking-widest">
-          <ClipboardList size={14} /> Alocados por OS
+          <ClipboardList size={14} /> Histórico por OS
         </div>
-        <h1 className="text-3xl font-black text-white">Estoque por Ordem de Serviço</h1>
-        <p className="text-white/50 text-sm">Selecione uma OS para ver tudo que está vinculado a ela: equipamentos, gases, materiais e alugáveis.</p>
+        <h1 className="text-3xl font-black text-white">Histórico de alocações por OS</h1>
+        <p className="text-white/50 text-sm">Mostra todas as alocações já realizadas na OS, mesmo após desalocação dos itens no estoque.</p>
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_280px]">
@@ -154,11 +182,10 @@ export function AlocadosPorOSView({ searchQuery }: AlocadosPorOSViewProps) {
                   Nenhuma OS disponível
                 </SelectItem>
               ) : (
-                availableOS.map((ordemServico: any) => {
-                  const value = getOsOptionValue(ordemServico as OrdemServicoResumo) || String(ordemServico?.id || '');
+                availableOS.map((ordemServico) => {
                   return (
-                    <SelectItem key={value} value={value} className="cursor-pointer rounded-xl px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
-                      {getOsOptionLabel(ordemServico as OrdemServicoResumo)}
+                    <SelectItem key={ordemServico.key} value={ordemServico.value} className="cursor-pointer rounded-xl px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
+                      {ordemServico.label}
                     </SelectItem>
                   );
                 })
@@ -192,13 +219,13 @@ export function AlocadosPorOSView({ searchQuery }: AlocadosPorOSViewProps) {
         </div>
         <div className="rounded-2xl border border-white/10 bg-[#101f3d] px-4 py-3">
           <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Fonte</p>
-          <p className="mt-1 text-sm font-bold text-white/70">Almoxarifado + alocações de gases</p>
+          <p className="mt-1 text-sm font-bold text-white/70">Histórico permanente de alocações</p>
         </div>
       </div>
 
       <div className="overflow-hidden rounded-[28px] border border-white/10 bg-[#101f3d] shadow-2xl shadow-black/20">
         <div className="border-b border-white/10 px-6 py-4">
-          <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Itens dessa OS</p>
+          <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Alocações registradas dessa OS</p>
         </div>
 
         {currentAllocations.length === 0 ? (

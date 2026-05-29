@@ -59,7 +59,7 @@ interface BaixaHistoricoItem {
 
 interface AllocationHistoricoItem {
   id: string;
-  action: 'alocar' | 'desalocar';
+  action: 'alocar' | 'desalocar' | 'baixa';
   kind: 'gases' | 'equipamentos' | 'materiais' | 'alugaveis' | 'outros';
   dataEvento: string;
   osId: string;
@@ -69,6 +69,27 @@ interface AllocationHistoricoItem {
   quantity?: number;
   local?: string;
   gasName?: string;
+}
+
+interface RomaneioHistoricoItemRow {
+  tableName: string;
+  rowId: string;
+  itemLabel: string;
+  quantidade?: string;
+  snapshotBefore: Record<string, string>;
+  snapshotAfter: Record<string, string>;
+}
+
+interface RomaneioHistoricoItem {
+  id: string;
+  createdAt: string;
+  mode: 'alocacao' | 'baixa';
+  osId: string;
+  osLabel: string;
+  osLocal?: string;
+  items: RomaneioHistoricoItemRow[];
+  revertedAt?: string;
+  revertedBy?: string;
 }
 
 const cleanValue = (value: unknown) => {
@@ -455,6 +476,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   const [expandedGasRows, setExpandedGasRows] = useState<Set<string>>(new Set());
   const [baixasHistorico, setBaixasHistorico] = useState<BaixaHistoricoItem[]>([]);
   const [alocacoesHistorico, setAlocacoesHistorico] = useState<AllocationHistoricoItem[]>([]);
+  const [romaneiosHistorico, setRomaneiosHistorico] = useState<RomaneioHistoricoItem[]>([]);
   const [isBaixaModalOpen, setIsBaixaModalOpen] = useState(false);
   const [baixaTargetRow, setBaixaTargetRow] = useState<StockRow | null>(null);
   const [baixaForm, setBaixaForm] = useState({
@@ -490,6 +512,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   const [selectedForRomaneio, setSelectedForRomaneio] = useState<Set<string>>(new Set());
   const [isRomaneioModalOpen, setIsRomaneioModalOpen] = useState(false);
   const [romaneioOsId, setRomaneioOsId] = useState<string>('');
+  const [romaneioMode, setRomaneioMode] = useState<'alocacao' | 'baixa'>('alocacao');
 
   useEffect(() => {
     let mounted = true;
@@ -568,6 +591,9 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       if (Array.isArray(almoxerifado.alocacoesHistorico)) {
         setAlocacoesHistorico(almoxerifado.alocacoesHistorico);
       }
+      if (Array.isArray(almoxerifado.romaneiosHistorico)) {
+        setRomaneiosHistorico(almoxerifado.romaneiosHistorico);
+      }
       if (Array.isArray(almoxerifado.selectedForRomaneio)) {
         try {
           setSelectedForRomaneio(new Set(almoxerifado.selectedForRomaneio));
@@ -584,8 +610,17 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
 
   useEffect(() => {
     if (!hasHydratedPersistedState.current) return;
-    void saveEntity('almoxerifado', { version: 2, tables, gasTypes, allocations, baixasHistorico, alocacoesHistorico, selectedForRomaneio: Array.from(selectedForRomaneio) });
-  }, [tables, gasTypes, allocations, baixasHistorico, alocacoesHistorico, selectedForRomaneio]);
+    void saveEntity('almoxerifado', {
+      version: 2,
+      tables,
+      gasTypes,
+      allocations,
+      baixasHistorico,
+      alocacoesHistorico,
+      romaneiosHistorico,
+      selectedForRomaneio: Array.from(selectedForRomaneio)
+    });
+  }, [tables, gasTypes, allocations, baixasHistorico, alocacoesHistorico, romaneiosHistorico, selectedForRomaneio]);
 
   const handleRemoveGas = (gasToRemove: string) => {
     setGasTypes((prev) => prev.filter((g) => g !== gasToRemove));
@@ -783,6 +818,22 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     if (!isRegisterOpen || !currentRegisterTable) return;
     setRegisterValues((previous) => createRegisterValues(currentRegisterTable, previous));
   }, [currentRegisterTable, isRegisterOpen]);
+
+  useEffect(() => {
+    if (!isAllocateModalOpen || !allocateForm.serviceOS) return;
+    const { osLocal } = resolveSelectedOsData(allocateForm.serviceOS);
+    if (osLocal && allocateForm.local !== osLocal) {
+      setAllocateForm((previous) => ({ ...previous, local: osLocal }));
+    }
+  }, [allocateForm.serviceOS, allocateForm.local, isAllocateModalOpen]);
+
+  useEffect(() => {
+    if (!isEquipAllocateModalOpen || !equipAllocateForm.osId) return;
+    const { osLocal } = resolveSelectedOsData(equipAllocateForm.osId);
+    if (osLocal && equipAllocateForm.local !== osLocal) {
+      setEquipAllocateForm((previous) => ({ ...previous, local: osLocal }));
+    }
+  }, [equipAllocateForm.osId, equipAllocateForm.local, isEquipAllocateModalOpen]);
 
   if (mode === 'public') {
     return (
@@ -1018,6 +1069,19 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     setIsRegisterOpen(true);
   };
 
+  const resolveSelectedOsData = (osId: string) => {
+    const selectedOs = availableOS.find((ordemServico: any) => {
+      const osValue = String(getOsOptionValue(ordemServico as any) || '');
+      const currentId = String((ordemServico as any)?.id || '');
+      return osValue === String(osId) || currentId === String(osId);
+    });
+
+    const osLabel = selectedOs ? getOsOptionLabel(selectedOs as any) : osId;
+    const osLocal = selectedOs ? getOsLocalExecution(selectedOs) : '';
+
+    return { selectedOs, osLabel, osLocal };
+  };
+
   const handleRegisterChange = (columnKey: string, value: string) => {
     setRegisterValues((previous) => {
       const next = { ...previous, [columnKey]: value };
@@ -1109,6 +1173,9 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     
     if (!supplierRow) return;
 
+    const { osLabel, osLocal } = resolveSelectedOsData(serviceOS);
+    const effectiveLocal = osLocal || local;
+
     const gasKey = `gas${normalizeKey(gasName)}`;
     const totalOwned = Number(supplierRow.values[gasKey]) || 0;
     
@@ -1133,7 +1200,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       supplierRowId,
       gasName,
       quantity: requestedQuantity,
-      local,
+      local: effectiveLocal,
       serviceOS,
     };
 
@@ -1145,11 +1212,11 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
         kind: 'gases',
         dataEvento: new Date().toISOString(),
         osId: serviceOS,
-        osLabel: serviceOS,
+        osLabel,
         itemLabel: gasName,
         tableName: 'Alugados - Gases',
         quantity: requestedQuantity,
-        local,
+        local: effectiveLocal,
         gasName
       },
       ...prev
@@ -1237,6 +1304,9 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       return;
     }
 
+    const { osLabel, osLocal } = resolveSelectedOsData(equipAllocateForm.osId);
+    const effectiveLocal = osLocal || equipAllocateForm.local;
+
     setTables((prevTables) =>
       prevTables.map((table) => {
         if (table.name === equipAllocateForm.tableName) {
@@ -1249,7 +1319,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                   values: {
                     ...row.values,
                     status: 'Alocado',
-                    localizacao: equipAllocateForm.local,
+                    localizacao: effectiveLocal,
                     serviceOS: equipAllocateForm.osId
                   }
                 };
@@ -1269,10 +1339,10 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
         kind: equipAllocateForm.tableName === 'Alugados - Equipamentos' ? 'equipamentos' : equipAllocateForm.tableName === 'Materiais' ? 'materiais' : 'outros',
         dataEvento: new Date().toISOString(),
         osId: equipAllocateForm.osId,
-        osLabel: equipAllocateForm.osId,
+        osLabel,
         itemLabel: equipAllocateForm.equipName,
         tableName: equipAllocateForm.tableName,
-        local: equipAllocateForm.local
+        local: effectiveLocal
       },
       ...prev
     ]);
@@ -1294,13 +1364,13 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     return items;
   };
 
-  const generateRomaneioPdf = (osLabel: string, osLocal: string) => {
+  const generateRomaneioPdf = (osLabel: string, osLocal: string, selectedRows: { tableName: string; row: StockRow }[]) => {
     const doc = new jsPDF({ unit: 'pt', format: 'a4' });
     const title = `Romaneio - OS: ${osLabel}`;
     doc.setFontSize(14);
     doc.text(title, 40, 50);
 
-    const rows = getSelectedRows().map(({ tableName, row }) => [
+    const rows = selectedRows.map(({ tableName, row }) => [
       tableName,
       row.values.item || row.id,
       row.values.material || row.values.equipamento || row.values.fornecedor || '—',
@@ -1319,62 +1389,127 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   };
 
   const handleConfirmRomaneio = async () => {
+    const selectedRows = getSelectedRows();
+    if (selectedRows.length === 0) {
+      alert('Selecione ao menos um item para gerar o romaneio.');
+      return;
+    }
+
     if (!romaneioOsId) {
       alert('Selecione uma OS para executar a alocação.');
       return;
     }
 
-    const selectedOs = availableOS.find((o: any) => String(o.id) === String(romaneioOsId));
-    let osLabel = romaneioOsId;
-    let osLocal = '';
-    if (selectedOs) {
-      osLabel = getOsOptionLabel(selectedOs as any);
-      osLocal = (selectedOs as any).negocio_detalhes?.servicos?.[0]?.local_execucao || (selectedOs as any).local || '';
-    } else {
+    let { selectedOs, osLabel, osLocal } = resolveSelectedOsData(romaneioOsId);
+
+    if (!selectedOs) {
       try {
         const resp = await api.get(`ordens-servico/${romaneioOsId}/`);
         const data = resp.data;
+        selectedOs = data;
         osLabel = getOsOptionLabel(data as any);
         osLocal = data?.negocio_detalhes?.servicos?.[0]?.local_execucao || data?.local || '';
       } catch (e) {
       }
     }
 
-    setTables(prev => prev.map(table => ({
-      ...table,
-      rows: table.rows.map(row => {
-        const key = keyForRow(table.name, row.id);
-        if (selectedForRomaneio.has(key)) {
-          const nextValues = {
+    const effectiveOsLabel = osLabel || romaneioOsId;
+    const effectiveOsLocal = osLocal || '';
+    const isBaixa = romaneioMode === 'baixa';
+
+    const romaneioItems = selectedRows.map(({ tableName, row }) => {
+      const nextValues = isBaixa
+        ? {
             ...row.values,
-            serviceOS: osLabel,
-            localizacao: osLocal || row.values.localizacao,
+            serviceOS: effectiveOsLabel,
+            localizacao: effectiveOsLocal || row.values.localizacao,
+            status: 'Baixa'
+          }
+        : {
+            ...row.values,
+            serviceOS: effectiveOsLabel,
+            localizacao: effectiveOsLocal || row.values.localizacao,
             status: 'Alocado'
           };
-          return { ...row, values: nextValues };
-        }
-        return row;
+
+      return {
+        tableName,
+        rowId: row.id,
+        itemLabel: row.values.material || row.values.equipamento || row.values.fornecedor || row.values.item || row.id,
+        quantidade: row.values.quantidade || row.values.qtd || '1',
+        snapshotBefore: { ...row.values },
+        snapshotAfter: { ...nextValues }
+      };
+    });
+
+    const snapshotByKey = new Map(romaneioItems.map((item) => [keyForRow(item.tableName, item.rowId), item.snapshotAfter]));
+
+    setTables(prev => prev.flatMap(table => [{
+      ...table,
+      rows: table.rows.filter(row => {
+        const key = keyForRow(table.name, row.id);
+        return !(romaneioMode === 'baixa' && snapshotByKey.has(key));
+      }).map(row => {
+        const key = keyForRow(table.name, row.id);
+        const nextValues = snapshotByKey.get(key);
+        if (!nextValues) return row;
+        return {
+          ...row,
+          values: nextValues,
+          searchText: Object.values(nextValues).join(' ').toLowerCase()
+        };
       })
-    })));
+    }]));
 
     const timestamp = new Date().toISOString();
-    const newHist = getSelectedRows().map(({ tableName, row }) => ({
+    const newHist = selectedRows.map(({ tableName, row }) => ({
       id: `aloc-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
-      action: 'alocar' as const,
+      action: (romaneioMode === 'baixa' ? 'baixa' : 'alocar') as AllocationHistoricoItem['action'],
       kind: (tableName === 'Alugados - Equipamentos' ? 'equipamentos' : tableName === 'Materiais' ? 'materiais' : 'outros') as AllocationHistoricoItem['kind'],
       dataEvento: timestamp,
       osId: romaneioOsId,
-      osLabel: osLabel,
+      osLabel: effectiveOsLabel,
       itemLabel: row.values.material || row.values.equipamento || row.values.item || 'Item',
       tableName,
-      local: osLocal || row.values.localizacao || ''
+      local: effectiveOsLocal || row.values.localizacao || ''
     }));
 
     setAlocacoesHistorico(prev => [...newHist, ...prev]);
 
+    if (romaneioMode === 'baixa') {
+      setBaixasHistorico((prev) => [
+        ...selectedRows.map(({ tableName, row }) => ({
+          id: `baixa-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          dataBaixa: timestamp,
+          tableName,
+          itemLabel: row.values.material || row.values.equipamento || row.values.fornecedor || row.values.item || 'Item',
+          statusAnterior: row.values.status || '',
+          osId: romaneioOsId,
+          osLabel: effectiveOsLabel,
+          localizacao: effectiveOsLocal || row.values.localizacao || '',
+          serviceOS: effectiveOsLabel,
+          snapshot: { ...row.values }
+        })),
+        ...prev
+      ]);
+    }
+
+    setRomaneiosHistorico((prev) => [
+      {
+        id: `rom-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        createdAt: timestamp,
+        mode: romaneioMode,
+        osId: romaneioOsId,
+        osLabel: effectiveOsLabel,
+        osLocal: effectiveOsLocal,
+        items: romaneioItems,
+      },
+      ...prev
+    ]);
+
     try {
-      const doc = generateRomaneioPdf(osLabel, osLocal);
-      doc.save(`romaneio-${osLabel || romaneioOsId}.pdf`);
+      const doc = generateRomaneioPdf(effectiveOsLabel, effectiveOsLocal, selectedRows);
+      doc.save(`romaneio-${effectiveOsLabel || romaneioOsId}.pdf`);
     } catch (e) {
       console.error('Erro ao gerar pdf do romaneio', e);
     }
@@ -1382,6 +1517,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     setSelectedForRomaneio(new Set());
     setIsRomaneioModalOpen(false);
     setRomaneioOsId('');
+    setRomaneioMode('alocacao');
   };
 
   const renderCell = (row: StockRow, column: StockColumn) => {
@@ -2314,7 +2450,9 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
             <div className="flex items-center justify-between border-b border-white/5 p-6 bg-[#101f3d]">
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-wider text-amber-400 mb-1">Romaneio</p>
-                <h2 className="text-xl font-black uppercase tracking-wide text-white">Alocação em massa</h2>
+                <h2 className="text-xl font-black uppercase tracking-wide text-white">
+                  {romaneioMode === 'baixa' ? 'Baixa em massa' : 'Alocação em massa'}
+                </h2>
               </div>
               <button type="button" onClick={() => setIsRomaneioModalOpen(false)} className="rounded-full bg-white/5 p-2.5 text-white/70 hover:bg-white/10">
                 <X size={18} />
@@ -2339,12 +2477,35 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                   </Select>
                 </div>
 
+                <div className="w-full md:w-56 space-y-2">
+                  <label className="block ml-1 text-[11px] font-bold uppercase tracking-wider text-white/50">Tipo de romaneio</label>
+                  <Select value={romaneioMode} onValueChange={(value) => setRomaneioMode(value as 'alocacao' | 'baixa')}>
+                    <SelectTrigger className="w-full rounded-xl border border-white/5 bg-[#0b1220]/80 h-12 text-white shadow-sm focus:border-white/30 hover:border-white/20">
+                      <SelectValue placeholder="Selecione o tipo" />
+                    </SelectTrigger>
+                    <SelectContent className="border border-white/10 bg-[#0b1220] text-white">
+                      <SelectItem value="alocacao" className="rounded-lg">Alocação</SelectItem>
+                      <SelectItem value="baixa" className="rounded-lg">Baixa</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
                 <div className="w-full md:w-auto min-w-[140px]">
                    <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-center shadow-inner">
                       <p className="text-[10px] font-bold uppercase tracking-widest text-amber-400/80 mb-1">Selecionados</p>
                       <p className="text-2xl font-black text-amber-400">{selectedForRomaneio.size}</p>
                    </div>
                 </div>
+              </div>
+
+              <div className="rounded-xl border border-white/5 bg-white/[0.02] p-4 shadow-inner">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-white/50">Local da OS</p>
+                <p className="mt-2 text-sm font-semibold text-white/80">
+                  {(() => {
+                    const { osLocal } = resolveSelectedOsData(romaneioOsId);
+                    return osLocal || 'Será preenchido automaticamente ao selecionar uma OS.';
+                  })()}
+                </p>
               </div>
 
               <div className="rounded-xl border border-white/5 bg-white/[0.02] p-5 shadow-inner">
