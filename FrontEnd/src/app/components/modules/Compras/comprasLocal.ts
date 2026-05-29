@@ -1,9 +1,9 @@
 import type { ElementType } from 'react';
-import { CheckCircle2, ClipboardList, Clock3 } from 'lucide-react';
+import { CheckCircle2, ClipboardList, Clock3, Users } from 'lucide-react';
 
-export type BoardStage = 'SOLICITACOES' | 'APROVACAO' | 'COMPRADOS';
+export type BoardStage = 'SOLICITACOES' | 'SELECAO_GERENTE' | 'APROVACAO' | 'COMPRADOS';
 export type ApprovalRoute = 'gerenteComercial' | 'diretorFinanceiro' | null;
-export type PurchaseState = 'comprado' | 'entregue' | 'estoque';
+export type PurchaseState = 'comprado' | 'entregue' | 'estoque' | 'contratado';
 
 export const APPROVAL_LIMIT = 500;
 
@@ -24,6 +24,7 @@ export interface QuoteFornecedor {
 
 export interface QuoteItem {
   itemId: string;
+  naturezaFornecimento: 'ITEM' | 'SERVICO';
   fornecedores: QuoteFornecedor[];
   menorValor: number | null;
   fornecedorVencedor: string;
@@ -45,6 +46,8 @@ export interface ItemCompra {
   un: string;
   link: string;
   fornecedor: string;
+  naturezaFornecimento: 'ITEM' | 'SERVICO';
+  purchaseState: PurchaseState;
 }
 
 export interface RequisicaoCompra {
@@ -79,6 +82,13 @@ export const BOARD_COLUMNS: Array<{ id: BoardStage; title: string; subtitle: str
     accent: 'from-amber-500/20 to-amber-500/5 border-amber-500/20 text-amber-300',
   },
   {
+    id: 'SELECAO_GERENTE',
+    title: 'Seleção do Gerente',
+    subtitle: 'Gerente analisa e escolhe os orçamentos',
+    icon: Users,
+    accent: 'from-violet-500/20 to-violet-500/5 border-violet-500/20 text-violet-300',
+  },
+  {
     id: 'APROVACAO',
     title: 'Aprovações',
     subtitle: 'Até R$ 499 com gerente comercial, a partir de R$ 500 com diretor financeiro',
@@ -87,8 +97,8 @@ export const BOARD_COLUMNS: Array<{ id: BoardStage; title: string; subtitle: str
   },
   {
     id: 'COMPRADOS',
-    title: 'Comprados',
-    subtitle: 'Comprado, entregue ou em estoque',
+    title: 'Compras',
+    subtitle: 'Comprado, entregue, estoque ou contratado por item',
     icon: CheckCircle2,
     accent: 'from-emerald-500/20 to-emerald-500/5 border-emerald-500/20 text-emerald-300',
   },
@@ -98,6 +108,7 @@ export const purchaseStateLabel: Record<PurchaseState, string> = {
   comprado: 'Comprado',
   entregue: 'Entregue',
   estoque: 'Estoque',
+  contratado: 'Contratado',
 };
 
 export const createId = () => {
@@ -119,6 +130,8 @@ export const createEmptyItem = (): ItemCompra => ({
   un: 'un',
   link: '',
   fornecedor: '',
+  naturezaFornecimento: 'SERVICO',
+  purchaseState: 'contratado',
 });
 
 export const createDefaultRequest = (solicitante = '', departamento = '', centroCusto = ''): FormState => ({
@@ -148,8 +161,13 @@ export const normalizeRequests = (value: unknown): RequisicaoCompra[] => {
     const selecionado = String(quote?.fornecedorSelecionado || '');
     const fornecedorSelecionado = fornecedores.find((entry: QuoteFornecedor) => entry.fornecedor === selecionado) || null;
 
+    const naturezaFornecimento = quote?.naturezaFornecimento === 'ITEM' || quote?.naturezaFornecimento === 'SERVICO'
+      ? quote.naturezaFornecimento
+      : 'SERVICO';
+
     return {
       itemId: String(quote?.itemId || quote?.id || index),
+      naturezaFornecimento,
       fornecedores: valoresValidos,
       menorValor: menor,
       fornecedorVencedor: vencedor,
@@ -193,11 +211,15 @@ export const normalizeRequests = (value: unknown): RequisicaoCompra[] => {
             un: String(it.un || 'un'),
             link: String(it.link || ''),
             fornecedor: String(it.fornecedor || ''),
+            naturezaFornecimento: it.naturezaFornecimento === 'ITEM' || it.naturezaFornecimento === 'SERVICO' ? it.naturezaFornecimento : 'SERVICO',
+            purchaseState: it.purchaseState === 'comprado' || it.purchaseState === 'entregue' || it.purchaseState === 'estoque' || it.purchaseState === 'contratado'
+              ? it.purchaseState
+              : (it.naturezaFornecimento === 'ITEM' ? 'comprado' : 'contratado'),
           }))
         : [],
-      stage: item.stage === 'APROVACAO' || item.stage === 'COMPRADOS' ? item.stage : 'SOLICITACOES',
+      stage: ['SOLICITACOES','SELECAO_GERENTE','APROVACAO','COMPRADOS'].includes(item.stage) ? item.stage : 'SOLICITACOES',
       approvalRoute: normalizeApprovalRoute(item.approvalRoute, typeof item.budgetValue === 'number' ? item.budgetValue : null),
-      purchaseState: item.purchaseState === 'entregue' || item.purchaseState === 'estoque' ? item.purchaseState : 'comprado',
+      purchaseState: item.purchaseState === 'entregue' || item.purchaseState === 'estoque' || item.purchaseState === 'contratado' ? item.purchaseState : 'comprado',
       budgetValue: typeof item.budgetValue === 'number' ? item.budgetValue : null,
       budgetDetails: Array.isArray(item.budgetDetails) ? item.budgetDetails.map(normalizeQuote) : [],
       createdAt: String(item.createdAt || new Date().toISOString()),

@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, HardHat, Anchor, ClipboardList, 
   ShoppingCart, DollarSign, BarChart3, Settings, Factory, 
   HeartHandshake, List, Clock, ChevronDown, ChevronRight, 
-  Briefcase, Wrench, Activity, FileText, Zap, Building2, CheckCircle2, Trash2, LayoutGrid
+  Briefcase, Wrench, Activity, FileText, Zap, Building2, CheckCircle2, Trash2, LayoutGrid, Package2
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -95,12 +95,14 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
     },
     {
       id: 'almoxerifado',
-      title: 'Almoxerifado',
+      title: 'Suprimentos',
       icon: ClipboardList,
       items: [
-        { id: 'estoquePublico', label: 'Estoque', icon: ClipboardList },
-        { id: 'estoque', label: 'Adicionar itens', icon: ClipboardList },
+        { id: 'estoquePublico', label: 'Estoque View', icon: ClipboardList },
+        { id: 'estoque', label: 'Almoxerifado', icon: ClipboardList },
+        { id: 'itensAdicionar', label: 'Itens para adicionar', icon: Package2 },
         { id: 'historicoBaixa', label: 'Histórico de Baixa', icon: Trash2 },
+        { id: 'historicoRomaneio', label: 'Histórico de Romaneio', icon: ClipboardList },
         { id: 'alocadosPorOS', label: 'Alocados por OS', icon: ClipboardList },
       ]
     },
@@ -139,6 +141,8 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
     }
     if (itemId === 'estoquePublico') return true;
     if (itemId === 'estoque') return userSession.permissoes?.almoxerifado === true || userSession.permissoes?.[itemId] === true;
+    if (itemId === 'itensAdicionar') return userSession.permissoes?.almoxerifado === true || userSession.permissoes?.[itemId] === true;
+    if (itemId === 'historicoRomaneio') return userSession.permissoes?.almoxerifado === true || userSession.permissoes?.[itemId] === true;
     
     // Utilizador comum verifica a lista de permissões recebida do Drive
     return userSession.permissoes?.[itemId] === true;

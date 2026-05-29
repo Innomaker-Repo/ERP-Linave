@@ -54,7 +54,6 @@ interface FormState {
   centroCusto: string;
 }
 
-const STORAGE_KEY = 'erp.compras.kanban.v1';
 
 const BOARD_COLUMNS: Array<{ id: BoardStage; title: string; subtitle: string; icon: React.ElementType; accent: string }> = [
   {
@@ -141,18 +140,6 @@ const normalizeRequests = (value: unknown): RequisicaoCompra[] => {
     .filter((item) => item.itens.length > 0);
 };
 
-const getStoredRequests = () => {
-  if (typeof window === 'undefined') return [];
-
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-
-    return normalizeRequests(JSON.parse(raw));
-  } catch (error) {
-    return [];
-  }
-};
 
 const formatCurrency = (value: number) => value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
@@ -163,19 +150,21 @@ const purchaseStateLabel: Record<PurchaseState, string> = {
 };
 
 export function ComprasView({ searchQuery }: { searchQuery: string }) {
-  const { obras, listas, userSession } = useErp();
+  const { obras, listas, userSession, compras, saveEntity } = useErp();
   const [formData, setFormData] = useState<FormState>(() =>
     createDefaultRequest(userSession?.nome || userSession?.email || '', '', '')
   );
   const [itens, setItens] = useState<ItemCompra[]>([createEmptyItem()]);
   const [budgetDrafts, setBudgetDrafts] = useState<Record<string, string>>({});
-  const [requests, setRequests] = useState<RequisicaoCompra[]>(() => getStoredRequests());
+  const [requests, setRequests] = useState<RequisicaoCompra[]>(() => (Array.isArray(compras) ? compras : []));
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    void saveEntity?.('compras', requests || []);
+  }, [requests, saveEntity]);
 
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(requests));
-  }, [requests]);
+  useEffect(() => {
+    if (Array.isArray(compras)) setRequests(compras);
+  }, [compras]);
 
   useEffect(() => {
     setFormData((current) => ({

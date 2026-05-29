@@ -853,7 +853,10 @@ const createInitialData = (savedData: any) => {
           gasTypes: Array.isArray(savedData.almoxerifado.gasTypes) ? savedData.almoxerifado.gasTypes : [],
           allocations: Array.isArray(savedData.almoxerifado.allocations) ? savedData.almoxerifado.allocations : [],
           baixasHistorico: Array.isArray(savedData.almoxerifado.baixasHistorico) ? savedData.almoxerifado.baixasHistorico : [],
-          alocacoesHistorico: Array.isArray(savedData.almoxerifado.alocacoesHistorico) ? savedData.almoxerifado.alocacoesHistorico : []
+          alocacoesHistorico: Array.isArray(savedData.almoxerifado.alocacoesHistorico) ? savedData.almoxerifado.alocacoesHistorico : [],
+          romaneiosHistorico: Array.isArray(savedData.almoxerifado.romaneiosHistorico) ? savedData.almoxerifado.romaneiosHistorico : [],
+          selectedForRomaneio: Array.isArray(savedData.almoxerifado.selectedForRomaneio) ? savedData.almoxerifado.selectedForRomaneio : [],
+          itensParaAdicionar: Array.isArray(savedData.almoxerifado.itensParaAdicionar) ? savedData.almoxerifado.itensParaAdicionar : []
         }
       : baseData.almoxerifado,
     config: savedData.config ? { ...baseData.config, ...savedData.config } : baseData.config,

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { Eraser, Plus, Send, ShoppingCart, Trash2 } from 'lucide-react';
-import { createDefaultRequest, createEmptyItem, createId, getStoredRequests, saveRequests, type ItemCompra } from './comprasLocal';
+import { createDefaultRequest, createEmptyItem, createId, type ItemCompra } from './comprasLocal';
 
 export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQuery: string }) {
   const { obras, userSession } = useErp();
@@ -9,6 +9,7 @@ export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQ
     createDefaultRequest(userSession?.nome || userSession?.email || '', '', '')
   );
   const [itens, setItens] = useState<ItemCompra[]>([createEmptyItem()]);
+  const { compras, saveEntity } = useErp();
 
   const updateItem = (id: string, field: keyof ItemCompra, value: string | number) => {
     setItens((current) => current.map((item) => (item.id === id ? { ...item, [field]: value } : item)));
@@ -58,7 +59,9 @@ export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQ
       updatedAt: new Date().toISOString(),
     };
 
-    saveRequests([novaRequisicao, ...getStoredRequests()]);
+    // persist into workspace-wide compras list
+    const existing = Array.isArray(compras) ? compras : [];
+    void saveEntity?.('compras', [novaRequisicao, ...existing]);
     setItens([createEmptyItem()]);
     window.alert('Solicitação criada e disponível para o kanban de compras.');
   };
