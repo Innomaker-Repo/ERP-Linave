@@ -31,16 +31,27 @@ const getPrefixoEmpresa = (empresaPrestadora?: string) => {
 
 const somarDiasDoOrcamento = (orcamento: any): number => {
   const atividades = Array.isArray(orcamento?.atividades) ? orcamento.atividades : [];
-
-  const totalAtividades = atividades.reduce((soma: number, item: any) => soma + Number(item?.dias || 0), 0);
-  return totalAtividades;
+  const maoDeObra = Array.isArray(orcamento?.maoDeObra) ? orcamento.maoDeObra : [];
+  const totalAtividades = atividades.reduce((soma: number, item: any) => soma + Number(item?.dias || item?.duracao || 0), 0);
+  const totalMDO = maoDeObra.reduce((soma: number, item: any) => soma + Number(item?.dias || 0), 0);
+  return totalAtividades + totalMDO;
 };
 
-const calcularDataTerminoPrevisto = (dataInicio: string, totalDias: number): string => {
+const calcularDataTerminoPrevisto = (dataInicio: string, totalDias: number, tipo: 'uteis' | 'corridos' = 'corridos'): string => {
   if (!dataInicio || !Number.isFinite(totalDias) || totalDias <= 0) return '';
   const base = new Date(`${dataInicio}T00:00:00`);
   if (Number.isNaN(base.getTime())) return '';
-  base.setDate(base.getDate() + Math.floor(totalDias));
+  if (tipo === 'corridos') {
+    base.setDate(base.getDate() + Math.floor(totalDias));
+  } else {
+    // Dias úteis: pula sábados (6) e domingos (0)
+    let diasRestantes = Math.floor(totalDias);
+    while (diasRestantes > 0) {
+      base.setDate(base.getDate() + 1);
+      const diaSemana = base.getDay();
+      if (diaSemana !== 0 && diaSemana !== 6) diasRestantes--;
+    }
+  }
   return base.toISOString().split('T')[0];
 };
 
@@ -402,6 +413,8 @@ export function OsView({ searchQuery }: OSViewProps) {
   const [showDetalhesOS, setShowDetalhesOS] = useState(false);
   const [selectedOS, setSelectedOS] = useState<OsFormData | null>(null);
   const [formData, setFormData] = useState<OsFormData>(criarInitialOsData());
+  const [diasPrevistos, setDiasPrevistos] = useState<number>(0);
+  const [tipoDias, setTipoDias] = useState<'uteis' | 'corridos'>('corridos');
 
   const inputClass = 'w-full bg-[#0b1220] border border-white/10 p-3 rounded-lg text-white text-sm outline-none focus:border-amber-500 transition-all placeholder:text-white/20';
   const labelClass = 'text-[9px] font-black text-white/40 uppercase tracking-widest ml-1 mb-1.5 block';
@@ -409,7 +422,9 @@ export function OsView({ searchQuery }: OSViewProps) {
   const listaOS = (Array.isArray(os) ? os : []) as OsFormData[];
   const obrasEmAndamento = (Array.isArray(obras) ? obras : []).filter((o: any) => o.categoria === 'Em Andamento');
   const osConsolidadas = listaOS.filter((item: any) => item.tipoDocumento === 'consolidada');
-  const obrasSemOsConsolidada = obrasEmAndamento.filter((obra: any) => !osConsolidadas.some((registro) => registro.obraId === obra.id));
+  // Obras sem OS em produção (rascunho não bloqueia)
+  const osEmProducao = osConsolidadas.filter((item) => item.statusOs !== 'rascunho');
+  const obrasSemOsConsolidada = obrasEmAndamento.filter((obra: any) => !osEmProducao.some((registro) => registro.obraId === obra.id));
 
   const normalizarHorasTrabalhadas = (linhas: any): HoraServicoLinha[] => {
     if (!Array.isArray(linhas)) return [];
@@ -466,6 +481,7 @@ export function OsView({ searchQuery }: OSViewProps) {
     return {
       numeroOrcamento: ultimoOrcamento?.numeroOrcamento || '',
       versao: String(ultimoOrcamento?.versao || ''),
+      status: ultimoOrcamento?.status || '',
       dataCriacao: ultimoOrcamento?.dataCriacao || '',
       solicitante: data.solicitante || '',
       responsavelComercial: data.responsavelComercial || '',
@@ -597,9 +613,36 @@ export function OsView({ searchQuery }: OSViewProps) {
     ].join('\n').trim();
   };
 
+  const handleSaveRascunhoOS = () => {
+    if (!formData.obraId) return alert('Selecione uma obra para salvar o rascunho.');
+    const semRascunhoAnterior = listaOS.filter((item) => !(item.obraId === formData.obraId && item.statusOs === 'rascunho'));
+    const rascunho: OsFormData = {
+      ...formData,
+      id: `OS-RASCUNHO-${formData.obraId}`,
+      statusOs: 'rascunho',
+      statusEnvio: 'pendente',
+      statusAprovacao: 'pendente',
+      // Persiste dias e tipo para restaurar ao reabrir
+      diasPrevistosRascunho: diasPrevistos,
+      tipoDiasRascunho: tipoDias,
+    } as any;
+    saveEntity('os', [...semRascunhoAnterior, rascunho]);
+    setShowFormNovaOS(false);
+    toast.success('Rascunho da OS salvo!');
+  };
+
   const handleObraChange = (obraId: string) => {
     const obra = obrasEmAndamento.find((item: any) => item.id === obraId);
     if (!obra) return;
+
+    // Se existe rascunho para esta obra, carrega os dados salvos
+    const rascunhoExistente = listaOS.find((item) => item.obraId === obraId && item.statusOs === 'rascunho') as any;
+    if (rascunhoExistente) {
+      setFormData(rascunhoExistente);
+      if (rascunhoExistente.diasPrevistosRascunho > 0) setDiasPrevistos(rascunhoExistente.diasPrevistosRascunho);
+      if (rascunhoExistente.tipoDiasRascunho) setTipoDias(rascunhoExistente.tipoDiasRascunho);
+      return;
+    }
 
     const clienteCtx = (clientes || []).find((item: any) => item.id === obra.clienteId);
     const nomeCliente = obra.nomeCliente || clienteCtx?.razaoSocial || clienteCtx?.razao_social || '';
@@ -632,6 +675,9 @@ export function OsView({ searchQuery }: OSViewProps) {
       proposta: extrairResumoProposta(obra)
     };
 
+    const totalDiasSeed = somarDiasDoOrcamento(resumoConsolidado.orcamento);
+    setDiasPrevistos(totalDiasSeed);
+
     setFormData((prev) => ({
       ...prev,
       obraId: obra.id,
@@ -662,17 +708,17 @@ export function OsView({ searchQuery }: OSViewProps) {
       return alert('Defina a data inicial prevista da OS.');
     }
 
-    const totalDiasOrcamento = somarDiasDoOrcamento(formData.resumoConsolidado?.orcamento);
+    const totalDiasOrcamento = diasPrevistos > 0 ? diasPrevistos : somarDiasDoOrcamento(formData.resumoConsolidado?.orcamento);
     if (totalDiasOrcamento <= 0) {
       return alert('Não foi possível calcular a data final porque o orçamento não informa dias suficientes.');
     }
 
-    const dataTerminoPrevisto = calcularDataTerminoPrevisto(formData.dataInicioPrevisto, totalDiasOrcamento);
+    const dataTerminoPrevisto = calcularDataTerminoPrevisto(formData.dataInicioPrevisto, totalDiasOrcamento, tipoDias);
     if (!dataTerminoPrevisto) {
       return alert('Não foi possível calcular a data final da OS.');
     }
 
-    const jaExisteConsolidada = osConsolidadas.some((item) => item.obraId === formData.obraId);
+    const jaExisteConsolidada = osEmProducao.some((item) => item.obraId === formData.obraId);
     if (jaExisteConsolidada) {
       return alert('Já existe uma OS consolidada para este negócio.');
     }
@@ -747,7 +793,9 @@ export function OsView({ searchQuery }: OSViewProps) {
       }
     }
 
-    saveEntity('os', [...listaOS, novaOS]);
+    // Remove rascunho anterior da mesma obra, se existir
+    const semRascunho = listaOS.filter((item) => !(item.obraId === formData.obraId && item.statusOs === 'rascunho'));
+    saveEntity('os', [...semRascunho, novaOS]);
     setShowFormNovaOS(false);
     setFormData(criarInitialOsData());
     toast.success('OS criada e enviada para produção com sucesso!');
@@ -1131,14 +1179,13 @@ export function OsView({ searchQuery }: OSViewProps) {
                 <div className="flex justify-between items-start gap-4">
                   <div className="flex-1">
                     <h3 className="text-white font-black text-lg">{obra.nome} {idProjetoOS && <span className="text-cyan-400">• {idProjetoOS}</span>}</h3>
-                    <p className="text-white/70 text-sm mt-1">{cliente?.razaoSocial}</p>
-                    <p className="text-white/50 text-xs mt-2">Previsto: {obra.dataPrevistaInicio || obra.inicioPrevisto || '-'} até {obra.dataPrevistaFinal || obra.fimPrevisto || '-'}</p>
+                    <p className="text-white/70 text-sm mt-1">{obra.nomeCliente || cliente?.razaoSocial || cliente?.razao_social || '—'}</p>
                   </div>
 
                   {osExistente ? (
                     <div className="flex gap-2 flex-wrap justify-end">
-                      <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase border ${osExistente.statusAprovacao === 'aprovada' ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' : 'bg-amber-500/20 border-amber-500/40 text-amber-300'}`}>
-                        {osExistente.statusAprovacao === 'aprovada' ? 'Aprovada' : 'Pendente'}
+                      <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase border ${osExistente.statusOs === 'rascunho' ? 'bg-yellow-500/20 border-yellow-500/40 text-yellow-300' : osExistente.statusAprovacao === 'aprovada' ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' : 'bg-amber-500/20 border-amber-500/40 text-amber-300'}`}>
+                        {osExistente.statusOs === 'rascunho' ? 'Rascunho' : osExistente.statusAprovacao === 'aprovada' ? 'Aprovada' : 'Pendente'}
                       </span>
                       <button
                         onClick={() => handleDownloadOSFromList(osExistente)}
@@ -1191,14 +1238,61 @@ export function OsView({ searchQuery }: OSViewProps) {
                 <h2 className="text-2xl font-black text-white uppercase">Ordem de Serviço Consolidada</h2>
                 <p className="text-white/50 text-sm mt-2">Nº {formData.ordemServicoNumero}</p>
               </div>
-              <button onClick={() => setShowFormNovaOS(false)} className="p-2 bg-white/5 rounded-full hover:bg-white/10 transition">
-                <X size={24} className="text-white/60" />
-              </button>
+              <div className="flex items-center gap-3">
+                <button onClick={() => setShowFormNovaOS(false)} className="p-2 bg-white/5 rounded-full hover:bg-white/10 transition">
+                  <X size={24} className="text-white/60" />
+                </button>
+              </div>
             </div>
 
             <div className="p-8 space-y-6 max-h-[calc(90vh-180px)] overflow-y-auto">
               <div className="bg-gradient-to-r from-blue-500/10 to-cyan-500/10 rounded-2xl border border-blue-500/20 p-6 space-y-4">
-                <h3 className="text-lg font-black text-white uppercase">Dados Principais</h3>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-black text-white uppercase">Dados Principais</h3>
+                  {/* Dias previstos + tipo */}
+                  <div className="flex items-center gap-2 bg-[#0b1220] border border-amber-500/30 rounded-xl px-4 py-2">
+                    <div className="text-center">
+                      <p className="text-[9px] font-black text-white/40 uppercase tracking-widest mb-1">Dias Previstos</p>
+                      <input
+                        type="number"
+                        min="0"
+                        className="w-16 bg-transparent text-amber-400 font-black text-xl text-center outline-none"
+                        value={diasPrevistos}
+                        onChange={(e) => {
+                          const v = Math.max(0, Number(e.target.value));
+                          setDiasPrevistos(v);
+                          setFormData((prev) => ({
+                            ...prev,
+                            dataTerminoPrevisto: prev.dataInicioPrevisto
+                              ? calcularDataTerminoPrevisto(prev.dataInicioPrevisto, v, tipoDias)
+                              : ''
+                          }));
+                        }}
+                      />
+                    </div>
+                    <div className="w-px h-10 bg-white/10" />
+                    <div>
+                      <p className="text-[9px] font-black text-white/40 uppercase tracking-widest mb-1">Tipo</p>
+                      <select
+                        className="bg-transparent text-white text-xs font-black outline-none cursor-pointer"
+                        value={tipoDias}
+                        onChange={(e) => {
+                          const v = e.target.value as 'uteis' | 'corridos';
+                          setTipoDias(v);
+                          setFormData((prev) => ({
+                            ...prev,
+                            dataTerminoPrevisto: prev.dataInicioPrevisto && diasPrevistos > 0
+                              ? calcularDataTerminoPrevisto(prev.dataInicioPrevisto, diasPrevistos, v)
+                              : ''
+                          }));
+                        }}
+                      >
+                        <option value="corridos">Dias Corridos</option>
+                        <option value="uteis">Dias Úteis</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
 
                 <div className="grid grid-cols-4 gap-4">
                   <div className="space-y-1.5">
@@ -1222,11 +1316,14 @@ export function OsView({ searchQuery }: OSViewProps) {
                       type="date"
                       className={inputClass}
                       value={formData.dataInicioPrevisto}
-                      onChange={(e) => setFormData((prev) => ({
-                        ...prev,
-                        dataInicioPrevisto: e.target.value,
-                        dataTerminoPrevisto: calcularDataTerminoPrevisto(e.target.value, somarDiasDoOrcamento(prev.resumoConsolidado?.orcamento))
-                      }))}
+                      onChange={(e) => {
+                        const d = diasPrevistos > 0 ? diasPrevistos : somarDiasDoOrcamento(formData.resumoConsolidado?.orcamento);
+                        setFormData((prev) => ({
+                          ...prev,
+                          dataInicioPrevisto: e.target.value,
+                          dataTerminoPrevisto: calcularDataTerminoPrevisto(e.target.value, d, tipoDias)
+                        }));
+                      }}
                     />
                   </div>
 
@@ -1448,9 +1545,19 @@ export function OsView({ searchQuery }: OSViewProps) {
                   <div className="bg-[#0b1220] rounded-3xl border border-amber-500/25 p-7 space-y-5 shadow-lg shadow-amber-900/20">
                     <div className="flex items-center justify-between border-b border-white/10 pb-4">
                       <p className="text-sm text-amber-300 font-black uppercase tracking-wider">Orçamento</p>
-                      <span className="px-3 py-1.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-200 text-xs font-black uppercase">
-                        {formData.resumoConsolidado?.orcamento.numeroOrcamento || 'Sem orçamento'}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="px-3 py-1.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-200 text-xs font-black uppercase">
+                          {formData.resumoConsolidado?.orcamento.numeroOrcamento || 'Sem orçamento'}
+                        </span>
+                        {formData.resumoConsolidado?.orcamento.status && (() => {
+                          const s = formData.resumoConsolidado!.orcamento.status;
+                          const cls = s === 'aprovado' ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                            : s === 'recusado' ? 'bg-red-500/20 border-red-500/40 text-red-300'
+                            : s === 'rascunho' ? 'bg-yellow-500/20 border-yellow-500/40 text-yellow-300'
+                            : 'bg-blue-500/20 border-blue-500/40 text-blue-300';
+                          return <span className={`px-2.5 py-1 rounded-full border text-[10px] font-black uppercase ${cls}`}>{s}</span>;
+                        })()}
+                      </div>
                     </div>
                     <div className="bg-[#101f3d] rounded-2xl p-4 border border-white/10 text-sm text-white/80 space-y-1">
                       <p>Solicitante: {formData.resumoConsolidado?.orcamento.solicitante || '-'}</p>
@@ -1483,9 +1590,19 @@ export function OsView({ searchQuery }: OSViewProps) {
                   <div className="bg-[#0b1220] rounded-3xl border border-emerald-500/25 p-7 space-y-5 shadow-lg shadow-emerald-900/20">
                     <div className="flex items-center justify-between border-b border-white/10 pb-4">
                       <p className="text-sm text-emerald-300 font-black uppercase tracking-wider">Proposta</p>
-                      <span className="px-3 py-1.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-200 text-xs font-black uppercase">
-                        {formData.resumoConsolidado?.proposta.numeroProposta || 'Sem proposta'}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="px-3 py-1.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-200 text-xs font-black uppercase">
+                          {formData.resumoConsolidado?.proposta.numeroProposta || 'Sem proposta'}
+                        </span>
+                        {formData.resumoConsolidado?.proposta.status && (() => {
+                          const s = formData.resumoConsolidado!.proposta.status;
+                          const cls = s === 'aceita' ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                            : s === 'recusada' ? 'bg-red-500/20 border-red-500/40 text-red-300'
+                            : 'bg-blue-500/20 border-blue-500/40 text-blue-300';
+                          const label = s === 'aceita' ? 'Aceita' : s === 'recusada' ? 'Recusada' : 'Pendente';
+                          return <span className={`px-2.5 py-1 rounded-full border text-[10px] font-black uppercase ${cls}`}>{label}</span>;
+                        })()}
+                      </div>
                     </div>
                     <div className="bg-[#101f3d] rounded-2xl p-4 border border-white/10 text-sm text-white/80">
                       <p className="font-black text-white text-base mb-1">Item A - Escopo Básico</p>
@@ -1512,8 +1629,14 @@ export function OsView({ searchQuery }: OSViewProps) {
                   <Zap size={18} /> Enviar para Produção
                 </button>
                 <button
+                  onClick={handleSaveRascunhoOS}
+                  className="px-8 bg-amber-500/20 border border-amber-500/40 text-amber-300 py-3 rounded-lg font-black uppercase text-sm hover:bg-amber-500/30 transition flex items-center gap-2"
+                >
+                  <FileText size={16} /> Salvar Rascunho
+                </button>
+                <button
                   onClick={() => setShowFormNovaOS(false)}
-                  className="px-12 bg-white/5 text-white py-3 rounded-lg font-black uppercase text-sm hover:bg-white/10 transition"
+                  className="px-8 bg-white/5 text-white py-3 rounded-lg font-black uppercase text-sm hover:bg-white/10 transition"
                 >
                   Cancelar
                 </button>

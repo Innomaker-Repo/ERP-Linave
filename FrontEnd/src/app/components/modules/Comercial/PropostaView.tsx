@@ -116,6 +116,7 @@ const mapNegocioToObra = (n: any): any => ({
   })),
   orcamentoRealizado: n.orcamento_realizado,
   orcamentoValores: n.orcamentos?.[0]?.valores || null,
+  orcamentos: n.orcamentos || [],
 });
 
 const parsePrecoParaDecimal = (preco: string): number => {
@@ -698,11 +699,25 @@ export function PropostaView() {
         requer_reorcamento: true,
       });
 
-      // Incrementa versaoNegocio no contexto global para o kanban refletir
+      // Atualiza contexto global: marca ultimo orcamento como recusado + requerReorcamento
       const obrasAtuais: any[] = Array.isArray(obras) ? obras : [];
       const obrasAtualizadas = obrasAtuais.map((o: any) => {
         if (o.negocioBackendId === obra.backendId || o.id === `ID ${obra.backendId}`) {
-          return { ...o, versaoNegocio: proximaVersao(o.versaoNegocio || '') };
+          const orcamentosExistentes: any[] = Array.isArray(o.orcamentos) ? o.orcamentos : [];
+          const orcamentosAtualizados = orcamentosExistentes.length > 0
+            ? orcamentosExistentes.map((orc: any, idx: number, arr: any[]) =>
+                idx === arr.length - 1
+                  ? { ...orc, status: 'recusado', dataRecusa: new Date().toISOString().split('T')[0], motivoRecusa: motivoRecusa }
+                  : orc
+              )
+            : orcamentosExistentes;
+          return {
+            ...o,
+            requerReorcamento: true,
+            categoria: 'Planejamento',
+            orcamentos: orcamentosAtualizados,
+            versaoNegocio: proximaVersao(o.versaoNegocio || ''),
+          };
         }
         return o;
       });
@@ -826,7 +841,7 @@ export function PropostaView() {
                     <div className="bg-white/3 rounded-lg p-4 mb-4 space-y-2 text-xs border border-white/5">
                       <div className="flex justify-between">
                         <span className="text-white/70">Versão:</span>
-                        <span className="text-white font-black">{ultimaProposta.versao}</span>
+                        <span className="text-white font-black">{ultimaProposta.versao || ultimaProposta.numeroProposta?.match(/[A-Z]+$/)?.[0] || 'A'}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-white/70">Criada em:</span>
@@ -1000,10 +1015,10 @@ export function PropostaView() {
 
       {/* SEÇÃO 1: DATA E NÚMERO (AUTOPREENCHIDOS) */}
       <div className={sectionClass}>
-        <h3 className="text-base font-black text-white uppercase mb-4">Cidade e Data</h3>
+        <h3 className="text-base font-black text-white uppercase mb-4">Data</h3>
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-1.5">
-            <label className={labelClass}>Cidade e Data</label>
+            <label className={labelClass}>Data</label>
             <input 
               type="date"
               className={inputClass}
@@ -1417,13 +1432,45 @@ export function PropostaView() {
       {/* SEÇÃO 16: G - PRAZO */}
       <div className={sectionClass}>
         <h3 className="text-base font-black text-white uppercase mb-4">G - Prazo</h3>
-        <div className="space-y-1.5">
-          <label className={labelClass}>Prazo</label>
-          <textarea 
-            className={`${inputClass} h-20`}
-            value={propostaForm.prazo}
-            onChange={e => setPropostaForm({...propostaForm, prazo: e.target.value})}
-          />
+        <div className="grid grid-cols-3 gap-4 items-start">
+          <div className="col-span-2 space-y-1.5">
+            <label className={labelClass}>Prazo</label>
+            <textarea
+              className={`${inputClass} h-20`}
+              value={propostaForm.prazo}
+              onChange={e => setPropostaForm({...propostaForm, prazo: e.target.value})}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className={labelClass}>Dias Previstos (Orçamento)</label>
+            {(() => {
+              // Tenta: selectedObra.orcamentos (agora incluído em mapNegocioToObra),
+              // fallback para obras do contexto ErpContext.
+              const obraCtx = (obras || []).find((o: any) =>
+                String(o.negocioBackendId) === String(selectedObra?.backendId) ||
+                o.id === selectedObra?.id
+              );
+              const orcamentos: any[] = selectedObra?.orcamentos?.length
+                ? selectedObra.orcamentos
+                : (obraCtx?.orcamentos || []);
+              const ultimoOrc = orcamentos[orcamentos.length - 1];
+              // Backend usa "duracao" em atividades; frontend salva como "dias"
+              const atividades: any[] = ultimoOrc?.data?.atividades || [];
+              const maoDeObra: any[] = ultimoOrc?.data?.maoDeObra || [];
+              const parseDias = (val: any) => parseFloat(String(val ?? 0)) || 0;
+              const total =
+                atividades.reduce((s, i) => s + parseDias(i.dias ?? i.duracao), 0) +
+                maoDeObra.reduce((s, i) => s + parseDias(i.dias), 0);
+              return (
+                <div className="h-20 flex items-center justify-center bg-amber-500/10 border border-amber-500/30 rounded-lg">
+                  <div className="text-center">
+                    <p className="text-amber-400 font-black text-2xl">{Number.isInteger(total) ? total : total.toFixed(1)}</p>
+                    <p className="text-white/50 text-[10px] font-black uppercase tracking-widest">dias previstos</p>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
         </div>
       </div>
 
@@ -1464,13 +1511,6 @@ export function PropostaView() {
         >
           <Save size={18} /> Salvar Rascunho
         </button>
-        {selectedObra && (
-          <button
-            type="button"
-            onClick={gerarDocxTemplate}
-            className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-3 rounded-lg font-black uppercase text-sm tracking-widest transition-all flex items-center justify-center gap-2"
-          >Gerar DOCX</button>
-        )}
       </div>
     </div>
   );

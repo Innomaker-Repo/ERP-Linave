@@ -95,6 +95,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   const [selectedObra, setSelectedObra] = useState<any>(null);
   const [loadingData, setLoadingData] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [detalhesModal, setDetalhesModal] = useState<{ obra: any; orc: any } | null>(null);
 
   const getRascunhoKey = (obraId: string | number) => `orcamento_rascunho_${obraId}`;
 
@@ -207,7 +208,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       .filter((versao) => /^[A-Z]+$/.test(versao));
 
     if (versoesAlfabeticas.length === 0) {
-      return orcamentos.length === 0 ? '' : 'A';
+      return 'A';
     }
 
     const ultimoIndice = versoesAlfabeticas.reduce((maior, versao) => {
@@ -307,6 +308,8 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     .filter((obra: any) => {
       if (obra.categoria !== 'Planejamento') return false;
       const ultimoOrcamento = obterUltimoOrcamento(obra);
+      // Pendente sem flag de reorçamento → está em aguardando aprovação
+      if (ultimoOrcamento?.status === 'pendente' && !obra.requerReorcamento) return false;
       return !ultimoOrcamento
         || ultimoOrcamento.status === 'recusado'
         || ultimoOrcamento.status === 'pendente_reorcamento'
@@ -328,6 +331,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   // Aguardando aprovação interna: negócios em Planejamento com orçamento pendente.
   const projetosAguardandoAprovacao = (obras || []).filter((obra: any) => {
     if (obra.categoria !== 'Planejamento') return false;
+    if (obra.requerReorcamento) return false; // marcado para reorçamento → sai daqui
     const ultimoOrcamento = obterUltimoOrcamento(obra);
     return ultimoOrcamento?.status === 'pendente';
   });
@@ -427,7 +431,21 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     const initialDefaults = getInitialOrcamentoData();
     const rawBase = ultimoOrcamento?.data
       ? { ...initialDefaults, ...ultimoOrcamento.data }
-      : initialDefaults;
+      : ultimoOrcamento
+        // Fallback para quando o orçamento veio do backend (sem .data): usa campos top-level
+        ? {
+            ...initialDefaults,
+            maoDeObra: ultimoOrcamento.mao_de_obra || ultimoOrcamento.maoDeObra || [],
+            materiais: ultimoOrcamento.materiais || [],
+            atividades: ultimoOrcamento.atividades || [],
+            terceirizados: ultimoOrcamento.terceirizados || [],
+            observacoes: ultimoOrcamento.observacoes_setor_orcamento || '',
+            margem: String(ultimoOrcamento.resumo?.margem ?? initialDefaults.margem),
+            oh: String(ultimoOrcamento.resumo?.OH ?? initialDefaults.oh),
+            impostos: String(ultimoOrcamento.resumo?.impostos ?? initialDefaults.impostos),
+            quantidadeItensProduzidos: String(ultimoOrcamento.resumo?.qnt || ''),
+          }
+        : initialDefaults;
 
     // Normaliza campos do backend e garante ao menos uma linha em cada seção
     const baseData = {
@@ -480,6 +498,8 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
         setOrcamentoData({
           ...formularioBase,
           ...rascunho,
+          // Sempre usa o numero/versão calculada, nunca o do rascunho
+          numeroOrcamento: formularioBase.numeroOrcamento,
           dadosServicos: Array.isArray(rascunho?.dadosServicos) && rascunho.dadosServicos.length > 0
             ? rascunho.dadosServicos
             : formularioBase.dadosServicos,
@@ -555,7 +575,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     const orcamentosExistentes = normalizarOrcamentos(selectedObra);
     const ultimoOrc = orcamentosExistentes.length > 0 ? orcamentosExistentes[orcamentosExistentes.length - 1] : null;
     const ultimoEhRascunho = ultimoOrc?.status === 'rascunho';
-    const reorcPendente = Boolean(selectedObra?.requerReorcamento && ultimoOrc && !ultimoEhRascunho);
+    const reorcPendente = Boolean(selectedObra?.requerReorcamento && ultimoOrc?.status === 'pendente_reorcamento');
     const proxVersao = (reorcPendente || ultimoEhRascunho)
       ? formatarVersaoOrcamento(ultimoOrc?.versao)
       : proximaVersaoOrcamento(orcamentosExistentes);
@@ -631,6 +651,8 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     if (!orcamentoData.escopoOrcamento.trim()) { alert("Escopo do orçamento é obrigatório."); return; }
     const qtdItens = Number(orcamentoData.quantidadeItensProduzidos);
     if (!qtdItens || qtdItens < 1) { alert("Quantidade de itens produzidos é obrigatória para concluir o orçamento."); return; }
+    const atividadesPreenchidas = orcamentoData.atividades.filter(i => i.atividade?.trim());
+    if (atividadesPreenchidas.length === 0) { alert("É obrigatório preencher pelo menos uma atividade prevista para concluir o orçamento."); return; }
 
     // Mão de obra: pelo menos um item com funcao preenchida
     const mdoPreenchido = orcamentoData.maoDeObra.filter((item: MaoDeObra) => item.funcao?.trim());
@@ -750,7 +772,28 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     const obraAtualizada = { ...obra, categoria: 'Planejamento', requerReorcamento: true, orcamentos: novosOrcamentos };
     const obrasAtualizadas = (obras || []).map((o: any) => o.id === obra.id ? obraAtualizada : o);
     saveEntity('obras', obrasAtualizadas);
+    try { localStorage.removeItem(getRascunhoKey(obra.id)); } catch {}
+    // Persiste no backend para sobreviver à remontagem do componente
+    try {
+      const negocioId = obra.negocioBackendId || extrairIdProjetoDoNumero(obra.id);
+      if (negocioId) await atualizarNegocio(negocioId, { requer_reorcamento: true, status: 'Orçamento recusado' });
+    } catch (err) {
+      console.warn('Erro ao persistir recusa no backend:', err);
+    }
     alert("Orçamento recusado. Projeto retornou para reorçamento.");
+  };
+
+  const handleArquivarNegocio = async (obra: any) => {
+    if (!window.confirm(`Confirma o arquivamento do negócio "${obra.nome}"?\n\nO negócio será marcado como Arquivado e não aparecerá mais nos fluxos ativos.`)) return;
+    const obraAtualizada = { ...obra, categoria: 'Arquivado', status: 'Arquivado' };
+    const obrasAtualizadas = (obras || []).map((o: any) => o.id === obra.id ? obraAtualizada : o);
+    saveEntity('obras', obrasAtualizadas);
+    try {
+      const negocioId = obra.negocioBackendId || extrairIdProjetoDoNumero(obra.id);
+      if (negocioId) await atualizarNegocio(negocioId, { categoria: 'Arquivado', status: 'Arquivado' });
+    } catch (err) {
+      console.warn('Erro ao arquivar negócio no backend:', err);
+    }
   };
 
   const abrirDocumentoNegocio = (documento: any) => {
@@ -1431,8 +1474,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   const totalMateriais = orcamentoData.materiais.reduce((sum, item) => sum + (parseDecimal(item.valorTotal) || 0), 0);
   const totalTerceirizados = orcamentoData.terceirizados.reduce((sum, item) => sum + (parseDecimal(item.valorTotal) || 0), 0);
   const totalDiasAtividades = orcamentoData.atividades
-    .map((item) => parseDecimal(item.dias))
-    .reduce((sum, d) => sum + d, 0);
+    .reduce((sum, item) => sum + parseDecimal(item.dias), 0);
   const totalBruto = totalMaoDeObra + totalMateriais + totalTerceirizados;
   const margemPercentual = parseFloat(orcamentoData.margem) || 0;
   const ohPercentual = parseFloat(orcamentoData.oh) || 0;
@@ -1479,9 +1521,18 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                 {projetosAOrcar.map((obra: any) => {
                   const nomeExibicaoCliente = obra.nomeCliente || obra.nome_cliente || obra.cliente_nome || "Cliente Identificado";
 
-                  const ultimoOrcamento = obterUltimoOrcamento(obra);
+                  const orcamentosExistentesCard = normalizarOrcamentos(obra);
+                  const ultimoOrcamento = orcamentosExistentesCard.length > 0 ? orcamentosExistentesCard[orcamentosExistentesCard.length - 1] : null;
                   const ehRascunho = ultimoOrcamento?.status === 'rascunho';
-                  const reorcamentoArquivos = obra.requerReorcamento || ultimoOrcamento?.status === 'pendente_reorcamento';
+                  const ultimaProposta = Array.isArray(obra.propostas) && obra.propostas.length > 0
+                    ? obra.propostas[obra.propostas.length - 1] : null;
+                  const propostaRecusada = ultimaProposta?.status === 'recusada' && obra.requerReorcamento;
+                  const ehRecusado = ultimoOrcamento?.status === 'recusado' || propostaRecusada;
+                  const reorcamentoArquivos = !ehRecusado && (obra.requerReorcamento || ultimoOrcamento?.status === 'pendente_reorcamento');
+                  // Versão que será criada no próximo orçamento
+                  const proximaVersaoCard = ehRascunho
+                    ? labelVersaoOrcamento(ultimoOrcamento?.versao)
+                    : labelVersaoOrcamento(proximaVersaoOrcamento(orcamentosExistentesCard));
                   const idProjetoOrc = Array.isArray(obra.propostas) && obra.propostas.length > 0
                     ? extrairIdProjetoDoNumero(obra.propostas[obra.propostas.length - 1].numeroProposta || '')
                     : '';
@@ -1489,7 +1540,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                   return (
                     <div
                       key={obra.id}
-                      className={`bg-[#101f3d] border rounded-2xl p-6 transition-all hover:shadow-lg ${ehRascunho ? 'border-yellow-500/40 hover:border-yellow-400/60 hover:shadow-yellow-900/20' : 'border-white/10 hover:border-amber-500/30 hover:shadow-amber-900/20'}`}
+                      className={`bg-[#101f3d] border rounded-2xl p-6 transition-all hover:shadow-lg ${ehRascunho ? 'border-yellow-500/40 hover:border-yellow-400/60 hover:shadow-yellow-900/20' : ehRecusado ? 'border-red-500/30 hover:border-red-400/60 hover:shadow-red-900/20' : 'border-white/10 hover:border-amber-500/30 hover:shadow-amber-900/20'}`}
                     >
                       <div className="space-y-4">
                         <div className="flex-1">
@@ -1510,39 +1561,62 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                             <span className="text-white/50">Status:</span>
                             {ehRascunho ? (
                               <span className="text-yellow-300 font-bold">
-                                {labelVersaoOrcamento(ultimoOrcamento.versao)} em edição
+                                {proximaVersaoCard} em edição
                               </span>
                             ) : !ultimoOrcamento ? (
                               <span className="text-blue-300 font-bold">Aguardando orçamento</span>
+                            ) : ehRecusado ? (
+                              <span className="text-red-400 font-bold">
+                                {proximaVersaoCard} — {propostaRecusada ? 'Proposta Recusada' : 'Orçamento Recusado'}
+                              </span>
                             ) : reorcamentoArquivos ? (
                               <span className="text-orange-300 font-bold">
-                                {labelVersaoOrcamento(ultimoOrcamento?.versao)} aguardando revisão
-                              </span>
-                            ) : ultimoOrcamento?.status === 'recusado' ? (
-                              <span className="text-red-300 font-bold">
-                                {labelVersaoOrcamento(ultimoOrcamento.versao)} recusada
+                                {proximaVersaoCard} aguardando revisão
                               </span>
                             ) : (
                               <span className="text-blue-300 font-bold">Aguardando orçamento</span>
                             )}
                           </div>
+                          {(ultimoOrcamento?.motivoRecusa || ultimaProposta?.motivoRecusaProposta) && ehRecusado && (
+                            <div className="pt-2 border-t border-red-500/20 space-y-1">
+                              <p className="text-red-400/70 text-[11px] font-black uppercase tracking-widest">Motivo da recusa</p>
+                              <p className="text-red-200 text-xs leading-relaxed">
+                                {ultimoOrcamento?.motivoRecusa || ultimaProposta?.motivoRecusaProposta}
+                              </p>
+                            </div>
+                          )}
                           {obra.motivoRecusaProposta && (
                             <div className="pt-2 border-t border-white/10 space-y-1">
                               <p className="text-white/50 text-[11px] font-black uppercase tracking-widest">Motivo da recusa da proposta</p>
                               <p className="text-amber-200 text-xs leading-relaxed">{obra.motivoRecusaProposta}</p>
-                              <p className="text-white/40 text-[11px]">
-                                Documentos alterados/adicionados: {obra.houveAlteracaoDocumentosRecusa ? 'Sim' : 'Não'}
-                              </p>
                             </div>
                           )}
                         </div>
 
-                        <button
-                          onClick={() => handleSelectObra(obra)}
-                          className={`w-full py-3 rounded-lg font-black uppercase text-xs tracking-widest transition-all shadow-lg ${ehRascunho ? 'bg-gradient-to-r from-yellow-500 to-amber-500 hover:from-yellow-400 hover:to-amber-400 text-[#0b1220] shadow-yellow-900/30' : 'bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-[#0b1220] shadow-amber-900/30'}`}
-                        >
-                          {ehRascunho ? 'Continuar Rascunho' : 'Fazer Orçamento'}
-                        </button>
+                        {(ehRecusado || reorcamentoArquivos) ? (
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleSelectObra(obra)}
+                              className="flex-1 py-3 rounded-lg font-black uppercase text-xs tracking-widest transition-all bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-[#0b1220] shadow-lg shadow-amber-900/30"
+                            >
+                              {ehRascunho ? 'Continuar Rascunho' : ehRecusado ? 'Refazer Orçamento' : 'Fazer Orçamento'}
+                            </button>
+                            <button
+                              onClick={() => handleArquivarNegocio(obra)}
+                              className="px-4 py-3 rounded-lg font-black uppercase text-xs tracking-widest transition-all bg-white/5 hover:bg-white/10 text-white/60 border border-white/10 hover:border-red-500/40 hover:text-red-400"
+                              title="Arquivar negócio → move para Finalizados"
+                            >
+                              Arquivar
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => handleSelectObra(obra)}
+                            className={`w-full py-3 rounded-lg font-black uppercase text-xs tracking-widest transition-all shadow-lg ${ehRascunho ? 'bg-gradient-to-r from-yellow-500 to-amber-500 hover:from-yellow-400 hover:to-amber-400 text-[#0b1220] shadow-yellow-900/30' : 'bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-[#0b1220] shadow-amber-900/30'}`}
+                          >
+                            {ehRascunho ? 'Continuar Rascunho' : 'Fazer Orçamento'}
+                          </button>
+                        )}
                       </div>
                     </div>
                   );
@@ -1755,6 +1829,13 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                             <Download size={14} /> Download Orçamento
                           </button>
                         )}
+
+                        <button
+                          onClick={() => setDetalhesModal({ obra, orc: ultimoOrcamento })}
+                          className="w-full bg-white/5 hover:bg-white/10 border border-white/10 text-white/70 hover:text-white py-2.5 rounded-lg font-black uppercase text-xs tracking-widest transition-all flex items-center justify-center gap-2"
+                        >
+                          <Eye size={14} /> Detalhes
+                        </button>
 
                         {podeNovoOrcamento ? (
                           <button
@@ -2350,8 +2431,8 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
             </button>
             <button
               onClick={handleConcluirOrcamento}
-              disabled={saving || Number(orcamentoData.quantidadeItensProduzidos) < 1}
-              title={Number(orcamentoData.quantidadeItensProduzidos) < 1 ? 'Informe a quantidade de itens produzidos para concluir' : ''}
+              disabled={saving || Number(orcamentoData.quantidadeItensProduzidos) < 1 || orcamentoData.atividades.filter(i => i.atividade?.trim()).length === 0}
+              title={Number(orcamentoData.quantidadeItensProduzidos) < 1 ? 'Informe a quantidade de itens produzidos para concluir' : orcamentoData.atividades.filter(i => i.atividade?.trim()).length === 0 ? 'Preencha pelo menos uma atividade prevista para concluir' : ''}
               className="flex-1 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-[#0b1220] py-3 rounded-lg font-black uppercase text-sm tracking-widest transition-all shadow-lg shadow-amber-900/30 disabled:opacity-40 disabled:cursor-not-allowed disabled:from-amber-500 disabled:to-orange-500"
             >
               <Lock size={16} className="inline mr-2" /> Concluir Orçamento
@@ -2365,6 +2446,217 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
           </div>
         </div>
       )}
+
+      {/* MODAL: DETALHES DO ORÇAMENTO */}
+      {detalhesModal && (() => {
+        const { obra, orc } = detalhesModal;
+        const d = orc.data || {};
+        const v = orc.valores || {};
+        const pd = (val: any) => Number(val ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+        const mdo: any[] = (d.maoDeObra || []).filter((i: any) => i.funcao?.trim());
+        const mats: any[] = (d.materiais || []).filter((i: any) => i.descricao?.trim());
+        const ters: any[] = (d.terceirizados || []).filter((i: any) => i.descricao?.trim());
+        const ativs: any[] = (d.atividades || []).filter((i: any) => i.atividade?.trim());
+        const totalDiasDetalhes = [
+          ...(d.atividades || []).map((i: any) => Number(i.duracao || i.dias || 0)),
+          ...(d.maoDeObra || []).map((i: any) => Number(i.dias || 0)),
+        ].reduce((a, b) => a + b, 0);
+        return (
+          <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 backdrop-blur-sm overflow-y-auto py-8 px-4">
+            <div className="bg-[#0d1b35] border border-white/10 rounded-2xl w-full max-w-4xl shadow-2xl">
+              {/* Header */}
+              <div className="flex items-start justify-between p-6 border-b border-white/10">
+                <div>
+                  <h2 className="text-2xl font-black text-white uppercase">{obra.nome}</h2>
+                  <p className="text-amber-400 font-bold text-sm mt-1">{obra.nomeCliente || '—'}</p>
+                  <div className="flex items-center gap-3 mt-2">
+                    <span className="px-2.5 py-1 bg-emerald-500/20 text-emerald-400 rounded-full text-xs font-black">{labelVersaoOrcamento(orc.versao)}</span>
+                    <span className="text-white/50 text-xs">{orc.numeroOrcamento || '—'}</span>
+                    <span className="text-white/50 text-xs">{orc.dataCriacao ? new Date(orc.dataCriacao).toLocaleDateString('pt-BR') : '—'}</span>
+                  </div>
+                </div>
+                <button onClick={() => setDetalhesModal(null)} className="p-2 bg-white/5 hover:bg-white/10 rounded-full transition">
+                  <X size={20} className="text-white/60" />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-6">
+                {/* Resumo Financeiro */}
+                <div className="bg-[#101f3d] rounded-xl p-5 border border-white/5">
+                  <h3 className="text-white/40 text-[10px] font-black uppercase tracking-widest mb-4">Resumo Financeiro</h3>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {[
+                      { label: 'Mão de Obra', val: v.totalMaoDeObra ?? v.totalMDO },
+                      { label: 'Materiais', val: v.totalMateriais },
+                      { label: 'Terceirizados', val: v.totalTerceirizados },
+                      { label: 'Total Bruto', val: v.totalBruto ?? v.subtotal },
+                    ].map(({ label, val }) => (
+                      <div key={label} className="bg-[#0b1220] rounded-lg p-3">
+                        <p className="text-white/40 text-[10px] font-black uppercase tracking-widest">{label}</p>
+                        <p className="text-white font-black mt-1">R$ {pd(val)}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-3 gap-4 mt-3">
+                    <div className="bg-[#0b1220] rounded-lg p-3">
+                      <p className="text-white/40 text-[10px] font-black uppercase tracking-widest">Margem {v.margem || d.margem}%</p>
+                      <p className="text-amber-400 font-black mt-1">+ R$ {pd(v.valorMargem)}</p>
+                    </div>
+                    <div className="bg-[#0b1220] rounded-lg p-3">
+                      <p className="text-white/40 text-[10px] font-black uppercase tracking-widest">OH {v.oh || d.oh}%</p>
+                      <p className="text-amber-400 font-black mt-1">+ R$ {pd(v.valorOH)}</p>
+                    </div>
+                    <div className="bg-[#0b1220] rounded-lg p-3">
+                      <p className="text-white/40 text-[10px] font-black uppercase tracking-widest">Impostos {v.impostos || d.impostos}%</p>
+                      <p className="text-amber-400 font-black mt-1">+ R$ {pd(v.valorImpostos)}</p>
+                    </div>
+                  </div>
+                  <div className="mt-4 flex justify-between items-center bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-4">
+                    <div>
+                      <p className="text-white/50 text-xs">Preço Final</p>
+                      <p className="text-emerald-400 font-black text-2xl">R$ {pd(v.precoFinal)}</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-white/50 text-xs">Dias Previstos</p>
+                      <p className="text-amber-400 font-black text-2xl">{totalDiasDetalhes > 0 ? totalDiasDetalhes : '—'}</p>
+                    </div>
+                    {Number(v.quantidadeItensProduzidos) > 0 && (
+                      <div className="text-right">
+                        <p className="text-white/50 text-xs">{v.quantidadeItensProduzidos} unid. × R$ {pd(v.valorPorUnidade)}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Mão de Obra */}
+                {mdo.length > 0 && (
+                  <div>
+                    <h3 className="text-white/40 text-[10px] font-black uppercase tracking-widest mb-3">Mão de Obra</h3>
+                    <div className="overflow-x-auto rounded-xl border border-white/5">
+                      <table className="w-full text-xs">
+                        <thead className="bg-[#101f3d]">
+                          <tr>{['Função','Qtd','Dias','Custo/Dia','Total','Obs'].map(h => <th key={h} className="px-3 py-2 text-left text-white/40 font-black uppercase tracking-widest">{h}</th>)}</tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                          {mdo.map((i: any, idx: number) => (
+                            <tr key={idx} className="bg-[#0b1220]">
+                              <td className="px-3 py-2 text-white font-bold">{i.funcao}</td>
+                              <td className="px-3 py-2 text-white/70">{i.quantidade ?? i.qnt}</td>
+                              <td className="px-3 py-2 text-white/70">{i.dias}</td>
+                              <td className="px-3 py-2 text-white/70">R$ {pd(i.custoUnitDia ?? i.custo_unit_dia)}</td>
+                              <td className="px-3 py-2 text-emerald-400 font-bold">R$ {pd(i.valorTotal)}</td>
+                              <td className="px-3 py-2 text-white/40">{i.observacao || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Materiais */}
+                {mats.length > 0 && (
+                  <div>
+                    <h3 className="text-white/40 text-[10px] font-black uppercase tracking-widest mb-3">Materiais / Consumíveis</h3>
+                    <div className="overflow-x-auto rounded-xl border border-white/5">
+                      <table className="w-full text-xs">
+                        <thead className="bg-[#101f3d]">
+                          <tr>{['Item','Un','Qtd','Peso','Custo Un.','Total','Obs'].map(h => <th key={h} className="px-3 py-2 text-left text-white/40 font-black uppercase tracking-widest">{h}</th>)}</tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                          {mats.map((i: any, idx: number) => (
+                            <tr key={idx} className="bg-[#0b1220]">
+                              <td className="px-3 py-2 text-white font-bold">{i.descricao || i.item}</td>
+                              <td className="px-3 py-2 text-white/70">{i.unidade}</td>
+                              <td className="px-3 py-2 text-white/70">{i.quantidade ?? i.qnt}</td>
+                              <td className="px-3 py-2 text-white/70">{i.pesoFator ?? i.peso}</td>
+                              <td className="px-3 py-2 text-white/70">R$ {pd(i.custoUnit ?? i.custo_unit)}</td>
+                              <td className="px-3 py-2 text-emerald-400 font-bold">R$ {pd(i.valorTotal)}</td>
+                              <td className="px-3 py-2 text-white/40">{i.observacao || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Terceirizados */}
+                {ters.length > 0 && (
+                  <div>
+                    <h3 className="text-white/40 text-[10px] font-black uppercase tracking-widest mb-3">Serviços Terceirizados</h3>
+                    <div className="overflow-x-auto rounded-xl border border-white/5">
+                      <table className="w-full text-xs">
+                        <thead className="bg-[#101f3d]">
+                          <tr>{['Descrição','Un','Qtd','Valor Un.','Total','Obs'].map(h => <th key={h} className="px-3 py-2 text-left text-white/40 font-black uppercase tracking-widest">{h}</th>)}</tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                          {ters.map((i: any, idx: number) => (
+                            <tr key={idx} className="bg-[#0b1220]">
+                              <td className="px-3 py-2 text-white font-bold">{i.descricao}</td>
+                              <td className="px-3 py-2 text-white/70">{i.unidade}</td>
+                              <td className="px-3 py-2 text-white/70">{i.quantidade ?? i.qnt}</td>
+                              <td className="px-3 py-2 text-white/70">R$ {pd(i.custoUnit ?? i.valor_unit)}</td>
+                              <td className="px-3 py-2 text-emerald-400 font-bold">R$ {pd(i.valorTotal)}</td>
+                              <td className="px-3 py-2 text-white/40">{i.observacao || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Atividades */}
+                {ativs.length > 0 && (
+                  <div>
+                    <h3 className="text-white/40 text-[10px] font-black uppercase tracking-widest mb-3">Atividades Previstas</h3>
+                    <div className="overflow-x-auto rounded-xl border border-white/5">
+                      <table className="w-full text-xs">
+                        <thead className="bg-[#101f3d]">
+                          <tr>{['Atividade','Dias','Obs'].map(h => <th key={h} className="px-3 py-2 text-left text-white/40 font-black uppercase tracking-widest">{h}</th>)}</tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                          {ativs.map((i: any, idx: number) => (
+                            <tr key={idx} className="bg-[#0b1220]">
+                              <td className="px-3 py-2 text-white font-bold">{i.atividade}</td>
+                              <td className="px-3 py-2 text-amber-400 font-bold">{i.dias ?? i.duracao}</td>
+                              <td className="px-3 py-2 text-white/40">{i.observacao || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Observações */}
+                {(d.observacoes || orc.observacoes) && (
+                  <div className="bg-[#101f3d] rounded-xl p-4 border border-white/5">
+                    <p className="text-white/40 text-[10px] font-black uppercase tracking-widest mb-2">Observações</p>
+                    <p className="text-white/80 text-sm">{d.observacoes || orc.observacoes}</p>
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-3 pt-2">
+                  <button
+                    onClick={() => handleDownloadOrcamentoPDF(orc, obra)}
+                    className="flex items-center gap-2 px-5 py-2.5 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 rounded-lg font-black uppercase text-xs tracking-widest transition-all"
+                  >
+                    <Download size={14} /> Download PDF
+                  </button>
+                  <button
+                    onClick={() => setDetalhesModal(null)}
+                    className="px-5 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 text-white/70 rounded-lg font-black uppercase text-xs tracking-widest transition-all"
+                  >
+                    Fechar
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
