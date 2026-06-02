@@ -3,7 +3,7 @@ import { ClipboardList, Package, Search } from 'lucide-react';
 import { useErp } from '../../../context/ErpContext';
 import { Badge } from '../../../modules/shared/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../modules/shared/ui/select';
-import { getOrdensServico, getOsOptionLabel, getOsOptionValue, type OrdemServicoResumo, isOsAlvo } from '../../../../services/ordensServico';
+import { getOrdensServico, getOsOptionLabel, getOsOptionValue, getOsStableValue, type OrdemServicoResumo, isOsAlvo } from '../../../../services/ordensServico';
 
 interface AllocationRow {
   id: string;
@@ -84,7 +84,7 @@ export function AlocadosPorOSView({ searchQuery }: AlocadosPorOSViewProps) {
 
     source.forEach((entry) => {
       if (!isOsAlvo(entry)) return;
-      const value = cleanValue(getOsOptionValue(entry as OrdemServicoResumo) || String(entry?.id || ''));
+      const value = cleanValue(getOsStableValue(entry as OrdemServicoResumo));
       if (!value || seen.has(value)) return;
       seen.add(value);
       merged.push({
@@ -101,7 +101,7 @@ export function AlocadosPorOSView({ searchQuery }: AlocadosPorOSViewProps) {
     historySource
       .filter((entry) => entry?.action === 'alocar')
       .forEach((entry) => {
-        const value = cleanValue(entry.osId || entry.osLabel);
+        const value = cleanValue(entry.osLabel || entry.osId);
         if (!value || seen.has(value)) return;
         seen.add(value);
         merged.push({

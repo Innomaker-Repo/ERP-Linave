@@ -5,7 +5,7 @@ import { Badge } from '../../../modules/shared/ui/badge';
 import { Input } from '../../../modules/shared/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../modules/shared/ui/select';
 import { useErp } from '../../../context/ErpContext';
-import { getOrdensServico, getOsOptionLabel, getOsOptionValue, type OrdemServicoResumo, isOsAlvo } from '../../../../services/ordensServico';
+import { getOrdensServico, getOsOptionLabel, getOsOptionValue, getOsStableValue, type OrdemServicoResumo, isOsAlvo } from '../../../../services/ordensServico';
 import api from '../../../../services/api';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -545,8 +545,9 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     const merged = [...backend];
     for (const item of ctx) {
       if (!isOsAlvo(item)) continue;
-      const val = getOsOptionValue(item as any);
-      if (!merged.some((m) => getOsOptionValue(m as any) === val)) {
+      const val = getOsStableValue(item as any);
+      if (!val) continue;
+      if (!merged.some((m) => getOsStableValue(m as any) === val)) {
         merged.push(item as any);
       }
     }
@@ -2391,17 +2392,27 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                     </SelectTrigger>
                     <SelectContent className="border border-white/10 bg-[#0b1220] text-white">
                       {availableOS.length > 0 ? (
-                        availableOS.map((ordemServico: any) => (
-                          <SelectItem key={getOsOptionValue(ordemServico) || ordemServico?.id} value={getOsOptionValue(ordemServico) || ordemServico?.id} className="rounded-lg">
-                            {getOsOptionLabel(ordemServico) || String(ordemServico?.ordemServicoNumero || ordemServico?.numeroOs || ordemServico?.id || 'OS')}
-                          </SelectItem>
-                        ))
+                        availableOS.map((ordemServico: any) => {
+                          const value = getOsStableValue(ordemServico);
+                          if (!value) return null;
+
+                          return (
+                            <SelectItem key={value} value={value} className="rounded-lg">
+                              {getOsOptionLabel(ordemServico) || value}
+                            </SelectItem>
+                          );
+                        })
                       ) : Array.isArray(os) && os.length > 0 ? (
-                        os.map((ordemServico: any) => (
-                          <SelectItem key={getOsOptionValue(ordemServico) || ordemServico?.id} value={getOsOptionValue(ordemServico) || ordemServico?.id} className="rounded-lg">
-                            {getOsOptionLabel(ordemServico) || String(ordemServico?.ordemServicoNumero || ordemServico?.numeroOs || ordemServico?.id || 'OS')}
-                          </SelectItem>
-                        ))
+                        os.map((ordemServico: any) => {
+                          const value = getOsStableValue(ordemServico);
+                          if (!value) return null;
+
+                          return (
+                            <SelectItem key={value} value={value} className="rounded-lg">
+                              {getOsOptionLabel(ordemServico) || value}
+                            </SelectItem>
+                          );
+                        })
                       ) : (
                         <SelectItem value="none" disabled>
                           Nenhuma OS elegível encontrada
