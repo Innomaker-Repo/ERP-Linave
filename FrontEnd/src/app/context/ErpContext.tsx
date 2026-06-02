@@ -828,9 +828,30 @@ const createInitialData = (savedData: any) => {
     }
   };
 
+  const hasStableOsNumber = (item: any) => Boolean(String(
+    item?.ordemServicoNumero ??
+    item?.ordem_servico_numero ??
+    item?.numero_os ??
+    item?.numeroOs ??
+    item?.cc ??
+    ''
+  ).trim());
+
+  const isLegacyOsRecord = (item: any) => /^(OS-(CONS|RASCUNHO)-)/i.test(String(item?.id || '')) || /^(OS-(CONS|RASCUNHO)-)/i.test(String(
+    item?.ordemServicoNumero ??
+    item?.ordem_servico_numero ??
+    item?.numero_os ??
+    item?.numeroOs ??
+    ''
+  ));
+
   const sanitizeCollection = (collection: string, items: any[] = []) => {
     if (!Array.isArray(items)) return [];
-    return items.filter((item) => !isDemoRecord(collection, item));
+    return items.filter((item) => {
+      if (isDemoRecord(collection, item)) return false;
+      if (collection === 'os' && isLegacyOsRecord(item) && !hasStableOsNumber(item)) return false;
+      return true;
+    });
   };
 
   if (!savedData) {
@@ -933,7 +954,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
   const [userSession, setUserSession] = useState<any>(() => getStoredSession());
   const [loading, setLoading] = useState(true);
   
-  const [data, setData] = useState(() => createInitialData(null));
+  const [data, setData] = useState<any>(() => createInitialData(null));
   const saveQueueRef = useRef(Promise.resolve());
 
   useEffect(() => {
@@ -956,7 +977,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
       try {
         const backendClientes = await getClientes();
         if (!mounted) return;
-        setData((prevData) => ({ ...prevData, clientes: backendClientes }));
+        setData((prevData: any) => ({ ...prevData, clientes: backendClientes }));
       } catch (error) {
         console.error('Erro ao carregar clientes SQL', error);
       } finally {
@@ -989,7 +1010,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
         ? await updateCliente(cliente.id, cliente)
         : await createCliente(cliente);
 
-      setData((prevData) => {
+      setData((prevData: any) => {
         const clientesAtuais = Array.isArray(prevData.clientes) ? prevData.clientes : [];
         const atualizados = clientesAtuais.filter((item: any) => item.id !== savedCliente.id);
         return { ...prevData, clientes: [...atualizados, savedCliente] };
@@ -1011,7 +1032,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
       console.error('Erro ao excluir cliente no backend', error);
       // Continue removendo localmente para evitar exibição de dados inconsistentes
     } finally {
-      setData((prevData) => ({
+      setData((prevData: any) => ({
         ...prevData,
         clientes: (prevData.clientes || []).filter((item: any) => item.id !== id),
       }));
@@ -1032,7 +1053,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
   };
 
   // Salva o workspace no estado local e sincroniza com o backend.
-  const saveEntity = async (collection: string, newData: any) => {
+  const saveEntity = async (collection: string, newData: any): Promise<void> => {
     const adminEmail = userSession?.email || 'admin@modo-teste.com';
     setActiveAdminEmail(adminEmail);
 
@@ -1041,8 +1062,8 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
       const currentWorkspace = getCachedWorkspace(adminEmail);
       const nextWorkspace = { ...currentWorkspace, clientes: [] };
       setCachedWorkspace(adminEmail, nextWorkspace);
-      setData((prevData) => ({ ...prevData, clientes: newData }));
-      return Promise.resolve(nextWorkspace);
+      setData((prevData: any) => ({ ...prevData, clientes: newData }));
+      return;
     }
 
     const executeSave = async () => {
@@ -1060,9 +1081,8 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     const queuedSave = saveQueueRef.current.then(executeSave, executeSave);
     saveQueueRef.current = queuedSave.then(() => undefined, () => undefined);
 
-    const result = await queuedSave;
+    await queuedSave;
     console.log(`${collection} atualizado:`, Array.isArray(newData) ? newData.length : Object.keys(newData || {}).length, 'itens');
-    return result;
   };
 
   // Simula upload de arquivo - sem enviar para nenhum lugar
@@ -1071,8 +1091,8 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     return null;
   };
 
-  const saveListas = async (l: any) => saveEntity('listas', l);
-  const saveConfig = async (c: any) => saveEntity('config', { ...(data.config || {}), ...c });
+  const saveListas = async (l: any): Promise<void> => saveEntity('listas', l);
+  const saveConfig = async (c: any): Promise<void> => saveEntity('config', { ...(data.config || {}), ...c });
 
   const logout = () => {
     window.localStorage.removeItem(SESSION_STORAGE_KEY);

@@ -140,7 +140,7 @@ export const handleDownloadPropostaPDF = (
         doc.setFontSize(9);
       } else {
         // Cabeçalho padrão para Servinave
-        const nomeEmpresa = propostaForm.empresaNome || 'VTS - Servinave Engenharia e Reparos Navais';
+        const nomeEmpresa = propostaForm.empresaNome || 'Servinave Engenharia e Reparos Navais';
         doc.text(nomeEmpresa, margin, currentY);
 
         doc.setFont('Arial', 'normal');
@@ -275,6 +275,9 @@ export const handleDownloadPropostaPDF = (
     if (propostaForm.preco) {
       writeText('D - Preco:', 11, true, 'left', 0, 4);
       writeText(propostaForm.preco, 11, false, 'left', 5, 4);
+      if (propostaForm.precoTextoLivre) {
+        writeText(propostaForm.precoTextoLivre, 11, false, 'left', 5, 8);
+      }
       if (propostaForm.impostosObservacoes) {
         writeText(propostaForm.impostosObservacoes, 11, false, 'left', 5, 8);
       } else {
@@ -298,7 +301,7 @@ export const handleDownloadPropostaPDF = (
     }
 
     writeText(propostaForm.encerramento || 'Atenciosamente,', 11, false, 'left', 0, 6);
-    const assinaturaPadrao = propostaForm.assinaturaNome || propostaForm.empresaNome || (isLinave ? 'Linave' : 'VTS - Servinave Engenharia e Reparos Navais');
+    const assinaturaPadrao = propostaForm.assinaturaNome || propostaForm.empresaNome || (isLinave ? 'Linave' : 'Servinave Engenharia e Reparos Navais');
     writeText(assinaturaPadrao, 11, true, 'left', 0, 1);
     writeText(propostaForm.assinaturaCargo || 'Setor Comercial', 11, false, 'left', 0, 10);
 

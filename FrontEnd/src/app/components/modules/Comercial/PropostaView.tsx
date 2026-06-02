@@ -39,6 +39,7 @@ interface PropostaFormData {
   escopoC: string;
   preco: string;
   precoItens?: Array<{ id: string; nome?: string; quantidade: number; precoUnitario: number; total: number }>;
+  precoTextoLivre: string;
   condicoesGerais: string;
   condicoesPagamento: string;
   prazo: string;
@@ -190,6 +191,7 @@ export function PropostaView() {
     escopoA: '',
     escopoBasicoServicos: [],
     precoItens: [],
+    precoTextoLivre: '',
     responsabilidadeContratada: '',
     escopoC: '',
     preco: '',
@@ -201,6 +203,12 @@ export function PropostaView() {
 
   const [propostaForm, setPropostaForm] = useState<PropostaFormData>(getInitialPropostaForm);
   const [novaColunaPorEscopo, setNovaColunaPorEscopo] = useState<Record<string, string>>({});
+
+  const formatarVersaoProposta = (proposta: any) => {
+    if (!proposta) return 'Original';
+    const versao = String(proposta.versao || proposta.numeroProposta?.match(/[A-Z]+$/)?.[0] || '').trim().toUpperCase();
+    return versao || 'Original';
+  };
 
   // Preço - itens editáveis (nome, quantidade, preço unitário, total)
   const criarPrecoItem = (override?: Partial<{ id: string; nome?: string; quantidade: number; precoUnitario: number; total: number }>) => ({
@@ -582,6 +590,7 @@ export function PropostaView() {
       condicoes_pagamento: propostaForm.condicoesPagamento,
       prazo: propostaForm.prazo,
       encerramento: propostaForm.encerramento,
+      preco_texto_livre: propostaForm.precoTextoLivre,
     };
 
     try {
@@ -645,6 +654,7 @@ export function PropostaView() {
         responsabilidadeContratada: propostaForm.responsabilidadeContratada,
         escopoC: propostaForm.escopoC,
         preco: propostaForm.preco,
+        precoTextoLivre: propostaForm.precoTextoLivre,
         condicoesGerais: propostaForm.condicoesGerais,
         condicoesPagamento: propostaForm.condicoesPagamento,
         prazo: propostaForm.prazo,
@@ -859,7 +869,7 @@ export function PropostaView() {
                     <div className="bg-white/3 rounded-lg p-4 mb-4 space-y-2 text-xs border border-white/5">
                       <div className="flex justify-between">
                         <span className="text-white/70">Versão:</span>
-                        <span className="text-white font-black">{ultimaProposta.versao || ultimaProposta.numeroProposta?.match(/[A-Z]+$/)?.[0] || 'A'}</span>
+                        <span className="text-white font-black">{formatarVersaoProposta(ultimaProposta)}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-white/70">Criada em:</span>
@@ -951,7 +961,7 @@ export function PropostaView() {
             <div key={proposta.versao} className={`rounded-lg p-6 border bg-white/5 border-white/10`}>
               <div className="flex justify-between items-start mb-4">
                 <div>
-                  <h3 className="text-lg font-black text-white">Versão {proposta.versao}</h3>
+                          <h3 className="text-lg font-black text-white">Versão {formatarVersaoProposta(proposta)}</h3>
                   <p className="text-white/70 text-sm mt-1">
                     {new Date(proposta.dataCriacao).toLocaleDateString('pt-BR')}
                   </p>
@@ -1423,6 +1433,16 @@ export function PropostaView() {
                 <div className="text-white/70 text-xs">Total</div>
                 <div className="text-white font-black">{propostaForm.preco || 'R$ 0,00'}</div>
               </div>
+            </div>
+
+            <div className="mt-4 space-y-1.5">
+              <label className={labelClass}>Texto livre do preço</label>
+              <textarea
+                className={`${inputClass} h-28`}
+                value={propostaForm.precoTextoLivre || ''}
+                onChange={(e) => setPropostaForm({ ...propostaForm, precoTextoLivre: e.target.value })}
+                placeholder="Observações, condições, detalhes comerciais ou qualquer texto complementar do preço"
+              />
             </div>
           </div>
         </div>

@@ -4,9 +4,25 @@ import { useErp } from '../context/ErpContext';
 
 const MOCK_GERENTE_COMERCIAL_EMAIL = 'gerente.comercial@linave.com.br';
 const MOCK_DIRETOR_FINANCEIRO_EMAIL = 'diretor.financeiro@linave.com.br';
+const SESSION_STORAGE_KEY = 'erp.userSession';
 
 export function LoginPage({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) {
   const { loginDireto } = useErp();
+
+  const persistSession = (user: any) => {
+    if (typeof loginDireto === 'function') {
+      loginDireto(user);
+      return;
+    }
+
+    const session = { ...user, token: null };
+    try {
+      window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+    } catch (_error) {
+    }
+
+    onLoginSuccess(session);
+  };
   
   const [step, setStep] = useState<'inicial' | 'entrar' | 'novo_usuario'>('inicial');
   const [email, setEmail] = useState('');
@@ -52,7 +68,7 @@ export function LoginPage({ onLoginSuccess }: { onLoginSuccess: (user: any) => v
     // Login de teste com admin/admin
     if (email === 'admin' && senha === 'admin') {
       const adminUser = { email: 'admin@modo-teste.com', role: 'ADMIN', nome: 'Administrador', permissoes: {} };
-      loginDireto(adminUser);
+      persistSession(adminUser);
       onLoginSuccess(adminUser);
       return;
     }
@@ -62,14 +78,14 @@ export function LoginPage({ onLoginSuccess }: { onLoginSuccess: (user: any) => v
 
     const mockUser = getMockUserByEmail(email);
     if (mockUser) {
-      loginDireto(mockUser);
+      persistSession(mockUser);
       onLoginSuccess(mockUser);
       return;
     }
     
     // Login simulado - apenas salva localmente
     const genericUser = { email, role: 'USER', nome: email.split('@')[0], permissoes: { compras: true } };
-    loginDireto(genericUser);
+    persistSession(genericUser);
     onLoginSuccess(genericUser);
   };
 
@@ -79,7 +95,7 @@ export function LoginPage({ onLoginSuccess }: { onLoginSuccess: (user: any) => v
     if (!email.includes('@')) return alert("Email inválido.");
     
     // Cria usuário local
-    loginDireto({ email, role: 'USER', nome: email.split('@')[0] });
+    persistSession({ email, role: 'USER', nome: email.split('@')[0] });
     onLoginSuccess({ email, role: 'USER' });
   };
 

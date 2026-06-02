@@ -381,16 +381,16 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       tipo: s.tipo || '',
       categoria: s.categoria || '',
       embarcacao: s.embarcacao || '',
-      localExecucao: s.localExecucao || '',
+      localExecucao: s.localExecucao || s.local_execucao || s.local || '',
       porto: s.porto || '',
-      prazoDes: s.prazoDes || '',
+      prazoDes: s.prazoDes || s.prazo_des || '',
       descricao: s.descricao || '',
       observacoes: s.observacoes || ''
     }));
     
     // Preencher escopo automaticamente com informações dos serviços
     const servicosInfo = dadosServicos
-      .map((s) => `• Serviço ${s.ordem}: ${s.tipo || 'Sem tipo'}${s.categoria ? ` (${s.categoria})` : ''}${s.localExecucao ? ` em ${s.localExecucao}` : ''}${s.prazoDes ? ` | Prazo: ${s.prazoDes}` : ''}`)
+      .map((s) => `• Serviço ${s.ordem}: ${s.tipo || 'Sem tipo'}${s.categoria ? ` (${s.categoria})` : ''}${s.localExecucao ? ` em ${s.localExecucao}` : ''}`)
       .join('\n');
     
     // Normaliza itens vindos do backend (campo snake_case) para o formato esperado pelo formulário
@@ -2005,7 +2005,6 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                         <p>Local: <span className="text-white">{servico.localExecucao || '−'}</span></p>
                         <p>Porto: <span className="text-white">{servico.porto || '−'}</span></p>
                         <p>Embarcação: <span className="text-white">{servico.embarcacao || '−'}</span></p>
-                        <p>Prazo: <span className="text-white">{servico.prazoDes || '−'}</span></p>
                       </div>
                       <div>
                         <p className="text-white/50 mb-1">Descrição</p>

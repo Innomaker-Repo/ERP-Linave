@@ -22,6 +22,15 @@ export const isOsAlvo = (os: any) => {
   return sentToProduction && !isFinalized;
 };
 
+export const getOsStableValue = (os: any) => String(
+  os?.ordemServicoNumero ??
+  os?.ordem_servico_numero ??
+  os?.numero_os ??
+  os?.numeroOs ??
+  os?.cc ??
+  ''
+).trim();
+
 const normalizeOs = (item: any): OrdemServicoResumo => ({
   id: String(item?.id ?? ''),
   ordemServicoNumero: String(item?.ordemServicoNumero ?? item?.ordem_servico_numero ?? item?.numero_os ?? item?.numeroOs ?? item?.cc ?? item?.id ?? ''),
