@@ -206,7 +206,7 @@ const listarItensASerIncluido = (aSerIncluido: OsFormData['aSerIncluido']) =>
     .map((item) => item.label);
 
 const criarInitialOsData = (): OsFormData => ({
-  id: `OS-CONS-${Date.now()}`,
+  id: '',
   obraId: '',
   clienteId: '',
   cliente: '',
@@ -296,7 +296,7 @@ export function OsView({ searchQuery }: OSViewProps) {
   const inputClass = 'w-full bg-[#0b1220] border border-white/10 p-3 rounded-lg text-white text-sm outline-none focus:border-amber-500 transition-all placeholder:text-white/20';
   const labelClass = 'text-[9px] font-black text-white/40 uppercase tracking-widest ml-1 mb-1.5 block';
 
-  const listaOS = (Array.isArray(os) ? os : []) as OsFormData[];
+  const listaOS = (Array.isArray(os) ? os : []).map((item: any) => normalizarIdOs(item as OsFormData));
   const obrasEmAndamento = (Array.isArray(obras) ? obras : []).filter((o: any) => o.categoria === 'Em Andamento');
   const osConsolidadas = listaOS.filter((item: any) => item.tipoDocumento === 'consolidada');
   // Obras sem OS em produção (rascunho não bloqueia)
@@ -449,7 +449,7 @@ export function OsView({ searchQuery }: OSViewProps) {
     const semRascunhoAnterior = listaOS.filter((item) => !(item.obraId === formData.obraId && item.statusOs === 'rascunho'));
     const rascunho: OsFormData = {
       ...formData,
-      id: `OS-RASCUNHO-${formData.obraId}`,
+      id: String(formData.ordemServicoNumero || formData.id || '').trim(),
       statusOs: 'rascunho',
       statusEnvio: 'pendente',
       statusAprovacao: 'pendente',
@@ -554,7 +554,7 @@ export function OsView({ searchQuery }: OSViewProps) {
     const novaOS: OsFormData = {
       ...formData,
       dataTerminoPrevisto,
-      id: `OS-CONS-${Date.now()}`,
+      id: String(formData.ordemServicoNumero || formData.id || '').trim(),
       statusOs: 'emproducao',
       statusEnvio: 'enviada',
       statusAprovacao: 'pendente',
@@ -812,10 +812,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                 <h2 className="text-2xl font-black text-white uppercase">Ordem de Serviço Consolidada</h2>
                 <div className="mt-3 flex flex-wrap items-center gap-3">
                   <span className="inline-flex items-center rounded-full border border-cyan-400/30 bg-cyan-500/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.2em] text-cyan-300">
-                    ID da OS: {formData.ordemServicoNumero || 'Original'}
-                  </span>
-                  <span className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.2em] text-emerald-300">
-                    ID do registro: {formData.id}
+                    ID da OS: {formData.ordemServicoNumero || 'Selecione uma obra'}
                   </span>
                 </div>
               </div>
