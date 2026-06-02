@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 import os
+import socket
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -97,17 +98,36 @@ WSGI_APPLICATION = 'ERP_Linave_BackEnd.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-DATABASES = {
-   'default': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'linave_db',
-        'USER': 'root',
-        'PASSWORD': 'Kamilinha1-',
-        #'PASSWORD': 'password@123',
-        'HOST': 'localhost',
-        'PORT': '3306',
+def _mysql_is_available(host: str, port: int, timeout: float = 0.5) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+USE_MYSQL = os.environ.get('DJANGO_USE_MYSQL', '1').lower() in ('1', 'true', 'yes', 'on')
+MYSQL_HOST = os.environ.get('DJANGO_DB_HOST', 'localhost')
+MYSQL_PORT = int(os.environ.get('DJANGO_DB_PORT', '3306'))
+
+if USE_MYSQL and _mysql_is_available(MYSQL_HOST, MYSQL_PORT):
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.mysql',
+            'NAME': os.environ.get('DJANGO_DB_NAME', 'linave_db'),
+            'USER': os.environ.get('DJANGO_DB_USER', 'root'),
+            'PASSWORD': os.environ.get('DJANGO_DB_PASSWORD', 'Kamilinha1-'),
+            'HOST': MYSQL_HOST,
+            'PORT': str(MYSQL_PORT),
+        }
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 
 # Password validation

@@ -79,13 +79,16 @@ const getBase64FromUrl = async (url: string): Promise<string | undefined> => {
 };
 // --------------------------
 
+const findClienteById = (clientes: any[], clienteId: any) =>
+  (Array.isArray(clientes) ? clientes : []).find((cliente: any) => String(cliente.id) === String(clienteId));
+
 
 const mapNegocioToObra = (n: any): any => ({
   backendId: n.id,
   clienteBackendId: n.cliente,
   id: gerarIdProjeto(n.empresa_prestadora || 'LN', String(n.id).padStart(4, '0')),
   nome: n.nome_negocio,
-  clienteId: n.cliente,
+  clienteId: String(n.cliente ?? ''),
   categoria: n.categoria,
   status: n.status,
   empresaPrestadora: n.empresa_prestadora,
@@ -141,6 +144,23 @@ export function PropostaView() {
     const char = (v || '').toUpperCase().slice(-1);
     if (!char) return 'A';
     return char < 'Z' ? String.fromCharCode(char.charCodeAt(0) + 1) : 'AA';
+  };
+
+  const getVersaoInicialProposta = (propostas: any[] = []) => {
+    const ultimaProposta = Array.isArray(propostas) && propostas.length > 0 ? propostas[propostas.length - 1] : null;
+    if (!ultimaProposta) return '';
+
+    if (ultimaProposta.status !== 'recusada') {
+      return '';
+    }
+
+    const versaoAnterior = String(
+      ultimaProposta.versao
+      || ultimaProposta.numeroProposta?.match(/[A-Z]+$/)?.[0]
+      || '',
+    ).toUpperCase();
+
+    return proximaVersao(versaoAnterior);
   };
 
   useEffect(() => {
@@ -464,7 +484,7 @@ export function PropostaView() {
   };
 
   const handleDownloadPropostaPDFWithLogo = async (proposta: any, obra: any) => {
-    const cliente = listaClientesLocal.find((c: any) => c.id === obra.clienteId);
+    const cliente = findClienteById(listaClientesLocal, obra.clienteId);
     const rawEmpresa = obra.empresaPrestadora || '';
     const cleaned = (typeof rawEmpresa === 'string' ? rawEmpresa : (rawEmpresa.nome || '')).toLowerCase();
     const isLinave = !cleaned.includes('servi');
@@ -479,10 +499,9 @@ export function PropostaView() {
   const handleSelectObra = (obra: any) => {
     setSelectedObra(obra);
 
-    const cliente = listaClientesLocal.find((c: any) => c.id === obra.clienteId);
+    const cliente = findClienteById(listaClientesLocal, obra.clienteId);
 
-    const indexVersao = obra.propostas?.length || 0;
-    const proximaVersaoLetra = indexVersao === 0 ? '' : indexToVersaoAlfabetica(indexVersao - 1);
+    const proximaVersaoLetra = getVersaoInicialProposta(obra.propostas);
 
     const componentesId = extrairComponentesDoId(obra.id);
     const numeroSequencial = componentesId?.numero || '0001';
@@ -490,7 +509,7 @@ export function PropostaView() {
     const base: PropostaFormData = {
       ...getInitialPropostaForm(),
       dataProposta: new Date().toISOString().split('T')[0],
-      cliente: cliente?.razaoSocial || '',
+      cliente: cliente?.razaoSocial || cliente?.razao_social || cliente?.nomeFantasia || cliente?.nome_fantasia || '',
       atribuidoA: obra.responsavelComercial || '',
       cargoContato: obra.tipo || '',
       numeroProposta: gerarIdProposta(componentesId?.prefixo || 'LN', numeroSequencial, proximaVersaoLetra),
@@ -537,8 +556,7 @@ export function PropostaView() {
   const handleSaveProposta = async () => {
     if (!selectedObra) return;
 
-    const indexVersao = selectedObra.propostas?.length || 0;
-    const proximaVersaoLetra = indexVersao === 0 ? '' : indexToVersaoAlfabetica(indexVersao - 1);
+    const proximaVersaoLetra = getVersaoInicialProposta(selectedObra.propostas);
 
     const componentesId = extrairComponentesDoId(selectedObra.id);
     const numeroSequencial = componentesId?.numero || String(selectedObra.backendId).padStart(4, '0');
@@ -761,7 +779,7 @@ export function PropostaView() {
                       <div>
                         <h3 className="text-lg font-black text-white">{obra.nome}</h3>
                         <p className="text-white/70 text-sm mt-1">
-                          Cliente: {listaClientesLocal.find((c: any) => c.id === obra.clienteId)?.razaoSocial}
+                          Cliente: {findClienteById(listaClientesLocal, obra.clienteId)?.razaoSocial || findClienteById(listaClientesLocal, obra.clienteId)?.razao_social || ''}
                         </p>
                       </div>
                     </div>
@@ -816,7 +834,7 @@ export function PropostaView() {
                       <div>
                         <h3 className="text-lg font-black text-white">{obra.nome}</h3>
                         <p className="text-white/70 text-sm mt-1">
-                          Cliente: {listaClientesLocal.find((c: any) => c.id === obra.clienteId)?.razaoSocial}
+                          Cliente: {findClienteById(listaClientesLocal, obra.clienteId)?.razaoSocial || findClienteById(listaClientesLocal, obra.clienteId)?.razao_social || ''}
                         </p>
                       </div>
                       <div className="flex gap-2">
@@ -1010,6 +1028,14 @@ export function PropostaView() {
         <div>
           <h1 className="text-3xl font-black text-white">PROPOSTA COMERCIAL</h1>
           <p className="text-white/50 text-xs mt-1">{selectedObra?.nome}</p>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <span className="inline-flex items-center rounded-full border border-cyan-400/30 bg-cyan-500/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.2em] text-cyan-300">
+              ID: {selectedObra?.id}
+            </span>
+            <span className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.2em] text-emerald-300">
+              Proposta: {propostaForm.numeroProposta || 'Original'}
+            </span>
+          </div>
         </div>
       </div>
 
