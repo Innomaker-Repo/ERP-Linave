@@ -475,8 +475,8 @@ export function OsView({ searchQuery }: OSViewProps) {
       return;
     }
 
-    const clienteCtx = (clientes || []).find((item: any) => item.id === obra.clienteId);
-    const nomeCliente = obra.nomeCliente || clienteCtx?.razaoSocial || clienteCtx?.razao_social || '';
+    const clienteCtx = findClienteById(clientes || [], obra.clienteId);
+    const nomeCliente = obra.nomeCliente || clienteCtx?.razaoSocial || clienteCtx?.razao_social || clienteCtx?.nomeFantasia || clienteCtx?.nome_fantasia || '';
 
     const resumoConsolidado = {
       negocio: {
@@ -505,7 +505,7 @@ export function OsView({ searchQuery }: OSViewProps) {
     setFormData((prev) => ({
       ...prev,
       obraId: obra.id,
-      clienteId: obra.clienteId,
+      clienteId: String(obra.clienteId || ''),
       negocioBackendId: obra.negocioBackendId || null,
       cliente: nomeCliente,
       projeto: obra.nome || '',
@@ -715,7 +715,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
   const obrasOrdenadas = obrasEmAndamento.filter((obra: any) => {
     if (!searchQuery) return true;
     const termo = searchQuery.toLowerCase();
-    const cliente = (clientes || []).find((item: any) => item.id === obra.clienteId);
+    const cliente = findClienteById(clientes || [], obra.clienteId);
     return (obra.nome || '').toLowerCase().includes(termo) || (cliente?.razaoSocial || '').toLowerCase().includes(termo);
   });
 
@@ -741,7 +741,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
       <div className="grid grid-cols-1 gap-4">
         {obrasOrdenadas.length > 0 ? (
           obrasOrdenadas.map((obra: any) => {
-            const cliente = (clientes || []).find((item: any) => item.id === obra.clienteId);
+            const cliente = findClienteById(clientes || [], obra.clienteId);
             const osExistente = osConsolidadas.find((item) => item.obraId === obra.id);
 
             return (
@@ -810,7 +810,14 @@ Geração: ${new Date().toLocaleString('pt-BR')}
             <div className="sticky top-0 z-40 bg-gradient-to-r from-orange-500/40 to-amber-500/40 backdrop-blur-md p-8 border-b border-white/10 flex justify-between items-center">
               <div>
                 <h2 className="text-2xl font-black text-white uppercase">Ordem de Serviço Consolidada</h2>
-                <p className="text-white/50 text-sm mt-2">Nº {formData.ordemServicoNumero}</p>
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                  <span className="inline-flex items-center rounded-full border border-cyan-400/30 bg-cyan-500/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.2em] text-cyan-300">
+                    ID da OS: {formData.ordemServicoNumero || 'Original'}
+                  </span>
+                  <span className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.2em] text-emerald-300">
+                    ID do registro: {formData.id}
+                  </span>
+                </div>
               </div>
               <div className="flex items-center gap-3">
                 <button onClick={() => setShowFormNovaOS(false)} className="p-2 bg-white/5 rounded-full hover:bg-white/10 transition">

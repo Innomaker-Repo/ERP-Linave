@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useErp } from '../../../context/ErpContext';
-import { gerarIdOrcamento, extrairIdProjetoDoNumero, extrairComponentesDoId } from '../../../context/ErpContext';
+import { gerarIdOrcamento, gerarIdProjeto, extrairIdProjetoDoNumero, extrairComponentesDoId } from '../../../context/ErpContext';
 import { Plus, X, DollarSign, FileText, Trash2, Lock, Eye, Download } from 'lucide-react';
 import jsPDF from 'jspdf';
 import { getBackendUrl } from '../../../../services/network';
@@ -81,6 +81,9 @@ const parseNumber = (value: any): number => {
   return isNaN(n) ? NaN : n;
 };
 
+const findClienteById = (clientes: any[], clienteId: any) =>
+  (Array.isArray(clientes) ? clientes : []).find((cliente: any) => String(cliente.id) === String(clienteId));
+
 
 export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
 <<<<<<< HEAD
@@ -113,33 +116,38 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
         const clientesMapa: any = {};
         if (Array.isArray(clientesBackend)) {
           setListaClientesOrc(clientesBackend);
-          clientesBackend.forEach((c: any) => { clientesMapa[c.id] = c; });
+          clientesBackend.forEach((c: any) => { clientesMapa[String(c.id)] = c; });
         }
 
         // 3. Busca os negócios (projetos)
         const dados = await getNegocios();
         if (Array.isArray(dados)) {
-          const formatados = dados.map((n: any) => ({
-            id: gerarIdProjeto(n.empresa_prestadora || 'LN', String(n.id).padStart(4, '0')),
-            nome: n.nome_negocio,
-            clienteId: n.cliente || n.cliente_id || n.clienteId,
-            nomeCliente: (clientesMapa[n.cliente]?.razaoSocial || clientesMapa[n.cliente]?.razao_social) || '',
-            empresaPrestadora: n.empresa_prestadora || 'Linave',
-            categoria: n.categoria || 'Planejamento',
-            status: n.status || 'Aguardando orçamento',
-            solicitante: n.solicitante || '',
-            responsavelTecnico: n.solicitante || '',
-            tipo: (n.servicos?.[0]?.tipo_servico) || n.tipo_servico || '',
-            requerReorcamento: n.requer_reorcamento !== undefined ? n.requer_reorcamento : true,
-            orcamentoRealizado: n.orcamento_realizado || false,
-            servicos: n.servicos || [],
-            negocioBackendId: n.id,
-            orcamentos: n.orcamentos || [],
-            propostas: n.propostas || [],
-            documentosNegocio: n.documentos || n.arquivos || [],
-            dataPrevistaInicio: n.data_prevista_inicio || null,
-            dataPrevistaFinal: n.data_prevista_final || null,
-          }));
+          const formatados = dados.map((n: any) => {
+            const clienteId = n.cliente || n.cliente_id || n.clienteId || '';
+            const clienteLocal = clientesMapa[String(clienteId)];
+
+            return {
+              id: gerarIdProjeto(n.empresa_prestadora || 'LN', String(n.id).padStart(4, '0')),
+              nome: n.nome_negocio,
+              clienteId,
+              nomeCliente: clienteLocal?.razaoSocial || clienteLocal?.razao_social || clienteLocal?.nomeFantasia || clienteLocal?.nome_fantasia || '',
+              empresaPrestadora: n.empresa_prestadora || 'Linave',
+              categoria: n.categoria || 'Planejamento',
+              status: n.status || 'Aguardando orçamento',
+              solicitante: n.solicitante || '',
+              responsavelTecnico: n.solicitante || '',
+              tipo: (n.servicos?.[0]?.tipo_servico) || n.tipo_servico || '',
+              requerReorcamento: n.requer_reorcamento !== undefined ? n.requer_reorcamento : true,
+              orcamentoRealizado: n.orcamento_realizado || false,
+              servicos: n.servicos || [],
+              negocioBackendId: n.id,
+              orcamentos: n.orcamentos || [],
+              propostas: n.propostas || [],
+              documentosNegocio: n.documentos || n.arquivos || [],
+              dataPrevistaInicio: n.data_prevista_inicio || null,
+              dataPrevistaFinal: n.data_prevista_final || null,
+            };
+          });
 
           // 4. Salva apenas UMA VEZ no contexto global
           saveEntity('obras', formatados);
@@ -342,7 +350,10 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       return;
     }
 
-    setSelectedObra(obra);
+    setSelectedObra({
+      ...obra,
+      nomeCliente: obra.nomeCliente || findClienteById(listaClientesOrc, obra.clienteId)?.razaoSocial || findClienteById(listaClientesOrc, obra.clienteId)?.razao_social || findClienteById(listaClientesOrc, obra.clienteId)?.nomeFantasia || findClienteById(listaClientesOrc, obra.clienteId)?.nome_fantasia || '',
+    });
     const orcamentosExistentes = normalizarOrcamentos(obra);
     const ultimoOrcamento = orcamentosExistentes.length > 0 ? orcamentosExistentes[orcamentosExistentes.length - 1] : null;
     const ultimoEhRascunho = ultimoOrcamento?.status === 'rascunho';
