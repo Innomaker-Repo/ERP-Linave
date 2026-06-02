@@ -361,6 +361,11 @@ const initialServico: Servico = {
   };
 
   const formatarIdCard = (obra: any): string => {
+    const idBase = extrairIdProjetoDoNumero(String(obra.id || ''));
+    if (idBase) {
+      return idBase;
+    }
+
     const numericId = obra.negocioBackendId
       || parseInt(String(obra.id || '').replace(/\D/g, ''), 10)
       || 0;
@@ -369,9 +374,8 @@ const initialServico: Servico = {
       : emp.includes('linave') ? 'LN'
       : getPrefixoEmpresa(obra.empresaPrestadora || 'LN');
     const idPadded = String(numericId).padStart(4, '0');
-    const versao = String(obra.versaoNegocio || '').toUpperCase();
     const ano = String(new Date().getFullYear()).slice(-2);
-    return `${prefixo}-${idPadded}${versao ? versao : ''}/${ano}`;
+    return `${prefixo}-${idPadded}/${ano}`;
   };
 
   const obraTemDocumentoMediacao = (obra: any) => {
@@ -646,7 +650,7 @@ const initialServico: Servico = {
     const cliente = listaClientesCRM.find((item: any) => item.id === obraAtual.clienteId);
 
     // Usar o ID do projeto diretamente (já tem formato correto: LN-0731/26)
-    const idProjetoFormatado = obraAtual.id || 'LN-0001/26';
+    const idProjetoFormatado = obraAtual.id || '';
 
     setSelectedObraDetalhes(obraAtual);
     setDocumentoMediacaoForm({

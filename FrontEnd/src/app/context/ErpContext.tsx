@@ -39,16 +39,17 @@ export const gerarIdOrcamento = (prefixo: string, numeroSequencial: string, vers
 };
 
 /**
- * Extrai prefixo, número de sequência e ano do ID do projeto
- * Exemplo: 'LN-0731/26' → { prefixo: 'LN', numero: '0731', ano: '26' }
+ * Extrai prefixo, número de sequência, versão e ano do ID do projeto
+ * Exemplo: 'LN-0731A/26' → { prefixo: 'LN', numero: '0731', versao: 'A', ano: '26' }
  */
-export const extrairComponentesDoId = (idProjeto: string): { prefixo: string; numero: string; ano: string } | null => {
-  const match = idProjeto.match(/^(?:([A-Z]+)-)?(\d+)\/(\d+)$/);
+export const extrairComponentesDoId = (idProjeto: string): { prefixo: string; numero: string; versao: string; ano: string } | null => {
+  const match = idProjeto.match(/^(?:([A-Z]+)-)?(\d+)([A-Z]+)?\/(\d+)$/);
   if (match) {
     return {
       prefixo: match[1] || '',
       numero: match[2],
-      ano: match[3]
+      versao: match[3] || '',
+      ano: match[4]
     };
   }
   return null;

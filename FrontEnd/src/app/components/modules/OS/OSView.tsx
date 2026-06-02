@@ -339,7 +339,7 @@ const criarInitialOsData = (): OsFormData => ({
   cc: '',
   dataInicioPrevisto: '',
   dataTerminoPrevisto: '',
-  ordemServicoNumero: `OS-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 999)).padStart(3, '0')}`,
+  ordemServicoNumero: '',
   supervisorEncarregado: '',
   descricaoGeralServico: '',
   aSerIncluido: {
@@ -647,7 +647,7 @@ export function OsView({ searchQuery }: OSViewProps) {
     const clienteCtx = (clientes || []).find((item: any) => item.id === obra.clienteId);
     const nomeCliente = obra.nomeCliente || clienteCtx?.razaoSocial || clienteCtx?.razao_social || '';
 
-    let ordemServicoNumero = `OS-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 999)).padStart(3, '0')}`;
+    let ordemServicoNumero = extrairIdProjetoDoNumero(obra.id || '');
     if (Array.isArray(obra.propostas) && obra.propostas.length > 0) {
       const ultimaProposta = obra.propostas[obra.propostas.length - 1];
       const numeroCompleto = ultimaProposta.numeroProposta || ultimaProposta.numero || '';
@@ -770,6 +770,7 @@ export function OsView({ searchQuery }: OSViewProps) {
         const payload = {
           cliente_id: clienteId,
           negocio_id: negocioId,
+          numero_os: formData.ordemServicoNumero,
           projeto: formData.projeto || '',
           equipamento: formData.equipamento || '',
           local: formData.local || '',
