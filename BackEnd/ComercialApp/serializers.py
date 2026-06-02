@@ -379,6 +379,7 @@ class OrcamentoSerializer(serializers.ModelSerializer):
 class OrdemServicoSerializer(serializers.ModelSerializer):
     cliente_detalhes = ClienteSerializer(source='cliente', read_only=True)
     negocio_detalhes = NegocioSerializer(source='negocio', read_only=True)
+    numero_os = serializers.CharField(required=False, allow_blank=True)
     local = serializers.CharField(allow_blank=True, default='')
     supervisor_encarregado = serializers.CharField(allow_blank=True, default='')
     descricao_geral_servico = serializers.CharField(allow_blank=True, default='')
@@ -410,18 +411,56 @@ class OrdemServicoSerializer(serializers.ModelSerializer):
             'data_aprovacao', 'documento_assinatura_aprovacao',
             'created_at', 'updated_at'
         ]
-        read_only_fields = ('id', 'numero_os', 'data_emissao', 'created_at', 'updated_at', 'cliente', 'negocio')
+        read_only_fields = ('id', 'data_emissao', 'created_at', 'updated_at', 'cliente', 'negocio')
     
     def create(self, validated_data):
         from datetime import datetime
-        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-        numero_os = timestamp
-        
-        contador = 1
-        numero_original = numero_os
-        while OrdemServico.objects.filter(numero_os=numero_os).exists():
-            numero_os = f"{numero_original}{contador}"
-            contador += 1
+
+        def index_to_version(index: int) -> str:
+            value = index
+            output = ''
+            while value >= 0:
+                output = chr((value % 26) + 65) + output
+                value = (value // 26) - 1
+            return output
+
+        def version_to_index(version: str) -> int:
+            cleaned = ''.join(ch for ch in str(version or '').upper() if 'A' <= ch <= 'Z')
+            if not cleaned:
+                return -1
+
+            value = 0
+            for char in cleaned:
+                value = (value * 26) + (ord(char) - 64)
+            return value - 1
+
+        numero_os = str(validated_data.pop('numero_os', '') or '').strip()
+        if not numero_os:
+            negocio = validated_data.get('negocio')
+            if negocio:
+                prefixo = 'SN' if 'servinave' in str(getattr(negocio, 'empresa_prestadora', '')).lower() else 'LN'
+                numero_os = f"{prefixo}-{str(negocio.id).zfill(4)}/{datetime.now().strftime('%y')}"
+
+        if numero_os:
+            import re
+
+            match = re.match(r'^(?:(?P<prefix>[A-Z]+)-)?(?P<num>\d+)(?P<versao>[A-Z]+)?/(?P<ano>\d+)$', numero_os)
+            if match:
+                prefixo = f"{match.group('prefix')}-" if match.group('prefix') else ''
+                numero_base = match.group('num')
+                ano = match.group('ano')
+                versao_inicial = match.group('versao') or ''
+
+                def build_numero(versao: str = '') -> str:
+                    return f"{prefixo}{numero_base}{versao}/{ano}"
+
+                candidato = build_numero(versao_inicial)
+                contador = 0 if not versao_inicial else version_to_index(versao_inicial) + 1
+                while OrdemServico.objects.filter(numero_os=candidato).exists():
+                    candidato = build_numero(index_to_version(contador))
+                    contador += 1
+
+                numero_os = candidato
         
         validated_data['numero_os'] = numero_os
         return super().create(validated_data)

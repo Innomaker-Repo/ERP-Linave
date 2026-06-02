@@ -217,7 +217,7 @@ const criarInitialOsData = (): OsFormData => ({
   cc: '',
   dataInicioPrevisto: '',
   dataTerminoPrevisto: '',
-  ordemServicoNumero: `OS-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 999)).padStart(3, '0')}`,
+  ordemServicoNumero: '',
   supervisorEncarregado: '',
   descricaoGeralServico: '',
   aSerIncluido: {

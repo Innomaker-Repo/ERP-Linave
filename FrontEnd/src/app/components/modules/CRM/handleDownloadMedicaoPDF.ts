@@ -1,4 +1,5 @@
 import jsPDF from 'jspdf';
+import { extrairIdProjetoDoNumero } from '../../../context/ErpContext';
 
 // Função auxiliar para carregar a imagem da pasta public antes de gerar o PDF
 const loadImage = (url: string): Promise<HTMLImageElement> => {
@@ -99,6 +100,7 @@ export const handleDownloadMedicaoPDF = async (
     // ===== 1. LÓGICA DE EMPRESA E CARREGAMENTO DA LOGO =====
     const empresaNome = documentoMediacaoForm.empresa || 'Linave';
     const isLinave = String(empresaNome).toLowerCase().includes('linave');
+    const numeroNegocio = obra?.id ? extrairIdProjetoDoNumero(String(obra.id)) || String(obra.id) : '';
     
     const nomeHeader = isLinave ? 'BM- LINAVE Serviços Navais & Offshore' : 'BM- SERVINAVE';
     const razaoSocialPrestadora = isLinave ? 'W.L.M LINAVE Serviços Navais e Offshore' : 'SERVINAVE';
@@ -170,7 +172,7 @@ export const handleDownloadMedicaoPDF = async (
     drawRowFields('Empresa:', razaoSocialPrestadora, 'Cliente:', documentoMediacaoForm.cliente || '', true, true);
     drawRowFields('CNPJ:', cnpjPrestadora, 'CNPJ:', documentoMediacaoForm.clienteCnpj || '12.345.678/0001-90', true, false);
     drawRowFields('Data emissao:', formatarDataParaBr(documentoMediacaoForm.dataEmissao) || '', 'Embarcaçao:', documentoMediacaoForm.embarcacao || '', true, false);
-    drawRowFields('Nr. BM:', documentoMediacaoForm.numeroBM || '', 'Periodo:', documentoMediacaoForm.periodo || '', true, false);
+    drawRowFields('Negócio / Nr. BM:', `${numeroNegocio}${documentoMediacaoForm.numeroBM ? ` • BM ${documentoMediacaoForm.numeroBM}` : ''}`, 'Periodo:', documentoMediacaoForm.periodo || '', true, false);
 
     y += 8;
 
@@ -264,7 +266,8 @@ export const handleDownloadMedicaoPDF = async (
     // ===== 5. SALVAR =====
     const prefixo = isLinave ? 'LN' : 'SN';
     const numeroBMSanitizado = (documentoMediacaoForm.numeroBM || '001').replace(/[/\\]/g, '-');
-    const nomeArquivo = `${prefixo}_Medicao_${numeroBMSanitizado}_${Date.now()}.pdf`;
+    const negocioSanitizado = (numeroNegocio || 'negocio').replace(/[/\\]/g, '-');
+    const nomeArquivo = `${prefixo}_Medicao_${negocioSanitizado}_${numeroBMSanitizado}_${Date.now()}.pdf`;
 
     const blob = doc.output('blob');
     const conteudoDataUrl = await new Promise<string>((resolve, reject) => {

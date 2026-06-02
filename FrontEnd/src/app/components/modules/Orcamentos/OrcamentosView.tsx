@@ -120,7 +120,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
         const dados = await getNegocios();
         if (Array.isArray(dados)) {
           const formatados = dados.map((n: any) => ({
-            id: `ID ${n.id}`,
+            id: gerarIdProjeto(n.empresa_prestadora || 'LN', String(n.id).padStart(4, '0')),
             nome: n.nome_negocio,
             clienteId: n.cliente || n.cliente_id || n.clienteId,
             nomeCliente: (clientesMapa[n.cliente]?.razaoSocial || clientesMapa[n.cliente]?.razao_social) || '',
@@ -213,7 +213,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   };
 
   const getInitialOrcamentoData = () => ({
-    numeroOrcamento: `LN-0001/${new Date().getFullYear().toString().slice(-2)}`,
+    numeroOrcamento: '',
     solicitante: '',
     escopoOrcamento: '',
     documentosReferencia: '',
