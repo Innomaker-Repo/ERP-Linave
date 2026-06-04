@@ -79,7 +79,7 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
       title: 'Financeiro',
       icon: DollarSign,
       items: [
-        { id: 'financeiro', label: 'Fluxo de Caixa', icon: DollarSign },
+        { id: 'financeiro', label: 'Financeiro', icon: DollarSign },
       ]
     },
     {

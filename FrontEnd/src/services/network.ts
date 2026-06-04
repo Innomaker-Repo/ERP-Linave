@@ -20,7 +20,10 @@ export function getServiceUrl(port: number, path = ''): string {
 }
 
 export function getBackendBaseUrl(): string {
-  return `${getCurrentProtocol()}//${getCurrentHost()}:8000/comercial/`;
+  // Ruta relativa (mismo origen): en dev el proxy de Vite la redirige a
+  // Django (localhost:8000); a través de ngrok funciona con un solo túnel
+  // sin CORS; en build de producción Django sirve el frontend y la API.
+  return `/comercial/`;
 }
 
 export function getBackendUrl(path = ''): string {
