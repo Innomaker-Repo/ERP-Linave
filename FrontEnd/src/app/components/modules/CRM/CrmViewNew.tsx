@@ -6,11 +6,14 @@ import { toast } from 'sonner';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable'; // Importação nomeada do plugin
 import { handleDownloadMedicaoPDF } from './handleDownloadMedicaoPDF';
-import { handleDownloadPropostaPDF } from './handleDownloadPropostaPDF'; 
+import { handleDownloadPropostaPDF } from './handleDownloadPropostaPDF';
+import { handleDownloadOrcamentoPDF as gerarOrcamentoPDF } from './handleDownloadOrcamentoPDF';
+import { handleDownloadOSPDF as gerarOSPDF } from './handleDownloadOSPDF';
 import { getCachedWorkspace } from '../../../services/workspaceStorage';
 import { getClientes } from '../../../services/clientes';
 import { getNegocios } from '../../../services/negocios';
 import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
+import { isEmpresaLinave, getLogoUrlForEmpresa } from '../../../utils/company';
 // Substitua as importações antigas por esta única:
 import { 
     getNegocios, 
@@ -909,9 +912,8 @@ const initialServico: Servico = {
 
     try {
       let logoBase64: string | undefined;
-      const empresaPrestadora = String(selectedObraDetalhes.empresaPrestadora || '').trim().toLowerCase();
-      const isLinave = empresaPrestadora.includes('linave');
-      const logoUrl = isLinave ? '/image2.jpg' : '/image1.png';
+      const isLinave = isEmpresaLinave(selectedObraDetalhes.empresaPrestadora);
+      const logoUrl = getLogoUrlForEmpresa(selectedObraDetalhes.empresaPrestadora);
 
       logoBase64 = await getBase64FromUrl(logoUrl);
 
@@ -1505,323 +1507,57 @@ const initialServico: Servico = {
   };
 
   const handleDownloadOSPDF = async () => {
-  const osDoNegocio = (os || []).filter((o: any) => o.obraId === selectedObraDetalhes?.id);
-  if (osDoNegocio.length === 0 && !selectedObraDetalhes) {
-    toast.error('Nenhuma OS vinculada a este negócio.');
-    return;
-  }
-
-  
-  // Pega a OS Consolidada mais recente, ou a primeira do array, ou usa o próprio selectedObraDetalhes como fallback
-  const osPrincipal = [...osDoNegocio].reverse().find((o: any) => o.tipoDocumento === 'consolidada' || (o.aSerIncluido && Object.keys(o.aSerIncluido).length > 0)) || osDoNegocio[0] || selectedObraDetalhes;
-  
-  const orcamentosBase = Array.isArray(osPrincipal?.orcamentos) && osPrincipal.orcamentos.length > 0
-    ? osPrincipal.orcamentos
-    : Array.isArray(selectedObraDetalhes?.orcamentos) && selectedObraDetalhes.orcamentos.length > 0
-      ? selectedObraDetalhes.orcamentos
-      : [];
-      
-  const propostasBase = Array.isArray(osPrincipal?.propostas) && osPrincipal.propostas.length > 0
-    ? osPrincipal.propostas
-    : Array.isArray(selectedObraDetalhes?.propostas) && selectedObraDetalhes.propostas.length > 0
-      ? selectedObraDetalhes.propostas
-      : [];
-      
-  const ultimoOrcamento = orcamentosBase.length > 0 ? orcamentosBase[orcamentosBase.length - 1] : null;
-  const ultimaProposta = propostasBase.length > 0 ? propostasBase[propostasBase.length - 1] : null;
-  const cliente = listaClientesCRM.find((c: any) => c.id === selectedObraDetalhes?.clienteId);
-  
-  let logoBase64 = await getBase64FromUrl('/image2.jpg');
-  
-  try {
-    const doc = new jsPDF('p', 'mm', 'a4');
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const margin = 10;
-    let y = margin;
-    
-    doc.setDrawColor(0);
-    doc.setLineWidth(0.3);
-    doc.rect(margin, y, pageWidth - 2 * margin, 35);        
-    doc.line(margin + 50, y, margin + 50, y + 15); 
-    doc.line(margin + 130, y, margin + 130, y + 15); 
-    doc.line(margin, y + 15, pageWidth - margin, y + 15); 
-    
-    if (logoBase64) {
-      const logoFormat = logoBase64.match(/^data:image\/(png|jpe?g)/i)?.[1]?.toLowerCase().includes('png') ? 'PNG' : 'JPEG';
-      doc.addImage(logoBase64, logoFormat, margin + 2, y + 2, 46, 11);
-    } else {
-      doc.setFont('Helvetica', 'bold');
-      doc.setFontSize(12);
-      doc.text('LINAVE', margin + 5, y + 10);
-    }
-    
-    doc.setFontSize(12);
-    doc.setFont('Helvetica', 'bold');
-    doc.text('ORDEM DE SERVIÇO\nDE PRODUÇÃO', margin + 90, y + 6.5, { align: 'center' });
-    
-    doc.setFontSize(7);
-    doc.text('Data Emissão:', margin + 132, y + 5);
-    doc.setFont('Helvetica', 'normal');
-    doc.text(osPrincipal.dataEmissao || new Date().toLocaleDateString('pt-BR'), margin + 155, y + 5);
-    
-    doc.setFont('Helvetica', 'bold');
-    doc.text('CC.:', margin + 132, y + 10);
-    doc.setFont('Helvetica', 'normal');
-    doc.text(osPrincipal.cc || 'Não inf.', margin + 142, y + 10);
-    y += 15;
-    
-    const rowH = 5;
-    doc.line(margin, y + rowH, pageWidth - margin, y + rowH);
-    doc.line(margin, y + rowH * 2, pageWidth - margin, y + rowH * 2);
-    doc.line(margin, y + rowH * 3, pageWidth - margin, y + rowH * 3);
-    doc.line(margin + 100, y, margin + 100, y + 20); 
-    
-    doc.setFontSize(8);
-    const printDado = (lbl: string, val: string, vx: number, vy: number) => {
-      doc.setFont('Helvetica', 'bold');
-      doc.text(lbl, vx, vy);
-      doc.setFont('Helvetica', 'normal');
-      doc.text(val || ' ', vx + 25, vy);
-    };
-    
-    const dataInicio = osPrincipal.dataInicioPrevisto || selectedObraDetalhes?.dataPrevistaInicio;
-    const dataTermino = osPrincipal.dataTerminoPrevisto || selectedObraDetalhes?.dataPrevistaFinal;
-    const idProjetoForPrint = selectedObraDetalhes?.id || '';
-    
-    printDado('CLIENTE:', cliente?.razaoSocial || '', margin + 2, y + 3.5);
-    printDado('Início Previsto:', dataInicio ? new Date(dataInicio).toLocaleDateString('pt-BR') : '', margin + 102, y + 3.5);
-    y += rowH;
-    
-    printDado('PROJETO:', `${selectedObraDetalhes?.nome || ''}${idProjetoForPrint ? ' • ' + idProjetoForPrint : ''}`, margin + 2, y + 3.5);
-    printDado('Térm. Previsto:', dataTermino ? new Date(dataTermino).toLocaleDateString('pt-BR') : '', margin + 102, y + 3.5);
-    y += rowH;
-    
-    printDado('EQUIPAMENTO:', osPrincipal.equipamento || osPrincipal.tipo || '', margin + 2, y + 3.5);
-    printDado('OS Nº:', osPrincipal.ordemServicoNumero || '', margin + 102, y + 3.5);
-    y += rowH;
-    
-    printDado('LOCAL:', osPrincipal.local || osPrincipal.localExecucao || '', margin + 2, y + 3.5);
-    printDado('Encarregado:', osPrincipal.supervisorEncarregado || '', margin + 102, y + 3.5);
-    y += rowH;
-    y += 5; 
-    
-    const leftW = 120;
-    const rightW = (pageWidth - 2 * margin) - leftW;
-    
-    doc.setFont('Helvetica', 'bold');
-    doc.setFillColor(230, 230, 230);
-    doc.rect(margin, y, leftW, 6, 'FD');
-    doc.rect(margin + leftW, y, rightW, 6, 'FD');
-    
-    doc.text('DESCRIÇÃO DO SERVIÇO', margin + leftW/2, y + 4, { align: 'center' });
-    doc.text('A SER INCLUIDO', margin + leftW + rightW/2, y + 4, { align: 'center' });
-    y += 6;
-    
-    const bodyY = y;
-    
-    doc.setFont('Helvetica', 'normal');
-    const descTexto = ultimaProposta ? formatarEscopoBasicoParaTexto(ultimaProposta.escopoBasicoServicos || ultimaProposta.escopoA) : (osPrincipal.descricao || osPrincipal.descricaoGeralServico || '');
-    const descLines = doc.splitTextToSize(descTexto, leftW - 4);
-    
-    let cursorEsq = bodyY + 5;
-    descLines.forEach((l: string) => {
-      doc.text(l, margin + 2, cursorEsq);
-      cursorEsq += 4;
-    });
-    
-    // ==========================================
-    // CORREÇÃO DOS X (A SER INCLUIDO)
-    // ==========================================
-    let baseChecks = osPrincipal?.aSerIncluido || selectedObraDetalhes?.aSerIncluido || {};
-    if (typeof baseChecks === 'string') {
-      try { baseChecks = JSON.parse(baseChecks); } catch(e) { baseChecks = {}; }
+    const osDoNegocio = (os || []).filter((o: any) => o.obraId === selectedObraDetalhes?.id);
+    if (osDoNegocio.length === 0 && !selectedObraDetalhes) {
+      toast.error('Nenhuma OS vinculada a este negócio.');
+      return;
     }
 
-    const getCheck = (uiLabel: string, dbKey: string) => {
-      let isChecked = false;
-      // 1. Lê os clicks da tela
-      try {
-        const checkboxes = document.querySelectorAll('input[type="checkbox"]');
-        for (let i = 0; i < checkboxes.length; i++) {
-          const input = checkboxes[i] as HTMLInputElement;
-          if (input.parentElement && input.parentElement.textContent && input.parentElement.textContent.includes(uiLabel)) {
-            if (input.checked) isChecked = true;
-          }
-        }
-      } catch (e) {}
+    const osPrincipal = [...osDoNegocio].reverse().find((o: any) => o.tipoDocumento === 'consolidada' || (o.aSerIncluido && Object.keys(o.aSerIncluido).length > 0)) || osDoNegocio[0] || selectedObraDetalhes;
 
-      // 2. Lê do banco de dados/estado se não achou na tela
-      if (!isChecked && (baseChecks[dbKey] === true || String(baseChecks[dbKey]) === 'true')) {
-        isChecked = true;
-      }
-      return isChecked;
-    };
+    const orcamentosBase = Array.isArray(osPrincipal?.orcamentos) && osPrincipal.orcamentos.length > 0
+      ? osPrincipal.orcamentos
+      : Array.isArray(selectedObraDetalhes?.orcamentos) && selectedObraDetalhes.orcamentos.length > 0
+        ? selectedObraDetalhes.orcamentos
+        : [];
 
-    const chk = (val: boolean) => val ? '[ X ]' : '[   ]';
-    
-    const listChecks = [
-      { lbl: 'CERTIFICADO DE GÁS FREE', v: getCheck('Certificado de Gás', 'certificadoGas') },
-      { lbl: 'VENTILAÇÃO', v: getCheck('Ventilação', 'ventilacao') },
-      { lbl: 'LIMPEZA ANTES', v: getCheck('Limpeza antes', 'limpezaAntes') },
-      { lbl: 'LIMPEZA APÓS CONCLUSÃO', v: getCheck('Limpeza após', 'limpezaApos') },
-      { lbl: 'ANDAIMES', v: getCheck('Andaimes', 'andaimes') },
-      { lbl: 'APOIO DE GUINDASTE', v: getCheck('Apoio de guindaste', 'apoioGuindastes') },
-      { lbl: 'TRANSPORTE EXTERNO', v: getCheck('Transporte externo', 'transporteExterno') },
-      { lbl: 'TESTE DE PRESSÃO', v: getCheck('Testes de pressão', 'testesPressao') },
-      { lbl: 'PINTURA', v: getCheck('Pintura', 'pintura') },
-      { lbl: 'LP / PM', v: getCheck('LP / PM', 'lpPm') },
-      { lbl: 'TESTE DE ULTRASSOM', v: getCheck('Teste de ultrassom', 'testeUltrassom') },
-      { lbl: 'INSPEÇÃO DIMENSIONAL', v: getCheck('Inspeção dimensional', 'inspecaoDimensional') },
-      { lbl: 'VISUAL DE SOLDA', v: getCheck('Visual de solda', 'visualSolda') },
-      { lbl: 'SOLDADOR CERTIFICADO', v: getCheck('Soldador certificado', 'soldadorCertificado') },
-      { lbl: 'PROCEDIMENTO DE SOLDA', v: getCheck('Procedimento de solda', 'procedimentoSolda') },
-      { lbl: 'CERTIFICAÇÃO DO MATERIAL', v: getCheck('Certificação do material', 'certificacaoMaterial') },
-      { lbl: 'VIGIA DE FOGO', v: getCheck('Vigia de fogo', 'vigiaFogo') }
-    ];
-    // ==========================================
-    
-    let cursorDir = bodyY + 5;
-    doc.setFontSize(7);
-    listChecks.forEach(c => {
-      doc.setFont('Helvetica', 'bold');
-      doc.text(chk(c.v), margin + leftW + 2, cursorDir);
-      doc.setFont('Helvetica', 'normal');
-      doc.text(c.lbl, margin + leftW + 10, cursorDir);
-      cursorDir += 4;
-    });
-    
-    const maxH = Math.max(cursorEsq, cursorDir) - bodyY + 5;
-    doc.rect(margin, bodyY, leftW, maxH);
-    doc.rect(margin + leftW, bodyY, rightW, maxH);
-    
-    y = bodyY + maxH + 5;
+    const propostasBase = Array.isArray(osPrincipal?.propostas) && osPrincipal.propostas.length > 0
+      ? osPrincipal.propostas
+      : Array.isArray(selectedObraDetalhes?.propostas) && selectedObraDetalhes.propostas.length > 0
+        ? selectedObraDetalhes.propostas
+        : [];
 
-    // --- NOVA TABELA DE MÃO DE OBRA ---
-    const maoDeObraOS = ultimoOrcamento?.data?.maoDeObra || [];
-    if (maoDeObraOS.length > 0) {
-      autoTable(doc, {
-        startY: y,
-        head: [['MÃO DE OBRA', 'QTDE', 'DIAS', 'ATIVIDADE', 'OBS.']],
-        body: maoDeObraOS.map((mo: any) => [
-          mo.cargo || mo.funcao || mo.maoDeObra || '',
-          mo.quantidade || mo.qtde || '',
-          mo.dias || '',
-          mo.atividade || '',
-          mo.obs || mo.observacao || '-'
-        ]),
-        theme: 'grid',
-        headStyles: { fillColor: [230, 230, 230], textColor: [0,0,0], fontStyle: 'bold', fontSize: 8 },
-        styles: { fontSize: 7, cellPadding: 2, textColor: [0,0,0] },
-        margin: { left: margin, right: margin }
-      });
-      y = (doc as any).lastAutoTable.finalY + 5;
-    }
+    const ultimoOrcamento = orcamentosBase.length > 0 ? orcamentosBase[orcamentosBase.length - 1] : null;
+    const ultimaProposta = propostasBase.length > 0 ? propostasBase[propostasBase.length - 1] : null;
+    const cliente = listaClientesCRM.find((c: any) => c.id === selectedObraDetalhes?.clienteId);
+    const logoBase64 = await getBase64FromUrl(getLogoUrlForEmpresa(selectedObraDetalhes?.empresaPrestadora));
 
-    const horasServicoOS = Array.isArray(osPrincipal?.horasTrabalhadasPorServico)
-      ? osPrincipal.horasTrabalhadasPorServico
-          .map((item: any, idx: number) => ({
-            id: String(item?.id || `hora-servico-${idx}`),
-            servico: String(item?.servico || '').trim(),
-            hora: Number(item?.hora || 0)
-          }))
-          .filter((item: any) => item.servico || item.hora > 0)
-      : [];
-    if (horasServicoOS.length > 0) {
-      const totalHorasServico = horasServicoOS.reduce((acc: number, item: any) => acc + (Number.isFinite(item.hora) ? item.hora : 0), 0);
-      autoTable(doc, {
-        startY: y,
-        head: [['SERVIÇO', 'HORA (H/H)']],
-        body: [
-          ...horasServicoOS.map((item: any) => [item.servico, String(item.hora)]),
-          ['HH TOTAL', String(totalHorasServico)]
-        ],
-        theme: 'grid',
-        headStyles: { fillColor: [230, 230, 230], textColor: [0,0,0], fontStyle: 'bold', fontSize: 8 },
-        styles: { fontSize: 7, cellPadding: 2, textColor: [0,0,0] },
-        margin: { left: margin, right: margin }
-      });
-      y = (doc as any).lastAutoTable.finalY + 5;
-    }
-    
-    // --- TABELA DE MATERIAIS ATUALIZADA (SEM VALORES) ---
-    const materiaisOS = ultimoOrcamento?.data?.materiais || [];
-    if (materiaisOS.length > 0) {
-      autoTable(doc, {
-        startY: y,
-        head: [['QUANT', 'UN', 'ESPECIFICAÇÃO DE MATERIAL']],
-        body: materiaisOS.map((m: any) => [
-          m.quantidade || '',
-          m.unidade || '',
-          m.descricao || ''
-        ]),
-        theme: 'grid',
-        headStyles: { fillColor: [230, 230, 230], textColor: [0,0,0], fontStyle: 'bold', fontSize: 8 },
-        styles: { fontSize: 7, cellPadding: 2, textColor: [0,0,0] },
-        margin: { left: margin, right: margin }
-      });
-      y = (doc as any).lastAutoTable.finalY + 5;
-    }
-    
-    // --- TABELA DE TERCEIRIZADOS ATUALIZADA (SEM VALORES) ---
-    const terceirizadosOS = ultimoOrcamento?.data?.terceirizados || [];
-    if (terceirizadosOS.length > 0) {
-      autoTable(doc, {
-        startY: y,
-        head: [['ITEM', 'TERCEIRIZAÇÃO OU SUB-CONTRATAÇÃO']],
-        body: terceirizadosOS.map((t: any, idx: number) => [
-          idx + 1,
-          t.descricao || ''
-        ]),
-        theme: 'grid',
-        headStyles: { fillColor: [230, 230, 230], textColor: [0,0,0], fontStyle: 'bold', fontSize: 8 },
-        styles: { fontSize: 7, cellPadding: 2, textColor: [0,0,0] },
-        margin: { left: margin, right: margin }
-      });
-    }
-    
-    const pageCount = (doc as any).internal.getNumberOfPages();
-    for (let i = 1; i <= pageCount; i++) {
-      doc.setPage(i);
-      doc.setFontSize(6);
-      doc.setTextColor(150);
-      doc.text(`Documento gerado pelo Linave ERP em ${new Date().toLocaleString('pt-BR')}`, margin, pageHeight - 5);
-      doc.text(`Pag. ${i} / ${pageCount}`, pageWidth - margin - 15, pageHeight - 5);
-    }
-    
-    const prefixo = getPrefixoEmpresa(selectedObraDetalhes?.empresaPrestadora);
-    const nomeArquivo = `${prefixo || 'ERP'}_OS_${osPrincipal.ordemServicoNumero || '001'}_${new Date().getTime()}.pdf`;
-    const conteudoDataUrl = doc.output('datauristring');
-    doc.save(nomeArquivo);
-
-if (selectedObraDetalhes && conteudoDataUrl) {
+    try {
+      const resultado = gerarOSPDF({ osPrincipal, ultimoOrcamento, ultimaProposta, cliente, obra: selectedObraDetalhes, logoBase64 });
+      if (selectedObraDetalhes && resultado?.conteudoDataUrl) {
         const documentosAtuais = Array.isArray(selectedObraDetalhes.documentosNegocio)
           ? selectedObraDetalhes.documentosNegocio
           : [];
-          
         const documentosSemOs = documentosAtuais.filter((docItem: any) => {
           const id = String(docItem?.id || '').toLowerCase();
           const nome = String(docItem?.nome || '').toLowerCase();
           return !(id.includes('doc-os') || nome.includes('_os_') || nome.includes('ordem de serviço') || nome.includes('ordem de servico'));
         });
-
-        // CHAMADA CORRETA PARA SALVAR O ANEXO NO BANCO
         await persistirObraAtualizada({
           ...selectedObraDetalhes,
           documentosNegocio: [
             ...documentosSemOs,
             {
               id: `doc-os-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-              nome: nomeArquivo,
+              nome: resultado.nomeArquivo,
               tipo: 'application/pdf',
-              tamanho: Math.max(0, Math.round((conteudoDataUrl.length * 3) / 4)),
+              tamanho: resultado.tamanho,
               dataUpload: new Date().toISOString(),
-              conteudo: conteudoDataUrl,
+              conteudo: resultado.conteudoDataUrl,
             },
           ],
         });
       }
-      
       toast.success('OS baixada em PDF com sucesso!');
     } catch (error) {
       console.error('Erro ao gerar PDF:', error);
@@ -1834,7 +1570,6 @@ if (selectedObraDetalhes && conteudoDataUrl) {
 
     const ultimoOrcamento = selectedObraDetalhes.orcamentos[selectedObraDetalhes.orcamentos.length - 1];
     const cliente = listaClientesCRM.find(c => c.id === selectedObraDetalhes.clienteId);
-    const obraParam = selectedObraDetalhes;
 
     try {
       const doc = new jsPDF('p', 'mm', 'a4');
@@ -2311,23 +2046,21 @@ if (selectedObraDetalhes && conteudoDataUrl) {
           const nome = String(docItem?.nome || '').toLowerCase();
           return !(id.includes('doc-orcamento') || nome.includes('orcamento') || nome.includes('orçamento'));
         });
-
         persistirObraAtualizada({
           ...selectedObraDetalhes,
           documentosNegocio: [
             ...documentosSemOrcamento,
             {
               id: `doc-orcamento-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-              nome: nomeArquivo,
+              nome: resultado.nomeArquivo,
               tipo: 'application/pdf',
-              tamanho: Math.max(0, Math.round((conteudoDataUrl.length * 3) / 4)),
+              tamanho: resultado.tamanho,
               dataUpload: new Date().toISOString(),
-              conteudo: conteudoDataUrl,
+              conteudo: resultado.conteudoDataUrl,
             },
           ],
         });
       }
-
       toast.success('Orçamento baixado em PDF com sucesso!');
     } catch (error) {
       console.error('Erro ao gerar PDF:', error);
@@ -2439,10 +2172,10 @@ if (selectedObraDetalhes && conteudoDataUrl) {
 
   const possuiOSAprovadaParaFinalizacao = (obraId: string) => {
     const osDoNegocio = (os || []).filter((item: any) => item.obraId === obraId);
+    // Basta a OS estar enviada e aprovada — não exige mais o anexo de assinatura.
     return osDoNegocio.some((item: any) => (
       item.statusEnvio === 'enviada'
       && item.statusAprovacao === 'aprovada'
-      && Boolean(item.documentoAssinaturaAprovacao?.conteudo || item.documentoAssinaturaAprovacao?.url)
     ));
   };
 
@@ -2648,7 +2381,6 @@ const obrasOrdenadas = useMemo(() => {
                               const osProntaFinalizacao = osDoNegocio.some((o: any) =>
                                 o.statusEnvio === 'enviada'
                                 && o.statusAprovacao === 'aprovada'
-                                && Boolean(o.documentoAssinaturaAprovacao?.conteudo || o.documentoAssinaturaAprovacao?.url)
                               );
                               return (
                                 <>
@@ -3679,7 +3411,6 @@ const obrasOrdenadas = useMemo(() => {
                 const osProntaFinalizacao = osDoNegocio.some((o: any) =>
                   o.statusEnvio === 'enviada'
                   && o.statusAprovacao === 'aprovada'
-                  && Boolean(o.documentoAssinaturaAprovacao?.conteudo || o.documentoAssinaturaAprovacao?.url)
                 );
                 return (
                   <div className="bg-gradient-to-r from-purple-500/10 to-violet-500/10 rounded-xl p-6 border border-purple-500/30 space-y-4">

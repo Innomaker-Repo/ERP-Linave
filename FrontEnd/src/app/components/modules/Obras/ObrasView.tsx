@@ -126,10 +126,10 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
 
   const isOsDisponivelProducao = (item: any) => {
     if (!item?.obraId) return false;
+    // A OS só entra em produção depois de APROVADA (ou se já estiver concluída).
+    // Criar/enviar a OS não basta — precisa da aprovação.
     return (
-      item.statusEnvio === 'enviada' ||
-      item.tipoDocumento === 'consolidada' ||
-      item.statusOs === 'emproducao' ||
+      item.statusAprovacao === 'aprovada' ||
       item.statusOs === 'concluida'
     );
   };
@@ -387,7 +387,7 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
           <h1 className="text-3xl font-black text-white uppercase italic tracking-tighter flex items-center gap-3">
             <Anchor className="text-amber-500" size={32} /> Gestão de Projetos
           </h1>
-          <p className="text-white/40 text-xs font-bold uppercase tracking-[0.2em] mt-2 ml-1">Serviços (Produção): apenas negócios com OS enviada</p>
+          <p className="text-white/40 text-xs font-bold uppercase tracking-[0.2em] mt-2 ml-1">Serviços (Produção): apenas negócios com OS aprovada</p>
         </div>
       </div>
 

@@ -99,6 +99,31 @@ export const extrairIdProjetoDoNumero = (numeroCompleto: string): string => {
   }
   return numeroCompleto;
 };
+
+/**
+ * Converte o nome da empresa prestadora no prefixo do ID.
+ * Exemplo: 'Linave' → 'LN', 'Servinave' → 'SN'
+ */
+export const getPrefixoEmpresa = (empresaPrestadora?: string): string => {
+  if (!empresaPrestadora) return 'LN';
+  return empresaPrestadora.toLowerCase().includes('servinave') ? 'SN' : 'LN';
+};
+
+/**
+ * Deriva o ID base de um negócio (LN-0001/26 ou SN-0001/26) a partir do objeto
+ * do negócio, aceitando tanto o formato cru do backend quanto o `obra` mapeado.
+ * É a fonte única de verdade que orçamento, proposta e OS devem usar para herdar
+ * o mesmo ID base do negócio ao qual estão atrelados.
+ */
+export const gerarIdProjetoDeNegocio = (negocio: any): string => {
+  // Usa apenas o id sequencial numérico do backend. Ignora qualquer `id` que já
+  // venha formatado (ex.: "SN-0002/26") para não duplicar prefixo/ano numa obra
+  // já mapeada — nesse caso o número puro está em negocioBackendId/backendId.
+  const idNumerico = [negocio?.negocioBackendId, negocio?.backendId, negocio?.id]
+    .find((valor) => valor !== null && valor !== undefined && /^\d+$/.test(String(valor)));
+  const empresa = negocio?.empresa_prestadora ?? negocio?.empresaPrestadora;
+  return gerarIdProjeto(getPrefixoEmpresa(empresa), String(idNumerico ?? '').padStart(4, '0'));
+};
 // ------------------------------------------
 
 
@@ -800,6 +825,7 @@ const createInitialData = (savedData: any) => {
     obras: [],
     financeiro: [],
     compras: [],
+    comprasHistorico: [],
     os: [],
     alocacoes: [],
     registrosHoras: [],
@@ -893,6 +919,7 @@ const createInitialData = (savedData: any) => {
     clientes: [], // Commercial clients are sourced directly from backend SQL.
     financeiro: sanitizeCollection('financeiro', savedData.financeiro),
     compras: Array.isArray(savedData.compras) ? savedData.compras : [],
+    comprasHistorico: Array.isArray(savedData.comprasHistorico) ? savedData.comprasHistorico : [],
     os: sanitizeCollection('os', savedData.os),
     usuarios: Array.isArray(savedData.usuarios) ? savedData.usuarios : [],
     equipes: Array.isArray(savedData.equipes) ? savedData.equipes : [],
@@ -946,6 +973,7 @@ interface ErpContextData {
   obras: any[];
   financeiro: any[];
   compras: any[];
+  comprasHistorico: any[];
   os: any[];
   usuarios: any[];
   equipes: any[];
@@ -995,7 +1023,9 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     let mounted = true;
 
     const hydrateWorkspace = async () => {
-      const adminEmail = userSession?.email || 'admin@modo-teste.com';
+      // Usa o dono do workspace (tenant) quando houver, para que vários usuários da mesma
+      // empresa (admin, gerente, diretor) compartilhem os mesmos dados.
+      const adminEmail = userSession?.workspaceOwner || userSession?.email || 'admin@modo-teste.com';
       setActiveAdminEmail(adminEmail);
 
       try {
@@ -1083,7 +1113,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     const session = { ...user, token: null };
     setUserSession(session);
     window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
-    setActiveAdminEmail(session.email || 'admin@modo-teste.com');
+    setActiveAdminEmail(session.workspaceOwner || session.email || 'admin@modo-teste.com');
   };
 
   // Persiste localmente no workspace em browser storage

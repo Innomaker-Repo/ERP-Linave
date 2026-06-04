@@ -271,6 +271,50 @@ class OrcamentoSerializer(serializers.ModelSerializer):
         if obj.levantamento and hasattr(obj.levantamento, 'dados_servicos'):
             dados_servicos = [ServicoSerializer(servico).data for servico in obj.levantamento.dados_servicos]
 
+        # IMPORTANTE: o frontend (CRM, Orçamentos, OS e PDFs) lê os itens em camelCase
+        # com os nomes dos campos do formulário (funcao, descricao, custoUnit, valorTotal...).
+        # Por isso mapeamos aqui os campos crus dos models para esse formato, já incluindo
+        # os totais calculados pelas properties do model.
+        mao_de_obra = [{
+            'id': str(item.id),
+            'funcao': item.fnc or '',
+            'quantidade': float(item.qnt or 0),
+            'dias': float(item.dias or 0),
+            'custoUnitDia': float(item.custo_unit_dia or 0),
+            'valorTotal': float(item.valor_total or 0),
+            'observacao': item.observacao or '',
+        } for item in obj.mao_de_obra.all()]
+
+        materiais = [{
+            'id': str(item.id),
+            'descricao': item.item or '',
+            'unidade': item.unidade or '',
+            'quantidade': float(item.qnt or 0),
+            'pesoFator': float(item.peso or 0),
+            'custoUnit': float(item.custo_unit or 0),
+            'valorTotal': float(item.valor_total or 0),
+            'origemTerceiros': 'Sim' if item.terceirizado else 'Nao',
+            'observacao': item.observacao or '',
+        } for item in obj.materiais.all()]
+
+        terceirizados = [{
+            'id': str(item.id),
+            'descricao': item.descricao or '',
+            'unidade': item.unidade or '',
+            'quantidade': float(item.qnt or 0),
+            'pesoFator': float(item.peso or 0),
+            'custoUnit': float(item.valor_unit or 0),
+            'valorTotal': float(item.valor_tot or 0),
+            'observacao': item.observacao or '',
+        } for item in obj.terceirizados.all()]
+
+        atividades = [{
+            'id': str(item.id),
+            'atividade': item.atividade or '',
+            'dias': float(item.duracao or 0),
+            'observacao': item.observacao or '',
+        } for item in obj.atividades.all()]
+
         return {
             'numeroOrcamento': obj.numero_orcamento,
             'solicitante': obj.levantamento.negocio.solicitante if obj.levantamento and obj.levantamento.negocio else '',
@@ -278,15 +322,15 @@ class OrcamentoSerializer(serializers.ModelSerializer):
             'escopoOrcamento': '',
             'documentosReferencia': str(obj.levantamento.arquivos_negocio) if obj.levantamento else '',
             'dadosServicos': dados_servicos,
-            'maoDeObra': MDOSerializer(obj.mao_de_obra.all(), many=True).data,
-            'materiais': MaterialSerializer(obj.materiais.all(), many=True).data,
-            'terceirizados': ServicosTerceirizadosSerializer(obj.terceirizados.all(), many=True).data,
-            'atividades': Ativ_previstaSerializer(obj.atividades.all(), many=True).data,
+            'maoDeObra': mao_de_obra,
+            'materiais': materiais,
+            'terceirizados': terceirizados,
+            'atividades': atividades,
             'observacoes': obj.observacoes_setor_orcamento or '',
             'margem': float(obj.resumo.margem) if obj.resumo else 0,
             'oh': float(obj.resumo.OH) if obj.resumo else 0,
             'impostos': float(obj.resumo.impostos) if obj.resumo else 0,
-            'quantidadeItensProduzidos': obj.resumo.qnt if obj.resumo else 0
+            'quantidadeItensProduzidos': float(obj.resumo.qnt) if obj.resumo else 0
         }
 
     def get_valores(self, obj):
@@ -343,7 +387,7 @@ class OrcamentoSerializer(serializers.ModelSerializer):
             'valorImpostos': float(valor_impostos),
             'totalSemImposto': float(total_sem_imposto),
             'precoFinal': float(preco_final),
-            'quantidadeItensProduzidos': int(qnt),
+            'quantidadeItensProduzidos': float(qnt),
             'valorPorUnidade': float(valor_por_unidade)
         }
 

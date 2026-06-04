@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { ArrowRight, CheckCircle2, CircleDollarSign, Eye, Package, Plus, Send, ShoppingCart, Trash2, Users, X } from 'lucide-react';
 import {
@@ -6,6 +6,7 @@ import {
   BOARD_COLUMNS,
   approvalRouteLabel,
   formatCurrency,
+  podeSelecionarFornecedorGerente,
   purchaseStateLabel,
   resolveApprovalRoute,
   type PurchaseState,
@@ -57,12 +58,12 @@ const resolveNaturezaFromSupplierName = (supplierName: string, supplierCatalog: 
 
   const getItemPurchaseStateOptions = (naturezaFornecimento: 'ITEM' | 'SERVICO') => (
     naturezaFornecimento === 'ITEM'
-      ? (['comprado', 'entregue', 'estoque'] as PurchaseState[])
-      : (['contratado'] as PurchaseState[])
+      ? (['comprar', 'comprado', 'entregue', 'estoque'] as PurchaseState[])
+      : (['aContratar', 'contratado'] as PurchaseState[])
   );
 
-  const getDefaultItemPurchaseState = (naturezaFornecimento: 'ITEM' | 'SERVICO') => (
-    naturezaFornecimento === 'ITEM' ? 'comprado' : 'contratado'
+  const getDefaultItemPurchaseState = (naturezaFornecimento: 'ITEM' | 'SERVICO'): PurchaseState => (
+    naturezaFornecimento === 'ITEM' ? 'comprar' : 'aContratar'
   );
 
 const buildDraftRows = (request: RequisicaoCompra): QuoteRowDraft[] =>
@@ -146,7 +147,7 @@ const calculateBudgetDetails = (
 };
 
 export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
-  const { userSession, fornecedores, compras, saveEntity } = useErp();
+  const { userSession, fornecedores, compras, comprasHistorico, saveEntity } = useErp();
   const [requests, setRequests] = useState<RequisicaoCompra[]>(() => (Array.isArray(compras) ? compras : []));
   const [quoteModal, setQuoteModal] = useState<QuoteModalState>(null);
   const [quoteRows, setQuoteRows] = useState<Record<string, QuoteRowDraft[]>>({});
@@ -156,14 +157,31 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
     [fornecedores]
   );
 
+  // Apenas o gerente comercial / diretor financeiro (mockados) enxergam e operam a etapa
+  // de Seleção do Gerente. Os demais perfis só veem as etapas seguintes.
+  const podeSelecionarGerente = podeSelecionarFornecedorGerente(userSession?.email);
+  const visibleBoardColumns = useMemo(
+    () => (podeSelecionarGerente ? BOARD_COLUMNS : BOARD_COLUMNS.filter((column) => column.id !== 'SELECAO_GERENTE')),
+    [podeSelecionarGerente]
+  );
+
+  // Guarda a última lista recebida do workspace. Só persistimos quando a mudança vem de uma
+  // ação do usuário (requests !== lastSynced), nunca no mount/sync — senão o auto-save
+  // sobrescreveria o workspace (inclusive o compartilhado) com estado vazio/antigo.
+  const lastSyncedComprasRef = useRef<RequisicaoCompra[]>(Array.isArray(compras) ? compras : []);
+
   // persist requests to workspace so other users (gerente / diretor) see them
   useEffect(() => {
+    if (requests === lastSyncedComprasRef.current) return;
     void saveEntity?.('compras', requests || []);
-  }, [requests, saveEntity]);
+  }, [requests]);
 
   // update local state when workspace compras changes
   useEffect(() => {
-    if (Array.isArray(compras)) setRequests(compras);
+    if (Array.isArray(compras)) {
+      lastSyncedComprasRef.current = compras;
+      setRequests(compras);
+    }
   }, [compras]);
 
   const activeRequest = useMemo(
@@ -269,22 +287,36 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
       }
     }
 
-    const { details, total } = calculateBudgetDetails(rows, activeRequest?.budgetDetails || [], supplierOptions);
-    const itensAtualizados = activeRequest.itens.map((item) => {
-      const detail = details.find((entry) => entry.itemId === item.id);
-      return {
-        ...item,
-        naturezaFornecimento: detail?.naturezaFornecimento || item.naturezaFornecimento || 'SERVICO',
-      };
-    });
+    const { details } = calculateBudgetDetails(rows, activeRequest?.budgetDetails || [], supplierOptions);
+
+    // Itens marcados como "já em estoque" não seguem o fluxo de compra: ao concluir o
+    // orçamento eles são removidos do pedido (somem da seleção, aprovação e finalizados).
+    const idsEmEstoque = new Set(rows.filter((row) => row.jaEmEstoque).map((row) => row.itemId));
+    const detailsFiltrados = details.filter((detail) => !idsEmEstoque.has(detail.itemId));
+    const itensAtualizados = activeRequest.itens
+      .filter((item) => !idsEmEstoque.has(item.id))
+      .map((item) => {
+        const detail = detailsFiltrados.find((entry) => entry.itemId === item.id);
+        return {
+          ...item,
+          naturezaFornecimento: detail?.naturezaFornecimento || item.naturezaFornecimento || 'SERVICO',
+        };
+      });
 
     patchRequest(activeRequest.id, (request) => ({
       ...request,
       itens: itensAtualizados,
-      budgetDetails: details,
-      budgetValue: total,
+      budgetDetails: detailsFiltrados,
+      budgetValue: calculateSelectedBudgetValue(detailsFiltrados),
       updatedAt: new Date().toISOString(),
     }));
+
+    // Limpa o rascunho para que, ao reabrir, a lista reflita só os itens remanescentes.
+    setQuoteRows((current) => {
+      const next = { ...current };
+      delete next[activeRequest.id];
+      return next;
+    });
 
     closeQuoteModal();
   };
@@ -347,10 +379,23 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
   };
 
   const handleDeleteRequest = (requestId: string) => {
-    const shouldDelete = window.confirm('Deseja excluir este card de compras? Esta ação não poderá ser desfeita.');
+    const request = requests.find((item) => item.id === requestId);
+    if (!request) return;
+
+    const shouldDelete = window.confirm('Concluir esta compra e enviá-la para o histórico? Ela sairá do kanban.');
     if (!shouldDelete) return;
 
-    setRequests((current) => current.filter((request) => request.id !== requestId));
+    // Excluir o card = dar a compra como concluída: arquiva o pedido inteiro (com todos os
+    // itens e a cotação selecionada) no histórico de compras antes de removê-lo do kanban.
+    const registroHistorico = {
+      ...request,
+      finalizadoEm: new Date().toISOString(),
+      finalizadoPor: userSession?.nome || userSession?.email || '',
+    };
+    const historicoAtual = Array.isArray(comprasHistorico) ? comprasHistorico : [];
+    void saveEntity?.('comprasHistorico', [registroHistorico, ...historicoAtual]);
+
+    setRequests((current) => current.filter((item) => item.id !== requestId));
     setQuoteRows((current) => {
       const next = { ...current };
       delete next[requestId];
@@ -368,6 +413,11 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
 
     if (req.stage !== 'SELECAO_GERENTE') {
       window.alert('A seleção de fornecedor só pode ser feita na etapa Seleção do Gerente.');
+      return;
+    }
+
+    if (!podeSelecionarGerente) {
+      window.alert('Apenas o gerente comercial ou o diretor financeiro podem selecionar o fornecedor.');
       return;
     }
 
@@ -479,8 +529,8 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 items-start">
-            {BOARD_COLUMNS.map((column) => {
+          <div className={`grid grid-cols-1 md:grid-cols-2 ${visibleBoardColumns.length >= 4 ? 'lg:grid-cols-4' : 'lg:grid-cols-3'} gap-4 items-start`}>
+            {visibleBoardColumns.map((column) => {
               const ColumnIcon = column.icon;
               const cards = requestsByStage[column.id];
 
@@ -570,11 +620,17 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
                                           disabled={itemDetail.jaEmEstoque}
                                         >
                                           <option value="">{itemDetail.jaEmEstoque ? 'Item já em estoque' : 'Selecione um fornecedor orçado'}</option>
-                                          {quotedSuppliers.map((supplier, supplierIndex) => (
-                                            <option key={`${item.id}-${supplier.fornecedor}-${supplierIndex}`} value={supplier.fornecedor}>
-                                              {supplier.fornecedor} - {formatCurrency(supplier.valor)}
-                                            </option>
-                                          ))}
+                                          {quotedSuppliers.map((supplier, supplierIndex) => {
+                                            const extras = [
+                                              supplier.prazoEntrega?.trim() ? `Entrega: ${supplier.prazoEntrega.trim()}` : '',
+                                              supplier.condicaoPagamento?.trim() ? `Pagto: ${supplier.condicaoPagamento.trim()}` : '',
+                                            ].filter(Boolean).join(' • ');
+                                            return (
+                                              <option key={`${item.id}-${supplier.fornecedor}-${supplierIndex}`} value={supplier.fornecedor}>
+                                                {supplier.fornecedor} - {formatCurrency(supplier.valor)}{extras ? ` • ${extras}` : ''}
+                                              </option>
+                                            );
+                                          })}
                                         </select>
                                       </>
                                     ) : request.stage === 'APROVACAO' || request.stage === 'COMPRADOS' ? (
@@ -583,6 +639,19 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
                                         <p className="text-white text-sm mt-1">{itemDetail.fornecedorSelecionado ? itemDetail.fornecedorSelecionado : 'Aguardando seleção do gerente'}</p>
                                       </div>
                                     ) : null}
+
+                                    {!itemDetail.jaEmEstoque && itemDetail.fornecedorSelecionado && (
+                                      <div className="grid grid-cols-2 gap-2">
+                                        <div className="rounded-lg border border-white/5 bg-white/[0.03] p-2">
+                                          <p className="text-[9px] uppercase tracking-[0.2em] text-white/40 font-black">Prazo de entrega</p>
+                                          <p className="text-white/80 text-xs mt-0.5">{itemDetail.prazoEntregaSelecionado || '—'}</p>
+                                        </div>
+                                        <div className="rounded-lg border border-white/5 bg-white/[0.03] p-2">
+                                          <p className="text-[9px] uppercase tracking-[0.2em] text-white/40 font-black">Condição de pagamento</p>
+                                          <p className="text-white/80 text-xs mt-0.5">{itemDetail.condicaoPagamentoSelecionada || '—'}</p>
+                                        </div>
+                                      </div>
+                                    )}
 
                                     <div className="flex flex-wrap gap-2 text-[10px] text-white/35">
                                       <span className="px-2 py-1 rounded-full bg-white/5">{quotedSuppliers.length} fornecedores</span>
@@ -745,7 +814,9 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
                       <div className="flex items-center justify-between gap-3">
                         <div>
                           <h3 className="text-white font-black text-lg">{row.itemLabel}</h3>
-                          <p className="text-white/35 text-xs mt-1">Adicione no mínimo 3 fornecedores. Você pode inserir mais fornecedores para este item.</p>
+                          {!row.jaEmEstoque && (
+                            <p className="text-white/35 text-xs mt-1">Adicione no mínimo 3 fornecedores. Você pode inserir mais fornecedores para este item.</p>
+                          )}
                         </div>
                         {quoteModal.mode === 'edit' && !row.jaEmEstoque && (
                           <button onClick={() => addQuoteSupplier(activeRequest.id, row.itemId)} className="flex items-center gap-2 rounded-xl bg-white/5 hover:bg-white/10 text-white px-4 py-2 text-xs font-bold uppercase tracking-wider transition-colors">
@@ -769,12 +840,12 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
                         </div>
                       )}
 
-                      {row.jaEmEstoque && (
-                        <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-emerald-100 text-xs font-semibold">
-                          Item já em estoque. Este item não precisa de orçamento.
+                      {row.jaEmEstoque ? (
+                        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-emerald-100 text-sm font-bold">
+                          Já consta no estoque — este item não segue o fluxo de compra.
                         </div>
-                      )}
-
+                      ) : (
+                      <>
                       <div className="space-y-3">
                         {row.fornecedores.map((supplier) => (
                           <div key={supplier.id} className="rounded-2xl border border-white/10 bg-[#101826] p-4 space-y-3">
@@ -860,9 +931,11 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
                         </div>
                         <div className="text-right">
                           <p className="text-[10px] uppercase tracking-[0.25em] text-white/45 font-black">Fornecedores</p>
-                          <p className="text-white font-bold mt-1">{row.jaEmEstoque ? 'N/A' : row.fornecedores.length}</p>
+                          <p className="text-white font-bold mt-1">{row.fornecedores.length}</p>
                         </div>
                       </div>
+                      </>
+                      )}
                     </div>
                   );
                 })}

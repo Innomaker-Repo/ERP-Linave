@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useErp } from '../../../context/ErpContext';
-import { gerarIdOrcamento, gerarIdProjeto, extrairIdProjetoDoNumero, extrairComponentesDoId } from '../../../context/ErpContext';
+import { gerarIdOrcamento, gerarIdProjeto, extrairIdProjetoDoNumero, extrairComponentesDoId, gerarIdProjetoDeNegocio } from '../../../context/ErpContext';
 import { Plus, X, DollarSign, FileText, Trash2, Lock, Eye, Download } from 'lucide-react';
 import jsPDF from 'jspdf';
 import { getBackendUrl } from '../../../../services/network';
@@ -127,7 +127,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
             const clienteLocal = clientesMapa[String(clienteId)];
 
             return {
-              id: gerarIdProjeto(n.empresa_prestadora || 'LN', String(n.id).padStart(4, '0')),
+              id: gerarIdProjetoDeNegocio(n),
               nome: n.nome_negocio,
               clienteId,
               nomeCliente: clienteLocal?.razaoSocial || clienteLocal?.razao_social || clienteLocal?.nomeFantasia || clienteLocal?.nome_fantasia || '',
@@ -2419,10 +2419,10 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
         const mats: any[] = (d.materiais || []).filter((i: any) => i.descricao?.trim());
         const ters: any[] = (d.terceirizados || []).filter((i: any) => i.descricao?.trim());
         const ativs: any[] = (d.atividades || []).filter((i: any) => i.atividade?.trim());
-        const totalDiasDetalhes = [
-          ...(d.atividades || []).map((i: any) => Number(i.duracao || i.dias || 0)),
-          ...(d.maoDeObra || []).map((i: any) => Number(i.dias || 0)),
-        ].reduce((a, b) => a + b, 0);
+        // Dias previstos = SOMENTE o somatório das atividades previstas (não inclui dias de mão de obra)
+        const totalDiasDetalhes = (d.atividades || [])
+          .map((i: any) => Number(i.dias || i.duracao || 0))
+          .reduce((a: number, b: number) => a + b, 0);
         return (
           <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 backdrop-blur-sm overflow-y-auto py-8 px-4">
             <div className="bg-[#0d1b35] border border-white/10 rounded-2xl w-full max-w-4xl shadow-2xl">

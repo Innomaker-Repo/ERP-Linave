@@ -1,7 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { UserPlus, Save, X, Edit2, Trash2, Building2, User, MapPin, Phone, Calendar, UserCheck, History, Eye } from 'lucide-react';
+import { UserPlus, Save, X, Edit2, Trash2, Building2, User, MapPin, Phone, Calendar, UserCheck, History, Eye, FileText } from 'lucide-react';
 import { useErp } from '../../../context/ErpContext';
 import { getClientes, createCliente, updateCliente, deleteCliente } from '../../../../services/clientes';
+import { toast } from 'sonner';
+import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
+import { NegocioDetalheModal } from '../Comercial/FinalizadosComercialView';
 
   export function ClientesView({ searchQuery }: { searchQuery: string }) {
   const { clientes, obras, saveCliente, deleteCliente, userSession, saveEntity } = useErp();
@@ -385,7 +388,10 @@ import { getClientes, createCliente, updateCliente, deleteCliente } from '../../
 
                   {negociosDoCliente.length > 0 ? (
                     <div className="space-y-3">
-                      {negociosDoCliente.map((negocio: any) => (
+                      {negociosDoCliente.map((negocio: any) => {
+                        const osDoNegocio = (Array.isArray(os) ? os : []).filter((item: any) => item.obraId === negocio.id);
+                        const docsMediacaoNegocio = obterDocsMediacao(negocio);
+                        return (
                         <div key={negocio.id} className="bg-[#0b1220] rounded-lg p-4 border border-white/10 hover:border-blue-500/50 transition-all space-y-2">
                           <div className="flex justify-between items-start">
                             <div>
@@ -431,8 +437,28 @@ import { getClientes, createCliente, updateCliente, deleteCliente } from '../../
                               <p className="text-blue-400 font-black">Propostas: {negocio.propostas.length} (Última versão: v{negocio.propostas[negocio.propostas.length - 1].versao})</p>
                             </div>
                           )}
+
+                          {osDoNegocio.length > 0 && (
+                            <div className="bg-white/5 rounded p-2 text-xs border border-white/10">
+                              <p className="text-violet-400 font-black">OS: {osDoNegocio.length} (Última: {osDoNegocio[osDoNegocio.length - 1].ordemServicoNumero || '—'})</p>
+                            </div>
+                          )}
+
+                          {docsMediacaoNegocio.length > 0 && (
+                            <div className="bg-white/5 rounded p-2 text-xs border border-white/10">
+                              <p className="text-amber-400 font-black">Medição: {docsMediacaoNegocio.length} documento(s)</p>
+                            </div>
+                          )}
+
+                          <button
+                            onClick={() => setNegocioDetalhe(negocio)}
+                            className="mt-1 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition bg-blue-600 hover:bg-blue-700 text-white"
+                          >
+                            <FileText size={13} /> Ver detalhes & baixar PDFs
+                          </button>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   ) : (
                     <div className="text-center py-8 text-white/40 text-sm">
@@ -455,6 +481,22 @@ import { getClientes, createCliente, updateCliente, deleteCliente } from '../../
           </div>
         );
       })()}
+
+      {/* MODAL - DETALHES DO NEGÓCIO (orçamento, proposta, OS, medição + download de PDFs) */}
+      {negocioDetalhe && (
+        <NegocioDetalheModal
+          obra={negocioDetalhe}
+          clientes={listaClientes}
+          os={os}
+          onClose={() => setNegocioDetalhe(null)}
+          onDownload={handleDownloadDocumento}
+          encontrarDocumento={encontrarDocumento}
+          obterDocsMediacao={obterDocsMediacao}
+          isDocumentoValido={isDocumentoValido}
+          formatDate={formatDate}
+          safeNumber={safeNumber}
+        />
+      )}
     </div>
   );
 }

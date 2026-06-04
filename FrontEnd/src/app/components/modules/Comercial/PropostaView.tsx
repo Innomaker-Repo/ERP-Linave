@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useErp, extrairComponentesDoId, gerarIdProposta } from '../../../context/ErpContext';
 import { Plus, X, FileText, CheckCircle, XCircle, ArrowLeft, Save, Download } from 'lucide-react';
 import { handleDownloadPropostaPDF } from '../CRM/handleDownloadPropostaPDF';
+import { isEmpresaLinave, getLogoUrlForEmpresa } from '../../../utils/company';
 import PizZip from 'pizzip';
 import Docxtemplater from 'docxtemplater';
 import { saveAs } from 'file-saver';
@@ -87,7 +88,7 @@ const findClienteById = (clientes: any[], clienteId: any) =>
 const mapNegocioToObra = (n: any): any => ({
   backendId: n.id,
   clienteBackendId: n.cliente,
-  id: gerarIdProjeto(n.empresa_prestadora || 'LN', String(n.id).padStart(4, '0')),
+  id: gerarIdProjetoDeNegocio(n),
   nome: n.nome_negocio,
   clienteId: String(n.cliente ?? ''),
   categoria: n.categoria,
@@ -156,7 +157,7 @@ export function PropostaView() {
 
     const versaoAnterior = String(
       ultimaProposta.versao
-      || ultimaProposta.numeroProposta?.match(/[A-Z]+$/)?.[0]
+      || extrairComponentesDoId(ultimaProposta.numeroProposta || '')?.versao
       || '',
     ).toUpperCase();
 
@@ -494,9 +495,9 @@ export function PropostaView() {
   const handleDownloadPropostaPDFWithLogo = async (proposta: any, obra: any) => {
     const cliente = findClienteById(listaClientesLocal, obra.clienteId);
     const rawEmpresa = obra.empresaPrestadora || '';
-    const cleaned = (typeof rawEmpresa === 'string' ? rawEmpresa : (rawEmpresa.nome || '')).toLowerCase();
-    const isLinave = !cleaned.includes('servi');
-    const logoUrl = isLinave ? '/image2.jpg' : '/image1.png';
+    const nomeEmpresa = typeof rawEmpresa === 'string' ? rawEmpresa : (rawEmpresa.nome || '');
+    const isLinave = isEmpresaLinave(nomeEmpresa);
+    const logoUrl = getLogoUrlForEmpresa(nomeEmpresa);
 
     const logoBase64 = await getBase64FromUrl(logoUrl);
     handleDownloadPropostaPDF(proposta, cliente, obra, logoBase64, isLinave);
@@ -639,8 +640,7 @@ export function PropostaView() {
       if (typeof ep === 'string') return ep;
       return (ep.nome || ep.razaoSocial || ep.empresaNome || '').toString();
     })();
-    const cleaned = (rawEmpresa || '').toString().toLowerCase();
-    const isLinave = cleaned.includes('linave');
+    const isLinave = isEmpresaLinave(rawEmpresa);
 
     try {
       const templateUrl = isLinave ? '/templates/LINAVE.docx' : '/templates/SERVINAVE.docx';
@@ -1513,12 +1513,10 @@ export function PropostaView() {
                 : (obraCtx?.orcamentos || []);
               const ultimoOrc = orcamentos[orcamentos.length - 1];
               // Backend usa "duracao" em atividades; frontend salva como "dias"
+              // Dias previstos = SOMENTE o somatório das atividades previstas (não inclui dias de mão de obra)
               const atividades: any[] = ultimoOrc?.data?.atividades || [];
-              const maoDeObra: any[] = ultimoOrc?.data?.maoDeObra || [];
               const parseDias = (val: any) => parseFloat(String(val ?? 0)) || 0;
-              const total =
-                atividades.reduce((s, i) => s + parseDias(i.dias ?? i.duracao), 0) +
-                maoDeObra.reduce((s, i) => s + parseDias(i.dias), 0);
+              const total = atividades.reduce((s, i) => s + parseDias(i.dias ?? i.duracao), 0);
               return (
                 <div className="h-20 flex items-center justify-center bg-amber-500/10 border border-amber-500/30 rounded-lg">
                   <div className="text-center">

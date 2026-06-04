@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, HardHat, Anchor, ClipboardList, 
   ShoppingCart, DollarSign, BarChart3, Settings, Factory, 
   HeartHandshake, List, Clock, ChevronDown, ChevronRight, 
-  Briefcase, Wrench, Activity, FileText, Zap, Building2, CheckCircle2, Trash2, LayoutGrid, Package2
+  Briefcase, Wrench, Activity, FileText, Zap, CheckCircle2, Trash2, LayoutGrid, Package2, History
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -90,6 +90,7 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
         { id: 'compras', label: 'Compras / Requisições', icon: ShoppingCart },
         { id: 'kanbanCompras', label: 'Kanban de Compras', icon: LayoutGrid },
         { id: 'aprovacoesCompras', label: 'Aprovações', icon: Clock },
+        { id: 'historicoCompras', label: 'Histórico de Compras', icon: History },
         { id: 'fornecedores', label: 'Fornecedores', icon: Factory },
       ]
     },
@@ -99,7 +100,7 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
       icon: ClipboardList,
       items: [
         { id: 'estoquePublico', label: 'Estoque View', icon: ClipboardList },
-        { id: 'estoque', label: 'Almoxerifado', icon: ClipboardList },
+        { id: 'estoque', label: 'Almoxarifado', icon: ClipboardList },
         { id: 'itensAdicionar', label: 'Itens para adicionar', icon: Package2 },
         { id: 'historicoBaixa', label: 'Histórico de Baixa', icon: Trash2 },
         { id: 'historicoRomaneio', label: 'Histórico de Romaneio', icon: ClipboardList },
@@ -112,9 +113,7 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
       icon: Settings,
       items: [
         { id: 'usuarios', label: 'Usuários & Acessos', icon: Settings },
-        { id: 'empresas', label: 'Empresas Prestadoras', icon: Building2 },
-        { id: 'listas', label: 'Menus Suspensos', icon: List },
-        { id: 'templates', label: 'Templates de Docs', icon: FileText }
+        { id: 'departamentos', label: 'Departamentos', icon: List }
       ]
     }
   ];
@@ -131,8 +130,32 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
     if (role === 'ADMIN') return true;
 
     if (itemId === 'compras') return true;
+    if (itemId === 'kanbanCompras') {
+      // Equipe de compras (permissão explícita) + gerente comercial / diretor financeiro,
+      // que precisam do kanban para selecionar o fornecedor na etapa "Seleção do Gerente".
+      return (
+        userSession.permissoes?.kanbanCompras === true ||
+        userSession.permissoes?.aprovacoesComprasGerente === true ||
+        userSession.permissoes?.aprovacoesComprasFinanceiro === true ||
+        isGerenteComercial ||
+        isDiretorFinanceiro
+      );
+    }
     if (itemId === 'aprovacoesCompras') {
       return (
+        userSession.permissoes?.aprovacoesComprasGerente === true ||
+        userSession.permissoes?.aprovacoesComprasFinanceiro === true ||
+        isGerenteComercial ||
+        isDiretorFinanceiro
+      );
+    }
+    if (itemId === 'historicoCompras') {
+      // Histórico (somente leitura) das compras concluídas: visível a quem participa do
+      // fluxo de compras.
+      return (
+        userSession.permissoes?.compras === true ||
+        userSession.permissoes?.kanbanCompras === true ||
+        userSession.permissoes?.historicoCompras === true ||
         userSession.permissoes?.aprovacoesComprasGerente === true ||
         userSession.permissoes?.aprovacoesComprasFinanceiro === true ||
         isGerenteComercial ||

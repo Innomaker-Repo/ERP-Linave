@@ -22,6 +22,16 @@ export const isOsAlvo = (os: any) => {
   return sentToProduction && !isFinalized;
 };
 
+// Mesma regra usada na aba de Produção (ObrasView): a OS só "vale" depois de
+// APROVADA (ou se já estiver concluída). Usada para liberar a OS na alocação/baixa
+// do estoque/almoxarifado e no centro de custo das requisições de compra.
+export const isOsAprovada = (os: any) => {
+  const statusAprovacao = String(os?.status_aprovacao ?? os?.statusAprovacao ?? '').toLowerCase();
+  const statusOs = String(os?.status_os ?? os?.statusOs ?? '').toLowerCase();
+  const isFinalized = statusOs === 'concluida' || statusOs === 'concluído' || statusOs === 'concluido';
+  return statusAprovacao === 'aprovada' || isFinalized;
+};
+
 export const getOsStableValue = (os: any) => String(
   os?.ordemServicoNumero ??
   os?.ordem_servico_numero ??

@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
-import { useErp } from '../../../context/ErpContext';
+import { useErp, getPrefixoEmpresa, gerarIdProjetoDeNegocio } from '../../../context/ErpContext';
 import { Plus, X, Check, Clock, Zap, Download, Eye, FileText } from 'lucide-react';
-
 interface DocumentoAssinatura {
   id: string;
   nome: string;
