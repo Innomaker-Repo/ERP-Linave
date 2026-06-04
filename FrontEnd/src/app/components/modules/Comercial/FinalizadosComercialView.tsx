@@ -6,8 +6,10 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import { handleDownloadOrcamentoPDF } from '../CRM/handleDownloadOrcamentoPDF';
+import { handleDownloadOSPDF } from '../CRM/handleDownloadOSPDF';
+import { handleDownloadPropostaPDF } from '../CRM/handleDownloadPropostaPDF';
+import { isEmpresaLinave, getLogoUrlForEmpresa } from '../../../utils/company';
 
 interface FinalizadosComercialViewProps {
   searchQuery: string;
@@ -279,7 +281,7 @@ function Field({ label, value }: { label: string; value: any }) {
   );
 }
 
-function NegocioDetalheModal({
+export function NegocioDetalheModal({
   obra,
   clientes,
   os,
@@ -328,96 +330,42 @@ function NegocioDetalheModal({
 
   const gerarPDFOrcamento = () => {
     if (!ultimoOrcamento) return toast.error('Sem orçamento para gerar.');
-    const doc = new jsPDF();
-    const d = ultimoOrcamento.data || {};
-    const v = ultimoOrcamento.valores || {};
-    doc.setFontSize(14); doc.setFont('helvetica', 'bold');
-    doc.text(`ORÇAMENTO ${ultimoOrcamento.numeroOrcamento || ''}`, 14, 18);
-    doc.setFontSize(9); doc.setFont('helvetica', 'normal');
-    doc.text(`Negócio: ${obra.nome}  |  Cliente: ${nomeCliente}  |  Versão: ${ultimoOrcamento.versao || '-'}  |  Status: ${ultimoOrcamento.status || '-'}`, 14, 26);
-    let y = 36;
-    const mdo: any[] = (d.maoDeObra || []).filter((i: any) => i.funcao?.trim() || i.fnc?.trim());
-    if (mdo.length > 0) {
-      autoTable(doc, { startY: y, head: [['Função', 'Qtd', 'Dias', 'Valor Total']], body: mdo.map((i: any) => [i.funcao || i.fnc || '-', i.quantidade || i.qnt || '-', i.dias || '-', `R$ ${pd(i.valorTotal)}`]), styles: { fontSize: 8 }, headStyles: { fillColor: [30, 60, 120] } });
-      y = (doc as any).lastAutoTable.finalY + 6;
-    }
-    const mats: any[] = (d.materiais || []).filter((i: any) => i.descricao?.trim());
-    if (mats.length > 0) {
-      doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.text('Materiais', 14, y); y += 4;
-      autoTable(doc, { startY: y, head: [['Descrição', 'Qtd', 'Un', 'Valor Total']], body: mats.map((i: any) => [i.descricao, i.quantidade || i.qnt || '-', i.unidade || '-', `R$ ${pd(i.valorTotal)}`]), styles: { fontSize: 8 }, headStyles: { fillColor: [30, 60, 120] } });
-      y = (doc as any).lastAutoTable.finalY + 6;
-    }
-    const ativs: any[] = (d.atividades || []).filter((i: any) => i.atividade?.trim());
-    if (ativs.length > 0) {
-      doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.text('Atividades Previstas', 14, y); y += 4;
-      autoTable(doc, { startY: y, head: [['Atividade', 'Dias', 'Obs']], body: ativs.map((i: any) => [i.atividade, i.dias || i.duracao || '-', i.observacao || '']), styles: { fontSize: 8 }, headStyles: { fillColor: [30, 60, 120] } });
-      y = (doc as any).lastAutoTable.finalY + 6;
-    }
-    if (v.precoFinal) {
-      doc.setFontSize(10); doc.setFont('helvetica', 'bold');
-      doc.text(`Preço Final: R$ ${pd(v.precoFinal)}`, 14, y + 4);
-    }
-    doc.save(`orcamento-${ultimoOrcamento.numeroOrcamento || obra.id}.pdf`);
+    handleDownloadOrcamentoPDF(ultimoOrcamento, clienteCtx, obra);
     toast.success('PDF do orçamento gerado!');
   };
 
-  const gerarPDFProposta = () => {
+  const gerarPDFProposta = async () => {
     if (!ultimaProposta) return toast.error('Sem proposta para gerar.');
-    const doc = new jsPDF();
-    doc.setFontSize(14); doc.setFont('helvetica', 'bold');
-    doc.text(`PROPOSTA COMERCIAL ${ultimaProposta.numeroProposta || ''}`, 14, 18);
-    doc.setFontSize(9); doc.setFont('helvetica', 'normal');
-    doc.text(`Negócio: ${obra.nome}  |  Cliente: ${nomeCliente}  |  Versão: ${ultimaProposta.versao || '-'}  |  Status: ${ultimaProposta.status || '-'}`, 14, 26);
-    let y = 36;
-    if (ultimaProposta.assunto) { doc.setFont('helvetica', 'bold'); doc.text('Assunto:', 14, y); doc.setFont('helvetica', 'normal'); doc.text(ultimaProposta.assunto, 40, y); y += 8; }
-    if (ultimaProposta.prazo) { doc.setFont('helvetica', 'bold'); doc.text('Prazo:', 14, y); doc.setFont('helvetica', 'normal'); doc.text(String(ultimaProposta.prazo), 34, y); y += 8; }
-    if (ultimaProposta.textoAbertura) {
-      doc.setFont('helvetica', 'bold'); doc.text('Texto de Abertura:', 14, y); y += 5;
-      doc.setFont('helvetica', 'normal');
-      const lines = doc.splitTextToSize(ultimaProposta.textoAbertura, 182);
-      doc.text(lines, 14, y); y += lines.length * 5 + 4;
-    }
-    if (ultimaProposta.escopoA) {
-      doc.setFont('helvetica', 'bold'); doc.text('Escopo Básico:', 14, y); y += 5;
-      doc.setFont('helvetica', 'normal');
-      const lines = doc.splitTextToSize(ultimaProposta.escopoA, 182);
-      doc.text(lines, 14, y); y += lines.length * 5 + 4;
-    }
-    const escopos: any[] = Array.isArray(ultimaProposta.escopoBasicoServicos) ? ultimaProposta.escopoBasicoServicos : [];
-    if (escopos.length > 0) {
-      autoTable(doc, { startY: y, head: [['Item', 'Descrição']], body: escopos.map((e: any, i: number) => [`${i + 1}. ${e.titulo || ''}`, e.descricaoServico || '']), styles: { fontSize: 8 }, headStyles: { fillColor: [30, 60, 120] } });
-    }
-    doc.save(`proposta-${ultimaProposta.numeroProposta || obra.id}.pdf`);
+    const isLinave = isEmpresaLinave(obra?.empresaPrestadora);
+    const logoBase64 = await carregarLogoBase64();
+    handleDownloadPropostaPDF(ultimaProposta, clienteCtx, obra, logoBase64, isLinave);
     toast.success('PDF da proposta gerado!');
   };
 
-  const gerarPDFOs = () => {
+  const carregarLogoBase64 = async (): Promise<string | undefined> => {
+    try {
+      const res = await fetch(getLogoUrlForEmpresa(obra?.empresaPrestadora));
+      if (!res.ok) return undefined;
+      const blob = await res.blob();
+      if (blob.size === 0) return undefined;
+      return await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = () => resolve('' as any);
+        reader.readAsDataURL(blob);
+      });
+    } catch {
+      return undefined;
+    }
+  };
+
+  const gerarPDFOs = async () => {
     if (osDoNegocio.length === 0) return toast.error('Sem OS para gerar.');
-    const doc = new jsPDF();
-    osDoNegocio.forEach((osItem: any, idx: number) => {
-      if (idx > 0) doc.addPage();
-      doc.setFontSize(14); doc.setFont('helvetica', 'bold');
-      doc.text(`ORDEM DE SERVIÇO ${osItem.ordemServicoNumero || ''}`, 14, 18);
-      doc.setFontSize(9); doc.setFont('helvetica', 'normal');
-      doc.text(`Projeto: ${osItem.projeto || obra.nome}  |  Cliente: ${osItem.cliente || nomeCliente}`, 14, 26);
-      doc.text(`Início: ${osItem.dataInicioPrevisto || '-'}  |  Término: ${osItem.dataTerminoPrevisto || '-'}  |  Status: ${osItem.statusOs || '-'}`, 14, 32);
-      let y = 42;
-      if (osItem.supervisorEncarregado) { doc.text(`Supervisor: ${osItem.supervisorEncarregado}`, 14, y); y += 6; }
-      if (osItem.equipamento) { doc.text(`Equipamento: ${osItem.equipamento}`, 14, y); y += 6; }
-      if (osItem.descricaoGeralServico) {
-        doc.setFont('helvetica', 'bold'); doc.text('Descrição do Serviço:', 14, y); y += 5;
-        doc.setFont('helvetica', 'normal');
-        const lines = doc.splitTextToSize(osItem.descricaoGeralServico, 182);
-        doc.text(lines, 14, y); y += lines.length * 5 + 4;
-      }
-      const mao = osItem.maoObra || {};
-      const hhRows = [['Estrutura', mao.estrutura], ['Tubulação', mao.tubulacao], ['Andaimes', mao.andaimes], ['Mecânica', mao.mecanica], ['Pintura', mao.pintura], ['Elétrica', mao.eletrica], ['C.Q', mao.cq], ['SMS', mao.sms]].filter(([, v]) => Number(v) > 0).map(([s, v]) => [s, String(v)]);
-      if (hhRows.length > 0) {
-        doc.setFont('helvetica', 'bold'); doc.text('Mão de Obra (H/H):', 14, y); y += 4;
-        autoTable(doc, { startY: y, head: [['Serviço', 'H/H']], body: hhRows, styles: { fontSize: 8 }, headStyles: { fillColor: [30, 60, 120] } });
-      }
-    });
-    doc.save(`os-${obra.id}.pdf`);
+    const osPrincipal = [...osDoNegocio].reverse().find(
+      (o: any) => o.tipoDocumento === 'consolidada' || (o.aSerIncluido && Object.keys(o.aSerIncluido).length > 0)
+    ) || osDoNegocio[osDoNegocio.length - 1];
+    const logoBase64 = await carregarLogoBase64();
+    handleDownloadOSPDF({ osPrincipal, ultimoOrcamento, ultimaProposta, cliente: clienteCtx, obra, logoBase64 });
     toast.success('PDF da OS gerado!');
   };
 

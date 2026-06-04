@@ -40,6 +40,7 @@ function getAbaForSection(section: string): { aba: string; item: string } {
     'compras': { aba: 'compras', item: 'compras' },
     'kanbanCompras': { aba: 'compras', item: 'kanbanCompras' },
     'aprovacoesCompras': { aba: 'compras', item: 'aprovacoesCompras' },
+    'historicoCompras': { aba: 'compras', item: 'historicoCompras' },
     'fornecedores': { aba: 'compras', item: 'fornecedores' },
     
     // Almoxerifado
@@ -52,9 +53,7 @@ function getAbaForSection(section: string): { aba: string; item: string } {
     
     // Configurações
     'usuarios': { aba: 'config', item: 'usuarios' },
-    'empresas': { aba: 'config', item: 'empresas' },
-    'listas': { aba: 'config', item: 'listas' },
-    'templates': { aba: 'config', item: 'templates' },
+    'departamentos': { aba: 'config', item: 'departamentos' },
   };
   
   return mapping[section] || { aba: 'gestao', item: 'dashboard' };

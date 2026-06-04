@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { extrairComponentesDoId, gerarIdProjeto, gerarIdProposta, useErp } from '../../../context/ErpContext';
+import { extrairComponentesDoId, gerarIdProjeto, gerarIdProposta, gerarIdProjetoDeNegocio, useErp } from '../../../context/ErpContext';
 import { Plus, X, FileText, CheckCircle, XCircle, ArrowLeft, Save, Download } from 'lucide-react';
 import { handleDownloadPropostaPDF } from '../CRM/handleDownloadPropostaPDF';
+import { isEmpresaLinave, getLogoUrlForEmpresa } from '../../../utils/company';
 import PizZip from 'pizzip';
 import Docxtemplater from 'docxtemplater';
 import { saveAs } from 'file-saver';
@@ -87,7 +88,7 @@ const findClienteById = (clientes: any[], clienteId: any) =>
 const mapNegocioToObra = (n: any): any => ({
   backendId: n.id,
   clienteBackendId: n.cliente,
-  id: gerarIdProjeto(n.empresa_prestadora || 'LN', String(n.id).padStart(4, '0')),
+  id: gerarIdProjetoDeNegocio(n),
   nome: n.nome_negocio,
   clienteId: String(n.cliente ?? ''),
   categoria: n.categoria,
@@ -157,7 +158,7 @@ export function PropostaView() {
 
     const versaoAnterior = String(
       ultimaProposta.versao
-      || ultimaProposta.numeroProposta?.match(/[A-Z]+$/)?.[0]
+      || extrairComponentesDoId(ultimaProposta.numeroProposta || '')?.versao
       || '',
     ).toUpperCase();
 
@@ -494,9 +495,9 @@ export function PropostaView() {
   const handleDownloadPropostaPDFWithLogo = async (proposta: any, obra: any) => {
     const cliente = findClienteById(listaClientesLocal, obra.clienteId);
     const rawEmpresa = obra.empresaPrestadora || '';
-    const cleaned = (typeof rawEmpresa === 'string' ? rawEmpresa : (rawEmpresa.nome || '')).toLowerCase();
-    const isLinave = !cleaned.includes('servi');
-    const logoUrl = isLinave ? '/image2.jpg' : '/image1.png';
+    const nomeEmpresa = typeof rawEmpresa === 'string' ? rawEmpresa : (rawEmpresa.nome || '');
+    const isLinave = isEmpresaLinave(nomeEmpresa);
+    const logoUrl = getLogoUrlForEmpresa(nomeEmpresa);
 
     const logoBase64 = await getBase64FromUrl(logoUrl);
     handleDownloadPropostaPDF(proposta, cliente, obra, logoBase64, isLinave);
@@ -529,8 +530,9 @@ export function PropostaView() {
       const orc = obra.orcamentoValores || null;
       if (orc) {
         const precoFinal = Number(orc.precoFinal ?? orc.valorTotalServico ?? 0) || 0;
-        const qnt = Number(orc.qnt ?? orc.quantidade ?? 1) || 1;
-        const unit = qnt > 0 ? precoFinal / qnt : precoFinal;
+        // Quantidade e preço por unidade vêm do orçamento (chaves do backend: quantidadeItensProduzidos / valorPorUnidade)
+        const qnt = Number(orc.quantidadeItensProduzidos ?? orc.qnt ?? orc.quantidade ?? 1) || 1;
+        const unit = Number(orc.valorPorUnidade ?? (qnt > 0 ? precoFinal / qnt : precoFinal)) || 0;
         const itemInit = {
           id: `preco-orcamento-${Date.now()}`,
           nome: 'Orçamento',
@@ -574,23 +576,23 @@ export function PropostaView() {
       ? gerarEscopoBasicoConsolidado(propostaForm.escopoBasicoServicos)
       : propostaForm.escopoA;
 
+    // As chaves devem bater com os nomes dos campos do PropostaComercialSerializer (camelCase)
     const payload = {
       cliente: selectedObra.clienteBackendId,
       negocio: selectedObra.backendId,
-      numero_proposta: numeroProposta,
+      numeroProposta: numeroProposta,
       status: 'pendente',
-      referencia: propostaForm.referencia,
+      referencias: propostaForm.referencia,
       saudacao: propostaForm.saudacao,
       assunto: propostaForm.assunto,
-      texto_de_abertura: escopoAConsolidado || propostaForm.textoAbertura,
-      responsabilidade_contratada: propostaForm.responsabilidadeContratada,
-      responsabilidade_contratante: propostaForm.escopoC,
+      textoAbertura: escopoAConsolidado || propostaForm.textoAbertura,
+      responsabilidadeContratada: propostaForm.responsabilidadeContratada,
+      responsabilidadeContratante: propostaForm.escopoC,
       preco: parsePrecoParaDecimal(propostaForm.preco),
-      condicoes_gerais: propostaForm.condicoesGerais,
-      condicoes_pagamento: propostaForm.condicoesPagamento,
+      condicoesGerais: propostaForm.condicoesGerais,
+      condicoesPagamento: propostaForm.condicoesPagamento,
       prazo: propostaForm.prazo,
       encerramento: propostaForm.encerramento,
-      preco_texto_livre: propostaForm.precoTextoLivre,
     };
 
     try {
@@ -602,9 +604,13 @@ export function PropostaView() {
       setSelectedObra(null);
       setPropostaForm(getInitialPropostaForm());
       setNovaColunaPorEscopo({});
-    } catch (err) {
-      console.error('Erro ao salvar proposta:', err);
-      alert('Erro ao salvar proposta. Verifique os dados e tente novamente.');
+    } catch (err: any) {
+      console.error('Erro ao salvar proposta:', err?.response?.data || err);
+      const data = err?.response?.data;
+      const detalhe = data
+        ? (typeof data === 'string' ? data : JSON.stringify(data))
+        : (err?.message || '');
+      alert(`Erro ao salvar proposta. Verifique os dados e tente novamente.${detalhe ? `\n\nDetalhe: ${detalhe}` : ''}`);
     }
   };
 
@@ -627,8 +633,7 @@ export function PropostaView() {
       if (typeof ep === 'string') return ep;
       return (ep.nome || ep.razaoSocial || ep.empresaNome || '').toString();
     })();
-    const cleaned = (rawEmpresa || '').toString().toLowerCase();
-    const isLinave = cleaned.includes('linave');
+    const isLinave = isEmpresaLinave(rawEmpresa);
 
     try {
       const templateUrl = isLinave ? '/templates/LINAVE.docx' : '/templates/SERVINAVE.docx';
@@ -1501,12 +1506,10 @@ export function PropostaView() {
                 : (obraCtx?.orcamentos || []);
               const ultimoOrc = orcamentos[orcamentos.length - 1];
               // Backend usa "duracao" em atividades; frontend salva como "dias"
+              // Dias previstos = SOMENTE o somatório das atividades previstas (não inclui dias de mão de obra)
               const atividades: any[] = ultimoOrc?.data?.atividades || [];
-              const maoDeObra: any[] = ultimoOrc?.data?.maoDeObra || [];
               const parseDias = (val: any) => parseFloat(String(val ?? 0)) || 0;
-              const total =
-                atividades.reduce((s, i) => s + parseDias(i.dias ?? i.duracao), 0) +
-                maoDeObra.reduce((s, i) => s + parseDias(i.dias), 0);
+              const total = atividades.reduce((s, i) => s + parseDias(i.dias ?? i.duracao), 0);
               return (
                 <div className="h-20 flex items-center justify-center bg-amber-500/10 border border-amber-500/30 rounded-lg">
                   <div className="text-center">

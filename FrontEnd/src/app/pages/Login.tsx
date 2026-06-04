@@ -6,6 +6,11 @@ const MOCK_GERENTE_COMERCIAL_EMAIL = 'gerente.comercial@linave.com.br';
 const MOCK_DIRETOR_FINANCEIRO_EMAIL = 'diretor.financeiro@linave.com.br';
 const SESSION_STORAGE_KEY = 'erp.userSession';
 
+// Todos os perfis de teste (admin + gerente + diretor) pertencem à MESMA empresa, então
+// compartilham um único workspace identificado pelo email do dono (tenant). Sem isso, cada
+// login carregaria um workspace separado e não veria os dados dos outros.
+const WORKSPACE_OWNER_EMAIL = 'admin@modo-teste.com';
+
 export function LoginPage({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) {
   const { loginDireto } = useErp();
 
@@ -37,8 +42,10 @@ export function LoginPage({ onLoginSuccess }: { onLoginSuccess: (user: any) => v
         email: MOCK_GERENTE_COMERCIAL_EMAIL,
         role: 'USER',
         nome: 'Gerente Comercial',
+        workspaceOwner: WORKSPACE_OWNER_EMAIL,
         permissoes: {
           compras: true,
+          kanbanCompras: true,
           aprovacoesCompras: true,
           aprovacoesComprasGerente: true,
         },
@@ -50,8 +57,10 @@ export function LoginPage({ onLoginSuccess }: { onLoginSuccess: (user: any) => v
         email: MOCK_DIRETOR_FINANCEIRO_EMAIL,
         role: 'USER',
         nome: 'Diretor Financeiro',
+        workspaceOwner: WORKSPACE_OWNER_EMAIL,
         permissoes: {
           compras: true,
+          kanbanCompras: true,
           aprovacoesCompras: true,
           aprovacoesComprasFinanceiro: true,
         },

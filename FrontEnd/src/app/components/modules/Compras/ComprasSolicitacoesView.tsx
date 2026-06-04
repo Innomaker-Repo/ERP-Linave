@@ -1,10 +1,20 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { Eraser, Plus, Send, ShoppingCart, Trash2 } from 'lucide-react';
 import { createDefaultRequest, createEmptyItem, createId, type ItemCompra } from './comprasLocal';
+import { isOsAprovada } from '../../../../services/ordensServico';
 
 export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQuery: string }) {
-  const { obras, userSession } = useErp();
+  const { obras, os, userSession } = useErp();
+
+  // Centro de Custo só lista obras que já têm uma OS APROVADA (mesma regra da aba de Produção).
+  const obrasComOSAprovada = useMemo(() => {
+    const listaOS = Array.isArray(os) ? os : [];
+    const obraIdsAprovadas = new Set(
+      listaOS.filter((item: any) => isOsAprovada(item)).map((item: any) => item.obraId).filter(Boolean)
+    );
+    return (obras || []).filter((obra: any) => obraIdsAprovadas.has(obra.id));
+  }, [obras, os]);
   const [formData, setFormData] = useState(() =>
     createDefaultRequest(userSession?.nome || userSession?.email || '', '', '')
   );
@@ -102,9 +112,13 @@ export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQ
                 onChange={(event) => setFormData({ ...formData, centroCusto: event.target.value })}
               >
                 <option value="">Vincular a um projeto...</option>
-                {obras?.map((obra: any) => (
-                  <option key={obra.id} value={obra.nome}>{obra.nome}</option>
-                ))}
+                {obrasComOSAprovada.length === 0 ? (
+                  <option value="" disabled>Nenhuma obra com OS aprovada</option>
+                ) : (
+                  obrasComOSAprovada.map((obra: any) => (
+                    <option key={obra.id} value={obra.nome}>{obra.nome}</option>
+                  ))
+                )}
               </select>
               <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-white/30">▼</div>
             </div>

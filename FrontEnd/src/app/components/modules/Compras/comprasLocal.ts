@@ -3,9 +3,24 @@ import { CheckCircle2, ClipboardList, Clock3, Users } from 'lucide-react';
 
 export type BoardStage = 'SOLICITACOES' | 'SELECAO_GERENTE' | 'APROVACAO' | 'COMPRADOS';
 export type ApprovalRoute = 'gerenteComercial' | 'diretorFinanceiro' | null;
-export type PurchaseState = 'comprado' | 'entregue' | 'estoque' | 'contratado';
+// Itens (produtos) iniciam em 'comprar' e avançam para comprado/entregue/estoque.
+// Serviços iniciam em 'aContratar' e avançam para contratado.
+export type PurchaseState = 'comprar' | 'comprado' | 'entregue' | 'estoque' | 'aContratar' | 'contratado';
 
 export const APPROVAL_LIMIT = 500;
+
+// Emails mockados dos únicos perfis autorizados a selecionar o fornecedor na etapa
+// "Seleção do Gerente". Provisório até existir um modelo de permissões por usuário.
+export const MOCK_GERENTE_COMERCIAL_EMAIL = 'gerente.comercial@linave.com.br';
+export const MOCK_DIRETOR_FINANCEIRO_EMAIL = 'diretor.financeiro@linave.com.br';
+
+// Só o gerente comercial ou o diretor financeiro (mockados) podem operar a etapa de
+// seleção do gerente. Assim que selecionam e enviam, o pedido avança para uma etapa
+// visível a todos.
+export const podeSelecionarFornecedorGerente = (email?: string | null): boolean => {
+  const normalized = String(email || '').trim().toLowerCase();
+  return normalized === MOCK_GERENTE_COMERCIAL_EMAIL || normalized === MOCK_DIRETOR_FINANCEIRO_EMAIL;
+};
 
 export const approvalRouteLabel: Record<Exclude<ApprovalRoute, null>, string> = {
   gerenteComercial: 'Gerente Comercial',
@@ -98,16 +113,18 @@ export const BOARD_COLUMNS: Array<{ id: BoardStage; title: string; subtitle: str
   {
     id: 'COMPRADOS',
     title: 'Compras',
-    subtitle: 'Comprado, entregue, estoque ou contratado por item',
+    subtitle: 'Itens iniciam em Comprar; serviços em À contratar — avançam por item',
     icon: CheckCircle2,
     accent: 'from-emerald-500/20 to-emerald-500/5 border-emerald-500/20 text-emerald-300',
   },
 ];
 
 export const purchaseStateLabel: Record<PurchaseState, string> = {
+  comprar: 'Comprar',
   comprado: 'Comprado',
   entregue: 'Entregue',
   estoque: 'Estoque',
+  aContratar: 'À contratar',
   contratado: 'Contratado',
 };
 
@@ -131,7 +148,7 @@ export const createEmptyItem = (): ItemCompra => ({
   link: '',
   fornecedor: '',
   naturezaFornecimento: 'SERVICO',
-  purchaseState: 'contratado',
+  purchaseState: 'aContratar',
 });
 
 export const createDefaultRequest = (solicitante = '', departamento = '', centroCusto = ''): FormState => ({
@@ -212,9 +229,9 @@ export const normalizeRequests = (value: unknown): RequisicaoCompra[] => {
             link: String(it.link || ''),
             fornecedor: String(it.fornecedor || ''),
             naturezaFornecimento: it.naturezaFornecimento === 'ITEM' || it.naturezaFornecimento === 'SERVICO' ? it.naturezaFornecimento : 'SERVICO',
-            purchaseState: it.purchaseState === 'comprado' || it.purchaseState === 'entregue' || it.purchaseState === 'estoque' || it.purchaseState === 'contratado'
+            purchaseState: ['comprar', 'comprado', 'entregue', 'estoque', 'aContratar', 'contratado'].includes(it.purchaseState)
               ? it.purchaseState
-              : (it.naturezaFornecimento === 'ITEM' ? 'comprado' : 'contratado'),
+              : (it.naturezaFornecimento === 'ITEM' ? 'comprar' : 'aContratar'),
           }))
         : [],
       stage: ['SOLICITACOES','SELECAO_GERENTE','APROVACAO','COMPRADOS'].includes(item.stage) ? item.stage : 'SOLICITACOES',

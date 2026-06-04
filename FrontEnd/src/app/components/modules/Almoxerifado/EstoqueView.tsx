@@ -5,10 +5,9 @@ import { Badge } from '../../../modules/shared/ui/badge';
 import { Input } from '../../../modules/shared/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../modules/shared/ui/select';
 import { useErp } from '../../../context/ErpContext';
-import { getOrdensServico, getOsOptionLabel, getOsOptionValue, getOsStableValue, type OrdemServicoResumo, isOsAlvo } from '../../../../services/ordensServico';
+import { getOrdensServico, getOsOptionLabel, getOsOptionValue, getOsStableValue, type OrdemServicoResumo, isOsAprovada } from '../../../../services/ordensServico';
 import api from '../../../../services/api';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import { gerarRomaneioPdf, loadRomaneioLogoBase64 } from './romaneioPdf';
 
 interface StockColumn {
   key: string;
@@ -76,6 +75,10 @@ interface RomaneioHistoricoItemRow {
   rowId: string;
   itemLabel: string;
   quantidade?: string;
+  mode?: 'alocacao' | 'baixa';
+  kind?: RomaneioItemKind;
+  // Quantidades por tipo de gás que saíram (apenas itens de gás). Ex.: { gasoxigenio: 3 }
+  gasQuantities?: Record<string, number>;
   snapshotBefore: Record<string, string>;
   snapshotAfter: Record<string, string>;
 }
@@ -87,6 +90,7 @@ interface RomaneioHistoricoItem {
   osId: string;
   osLabel: string;
   osLocal?: string;
+  osCliente?: string;
   items: RomaneioHistoricoItemRow[];
   revertedAt?: string;
   revertedBy?: string;
@@ -267,6 +271,29 @@ const getOsLocalExecution = (os: any) => cleanValue(
   || os?.localExecucao
   || os?.local
 );
+
+type RomaneioItemKind = 'material' | 'gas' | 'equipamento';
+
+// Define o tratamento de cada item no romaneio a partir da tabela de origem:
+// - Materiais       -> baixa (consumível, deduz a quantidade escolhida do estoque)
+// - Alugados - Gases -> gás (deduz as quantidades por tipo; retornam por quantidade)
+// - Demais          -> equipamento/alugado, alocação do item inteiro
+const getRomaneioItemKind = (tableName: string): RomaneioItemKind => {
+  const normalized = normalizeKey(tableName);
+  if (normalized === 'materiais') return 'material';
+  if (normalized === 'alugadosgases') return 'gas';
+  return 'equipamento';
+};
+
+// Lista as colunas de gás (chaves "gas...") de uma linha da tabela de gases.
+const getGasKeys = (values: Record<string, string>) =>
+  Object.keys(values || {}).filter((key) => key.startsWith('gas'));
+
+// Converte quantidades textuais do estoque ("120", "6", "1,5") em número.
+const parseEstoqueQty = (value: unknown): number => {
+  const parsed = parseFloat(String(value ?? '').replace(',', '.').replace(/[^0-9.]/g, ''));
+  return Number.isFinite(parsed) ? parsed : 0;
+};
 
 const INITIAL_GAS_TYPES = ['Oxigênio', 'Acetileno'];
 const EMPTY_SERVICE_OS_VALUE = '__none__';
@@ -512,7 +539,8 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   const [selectedForRomaneio, setSelectedForRomaneio] = useState<Set<string>>(new Set());
   const [isRomaneioModalOpen, setIsRomaneioModalOpen] = useState(false);
   const [romaneioOsId, setRomaneioOsId] = useState<string>('');
-  const [romaneioMode, setRomaneioMode] = useState<'alocacao' | 'baixa'>('alocacao');
+  // Quantidade de baixa por material selecionado (chave `tableName::rowId`).
+  const [romaneioQuantities, setRomaneioQuantities] = useState<Record<string, string>>({});
 
   useEffect(() => {
     let mounted = true;
@@ -542,17 +570,24 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     const backend = Array.isArray(ordensServicoBackend) ? ordensServicoBackend : [];
     const ctx = Array.isArray(os) ? os : [];
 
-    const merged = [...backend];
-    for (const item of ctx) {
-      if (!isOsAlvo(item)) continue;
-      const val = getOsStableValue(item as any);
-      if (!val) continue;
-      if (!merged.some((m) => getOsStableValue(m as any) === val)) {
-        merged.push(item as any);
-      }
-    }
+    // Regra: só OS APROVADAS podem receber alocação/baixa (mesma regra da Produção).
+    // A aprovação é gravada no contexto (workspace) pela CRM, então priorizamos o contexto
+    // para não ser ofuscado por um registro "pendente" vindo do backend com o mesmo número.
+    const result: any[] = [];
+    const seen = new Set<string>();
 
-    return merged;
+    const adicionar = (item: any) => {
+      if (!isOsAprovada(item)) return;
+      const val = getOsStableValue(item as any) || String((item as any)?.id || '');
+      if (!val || seen.has(val)) return;
+      seen.add(val);
+      result.push(item);
+    };
+
+    ctx.forEach(adicionar);
+    backend.forEach(adicionar);
+
+    return result;
   }, [ordensServicoBackend, os]);
 
   React.useEffect(() => {
@@ -1365,30 +1400,6 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     return items;
   };
 
-  const generateRomaneioPdf = (osLabel: string, osLocal: string, selectedRows: { tableName: string; row: StockRow }[]) => {
-    const doc = new jsPDF({ unit: 'pt', format: 'a4' });
-    const title = `Romaneio - OS: ${osLabel}`;
-    doc.setFontSize(14);
-    doc.text(title, 40, 50);
-
-    const rows = selectedRows.map(({ tableName, row }) => [
-      tableName,
-      row.values.item || row.id,
-      row.values.material || row.values.equipamento || row.values.fornecedor || '—',
-      row.values.quantidade || row.values.qtd || '1',
-      osLocal || row.values.localizacao || '—'
-    ]);
-
-    autoTable(doc, {
-      head: [['Tabela', 'Item', 'Descrição', 'Quantidade', 'Local']],
-      body: rows,
-      startY: 80,
-      styles: { fontSize: 10 }
-    });
-
-    return doc;
-  };
-
   const handleConfirmRomaneio = async () => {
     const selectedRows = getSelectedRows();
     if (selectedRows.length === 0) {
@@ -1416,109 +1427,206 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
 
     const effectiveOsLabel = osLabel || romaneioOsId;
     const effectiveOsLocal = osLocal || '';
-    const isBaixa = romaneioMode === 'baixa';
 
+    // Valida as quantidades de baixa dos materiais antes de aplicar qualquer mudança.
+    for (const { tableName, row } of selectedRows) {
+      if (getRomaneioItemKind(tableName) !== 'material') continue;
+      const estoque = parseEstoqueQty(row.values.quantidade);
+      const key = keyForRow(tableName, row.id);
+      const baixa = parseEstoqueQty(romaneioQuantities[key] ?? '');
+      const nome = row.values.material || row.values.item || row.id;
+      if (baixa <= 0) {
+        alert(`Informe a quantidade de baixa para o material "${nome}".`);
+        return;
+      }
+      if (baixa > estoque) {
+        alert(`A quantidade de baixa (${baixa}) do material "${nome}" excede o estoque disponível (${estoque}).`);
+        return;
+      }
+    }
+
+    const timestamp = new Date().toISOString();
+
+    // Define o tratamento de cada item conforme seu tipo:
+    // - material -> baixa (deduz a quantidade escolhida);
+    // - gás      -> deduz as quantidades atuais por tipo (saem do estoque, retornam por quantidade);
+    // - demais   -> alocação do item inteiro.
     const romaneioItems = selectedRows.map(({ tableName, row }) => {
-      const nextValues = isBaixa
-        ? {
-            ...row.values,
-            serviceOS: effectiveOsLabel,
-            localizacao: effectiveOsLocal || row.values.localizacao,
-            status: 'Baixa'
-          }
-        : {
-            ...row.values,
-            serviceOS: effectiveOsLabel,
-            localizacao: effectiveOsLocal || row.values.localizacao,
-            status: 'Alocado'
-          };
+      const kind = getRomaneioItemKind(tableName);
+      const key = keyForRow(tableName, row.id);
 
+      if (kind === 'material') {
+        const estoque = parseEstoqueQty(row.values.quantidade);
+        const baixaQty = Math.min(estoque, Math.max(0, parseEstoqueQty(romaneioQuantities[key] ?? '')));
+        const restante = Math.max(0, estoque - baixaQty);
+        const nextValues = {
+          ...row.values,
+          quantidade: String(restante),
+          serviceOS: effectiveOsLabel,
+          localizacao: effectiveOsLocal || row.values.localizacao,
+        };
+        return {
+          tableName,
+          rowId: row.id,
+          mode: 'baixa' as const,
+          kind,
+          itemLabel: row.values.material || row.values.item || row.id,
+          quantidade: String(baixaQty),
+          removed: restante <= 0,
+          snapshotBefore: { ...row.values },
+          snapshotAfter: nextValues,
+        };
+      }
+
+      if (kind === 'gas') {
+        // Registra a quantidade atual de cada gás (sai do estoque) e zera na linha.
+        const gasQuantities: Record<string, number> = {};
+        const nextValues = { ...row.values };
+        getGasKeys(row.values).forEach((gasKey) => {
+          const atual = parseEstoqueQty(row.values[gasKey]);
+          if (atual > 0) gasQuantities[gasKey] = atual;
+          nextValues[gasKey] = '0';
+        });
+        nextValues.total = '0';
+        const totalSaida = Object.values(gasQuantities).reduce((soma, valor) => soma + valor, 0);
+        return {
+          tableName,
+          rowId: row.id,
+          mode: 'alocacao' as const,
+          kind,
+          itemLabel: row.values.fornecedor || row.values.item || row.id,
+          quantidade: String(totalSaida),
+          gasQuantities,
+          removed: false,
+          snapshotBefore: { ...row.values },
+          snapshotAfter: nextValues,
+        };
+      }
+
+      const nextValues = {
+        ...row.values,
+        serviceOS: effectiveOsLabel,
+        localizacao: effectiveOsLocal || row.values.localizacao,
+        status: 'Alocado',
+      };
       return {
         tableName,
         rowId: row.id,
+        mode: 'alocacao' as const,
+        kind,
         itemLabel: row.values.material || row.values.equipamento || row.values.fornecedor || row.values.item || row.id,
         quantidade: row.values.quantidade || row.values.qtd || '1',
+        removed: false,
         snapshotBefore: { ...row.values },
-        snapshotAfter: { ...nextValues }
+        snapshotAfter: nextValues,
       };
     });
 
-    const snapshotByKey = new Map(romaneioItems.map((item) => [keyForRow(item.tableName, item.rowId), item.snapshotAfter]));
+    const byKey = new Map(romaneioItems.map((item) => [keyForRow(item.tableName, item.rowId), item]));
 
-    setTables(prev => prev.flatMap(table => [{
+    // Aplica no estoque: materiais totalmente consumidos saem da tabela;
+    // os demais (baixa parcial ou alocação) têm os valores atualizados.
+    setTables((prev) => prev.map((table) => ({
       ...table,
-      rows: table.rows.filter(row => {
-        const key = keyForRow(table.name, row.id);
-        return !(romaneioMode === 'baixa' && snapshotByKey.has(key));
-      }).map(row => {
-        const key = keyForRow(table.name, row.id);
-        const nextValues = snapshotByKey.get(key);
-        if (!nextValues) return row;
-        return {
+      rows: table.rows.flatMap((row) => {
+        const item = byKey.get(keyForRow(table.name, row.id));
+        if (!item) return [row];
+        if (item.removed) return [];
+        return [{
           ...row,
-          values: nextValues,
-          searchText: Object.values(nextValues).join(' ').toLowerCase()
-        };
+          values: item.snapshotAfter,
+          searchText: Object.values(item.snapshotAfter).join(' ').toLowerCase(),
+        }];
       })
-    }]));
+    })));
 
-    const timestamp = new Date().toISOString();
-    const newHist = selectedRows.map(({ tableName, row }) => ({
-      id: `aloc-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
-      action: (romaneioMode === 'baixa' ? 'baixa' : 'alocar') as AllocationHistoricoItem['action'],
-      kind: (tableName === 'Alugados - Equipamentos' ? 'equipamentos' : tableName === 'Materiais' ? 'materiais' : 'outros') as AllocationHistoricoItem['kind'],
+    const novosEventos = romaneioItems.map((item) => ({
+      id: `aloc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      action: (item.mode === 'baixa' ? 'baixa' : 'alocar') as AllocationHistoricoItem['action'],
+      kind: (item.kind === 'gas'
+        ? 'gases'
+        : item.tableName === 'Alugados - Equipamentos'
+          ? 'equipamentos'
+          : item.tableName === 'Materiais'
+            ? 'materiais'
+            : 'outros') as AllocationHistoricoItem['kind'],
       dataEvento: timestamp,
       osId: romaneioOsId,
       osLabel: effectiveOsLabel,
-      itemLabel: row.values.material || row.values.equipamento || row.values.item || 'Item',
-      tableName,
-      local: effectiveOsLocal || row.values.localizacao || ''
+      itemLabel: item.itemLabel,
+      tableName: item.tableName,
+      quantity: (item.mode === 'baixa' || item.kind === 'gas') ? (Number(item.quantidade) || undefined) : undefined,
+      local: effectiveOsLocal || item.snapshotBefore.localizacao || '',
     }));
 
-    setAlocacoesHistorico(prev => [...newHist, ...prev]);
+    setAlocacoesHistorico((prev) => [...novosEventos, ...prev]);
 
-    if (romaneioMode === 'baixa') {
+    // Histórico de baixa registra apenas os materiais consumidos.
+    const baixaItems = romaneioItems.filter((item) => item.mode === 'baixa');
+    if (baixaItems.length > 0) {
       setBaixasHistorico((prev) => [
-        ...selectedRows.map(({ tableName, row }) => ({
+        ...baixaItems.map((item) => ({
           id: `baixa-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           dataBaixa: timestamp,
-          tableName,
-          itemLabel: row.values.material || row.values.equipamento || row.values.fornecedor || row.values.item || 'Item',
-          statusAnterior: row.values.status || '',
+          tableName: item.tableName,
+          itemLabel: `${item.itemLabel} (x${item.quantidade})`,
+          statusAnterior: item.snapshotBefore.status || '',
           osId: romaneioOsId,
           osLabel: effectiveOsLabel,
-          localizacao: effectiveOsLocal || row.values.localizacao || '',
+          localizacao: effectiveOsLocal || item.snapshotBefore.localizacao || '',
           serviceOS: effectiveOsLabel,
-          snapshot: { ...row.values }
+          snapshot: { ...item.snapshotBefore },
         })),
         ...prev
       ]);
     }
 
+    // Romaneio só é considerado de "baixa" (sem devolução) quando todos os itens são materiais.
+    const romaneioModeResolvido = romaneioItems.every((item) => item.mode === 'baixa') ? 'baixa' : 'alocacao';
+
+    const osCliente = cleanValue(
+      (selectedOs as any)?.cliente_detalhes?.razao_social
+      || (selectedOs as any)?.cliente_detalhes?.razaoSocial
+      || (selectedOs as any)?.cliente
+      || ''
+    );
+
     setRomaneiosHistorico((prev) => [
       {
         id: `rom-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         createdAt: timestamp,
-        mode: romaneioMode,
+        mode: romaneioModeResolvido,
         osId: romaneioOsId,
         osLabel: effectiveOsLabel,
         osLocal: effectiveOsLocal,
-        items: romaneioItems,
+        osCliente,
+        items: romaneioItems.map(({ removed, ...rest }) => rest),
       },
       ...prev
     ]);
 
     try {
-      const doc = generateRomaneioPdf(effectiveOsLabel, effectiveOsLocal, selectedRows);
+      const logoBase64 = await loadRomaneioLogoBase64();
+      const doc = gerarRomaneioPdf({
+        cliente: osCliente,
+        osLabel: effectiveOsLabel,
+        enderecoEntrega: effectiveOsLocal,
+        dataEmissao: timestamp,
+        items: romaneioItems.map((item) => ({
+          descricao: item.itemLabel,
+          quantidade: item.quantidade || '1',
+        })),
+        logoBase64,
+      });
       doc.save(`romaneio-${effectiveOsLabel || romaneioOsId}.pdf`);
     } catch (e) {
       console.error('Erro ao gerar pdf do romaneio', e);
     }
 
     setSelectedForRomaneio(new Set());
+    setRomaneioQuantities({});
     setIsRomaneioModalOpen(false);
     setRomaneioOsId('');
-    setRomaneioMode('alocacao');
   };
 
   const renderCell = (row: StockRow, column: StockColumn) => {
@@ -1818,14 +1926,24 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
           <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">Ação Rápida</label>
           <div className="grid grid-cols-2 gap-2 w-full min-w-[260px]">
             {selectedTable.name === 'Alugados - Gases' ? (
-              <button
-                type="button"
-                onClick={() => setIsAllocateModalOpen(true)}
-                className="col-span-2 inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-red-500/30 bg-red-500/15 px-4 text-xs font-bold uppercase tracking-widest text-red-200 transition hover:bg-red-500/25 hover:text-white shadow-sm"
-              >
-                <MapPin size={16} />
-                Alocar
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={openRegisterModal}
+                  className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/15 px-4 text-xs font-bold uppercase tracking-widest text-emerald-200 transition hover:bg-emerald-500/25 hover:text-white shadow-sm"
+                >
+                  <Plus size={16} />
+                  Registrar Item
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsAllocateModalOpen(true)}
+                  className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-red-500/30 bg-red-500/15 px-4 text-xs font-bold uppercase tracking-widest text-red-200 transition hover:bg-red-500/25 hover:text-white shadow-sm"
+                >
+                  <MapPin size={16} />
+                  Alocar
+                </button>
+              </>
             ) : (
               <button
                 type="button"
@@ -2462,7 +2580,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-wider text-amber-400 mb-1">Romaneio</p>
                 <h2 className="text-xl font-black uppercase tracking-wide text-white">
-                  {romaneioMode === 'baixa' ? 'Baixa em massa' : 'Alocação em massa'}
+                  Gerar romaneio
                 </h2>
               </div>
               <button type="button" onClick={() => setIsRomaneioModalOpen(false)} className="rounded-full bg-white/5 p-2.5 text-white/70 hover:bg-white/10">
@@ -2488,19 +2606,6 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                   </Select>
                 </div>
 
-                <div className="w-full md:w-56 space-y-2">
-                  <label className="block ml-1 text-[11px] font-bold uppercase tracking-wider text-white/50">Tipo de romaneio</label>
-                  <Select value={romaneioMode} onValueChange={(value) => setRomaneioMode(value as 'alocacao' | 'baixa')}>
-                    <SelectTrigger className="w-full rounded-xl border border-white/5 bg-[#0b1220]/80 h-12 text-white shadow-sm focus:border-white/30 hover:border-white/20">
-                      <SelectValue placeholder="Selecione o tipo" />
-                    </SelectTrigger>
-                    <SelectContent className="border border-white/10 bg-[#0b1220] text-white">
-                      <SelectItem value="alocacao" className="rounded-lg">Alocação</SelectItem>
-                      <SelectItem value="baixa" className="rounded-lg">Baixa</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
                 <div className="w-full md:w-auto min-w-[140px]">
                    <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-center shadow-inner">
                       <p className="text-[10px] font-bold uppercase tracking-widest text-amber-400/80 mb-1">Selecionados</p>
@@ -2510,7 +2615,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
               </div>
 
               <div className="rounded-xl border border-white/5 bg-white/[0.02] p-4 shadow-inner">
-                <p className="text-[11px] font-bold uppercase tracking-wider text-white/50">Local da OS</p>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-white/50">Local de destino (preenchido pela OS)</p>
                 <p className="mt-2 text-sm font-semibold text-white/80">
                   {(() => {
                     const { osLocal } = resolveSelectedOsData(romaneioOsId);
@@ -2520,29 +2625,71 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
               </div>
 
               <div className="rounded-xl border border-white/5 bg-white/[0.02] p-5 shadow-inner">
-                <h4 className="text-[11px] font-bold uppercase tracking-wider text-white/50 mb-4">Itens Selecionados</h4>
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                  <h4 className="text-[11px] font-bold uppercase tracking-wider text-white/50">Itens Selecionados</h4>
+                  <p className="text-[10px] text-white/40">
+                    <span className="font-bold text-red-300">Materiais</span> são baixados (consumidos) •{' '}
+                    <span className="font-bold text-emerald-300">Equipamentos e alugados</span> são alocados
+                  </p>
+                </div>
                 <div className="max-h-60 overflow-y-auto pr-2 custom-scrollbar">
                   {getSelectedRows().length === 0 ? (
                     <p className="text-white/40 text-sm text-center py-4">Nenhum item selecionado.</p>
                   ) : (
                     <ul className="space-y-2">
-                      {getSelectedRows().map(({ tableName, row }) => (
-                        <li key={`${tableName}::${row.id}`} className="flex items-center justify-between rounded-lg border border-white/5 bg-[#0b1220]/40 p-3 shadow-sm">
-                          <div className="min-w-0 pr-4">
-                            <div className="text-sm font-bold text-white truncate">{row.values.material || row.values.fornecedor || row.values.item}</div>
-                            <div className="text-xs text-white/50 mt-1">{tableName} • <span className="font-semibold text-white/70">{row.values.quantidade || row.values.qtd || '1'} unid.</span></div>
-                          </div>
-                          <div>
-                            <button 
-                              type="button" 
-                              onClick={() => setSelectedForRomaneio(prev => { const next = new Set(prev); next.delete(`${tableName}::${row.id}`); return next; })} 
-                              className="rounded-lg bg-red-500/10 px-3 py-1.5 text-red-300 text-[10px] font-bold uppercase tracking-wider hover:bg-red-500/20 transition whitespace-nowrap"
+                      {getSelectedRows().map(({ tableName, row }) => {
+                        const key = `${tableName}::${row.id}`;
+                        const kind = getRomaneioItemKind(tableName);
+                        const estoque = parseEstoqueQty(row.values.quantidade || row.values.qtd);
+                        const qtdBaixa = romaneioQuantities[key] ?? '';
+                        return (
+                          <li key={key} className="flex items-center justify-between gap-3 rounded-lg border border-white/5 bg-[#0b1220]/40 p-3 shadow-sm">
+                            <div className="min-w-0 flex-1 pr-2">
+                              <div className="text-sm font-bold text-white truncate">{row.values.material || row.values.equipamento || row.values.fornecedor || row.values.item}</div>
+                              <div className="mt-1 flex items-center gap-2 text-xs text-white/50">
+                                <span className="truncate">{tableName}</span>
+                                {kind === 'material' ? (
+                                  <span className="shrink-0 rounded-md bg-red-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-red-300">Baixa</span>
+                                ) : kind === 'gas' ? (
+                                  <span className="shrink-0 rounded-md bg-cyan-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-cyan-300">Gás</span>
+                                ) : (
+                                  <span className="shrink-0 rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-300">Alocação</span>
+                                )}
+                              </div>
+                            </div>
+
+                            {kind === 'material' ? (
+                              <div className="flex flex-col items-end shrink-0">
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={estoque || undefined}
+                                  value={qtdBaixa}
+                                  placeholder={String(estoque || '')}
+                                  onChange={(e) => setRomaneioQuantities((prev) => ({ ...prev, [key]: e.target.value }))}
+                                  className="h-9 w-20 rounded-lg border border-white/10 bg-[#0b1220]/80 px-2 text-center text-sm text-white placeholder:text-white/30 focus:border-amber-500/40 focus:outline-none"
+                                />
+                                <span className="mt-0.5 text-[10px] text-white/40">baixar de {estoque || '—'}</span>
+                              </div>
+                            ) : kind === 'gas' ? (
+                              <span className="shrink-0 text-[10px] text-white/50 whitespace-nowrap text-right">envia o estoque<br/>atual ({getGasKeys(row.values).reduce((soma, gk) => soma + parseEstoqueQty(row.values[gk]), 0)} un.)</span>
+                            ) : (
+                              <span className="shrink-0 text-xs font-semibold text-white/60 whitespace-nowrap">1 unid.</span>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedForRomaneio(prev => { const next = new Set(prev); next.delete(key); return next; });
+                                setRomaneioQuantities(prev => { const next = { ...prev }; delete next[key]; return next; });
+                              }}
+                              className="shrink-0 rounded-lg bg-red-500/10 px-3 py-1.5 text-red-300 text-[10px] font-bold uppercase tracking-wider hover:bg-red-500/20 transition whitespace-nowrap"
                             >
                               Remover
                             </button>
-                          </div>
-                        </li>
-                      ))}
+                          </li>
+                        );
+                      })}
                     </ul>
                   )}
                 </div>
@@ -2551,7 +2698,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
 
             <div className="flex justify-end gap-3 border-t border-white/5 p-6 bg-[#131f37]">
               <button type="button" onClick={() => setIsRomaneioModalOpen(false)} className="rounded-xl border border-white/5 bg-[#0b1220]/80 px-6 py-3 text-xs font-bold uppercase tracking-wider text-white hover:bg-white/10 transition">Cancelar</button>
-              <button type="button" onClick={handleConfirmRomaneio} disabled={selectedForRomaneio.size === 0} className="rounded-xl bg-amber-600 px-6 py-3 text-xs font-bold uppercase tracking-wider text-white disabled:opacity-40 hover:bg-amber-500 shadow-lg transition">Alocar e Gerar Romaneio</button>
+              <button type="button" onClick={handleConfirmRomaneio} disabled={selectedForRomaneio.size === 0} className="rounded-xl bg-amber-600 px-6 py-3 text-xs font-bold uppercase tracking-wider text-white disabled:opacity-40 hover:bg-amber-500 shadow-lg transition">Gerar Romaneio</button>
             </div>
           </div>
         </div>

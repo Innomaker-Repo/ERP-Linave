@@ -1,16 +1,15 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, Clock3, ShoppingCart, Undo2 } from 'lucide-react';
 import { useErp } from '../../../context/ErpContext';
 import {
   approvalRouteLabel,
   formatCurrency,
+  MOCK_GERENTE_COMERCIAL_EMAIL,
+  MOCK_DIRETOR_FINANCEIRO_EMAIL,
   type QuoteItem,
   type ApprovalRoute,
   type RequisicaoCompra,
 } from './comprasLocal';
-
-const MOCK_GERENTE_COMERCIAL_EMAIL = 'gerente.comercial@linave.com.br';
-const MOCK_DIRETOR_FINANCEIRO_EMAIL = 'diretor.financeiro@linave.com.br';
 
 const isGerenteComercialEmail = (email: string) => {
   const normalized = email.trim().toLowerCase();
@@ -35,12 +34,20 @@ export function ComprasAprovacoesView({ searchQuery }: { searchQuery: string }) 
   const [requests, setRequests] = useState<RequisicaoCompra[]>(() => (Array.isArray(compras) ? compras : []));
   const [selectedRequest, setSelectedRequest] = useState<RequisicaoCompra | null>(null);
 
-  useEffect(() => {
-    void saveEntity?.('compras', requests || []);
-  }, [requests, saveEntity]);
+  // Só persiste em mudança de fato local (não no mount/sync), para não sobrescrever o
+  // workspace compartilhado com estado vazio/antigo.
+  const lastSyncedComprasRef = useRef<RequisicaoCompra[]>(Array.isArray(compras) ? compras : []);
 
   useEffect(() => {
-    if (Array.isArray(compras)) setRequests(compras);
+    if (requests === lastSyncedComprasRef.current) return;
+    void saveEntity?.('compras', requests || []);
+  }, [requests]);
+
+  useEffect(() => {
+    if (Array.isArray(compras)) {
+      lastSyncedComprasRef.current = compras;
+      setRequests(compras);
+    }
   }, [compras]);
 
   const isAdmin = userSession?.role === 'ADMIN';
@@ -92,18 +99,25 @@ export function ComprasAprovacoesView({ searchQuery }: { searchQuery: string }) 
   };
 
   const getDefaultItemPurchaseState = (naturezaFornecimento: 'ITEM' | 'SERVICO') => (
-    naturezaFornecimento === 'ITEM' ? 'comprado' : 'contratado'
+    naturezaFornecimento === 'ITEM' ? 'comprar' : 'aContratar'
   );
 
   const handleApprove = (requestId: string) => {
     patchRequest(requestId, (request) => ({
       ...request,
       stage: 'COMPRADOS',
-      itens: request.itens.map((item) => ({
-        ...item,
-        purchaseState: item.purchaseState || getDefaultItemPurchaseState(item.naturezaFornecimento),
-      })),
-      purchaseState: request.purchaseState || 'comprado',
+      // Ao entrar em finalizados, cada item começa no estado inicial conforme a natureza do
+      // fornecedor selecionado: ITEM -> "Comprar"; SERVIÇO -> "À contratar".
+      itens: request.itens.map((item) => {
+        const detail = (request.budgetDetails || []).find((d) => d.itemId === item.id);
+        const natureza = detail?.naturezaFornecimento || item.naturezaFornecimento || 'SERVICO';
+        return {
+          ...item,
+          naturezaFornecimento: natureza,
+          purchaseState: getDefaultItemPurchaseState(natureza),
+        };
+      }),
+      purchaseState: request.purchaseState || 'comprar',
       updatedAt: new Date().toISOString(),
     }));
   };

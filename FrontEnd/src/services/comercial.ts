@@ -165,8 +165,8 @@ export const buildOrcamentoPayload = (orcamentoData: any, obra: any, negocioId: 
   // Mapeamento correto para bater com models.py
   const mapMDOItem = (item: any) => ({
     fnc: String(item.funcao || item.fnc || 'Indefinido'),
-    qnt: parseInt(item.quantidade || item.qnt || 0),
-    dias: parseInt(item.dias || 0),
+    qnt: parseDecimal(item.quantidade || item.qnt || 0), // permite decimais (ex.: 0.5)
+    dias: parseDecimal(item.dias || 0), // permite decimais (ex.: 0.5)
     custo_unit_dia: parseDecimal(item.custoUnitDia || item.custo_unit_dia || 0),
     observacao: String(item.observacao || '').trim()
   });
@@ -174,7 +174,7 @@ export const buildOrcamentoPayload = (orcamentoData: any, obra: any, negocioId: 
  const mapMaterialItem = (item: any) => ({
   item: String(item.descricao || ''),
   unidade: String(item.unidade || ''),
-  qnt: parseInt(item.quantidade) || 0, // Backend espera "qnt"
+  qnt: parseDecimal(item.quantidade || 0), // Backend espera "qnt" — permite decimais
   peso: parseDecimal(item.pesoFator || 0),
   custo_unit: parseDecimal(item.custoUnit || 0), // Backend espera "custo_unit"
   terceirizado: item.origemTerceiros === 'Sim',
@@ -184,7 +184,7 @@ export const buildOrcamentoPayload = (orcamentoData: any, obra: any, negocioId: 
 const mapTerceirizadoItem = (item: any) => ({
   descricao: item.descricao || '',
   unidade: item.unidade || '',
-  qnt: parseInt(item.quantidade) || 0, // Backend espera "qnt"
+  qnt: parseDecimal(item.quantidade || 0), // Backend espera "qnt" — permite decimais
   peso: parseDecimal(item.pesoFator || 0),
   valor_unit: parseDecimal(item.custoUnit || 0), // Backend espera "valor_unit"
   observacao: String(item.observacao || item.observacoes || '').trim()
@@ -192,7 +192,7 @@ const mapTerceirizadoItem = (item: any) => ({
 
   const mapAtividadeItem = (item: any) => ({
     atividade: String(item.atividade || ''),
-    duracao: parseInt(item.dias || item.duracao || 0), // Nome correto no models.py
+    duracao: parseDecimal(item.dias || item.duracao || 0), // Nome correto no models.py — permite decimais (ex.: 0.5)
     observacao: String(item.observacao || '').trim()
   });
 
@@ -202,7 +202,7 @@ const mapTerceirizadoItem = (item: any) => ({
       margem: parseDecimal(orcamentoData.margem || 0),
       OH: parseDecimal(orcamentoData.oh || 0),
       impostos: parseDecimal(orcamentoData.impostos || 0),
-      qnt: parseInt(orcamentoData.quantidadeItensProduzidos) || 0
+      qnt: parseDecimal(orcamentoData.quantidadeItensProduzidos || 0) // permite decimais
     },
     mao_de_obra: Array.isArray(orcamentoData.maoDeObra)
       ? orcamentoData.maoDeObra.filter((mo: any) => mo.funcao && mo.funcao.trim() !== '').map(mapMDOItem)

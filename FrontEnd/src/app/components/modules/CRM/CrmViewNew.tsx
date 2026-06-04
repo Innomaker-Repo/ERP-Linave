@@ -6,9 +6,12 @@ import { toast } from 'sonner';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable'; // Importação nomeada do plugin
 import { handleDownloadMedicaoPDF } from './handleDownloadMedicaoPDF';
-import { handleDownloadPropostaPDF } from './handleDownloadPropostaPDF'; 
+import { handleDownloadPropostaPDF } from './handleDownloadPropostaPDF';
+import { handleDownloadOrcamentoPDF as gerarOrcamentoPDF } from './handleDownloadOrcamentoPDF';
+import { handleDownloadOSPDF as gerarOSPDF } from './handleDownloadOSPDF';
 import { getCachedWorkspace } from '../../../services/workspaceStorage';
 import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
+import { isEmpresaLinave, getLogoUrlForEmpresa } from '../../../utils/company';
 // Substitua as importações antigas por esta única:
 import { 
     getNegocios, 
@@ -866,9 +869,8 @@ const initialServico: Servico = {
 
     try {
       let logoBase64: string | undefined;
-      const empresaPrestadora = String(selectedObraDetalhes.empresaPrestadora || '').trim().toLowerCase();
-      const isLinave = empresaPrestadora.includes('linave');
-      const logoUrl = isLinave ? '/image2.jpg' : '/image1.png';
+      const isLinave = isEmpresaLinave(selectedObraDetalhes.empresaPrestadora);
+      const logoUrl = getLogoUrlForEmpresa(selectedObraDetalhes.empresaPrestadora);
 
       logoBase64 = await getBase64FromUrl(logoUrl);
 
@@ -1475,323 +1477,57 @@ const initialServico: Servico = {
   };
 
   const handleDownloadOSPDF = async () => {
-  const osDoNegocio = (os || []).filter((o: any) => o.obraId === selectedObraDetalhes?.id);
-  if (osDoNegocio.length === 0 && !selectedObraDetalhes) {
-    toast.error('Nenhuma OS vinculada a este negócio.');
-    return;
-  }
-
-  
-  // Pega a OS Consolidada mais recente, ou a primeira do array, ou usa o próprio selectedObraDetalhes como fallback
-  const osPrincipal = [...osDoNegocio].reverse().find((o: any) => o.tipoDocumento === 'consolidada' || (o.aSerIncluido && Object.keys(o.aSerIncluido).length > 0)) || osDoNegocio[0] || selectedObraDetalhes;
-  
-  const orcamentosBase = Array.isArray(osPrincipal?.orcamentos) && osPrincipal.orcamentos.length > 0
-    ? osPrincipal.orcamentos
-    : Array.isArray(selectedObraDetalhes?.orcamentos) && selectedObraDetalhes.orcamentos.length > 0
-      ? selectedObraDetalhes.orcamentos
-      : [];
-      
-  const propostasBase = Array.isArray(osPrincipal?.propostas) && osPrincipal.propostas.length > 0
-    ? osPrincipal.propostas
-    : Array.isArray(selectedObraDetalhes?.propostas) && selectedObraDetalhes.propostas.length > 0
-      ? selectedObraDetalhes.propostas
-      : [];
-      
-  const ultimoOrcamento = orcamentosBase.length > 0 ? orcamentosBase[orcamentosBase.length - 1] : null;
-  const ultimaProposta = propostasBase.length > 0 ? propostasBase[propostasBase.length - 1] : null;
-  const cliente = listaClientesCRM.find((c: any) => c.id === selectedObraDetalhes?.clienteId);
-  
-  let logoBase64 = await getBase64FromUrl('/image2.jpg');
-  
-  try {
-    const doc = new jsPDF('p', 'mm', 'a4');
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const margin = 10;
-    let y = margin;
-    
-    doc.setDrawColor(0);
-    doc.setLineWidth(0.3);
-    doc.rect(margin, y, pageWidth - 2 * margin, 35);        
-    doc.line(margin + 50, y, margin + 50, y + 15); 
-    doc.line(margin + 130, y, margin + 130, y + 15); 
-    doc.line(margin, y + 15, pageWidth - margin, y + 15); 
-    
-    if (logoBase64) {
-      const logoFormat = logoBase64.match(/^data:image\/(png|jpe?g)/i)?.[1]?.toLowerCase().includes('png') ? 'PNG' : 'JPEG';
-      doc.addImage(logoBase64, logoFormat, margin + 2, y + 2, 46, 11);
-    } else {
-      doc.setFont('Helvetica', 'bold');
-      doc.setFontSize(12);
-      doc.text('LINAVE', margin + 5, y + 10);
-    }
-    
-    doc.setFontSize(12);
-    doc.setFont('Helvetica', 'bold');
-    doc.text('ORDEM DE SERVIÇO\nDE PRODUÇÃO', margin + 90, y + 6.5, { align: 'center' });
-    
-    doc.setFontSize(7);
-    doc.text('Data Emissão:', margin + 132, y + 5);
-    doc.setFont('Helvetica', 'normal');
-    doc.text(osPrincipal.dataEmissao || new Date().toLocaleDateString('pt-BR'), margin + 155, y + 5);
-    
-    doc.setFont('Helvetica', 'bold');
-    doc.text('CC.:', margin + 132, y + 10);
-    doc.setFont('Helvetica', 'normal');
-    doc.text(osPrincipal.cc || 'Não inf.', margin + 142, y + 10);
-    y += 15;
-    
-    const rowH = 5;
-    doc.line(margin, y + rowH, pageWidth - margin, y + rowH);
-    doc.line(margin, y + rowH * 2, pageWidth - margin, y + rowH * 2);
-    doc.line(margin, y + rowH * 3, pageWidth - margin, y + rowH * 3);
-    doc.line(margin + 100, y, margin + 100, y + 20); 
-    
-    doc.setFontSize(8);
-    const printDado = (lbl: string, val: string, vx: number, vy: number) => {
-      doc.setFont('Helvetica', 'bold');
-      doc.text(lbl, vx, vy);
-      doc.setFont('Helvetica', 'normal');
-      doc.text(val || ' ', vx + 25, vy);
-    };
-    
-    const dataInicio = osPrincipal.dataInicioPrevisto || selectedObraDetalhes?.dataPrevistaInicio;
-    const dataTermino = osPrincipal.dataTerminoPrevisto || selectedObraDetalhes?.dataPrevistaFinal;
-    const idProjetoForPrint = selectedObraDetalhes?.id || '';
-    
-    printDado('CLIENTE:', cliente?.razaoSocial || '', margin + 2, y + 3.5);
-    printDado('Início Previsto:', dataInicio ? new Date(dataInicio).toLocaleDateString('pt-BR') : '', margin + 102, y + 3.5);
-    y += rowH;
-    
-    printDado('PROJETO:', `${selectedObraDetalhes?.nome || ''}${idProjetoForPrint ? ' • ' + idProjetoForPrint : ''}`, margin + 2, y + 3.5);
-    printDado('Térm. Previsto:', dataTermino ? new Date(dataTermino).toLocaleDateString('pt-BR') : '', margin + 102, y + 3.5);
-    y += rowH;
-    
-    printDado('EQUIPAMENTO:', osPrincipal.equipamento || osPrincipal.tipo || '', margin + 2, y + 3.5);
-    printDado('OS Nº:', osPrincipal.ordemServicoNumero || '', margin + 102, y + 3.5);
-    y += rowH;
-    
-    printDado('LOCAL:', osPrincipal.local || osPrincipal.localExecucao || '', margin + 2, y + 3.5);
-    printDado('Encarregado:', osPrincipal.supervisorEncarregado || '', margin + 102, y + 3.5);
-    y += rowH;
-    y += 5; 
-    
-    const leftW = 120;
-    const rightW = (pageWidth - 2 * margin) - leftW;
-    
-    doc.setFont('Helvetica', 'bold');
-    doc.setFillColor(230, 230, 230);
-    doc.rect(margin, y, leftW, 6, 'FD');
-    doc.rect(margin + leftW, y, rightW, 6, 'FD');
-    
-    doc.text('DESCRIÇÃO DO SERVIÇO', margin + leftW/2, y + 4, { align: 'center' });
-    doc.text('A SER INCLUIDO', margin + leftW + rightW/2, y + 4, { align: 'center' });
-    y += 6;
-    
-    const bodyY = y;
-    
-    doc.setFont('Helvetica', 'normal');
-    const descTexto = ultimaProposta ? formatarEscopoBasicoParaTexto(ultimaProposta.escopoBasicoServicos || ultimaProposta.escopoA) : (osPrincipal.descricao || osPrincipal.descricaoGeralServico || '');
-    const descLines = doc.splitTextToSize(descTexto, leftW - 4);
-    
-    let cursorEsq = bodyY + 5;
-    descLines.forEach((l: string) => {
-      doc.text(l, margin + 2, cursorEsq);
-      cursorEsq += 4;
-    });
-    
-    // ==========================================
-    // CORREÇÃO DOS X (A SER INCLUIDO)
-    // ==========================================
-    let baseChecks = osPrincipal?.aSerIncluido || selectedObraDetalhes?.aSerIncluido || {};
-    if (typeof baseChecks === 'string') {
-      try { baseChecks = JSON.parse(baseChecks); } catch(e) { baseChecks = {}; }
+    const osDoNegocio = (os || []).filter((o: any) => o.obraId === selectedObraDetalhes?.id);
+    if (osDoNegocio.length === 0 && !selectedObraDetalhes) {
+      toast.error('Nenhuma OS vinculada a este negócio.');
+      return;
     }
 
-    const getCheck = (uiLabel: string, dbKey: string) => {
-      let isChecked = false;
-      // 1. Lê os clicks da tela
-      try {
-        const checkboxes = document.querySelectorAll('input[type="checkbox"]');
-        for (let i = 0; i < checkboxes.length; i++) {
-          const input = checkboxes[i] as HTMLInputElement;
-          if (input.parentElement && input.parentElement.textContent && input.parentElement.textContent.includes(uiLabel)) {
-            if (input.checked) isChecked = true;
-          }
-        }
-      } catch (e) {}
+    const osPrincipal = [...osDoNegocio].reverse().find((o: any) => o.tipoDocumento === 'consolidada' || (o.aSerIncluido && Object.keys(o.aSerIncluido).length > 0)) || osDoNegocio[0] || selectedObraDetalhes;
 
-      // 2. Lê do banco de dados/estado se não achou na tela
-      if (!isChecked && (baseChecks[dbKey] === true || String(baseChecks[dbKey]) === 'true')) {
-        isChecked = true;
-      }
-      return isChecked;
-    };
+    const orcamentosBase = Array.isArray(osPrincipal?.orcamentos) && osPrincipal.orcamentos.length > 0
+      ? osPrincipal.orcamentos
+      : Array.isArray(selectedObraDetalhes?.orcamentos) && selectedObraDetalhes.orcamentos.length > 0
+        ? selectedObraDetalhes.orcamentos
+        : [];
 
-    const chk = (val: boolean) => val ? '[ X ]' : '[   ]';
-    
-    const listChecks = [
-      { lbl: 'CERTIFICADO DE GÁS FREE', v: getCheck('Certificado de Gás', 'certificadoGas') },
-      { lbl: 'VENTILAÇÃO', v: getCheck('Ventilação', 'ventilacao') },
-      { lbl: 'LIMPEZA ANTES', v: getCheck('Limpeza antes', 'limpezaAntes') },
-      { lbl: 'LIMPEZA APÓS CONCLUSÃO', v: getCheck('Limpeza após', 'limpezaApos') },
-      { lbl: 'ANDAIMES', v: getCheck('Andaimes', 'andaimes') },
-      { lbl: 'APOIO DE GUINDASTE', v: getCheck('Apoio de guindaste', 'apoioGuindastes') },
-      { lbl: 'TRANSPORTE EXTERNO', v: getCheck('Transporte externo', 'transporteExterno') },
-      { lbl: 'TESTE DE PRESSÃO', v: getCheck('Testes de pressão', 'testesPressao') },
-      { lbl: 'PINTURA', v: getCheck('Pintura', 'pintura') },
-      { lbl: 'LP / PM', v: getCheck('LP / PM', 'lpPm') },
-      { lbl: 'TESTE DE ULTRASSOM', v: getCheck('Teste de ultrassom', 'testeUltrassom') },
-      { lbl: 'INSPEÇÃO DIMENSIONAL', v: getCheck('Inspeção dimensional', 'inspecaoDimensional') },
-      { lbl: 'VISUAL DE SOLDA', v: getCheck('Visual de solda', 'visualSolda') },
-      { lbl: 'SOLDADOR CERTIFICADO', v: getCheck('Soldador certificado', 'soldadorCertificado') },
-      { lbl: 'PROCEDIMENTO DE SOLDA', v: getCheck('Procedimento de solda', 'procedimentoSolda') },
-      { lbl: 'CERTIFICAÇÃO DO MATERIAL', v: getCheck('Certificação do material', 'certificacaoMaterial') },
-      { lbl: 'VIGIA DE FOGO', v: getCheck('Vigia de fogo', 'vigiaFogo') }
-    ];
-    // ==========================================
-    
-    let cursorDir = bodyY + 5;
-    doc.setFontSize(7);
-    listChecks.forEach(c => {
-      doc.setFont('Helvetica', 'bold');
-      doc.text(chk(c.v), margin + leftW + 2, cursorDir);
-      doc.setFont('Helvetica', 'normal');
-      doc.text(c.lbl, margin + leftW + 10, cursorDir);
-      cursorDir += 4;
-    });
-    
-    const maxH = Math.max(cursorEsq, cursorDir) - bodyY + 5;
-    doc.rect(margin, bodyY, leftW, maxH);
-    doc.rect(margin + leftW, bodyY, rightW, maxH);
-    
-    y = bodyY + maxH + 5;
+    const propostasBase = Array.isArray(osPrincipal?.propostas) && osPrincipal.propostas.length > 0
+      ? osPrincipal.propostas
+      : Array.isArray(selectedObraDetalhes?.propostas) && selectedObraDetalhes.propostas.length > 0
+        ? selectedObraDetalhes.propostas
+        : [];
 
-    // --- NOVA TABELA DE MÃO DE OBRA ---
-    const maoDeObraOS = ultimoOrcamento?.data?.maoDeObra || [];
-    if (maoDeObraOS.length > 0) {
-      autoTable(doc, {
-        startY: y,
-        head: [['MÃO DE OBRA', 'QTDE', 'DIAS', 'ATIVIDADE', 'OBS.']],
-        body: maoDeObraOS.map((mo: any) => [
-          mo.cargo || mo.funcao || mo.maoDeObra || '',
-          mo.quantidade || mo.qtde || '',
-          mo.dias || '',
-          mo.atividade || '',
-          mo.obs || mo.observacao || '-'
-        ]),
-        theme: 'grid',
-        headStyles: { fillColor: [230, 230, 230], textColor: [0,0,0], fontStyle: 'bold', fontSize: 8 },
-        styles: { fontSize: 7, cellPadding: 2, textColor: [0,0,0] },
-        margin: { left: margin, right: margin }
-      });
-      y = (doc as any).lastAutoTable.finalY + 5;
-    }
+    const ultimoOrcamento = orcamentosBase.length > 0 ? orcamentosBase[orcamentosBase.length - 1] : null;
+    const ultimaProposta = propostasBase.length > 0 ? propostasBase[propostasBase.length - 1] : null;
+    const cliente = listaClientesCRM.find((c: any) => c.id === selectedObraDetalhes?.clienteId);
+    const logoBase64 = await getBase64FromUrl(getLogoUrlForEmpresa(selectedObraDetalhes?.empresaPrestadora));
 
-    const horasServicoOS = Array.isArray(osPrincipal?.horasTrabalhadasPorServico)
-      ? osPrincipal.horasTrabalhadasPorServico
-          .map((item: any, idx: number) => ({
-            id: String(item?.id || `hora-servico-${idx}`),
-            servico: String(item?.servico || '').trim(),
-            hora: Number(item?.hora || 0)
-          }))
-          .filter((item: any) => item.servico || item.hora > 0)
-      : [];
-    if (horasServicoOS.length > 0) {
-      const totalHorasServico = horasServicoOS.reduce((acc: number, item: any) => acc + (Number.isFinite(item.hora) ? item.hora : 0), 0);
-      autoTable(doc, {
-        startY: y,
-        head: [['SERVIÇO', 'HORA (H/H)']],
-        body: [
-          ...horasServicoOS.map((item: any) => [item.servico, String(item.hora)]),
-          ['HH TOTAL', String(totalHorasServico)]
-        ],
-        theme: 'grid',
-        headStyles: { fillColor: [230, 230, 230], textColor: [0,0,0], fontStyle: 'bold', fontSize: 8 },
-        styles: { fontSize: 7, cellPadding: 2, textColor: [0,0,0] },
-        margin: { left: margin, right: margin }
-      });
-      y = (doc as any).lastAutoTable.finalY + 5;
-    }
-    
-    // --- TABELA DE MATERIAIS ATUALIZADA (SEM VALORES) ---
-    const materiaisOS = ultimoOrcamento?.data?.materiais || [];
-    if (materiaisOS.length > 0) {
-      autoTable(doc, {
-        startY: y,
-        head: [['QUANT', 'UN', 'ESPECIFICAÇÃO DE MATERIAL']],
-        body: materiaisOS.map((m: any) => [
-          m.quantidade || '',
-          m.unidade || '',
-          m.descricao || ''
-        ]),
-        theme: 'grid',
-        headStyles: { fillColor: [230, 230, 230], textColor: [0,0,0], fontStyle: 'bold', fontSize: 8 },
-        styles: { fontSize: 7, cellPadding: 2, textColor: [0,0,0] },
-        margin: { left: margin, right: margin }
-      });
-      y = (doc as any).lastAutoTable.finalY + 5;
-    }
-    
-    // --- TABELA DE TERCEIRIZADOS ATUALIZADA (SEM VALORES) ---
-    const terceirizadosOS = ultimoOrcamento?.data?.terceirizados || [];
-    if (terceirizadosOS.length > 0) {
-      autoTable(doc, {
-        startY: y,
-        head: [['ITEM', 'TERCEIRIZAÇÃO OU SUB-CONTRATAÇÃO']],
-        body: terceirizadosOS.map((t: any, idx: number) => [
-          idx + 1,
-          t.descricao || ''
-        ]),
-        theme: 'grid',
-        headStyles: { fillColor: [230, 230, 230], textColor: [0,0,0], fontStyle: 'bold', fontSize: 8 },
-        styles: { fontSize: 7, cellPadding: 2, textColor: [0,0,0] },
-        margin: { left: margin, right: margin }
-      });
-    }
-    
-    const pageCount = (doc as any).internal.getNumberOfPages();
-    for (let i = 1; i <= pageCount; i++) {
-      doc.setPage(i);
-      doc.setFontSize(6);
-      doc.setTextColor(150);
-      doc.text(`Documento gerado pelo Linave ERP em ${new Date().toLocaleString('pt-BR')}`, margin, pageHeight - 5);
-      doc.text(`Pag. ${i} / ${pageCount}`, pageWidth - margin - 15, pageHeight - 5);
-    }
-    
-    const prefixo = getPrefixoEmpresa(selectedObraDetalhes?.empresaPrestadora);
-    const nomeArquivo = `${prefixo || 'ERP'}_OS_${osPrincipal.ordemServicoNumero || '001'}_${new Date().getTime()}.pdf`;
-    const conteudoDataUrl = doc.output('datauristring');
-    doc.save(nomeArquivo);
-
-if (selectedObraDetalhes && conteudoDataUrl) {
+    try {
+      const resultado = gerarOSPDF({ osPrincipal, ultimoOrcamento, ultimaProposta, cliente, obra: selectedObraDetalhes, logoBase64 });
+      if (selectedObraDetalhes && resultado?.conteudoDataUrl) {
         const documentosAtuais = Array.isArray(selectedObraDetalhes.documentosNegocio)
           ? selectedObraDetalhes.documentosNegocio
           : [];
-          
         const documentosSemOs = documentosAtuais.filter((docItem: any) => {
           const id = String(docItem?.id || '').toLowerCase();
           const nome = String(docItem?.nome || '').toLowerCase();
           return !(id.includes('doc-os') || nome.includes('_os_') || nome.includes('ordem de serviço') || nome.includes('ordem de servico'));
         });
-
-        // CHAMADA CORRETA PARA SALVAR O ANEXO NO BANCO
         await persistirObraAtualizada({
           ...selectedObraDetalhes,
           documentosNegocio: [
             ...documentosSemOs,
             {
               id: `doc-os-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-              nome: nomeArquivo,
+              nome: resultado.nomeArquivo,
               tipo: 'application/pdf',
-              tamanho: Math.max(0, Math.round((conteudoDataUrl.length * 3) / 4)),
+              tamanho: resultado.tamanho,
               dataUpload: new Date().toISOString(),
-              conteudo: conteudoDataUrl,
+              conteudo: resultado.conteudoDataUrl,
             },
           ],
         });
       }
-      
       toast.success('OS baixada em PDF com sucesso!');
     } catch (error) {
       console.error('Erro ao gerar PDF:', error);
@@ -1804,471 +1540,10 @@ if (selectedObraDetalhes && conteudoDataUrl) {
 
     const ultimoOrcamento = selectedObraDetalhes.orcamentos[selectedObraDetalhes.orcamentos.length - 1];
     const cliente = listaClientesCRM.find(c => c.id === selectedObraDetalhes.clienteId);
-    const obraParam = selectedObraDetalhes;
 
     try {
-      const doc = new jsPDF('p', 'mm', 'a4');
-      const pageWidth = doc.internal.pageSize.getWidth();
-      const pageHeight = doc.internal.pageSize.getHeight();
-      const lineHeight = 5;
-      const cellHeight = lineHeight;
-      let y = 10;
-      const margin = 8;
-      const baseColWidth = (pageWidth - margin * 2) / 10;
-      const laborColWidths = [
-        baseColWidth,
-        baseColWidth * 2.7,
-        baseColWidth,
-        baseColWidth,
-        baseColWidth * 1.4,
-        baseColWidth * 1.6,
-        baseColWidth * 1.3
-      ];
-      const materialsColWidths = [
-        baseColWidth,
-        baseColWidth * 3.3,
-        baseColWidth * 0.8,
-        baseColWidth * 0.9,
-        baseColWidth * 1.3,
-        baseColWidth * 1.4,
-        baseColWidth * 1.3
-      ];
-      const activitiesColWidths = [
-        baseColWidth,
-        baseColWidth * 3,
-        baseColWidth,
-        baseColWidth * 5
-      ];
-      const sumWidths = (widths: number[]) => widths.reduce((sum, width) => sum + width, 0);
-
-      const drawCellWithAutoWrap = (x: number, y: number, width: number, height: number, text: string, bold = false, red = false) => {
-        doc.setFont('Arial', bold ? 'bold' : 'normal');
-
-        if (red) {
-          doc.setTextColor(255, 0, 0);
-        } else {
-          doc.setTextColor(0, 0, 0);
-        }
-
-        const lines = doc.splitTextToSize(text || '', width - 2);
-
-        let fontSize = 8;
-        let displayLines = lines.slice(0, 2);
-
-        if (lines.length > 2) {
-          fontSize = 6;
-          doc.setFontSize(fontSize);
-          const newLines = doc.splitTextToSize(text || '', width - 2);
-          displayLines = newLines.slice(0, 3);
-        } else {
-          doc.setFontSize(fontSize);
-        }
-
-        doc.rect(x, y, width, height);
-
-        const lineHeightText = fontSize * 0.35;
-        const totalTextHeight = displayLines.length * lineHeightText;
-        let textY = y + (height - totalTextHeight) / 2 + lineHeightText * 0.7;
-
-        displayLines.forEach((line: string) => {
-          doc.text(line, x + 1, textY, { maxWidth: width - 2 });
-          textY += lineHeightText;
-        });
-
-        doc.setTextColor(0, 0, 0);
-      };
-
-      const drawCell = (x: number, y: number, width: number, height: number, text: string, bold = false, red = false) => {
-        doc.rect(x, y, width, height);
-        doc.setFont('Arial', bold ? 'bold' : 'normal');
-        doc.setFontSize(9);
-        if (red) {
-          doc.setTextColor(255, 0, 0);
-        } else {
-          doc.setTextColor(0, 0, 0);
-        }
-        const maxChars = Math.floor(width / 1.5);
-        const wrappedText = text.length > maxChars ? text.substring(0, maxChars - 3) + '...' : text;
-        doc.text(wrappedText, x + 1, y + 3.5, { maxWidth: width - 2 });
-        doc.setTextColor(0, 0, 0);
-      };
-
-      let x = margin;
-      drawCell(x, y, baseColWidth, cellHeight, 'Cliente:', true);
-      x += baseColWidth;
-      drawCell(x, y, baseColWidth * 3, cellHeight, cliente?.razaoSocial || '');
-      x += baseColWidth * 3;
-      drawCell(x, y, baseColWidth, cellHeight, '');
-      x += baseColWidth;
-      drawCell(x, y, baseColWidth * 5, cellHeight, `Data: ${new Date().toLocaleDateString('pt-BR')}`);
-      y += cellHeight;
-
-      x = margin;
-      drawCell(x, y, baseColWidth, cellHeight, 'Ship:', true);
-      x += baseColWidth;
-      drawCell(x, y, baseColWidth * 9, cellHeight, obraParam?.nome || '');
-      y += cellHeight;
-
-      x = margin;
-      drawCell(x, y, baseColWidth, cellHeight, 'Escopo:', true);
-      x += baseColWidth;
-      drawCell(x, y, baseColWidth * 9, cellHeight, 'Serviços conforme descrito abaixo');
-      y += cellHeight + 2;
-
-      const base = safeNumber(ultimoOrcamento.valores.totalBruto ?? ultimoOrcamento.valores.subtotal);
-      const margemPercent = safeNumber(ultimoOrcamento.valores.margem);
-      const ohPercent = safeNumber(ultimoOrcamento.valores.oh);
-      const impostosPercent = safeNumber(ultimoOrcamento.valores.impostos);
-      const valorMargem = safeNumber(ultimoOrcamento.valores.valorMargem ?? ((base * margemPercent) / 100));
-      const valorOH = safeNumber(ultimoOrcamento.valores.valorOH ?? ((base * ohPercent) / 100));
-      const semImposto = safeNumber(ultimoOrcamento.valores.totalSemImposto ?? (base + valorMargem + valorOH));
-      const valorImposto = safeNumber(ultimoOrcamento.valores.valorImpostos ?? ((semImposto * impostosPercent) / 100));
-      const precoFinal = safeNumber(ultimoOrcamento.valores.precoFinal);
-
-      const maoDeObraData = (ultimoOrcamento.data.maoDeObra || []).filter((item: any) => item.funcao);
-      const totalMaoDeObra = maoDeObraData.reduce((sum: number, item: any) => sum + parseDecimal(item.valorTotal || '0'), 0);
-      const materiaisData = (ultimoOrcamento.data.materiais || []).filter((item: any) => item.descricao);
-      const totalMateriais = materiaisData.reduce((sum: number, item: any) => sum + parseDecimal(item.valorTotal || '0'), 0);
-      const terceirizadosData = (ultimoOrcamento.data.terceirizados || []).filter((item: any) => item.descricao);
-      const totalTerceiros = terceirizadosData.reduce((sum: number, item: any) => sum + parseDecimal(item.valorTotal || '0'), 0);
-      const atividadesData = (ultimoOrcamento.data.atividades || []).filter((item: any) => item.atividade);
-      const totalDias = atividadesData.reduce((sum: number, item: any) => sum + parseDecimal(item.dias || '0'), 0);
-
-      const totalItens = maoDeObraData.length + materiaisData.length + terceirizadosData.length;
-      const precoPorItem = totalItens > 0 ? precoFinal / totalItens : 0;
-
-      x = margin;
-      doc.setFont('Arial', 'bold');
-      doc.setFontSize(9);
-      doc.text('A', x + 2, y + 3);
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-      doc.setTextColor(255, 0, 0);
-      doc.text('MÃO DE OBRA', x + 2, y + 3);
-      doc.rect(x, y, baseColWidth * 9, cellHeight);
-      doc.setTextColor(0, 0, 0);
-      y += cellHeight;
-
-      x = margin;
-      const headersMaoDeObra = ['Item', 'Função', 'Qtd', 'Dias', 'Custo/Dia', 'Obs', 'Valor Total'];
-      headersMaoDeObra.forEach((h, index) => {
-        const colWidth = laborColWidths[index];
-        doc.setFont('Arial', 'bold');
-        doc.setFontSize(7);
-        doc.text(h, x + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
-        doc.rect(x, y, colWidth, cellHeight);
-        x += colWidth;
-      });
-      y += cellHeight;
-
-      maoDeObraData.forEach((item: any, idx: number) => {
-        x = margin;
-        doc.setFont('Arial', 'normal');
-        doc.setFontSize(7);
-
-        doc.text(String(idx + 1), x + 0.5, y + 2.5);
-        doc.rect(x, y, laborColWidths[0], cellHeight);
-        x += laborColWidths[0];
-
-        drawCellWithAutoWrap(x, y, laborColWidths[1], cellHeight, item.funcao || '');
-        x += laborColWidths[1];
-
-        doc.text(String(item.quantidade || ''), x + 0.5, y + 2.5);
-        doc.rect(x, y, laborColWidths[2], cellHeight);
-        x += laborColWidths[2];
-
-        doc.text(String(item.dias || ''), x + 0.5, y + 2.5);
-        doc.rect(x, y, laborColWidths[3], cellHeight);
-        x += laborColWidths[3];
-
-        doc.text(String(item.custoUnitDia ? parseFloat(item.custoUnitDia).toFixed(2) : ''), x + 0.5, y + 2.5);
-        doc.rect(x, y, laborColWidths[4], cellHeight);
-        x += laborColWidths[4];
-
-        drawCellWithAutoWrap(x, y, laborColWidths[5], cellHeight, item.observacoes || '');
-        x += laborColWidths[5];
-
-        doc.setFont('Arial', 'bold');
-        doc.setTextColor(255, 0, 0);
-        doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
-        doc.setTextColor(0, 0, 0);
-        doc.setFont('Arial', 'normal');
-        doc.rect(x, y, laborColWidths[6], cellHeight);
-        x += laborColWidths[6];
-
-        y += cellHeight;
-      });
-
-      x = margin;
-      doc.setFont('Arial', 'bold');
-      doc.setFontSize(8);
-      doc.setTextColor(255, 0, 0);
-      doc.text('Sub-total', x + 0.5, y + 2.5);
-      doc.setTextColor(0, 0, 0);
-      doc.rect(x, y, sumWidths(laborColWidths.slice(0, -1)), cellHeight);
-      x += sumWidths(laborColWidths.slice(0, -1));
-      doc.setTextColor(255, 0, 0);
-      doc.text(totalMaoDeObra.toFixed(2), x + 0.5, y + 2.5);
-      doc.setTextColor(0, 0, 0);
-      doc.rect(x, y, laborColWidths[6], cellHeight);
-      y += cellHeight + 2;
-
-      if (materiaisData && materiaisData.length > 0) {
-        const headersMateriais = ['Item', 'Descrição', 'Un', 'Qtd', 'Peso/Fat', 'Custo Un', 'Total'];
-
-        x = margin;
-        doc.setFont('Arial', 'bold');
-        doc.setFontSize(9);
-        doc.text('B', x + 2, y + 3);
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
-        doc.setTextColor(255, 0, 0);
-        doc.text('CONSUMÍVEIS E MATERIAIS', x + 2, y + 3);
-        doc.rect(x, y, baseColWidth * 9, cellHeight);
-        doc.setTextColor(0, 0, 0);
-        y += cellHeight;
-
-        x = margin;
-        headersMateriais.forEach((h, index) => {
-          const colWidth = materialsColWidths[index];
-          doc.setFont('Arial', 'bold');
-          doc.setFontSize(7);
-          doc.text(h, x + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
-          doc.rect(x, y, colWidth, cellHeight);
-          x += colWidth;
-        });
-        y += cellHeight;
-
-        materiaisData.forEach((item: any, idx: number) => {
-          x = margin;
-          doc.setFont('Arial', 'normal');
-          doc.setFontSize(7);
-
-          doc.text(String(idx + 1), x + 0.5, y + 2.5);
-          doc.rect(x, y, materialsColWidths[0], cellHeight);
-          x += materialsColWidths[0];
-
-          drawCellWithAutoWrap(x, y, materialsColWidths[1], cellHeight, item.descricao || '');
-          x += materialsColWidths[1];
-
-          doc.text(item.unidade || '', x + 0.5, y + 2.5);
-          doc.rect(x, y, materialsColWidths[2], cellHeight);
-          x += materialsColWidths[2];
-
-          doc.text(String(item.quantidade || ''), x + 0.5, y + 2.5);
-          doc.rect(x, y, materialsColWidths[3], cellHeight);
-          x += materialsColWidths[3];
-
-          doc.text(String(item.pesoFator || ''), x + 0.5, y + 2.5);
-          doc.rect(x, y, materialsColWidths[4], cellHeight);
-          x += materialsColWidths[4];
-
-          doc.text(String(item.custoUnit ? parseFloat(item.custoUnit).toFixed(2) : ''), x + 0.5, y + 2.5);
-          doc.rect(x, y, materialsColWidths[5], cellHeight);
-          x += materialsColWidths[5];
-
-          doc.setFont('Arial', 'bold');
-          doc.setTextColor(255, 0, 0);
-          doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
-          doc.setTextColor(0, 0, 0);
-          doc.setFont('Arial', 'normal');
-          doc.rect(x, y, materialsColWidths[6], cellHeight);
-          x += materialsColWidths[6];
-
-          y += cellHeight;
-        });
-
-        x = margin;
-        doc.setFont('Arial', 'bold');
-        doc.setFontSize(8);
-        doc.setTextColor(255, 0, 0);
-        doc.text('Valor total', x + 0.5, y + 2.5);
-        doc.setTextColor(0, 0, 0);
-        doc.rect(x, y, sumWidths(materialsColWidths.slice(0, -1)), cellHeight);
-        x += sumWidths(materialsColWidths.slice(0, -1));
-        doc.setTextColor(255, 0, 0);
-        doc.text(totalMateriais.toFixed(2), x + 0.5, y + 2.5);
-        doc.setTextColor(0, 0, 0);
-        doc.rect(x, y, materialsColWidths[6], cellHeight);
-        y += cellHeight + 2;
-      }
-
-      if (terceirizadosData && terceirizadosData.length > 0) {
-        const headersTerceiros = ['Item', 'Descrição', 'Un', 'Qtd', 'Peso/Fat', 'Custo Un', 'Total'];
-
-        x = margin;
-        doc.setFont('Arial', 'bold');
-        doc.setFontSize(9);
-        doc.text('C', x + 2, y + 3);
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
-        doc.setTextColor(255, 0, 0);
-        doc.text('SERVIÇOS TERCEIRIZADOS', x + 2, y + 3);
-        doc.rect(x, y, baseColWidth * 9, cellHeight);
-        doc.setTextColor(0, 0, 0);
-        y += cellHeight;
-
-        x = margin;
-        headersTerceiros.forEach((h, index) => {
-          const colWidth = materialsColWidths[index];
-          doc.setFont('Arial', 'bold');
-          doc.setFontSize(7);
-          doc.text(h, x + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
-          doc.rect(x, y, colWidth, cellHeight);
-          x += colWidth;
-        });
-        y += cellHeight;
-
-        terceirizadosData.forEach((item: any, idx: number) => {
-          x = margin;
-          doc.setFont('Arial', 'normal');
-          doc.setFontSize(7);
-
-          doc.text(String(idx + 1), x + 0.5, y + 2.5);
-          doc.rect(x, y, materialsColWidths[0], cellHeight);
-          x += materialsColWidths[0];
-
-          drawCellWithAutoWrap(x, y, materialsColWidths[1], cellHeight, item.descricao || '');
-          x += materialsColWidths[1];
-
-          doc.text(item.unidade || '', x + 0.5, y + 2.5);
-          doc.rect(x, y, materialsColWidths[2], cellHeight);
-          x += materialsColWidths[2];
-
-          doc.text(String(item.quantidade || ''), x + 0.5, y + 2.5);
-          doc.rect(x, y, materialsColWidths[3], cellHeight);
-          x += materialsColWidths[3];
-
-          doc.text(String(item.pesoFator || ''), x + 0.5, y + 2.5);
-          doc.rect(x, y, materialsColWidths[4], cellHeight);
-          x += materialsColWidths[4];
-
-          doc.text(String(item.custoUnit ? parseFloat(item.custoUnit).toFixed(2) : ''), x + 0.5, y + 2.5);
-          doc.rect(x, y, materialsColWidths[5], cellHeight);
-          x += materialsColWidths[5];
-
-          doc.setFont('Arial', 'bold');
-          doc.setTextColor(255, 0, 0);
-          doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
-          doc.setTextColor(0, 0, 0);
-          doc.setFont('Arial', 'normal');
-          doc.rect(x, y, materialsColWidths[6], cellHeight);
-          x += materialsColWidths[6];
-
-          y += cellHeight;
-        });
-
-        x = margin;
-        doc.setFont('Arial', 'bold');
-        doc.setFontSize(8);
-        doc.setTextColor(255, 0, 0);
-        doc.text('Sub-total', x + 0.5, y + 2.5);
-        doc.setTextColor(0, 0, 0);
-        doc.rect(x, y, sumWidths(materialsColWidths.slice(0, -1)), cellHeight);
-        x += sumWidths(materialsColWidths.slice(0, -1));
-        doc.setTextColor(255, 0, 0);
-        doc.text(totalTerceiros.toFixed(2), x + 0.5, y + 2.5);
-        doc.setTextColor(0, 0, 0);
-        doc.rect(x, y, materialsColWidths[6], cellHeight);
-        y += cellHeight + 2;
-      }
-
-      x = margin;
-      doc.setFont('Arial', 'bold');
-      doc.setFontSize(9);
-      doc.text('E', x + 2, y + 3);
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-      doc.text('Cálculos Finais', x + 2, y + 3);
-      doc.rect(x, y, baseColWidth * 9, cellHeight);
-      y += cellHeight;
-
-      const calculos = [
-        ['1', 'Valor mão de obra', totalMaoDeObra.toFixed(2)],
-        ['2', 'Valor consumível e material', totalMateriais.toFixed(2)],
-        ['3', 'Valor terceirizados', totalTerceiros.toFixed(2)],
-        ['4', 'Total', base.toFixed(2)],
-        ['5', `O.H (${ohPercent}%)`, valorOH.toFixed(2)],
-        ['6', `Margem (${margemPercent}%)`, valorMargem.toFixed(2)],
-        ['7', 'PV S/ imposto', semImposto.toFixed(2)],
-        ['8', `Imposto S/ NF (${impostosPercent}%)`, valorImposto.toFixed(2)],
-        ['9', 'PV FINAL R$', precoFinal.toFixed(2)]
-      ];
-
-      calculos.forEach((row, idx) => {
-        const isLastRow = idx === calculos.length - 1;
-        x = margin;
-        doc.setFont('Arial', 'normal');
-        doc.setFontSize(8);
-
-        if (isLastRow) {
-          doc.setFont('Arial', 'bold');
-          doc.setTextColor(255, 0, 0);
-        }
-
-        doc.text(row[0], x + 0.5, y + 2.5);
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
-
-        doc.text(row[1], x + 0.5, y + 2.5, { maxWidth: baseColWidth * 8 - 2 });
-        doc.rect(x, y, baseColWidth * 8, cellHeight);
-        x += baseColWidth * 8;
-
-        doc.text(row[2], x + 0.5, y + 2.5);
-        doc.rect(x, y, baseColWidth, cellHeight);
-
-        if (isLastRow) {
-          doc.setTextColor(0, 0, 0);
-        }
-        y += cellHeight;
-      });
-
-      x = margin;
-      doc.setFont('Arial', 'bold');
-      doc.setFontSize(8);
-      doc.text('RESUMO:', x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth * 10, cellHeight);
-      y += cellHeight;
-
-      x = margin;
-      doc.setFont('Arial', 'normal');
-      doc.setFontSize(8);
-      doc.text('Qtd. de Itens:', x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth * 5, cellHeight);
-      x += baseColWidth * 5;
-      doc.setFont('Arial', 'bold');
-      doc.text(String(totalItens), x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth * 5, cellHeight);
-      y += cellHeight;
-
-      x = margin;
-      doc.setFont('Arial', 'normal');
-      doc.setFontSize(8);
-      doc.text('Preço por Item:', x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth * 5, cellHeight);
-      x += baseColWidth * 5;
-      doc.setFont('Arial', 'bold');
-      doc.text(`R$ ${precoPorItem.toFixed(2)}`, x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth * 5, cellHeight);
-      y += cellHeight;
-
-      x = margin;
-      doc.setFont('Arial', 'normal');
-      doc.setFontSize(8);
-      doc.text('Valor Total:', x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth * 5, cellHeight);
-      x += baseColWidth * 5;
-      doc.setFont('Arial', 'bold');
-      doc.setTextColor(255, 0, 0);
-      doc.text(`R$ ${precoFinal.toFixed(2)}`, x + 0.5, y + 2.5);
-      doc.setTextColor(0, 0, 0);
-      doc.rect(x, y, baseColWidth * 5, cellHeight);
-
-      const nomeArquivo = `Orcamento_${ultimoOrcamento.numeroOrcamento}_v${formatarVersaoOrcamento(ultimoOrcamento.versao)}.pdf`;
-      const conteudoDataUrl = doc.output('datauristring');
-      doc.save(nomeArquivo);
-
-      if (selectedObraDetalhes && conteudoDataUrl) {
+      const resultado = gerarOrcamentoPDF(ultimoOrcamento, cliente, selectedObraDetalhes);
+      if (selectedObraDetalhes && resultado?.conteudoDataUrl) {
         const documentosAtuais = Array.isArray(selectedObraDetalhes.documentosNegocio)
           ? selectedObraDetalhes.documentosNegocio
           : [];
@@ -2277,23 +1552,21 @@ if (selectedObraDetalhes && conteudoDataUrl) {
           const nome = String(docItem?.nome || '').toLowerCase();
           return !(id.includes('doc-orcamento') || nome.includes('orcamento') || nome.includes('orçamento'));
         });
-
         persistirObraAtualizada({
           ...selectedObraDetalhes,
           documentosNegocio: [
             ...documentosSemOrcamento,
             {
               id: `doc-orcamento-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-              nome: nomeArquivo,
+              nome: resultado.nomeArquivo,
               tipo: 'application/pdf',
-              tamanho: Math.max(0, Math.round((conteudoDataUrl.length * 3) / 4)),
+              tamanho: resultado.tamanho,
               dataUpload: new Date().toISOString(),
-              conteudo: conteudoDataUrl,
+              conteudo: resultado.conteudoDataUrl,
             },
           ],
         });
       }
-
       toast.success('Orçamento baixado em PDF com sucesso!');
     } catch (error) {
       console.error('Erro ao gerar PDF:', error);
@@ -2405,10 +1678,10 @@ if (selectedObraDetalhes && conteudoDataUrl) {
 
   const possuiOSAprovadaParaFinalizacao = (obraId: string) => {
     const osDoNegocio = (os || []).filter((item: any) => item.obraId === obraId);
+    // Basta a OS estar enviada e aprovada — não exige mais o anexo de assinatura.
     return osDoNegocio.some((item: any) => (
       item.statusEnvio === 'enviada'
       && item.statusAprovacao === 'aprovada'
-      && Boolean(item.documentoAssinaturaAprovacao?.conteudo || item.documentoAssinaturaAprovacao?.url)
     ));
   };
 
@@ -2614,7 +1887,6 @@ const obrasOrdenadas = useMemo(() => {
                               const osProntaFinalizacao = osDoNegocio.some((o: any) =>
                                 o.statusEnvio === 'enviada'
                                 && o.statusAprovacao === 'aprovada'
-                                && Boolean(o.documentoAssinaturaAprovacao?.conteudo || o.documentoAssinaturaAprovacao?.url)
                               );
                               return (
                                 <>
@@ -3645,7 +2917,6 @@ const obrasOrdenadas = useMemo(() => {
                 const osProntaFinalizacao = osDoNegocio.some((o: any) =>
                   o.statusEnvio === 'enviada'
                   && o.statusAprovacao === 'aprovada'
-                  && Boolean(o.documentoAssinaturaAprovacao?.conteudo || o.documentoAssinaturaAprovacao?.url)
                 );
                 return (
                   <div className="bg-gradient-to-r from-purple-500/10 to-violet-500/10 rounded-xl p-6 border border-purple-500/30 space-y-4">

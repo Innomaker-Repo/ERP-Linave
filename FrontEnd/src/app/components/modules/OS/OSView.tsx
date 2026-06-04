@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { useErp } from '../../../context/ErpContext';
+import { useErp, getPrefixoEmpresa, gerarIdProjetoDeNegocio } from '../../../context/ErpContext';
 import { Plus, X, Check, Clock, Zap, Download, Eye, FileText } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { toast } from 'sonner';
 import { criarOrdemServico } from '../../../../services/comercialService';
+import { getLogoUrlForEmpresa } from '../../../utils/company';
 
 // ==========================================
 // FUNÇÕES AUXILIARES GERAIS
@@ -23,9 +24,10 @@ const getBase64FromUrl = async (url: string): Promise<string> => {
   }
 };
 
-const getPrefixoEmpresa = (empresaPrestadora?: string) => {
-  if (!empresaPrestadora) return 'LN';
-  return empresaPrestadora.toLowerCase().includes('servinave') ? 'SN' : 'LN';
+// Função adicionada para corrigir o ReferenceError
+const extrairIdProjetoDoNumero = (numeroStr: string | number | undefined | null): string => {
+  if (!numeroStr) return '';
+  return String(numeroStr).trim();
 };
 
 const findClienteById = (clientes: any[], clienteId: any) =>
@@ -41,11 +43,9 @@ const normalizarIdOs = (os: Partial<OsFormData> & { id?: string; ordemServicoNum
 };
 
 const somarDiasDoOrcamento = (orcamento: any): number => {
+  // Dias previstos = SOMENTE o somatório das atividades previstas (não inclui dias de mão de obra)
   const atividades = Array.isArray(orcamento?.atividades) ? orcamento.atividades : [];
-  const maoDeObra = Array.isArray(orcamento?.maoDeObra) ? orcamento.maoDeObra : [];
-  const totalAtividades = atividades.reduce((soma: number, item: any) => soma + Number(item?.dias || item?.duracao || 0), 0);
-  const totalMDO = maoDeObra.reduce((soma: number, item: any) => soma + Number(item?.dias || 0), 0);
-  return totalAtividades + totalMDO;
+  return atividades.reduce((soma: number, item: any) => soma + Number(item?.dias || item?.duracao || 0), 0);
 };
 
 const calcularDataTerminoPrevisto = (dataInicio: string, totalDias: number, tipo: 'uteis' | 'corridos' = 'corridos'): string => {
@@ -658,12 +658,10 @@ export function OsView({ searchQuery }: OSViewProps) {
     const clienteCtx = findClienteById(clientes || [], obra.clienteId);
     const nomeCliente = obra.nomeCliente || clienteCtx?.razaoSocial || clienteCtx?.razao_social || clienteCtx?.nomeFantasia || clienteCtx?.nome_fantasia || '';
 
-    let ordemServicoNumero = String(obra.id || '').trim();
-    if (Array.isArray(obra.propostas) && obra.propostas.length > 0) {
-      const ultimaProposta = obra.propostas[obra.propostas.length - 1];
-      const numeroCompleto = ultimaProposta.numeroProposta || ultimaProposta.numero || '';
-      ordemServicoNumero = String(numeroCompleto || ordemServicoNumero).trim();
-    }
+    // A OS deriva seu ID base diretamente do negócio (mesma base de orçamento/proposta),
+    // e não do número da proposta. O sufixo por recusa de OS fica para quando o fluxo
+    // de recusa de OS existir.
+    const ordemServicoNumero = gerarIdProjetoDeNegocio(obra);
 
     const resumoConsolidado = {
       negocio: {
@@ -859,7 +857,7 @@ export function OsView({ searchQuery }: OSViewProps) {
     const ultimaProposta = propostasBase.length > 0 ? propostasBase[propostasBase.length - 1] : null;
     const cliente = findClienteById(clientes || [], selectedObraDetalhes?.clienteId || osPrincipal.clienteId);
     
-    let logoBase64 = await getBase64FromUrl('/image2.jpg');
+    let logoBase64 = await getBase64FromUrl(getLogoUrlForEmpresa(selectedObraDetalhes?.empresaPrestadora));
 
     const formatDateISO = (dateStr: string) => {
       if (!dateStr) return '';
