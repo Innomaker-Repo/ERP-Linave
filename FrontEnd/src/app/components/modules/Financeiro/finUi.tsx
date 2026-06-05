@@ -156,6 +156,32 @@ export function Select({ children, ...rest }: React.SelectHTMLAttributes<HTMLSel
   );
 }
 
+// Input de arquivo que captura o(s) nome(s) do(s) arquivo(s) selecionado(s).
+export function FileInput({
+  label = 'Anexar arquivo', value = [] as string[], onChange, multiple = true,
+}: { label?: string; value?: string[]; onChange: (names: string[]) => void; multiple?: boolean }) {
+  return (
+    <div>
+      <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-dashed border-white/15 bg-[#0b1220] px-4 py-4 text-sm text-white/60 transition-colors hover:border-amber-500/40">
+        <span className="text-lg">📎</span> {value.length ? `${value.length} arquivo(s) anexado(s)` : label}
+        <input
+          type="file"
+          multiple={multiple}
+          className="hidden"
+          onChange={(e) => onChange(Array.from(e.target.files || []).map((f) => f.name))}
+        />
+      </label>
+      {value.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {value.map((n, i) => (
+            <span key={i} className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-bold text-white/70">📄 {n}</span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Caixa de upload (visual).
 export function UploadBox({ label = 'Anexar documento / imagem', files = [] as string[] }) {
   return (
@@ -234,6 +260,29 @@ export function FinFilters() {
           <option value="month">Mês específico</option>
           <option value="year">Ano específico</option>
         </Select>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Modal ----------
+export function FinModal({
+  title, hint, onClose, wide, children,
+}: { title: string; hint?: string; onClose: () => void; wide?: boolean; children: React.ReactNode }) {
+  return (
+    <div className="fixed inset-0 z-[1000] grid place-items-center bg-black/60 p-4" onClick={onClose}>
+      <div
+        className={`w-full ${wide ? 'max-w-4xl' : 'max-w-2xl'} max-h-[92vh] overflow-auto rounded-[24px] border border-white/10 bg-[#101f3d] shadow-2xl shadow-black/40`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-white/10 px-6 py-4">
+          <div>
+            <h2 className="text-lg font-black text-white">{title}</h2>
+            {hint && <p className="mt-1 text-sm text-white/45">{hint}</p>}
+          </div>
+          <button onClick={onClose} className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-xl bg-white/5 text-lg text-white/70 transition-colors hover:bg-white/10">✕</button>
+        </div>
+        <div className="p-6">{children}</div>
       </div>
     </div>
   );

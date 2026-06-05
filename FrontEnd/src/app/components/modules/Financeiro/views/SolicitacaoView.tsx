@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Send, CheckCircle2 } from 'lucide-react';
-import { FinCard, Toolbar, Field, Input, Select, Textarea, UploadBox, Btn } from '../finUi';
+import { FinCard, Toolbar, Field, Input, Select, Textarea, FileInput, Btn } from '../finUi';
 import { todayStr, genFinId, num } from '../finData';
 import { useFin } from '../useFin';
 
@@ -12,6 +12,7 @@ const fornecedorNome = (f: any) =>
 export function SolicitacaoView() {
   const { empresas, oss, departamentos, fornecedores, addRecord } = useFin();
   const [vinculo, setVinculo] = useState<'OS' | 'Departamento'>('OS');
+  const [anexos, setAnexos] = useState<string[]>([]);
   const [salvando, setSalvando] = useState(false);
   const [ok, setOk] = useState(false);
 
@@ -51,9 +52,11 @@ export function SolicitacaoView() {
         vencimento: form.vencimento,
         forma: form.forma,
         descricao: form.descricao,
+        anexos,
       });
       setOk(true);
       setForm((p) => ({ ...p, solicitante: '', fornecedor: '', documento: '', valor: '', forma: '', descricao: '' }));
+      setAnexos([]);
       setTimeout(() => setOk(false), 3000);
     } finally {
       setSalvando(false);
@@ -118,7 +121,7 @@ export function SolicitacaoView() {
         <Field label="Forma solicitada" span={3}><Input value={form.forma} onChange={(e) => set('forma', e.target.value)} placeholder="PIX / Boleto..." /></Field>
 
         <Field label="Anexar documento / imagem" span={12}>
-          <UploadBox label="Anexar NF, boleto, recibo, PDF ou foto" />
+          <FileInput label="Anexar NF, boleto, recibo, PDF ou foto" value={anexos} onChange={setAnexos} />
         </Field>
         <Field label="Descrição" span={12}><Textarea value={form.descricao} onChange={(e) => set('descricao', e.target.value)} placeholder="Detalhes da solicitação..." /></Field>
 

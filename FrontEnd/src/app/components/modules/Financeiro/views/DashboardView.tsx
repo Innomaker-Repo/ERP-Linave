@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { FinCard, Metric } from '../finUi';
 import { money, isOld, num, type Empresa } from '../finData';
 import { useFin } from '../useFin';
+import { useFinFilters } from '../finFilters';
 
 // Barra horizontal de comparação (A pagar / A receber / Previsão).
 function BarRow({ label, value, max }: { label: string; value: number; max: number }) {
@@ -19,8 +20,10 @@ function BarRow({ label, value, max }: { label: string; value: number; max: numb
 
 export function DashboardView() {
   const { oss, records } = useFin();
-  const pagar = records('contaPagar');
-  const receber = records('contaReceber');
+  const { match } = useFinFilters();
+  const pagar = records('contaPagar').filter(match);
+  const receber = records('contaReceber').filter(match);
+  const ossF = oss.filter(match);
 
   const kpis = useMemo(() => {
     const abertas = pagar.filter((p) => p.status !== 'Pago');
@@ -37,7 +40,7 @@ export function DashboardView() {
   const empresaResumo = (empresa: Empresa) => {
     const aPagar = pagar.filter((p) => p.empresa === empresa && p.status !== 'Pago').reduce((s, p) => s + num(p.valor), 0);
     const aReceber = receber.filter((r) => r.empresa === empresa && !r.recebido).reduce((s, r) => s + num(r.valorLiquido ?? r.valor), 0);
-    const previsao = oss.filter((o) => o.empresa === empresa && !['Finalizada', 'Cancelada'].includes(o.status)).reduce((s, o) => s + o.valor, 0);
+    const previsao = ossF.filter((o) => o.empresa === empresa && !['Finalizada', 'Cancelada'].includes(o.status)).reduce((s, o) => s + o.valor, 0);
     const max = Math.max(aPagar, aReceber, previsao, 1);
     return { aPagar, aReceber, previsao, max };
   };

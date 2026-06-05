@@ -252,19 +252,47 @@ export const empresaFromCC = (cc?: string, fallback: Empresa = 'Linave'): Empres
   return fallback;
 };
 
-// Deriva o valor monetário de uma OS a partir do orçamento embutido.
-const osValor = (os: any): number =>
-  num(
-    os?.orcamentoValores?.valorTotalServico ??
-    os?.orcamentoValores?.precoFinal ??
-    os?.orcamento ??
-    os?.valorTotal ??
-    os?.valor ??
+// Deriva o valor monetário de uma OS. A OS consolidada NÃO guarda os valores do
+// orçamento (são extraídos "sem valores"); o valor real fica no negócio/obra vinculado.
+// Mesma precedência usada na tela de Finalizados (Comercial): precoFinal do último
+// orçamento → valorTotalServico → orcamentoValores → orcamento.
+const orcamentoValor = (entidade: any): number => {
+  const orcamentos = Array.isArray(entidade?.orcamentos) ? entidade.orcamentos : [];
+  const ultimo = orcamentos.length ? orcamentos[orcamentos.length - 1] : null;
+  return num(
+    ultimo?.valores?.precoFinal ??
+    ultimo?.valores?.valorTotalServico ??
+    entidade?.orcamentoValores?.precoFinal ??
+    entidade?.orcamentoValores?.valorTotalServico ??
+    entidade?.orcamento ??
     0,
   );
+};
 
-// Rótulo de status financeiro a partir do estado da OS.
-const osStatusLabel = (os: any): string => {
+const osValor = (os: any, obra?: any): number => {
+  const doOs = orcamentoValor(os);
+  if (doOs) return doOs;
+  const doObra = orcamentoValor(obra);
+  if (doObra) return doObra;
+  return num(os?.valorTotal ?? os?.valor ?? 0);
+};
+
+// Documentos de medição de um negócio (mesmo critério da tela de Finalizados do Comercial).
+export const docsMediacao = (obra: any): any[] =>
+  (Array.isArray(obra?.documentosNegocio) ? obra.documentosNegocio : []).filter((doc: any) => {
+    const id = String(doc?.id || '').toLowerCase();
+    const nome = String(doc?.nome || '').toLowerCase();
+    return id.includes('mediacao') || nome.includes('medi') || nome.includes('medição');
+  });
+
+// Um negócio está finalizado quando foi arquivado ou possui documento de medição.
+export const obraFinalizada = (obra: any): boolean =>
+  obra?.categoria === 'Arquivado' || Boolean(obra?.finalizadoComMediacao) || docsMediacao(obra).length > 0;
+
+// Rótulo de status financeiro a partir do estado da OS (e do negócio vinculado).
+const osStatusLabel = (os: any, obra?: any): string => {
+  // Se o negócio foi arquivado/medido, a OS está finalizada a este ponto.
+  if (obra && obraFinalizada(obra)) return 'Finalizada';
   const aprov = String(os?.status_aprovacao ?? os?.statusAprovacao ?? '').toLowerCase();
   const st = String(os?.status_os ?? os?.statusOs ?? '').toLowerCase();
   if (st === 'concluida' || st === 'concluído' || st === 'concluido') return 'Finalizada';
@@ -275,7 +303,8 @@ const osStatusLabel = (os: any): string => {
 };
 
 // Normaliza uma OS do contexto (formatos camelCase e snake_case) para a view-model financeira.
-export const mapOsToFinanceiro = (os: any): OS => {
+// `obra` é o negócio vinculado (ctx.obras), de onde vem o valor do orçamento.
+export const mapOsToFinanceiro = (os: any, obra?: any): OS => {
   const numero = String(
     os?.ordemServicoNumero ?? os?.ordem_servico_numero ?? os?.numero_os ?? os?.numeroOs ?? os?.cc ?? os?.id ?? '',
   ).trim();
@@ -291,13 +320,50 @@ export const mapOsToFinanceiro = (os: any): OS => {
     empresa,
     cliente,
     descricao: String(os?.descricaoGeralServico ?? os?.descricao_geral_servico ?? os?.descricao ?? os?.projeto ?? ''),
-    valor: osValor(os),
+    valor: osValor(os, obra),
     dataTermino: String(os?.dataTerminoPrevisto ?? os?.data_termino_previsto ?? os?.dataTermino ?? '').slice(0, 10),
-    status: osStatusLabel(os),
+    status: osStatusLabel(os, obra),
   };
 };
 
+// Valor do orçamento de um negócio/obra (exposto para derivar NFe a partir da medição).
+export const negocioValor = (obra: any): number => orcamentoValor(obra);
+
+// ---------- NFe: impostos e cálculo de líquido ----------
+export const TAX_DEFAULTS = { cofins: 3, csll: 1, inss: 0, ir: 1.5, pis: 0.0065, iss: 5 };
+
+export const calcNfeLiquido = (original: number, taxes: Record<string, number>): number => {
+  const totalImpostos = Object.values(taxes).reduce((s, p) => s + tax(original, p), 0);
+  return Math.max(0, num(original) - totalImpostos);
+};
+
+export interface NfeSolicitacao {
+  id: string;
+  os: string;
+  empresa: Empresa;
+  cliente: string;
+  valor: number;
+  forma: string;
+  dataEmitir: string;
+  tipoNfe: string;
+  status: string;
+  anexos: string[];
+  contrato: string;
+  derived: boolean;
+}
+
 // Discriminador dos registros financeiros guardados na coleção `financeiro` do workspace.
-export type FinTipo = 'solicitacao' | 'contaPagar' | 'contaReceber' | 'nfeReq' | 'banco' | 'locEstudo';
+export type FinTipo = 'solicitacao' | 'contaPagar' | 'contaReceber' | 'nfeReq' | 'nfe' | 'banco' | 'locEstudo';
 
 export const genFinId = (prefix: string) => `${prefix}-${Date.now().toString(36).toUpperCase()}`;
+
+// Baixa um conteúdo de texto como arquivo (CSV/TXT) — frontend puro.
+export const download = (text: string, filename: string, type = 'text/plain;charset=utf-8') => {
+  const blob = new Blob([text], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+};

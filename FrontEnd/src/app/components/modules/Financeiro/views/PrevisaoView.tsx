@@ -2,11 +2,13 @@ import React, { useMemo } from 'react';
 import { FinCard, Toolbar, Kpi, DataTable, Th, Td, CompanyTag, StatusTag, Pill, EmptyRow } from '../finUi';
 import { br, isOld, money } from '../finData';
 import { useFin } from '../useFin';
+import { useFinFilters } from '../finFilters';
 
 // Leitura real: previsão derivada das OS em aberto/andamento (não vem da NFe).
 export function PrevisaoView() {
   const { oss } = useFin();
-  const rows = useMemo(() => oss.filter((o) => !['Finalizada', 'Cancelada'].includes(o.status)), [oss]);
+  const { match } = useFinFilters();
+  const rows = useMemo(() => oss.filter((o) => !['Finalizada', 'Cancelada'].includes(o.status) && match(o)), [oss, match]);
   const total = rows.reduce((s, o) => s + o.valor, 0);
   const vencido = rows.filter((o) => isOld(o.dataTermino)).reduce((s, o) => s + o.valor, 0);
 

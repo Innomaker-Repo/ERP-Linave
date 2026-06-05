@@ -5,14 +5,16 @@
  * landing padrão (Dashboard) para chamadas legadas.
  * =======================================================================================*/
 import React from 'react';
-import { FinFilters } from './finUi';
+import { FinFiltersProvider, FinFiltersBar } from './finFilters';
 import { DashboardView } from './views/DashboardView';
 
 export function FinanceiroView() {
   return (
-    <div className="space-y-5">
-      <FinFilters />
-      <DashboardView />
-    </div>
+    <FinFiltersProvider>
+      <div className="space-y-5">
+        <FinFiltersBar />
+        <DashboardView />
+      </div>
+    </FinFiltersProvider>
   );
 }
