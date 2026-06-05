@@ -33,8 +33,18 @@ function getAbaForSection(section: string): { aba: string; item: string } {
     'orcamentos': { aba: 'comercial', item: 'orcamentos' },
     'finalizadosComercial': { aba: 'comercial', item: 'finalizadosComercial' },
     
-    // Financeiro
-    'financeiro': { aba: 'financeiro', item: 'financeiro' },
+    // Financeiro (cada seção é um item próprio do sidebar)
+    'finDashboard': { aba: 'financeiro', item: 'dashboard' },
+    'finSolicitacao': { aba: 'financeiro', item: 'solicitacao' },
+    'finAprovacoes': { aba: 'financeiro', item: 'aprovacoes' },
+    'finPagar': { aba: 'financeiro', item: 'pagar' },
+    'finNfe': { aba: 'financeiro', item: 'nfe' },
+    'finReceber': { aba: 'financeiro', item: 'receber' },
+    'finLocacao': { aba: 'financeiro', item: 'locacao' },
+    'finPrevisao': { aba: 'financeiro', item: 'previsao' },
+    'finBancos': { aba: 'financeiro', item: 'bancos' },
+    'finDepartamentos': { aba: 'financeiro', item: 'departamentos' },
+    'finHistorico': { aba: 'financeiro', item: 'historico' },
     
     // Compras
     'compras': { aba: 'compras', item: 'compras' },
