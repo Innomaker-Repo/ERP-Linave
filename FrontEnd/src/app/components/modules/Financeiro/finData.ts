@@ -242,3 +242,62 @@ export const FIN_TITLES: Record<string, [string, string]> = {
 // Status de recebível derivado.
 export const recStatus = (r: ContaReceber) =>
   r.recebido ? 'Recebido' : isOld(r.vencimentoRecebimento) ? 'Vencido' : 'A receber';
+
+// ---------- Adaptação de dados reais do ERP ----------
+// O centro de custo / cc das OS usa prefixo LN (Linave) ou SN (Servinave).
+export const empresaFromCC = (cc?: string, fallback: Empresa = 'Linave'): Empresa => {
+  const s = String(cc || '').trim().toUpperCase();
+  if (s.startsWith('SN')) return 'Servinave';
+  if (s.startsWith('LN')) return 'Linave';
+  return fallback;
+};
+
+// Deriva o valor monetário de uma OS a partir do orçamento embutido.
+const osValor = (os: any): number =>
+  num(
+    os?.orcamentoValores?.valorTotalServico ??
+    os?.orcamentoValores?.precoFinal ??
+    os?.orcamento ??
+    os?.valorTotal ??
+    os?.valor ??
+    0,
+  );
+
+// Rótulo de status financeiro a partir do estado da OS.
+const osStatusLabel = (os: any): string => {
+  const aprov = String(os?.status_aprovacao ?? os?.statusAprovacao ?? '').toLowerCase();
+  const st = String(os?.status_os ?? os?.statusOs ?? '').toLowerCase();
+  if (st === 'concluida' || st === 'concluído' || st === 'concluido') return 'Finalizada';
+  if (aprov === 'aprovada') return 'Em andamento';
+  if (st === 'emproducao' || st === 'em produção' || st === 'em producao') return 'Em andamento';
+  if (st === 'cancelada') return 'Cancelada';
+  return 'Aberta';
+};
+
+// Normaliza uma OS do contexto (formatos camelCase e snake_case) para a view-model financeira.
+export const mapOsToFinanceiro = (os: any): OS => {
+  const numero = String(
+    os?.ordemServicoNumero ?? os?.ordem_servico_numero ?? os?.numero_os ?? os?.numeroOs ?? os?.cc ?? os?.id ?? '',
+  ).trim();
+  const cliente = String(
+    os?.cliente_detalhes?.razao_social ?? os?.cliente_detalhes?.razaoSocial ?? os?.cliente ?? os?.projeto ?? '—',
+  );
+  const cc = String(os?.cc ?? '');
+  const empresa = os?.empresa_prestadora || os?.empresaPrestadora
+    ? empresaFromCC(undefined, String(os.empresa_prestadora ?? os.empresaPrestadora).toLowerCase().includes('servi') ? 'Servinave' : 'Linave')
+    : empresaFromCC(cc || numero);
+  return {
+    numero: numero || '—',
+    empresa,
+    cliente,
+    descricao: String(os?.descricaoGeralServico ?? os?.descricao_geral_servico ?? os?.descricao ?? os?.projeto ?? ''),
+    valor: osValor(os),
+    dataTermino: String(os?.dataTerminoPrevisto ?? os?.data_termino_previsto ?? os?.dataTermino ?? '').slice(0, 10),
+    status: osStatusLabel(os),
+  };
+};
+
+// Discriminador dos registros financeiros guardados na coleção `financeiro` do workspace.
+export type FinTipo = 'solicitacao' | 'contaPagar' | 'contaReceber' | 'nfeReq' | 'banco' | 'locEstudo';
+
+export const genFinId = (prefix: string) => `${prefix}-${Date.now().toString(36).toUpperCase()}`;

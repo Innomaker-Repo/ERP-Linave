@@ -1,6 +1,7 @@
 import React from 'react';
 import { FinFilters } from '../../components/modules/Financeiro/finUi';
 import { DashboardView } from '../../components/modules/Financeiro/views/DashboardView';
+import { OsEmitidasView } from '../../components/modules/Financeiro/views/OsEmitidasView';
 import { SolicitacaoView } from '../../components/modules/Financeiro/views/SolicitacaoView';
 import { AprovacoesView } from '../../components/modules/Financeiro/views/AprovacoesView';
 import { ContasPagarView } from '../../components/modules/Financeiro/views/ContasPagarView';
@@ -20,6 +21,7 @@ interface FinanceiroModuleProps {
 // Cada item do sidebar do ERP (grupo Financeiro) cai aqui e renderiza sua própria view.
 const VIEWS: Record<string, React.ComponentType> = {
   dashboard: DashboardView,
+  os: OsEmitidasView,
   solicitacao: SolicitacaoView,
   aprovacoes: AprovacoesView,
   pagar: ContasPagarView,
