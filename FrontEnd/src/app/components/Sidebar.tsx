@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { useErp } from '../context/ErpContext';
 import { 
-  LayoutDashboard, Users, HardHat, Anchor, ClipboardList, 
-  ShoppingCart, DollarSign, BarChart3, Settings, Factory, 
-  HeartHandshake, List, Clock, ChevronDown, ChevronRight, 
-  Briefcase, Wrench, Activity, FileText, Zap, CheckCircle2, Trash2, LayoutGrid, Package2, History
+  LayoutDashboard, Users, HardHat, Anchor, ClipboardList,
+  ShoppingCart, DollarSign, BarChart3, Settings, Factory,
+  HeartHandshake, List, Clock, ChevronDown, ChevronRight,
+  Briefcase, Wrench, Activity, FileText, Zap, CheckCircle2, Trash2, LayoutGrid, Package2, History,
+  FilePlus, Banknote, ScrollText, Wallet, Building2, TrendingUp, Landmark, Tags
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -14,6 +15,12 @@ interface SidebarProps {
 
 const MOCK_GERENTE_COMERCIAL_EMAIL = 'gerente.comercial@linave.com.br';
 const MOCK_DIRETOR_FINANCEIRO_EMAIL = 'diretor.financeiro@linave.com.br';
+
+// Itens do grupo Financeiro (cada seção é uma aba própria no sidebar).
+const FINANCEIRO_ITEM_IDS = new Set([
+  'finDashboard', 'finSolicitacao', 'finAprovacoes', 'finPagar', 'finNfe',
+  'finReceber', 'finLocacao', 'finPrevisao', 'finBancos', 'finDepartamentos', 'finHistorico',
+]);
 
 export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
   const { userSession, config } = useErp();
@@ -79,7 +86,19 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
       title: 'Financeiro',
       icon: DollarSign,
       items: [
-        { id: 'financeiro', label: 'Financeiro', icon: DollarSign },
+        // Operação
+        { id: 'finDashboard', label: 'Dashboard Financeiro', icon: LayoutDashboard },
+        { id: 'finSolicitacao', label: 'Solicitação de Pagamento', icon: FilePlus },
+        { id: 'finAprovacoes', label: 'Aprovações', icon: CheckCircle2 },
+        { id: 'finPagar', label: 'Contas a Pagar', icon: Banknote },
+        { id: 'finNfe', label: 'NFe', icon: ScrollText },
+        { id: 'finReceber', label: 'Contas a Receber', icon: Wallet },
+        { id: 'finLocacao', label: 'Locação', icon: Building2 },
+        { id: 'finPrevisao', label: 'Previsão de Receita', icon: TrendingUp },
+        // Gestão
+        { id: 'finBancos', label: 'Bancos', icon: Landmark },
+        { id: 'finDepartamentos', label: 'Departamentos', icon: Tags },
+        { id: 'finHistorico', label: 'Histórico', icon: History },
       ]
     },
     {
@@ -128,6 +147,11 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
     
     // Admin tem acesso irrestrito
     if (role === 'ADMIN') return true;
+
+    // Financeiro: todas as seções seguem a permissão "financeiro".
+    if (FINANCEIRO_ITEM_IDS.has(itemId)) {
+      return userSession.permissoes?.financeiro === true || userSession.permissoes?.[itemId] === true;
+    }
 
     if (itemId === 'compras') return true;
     if (itemId === 'kanbanCompras') {
