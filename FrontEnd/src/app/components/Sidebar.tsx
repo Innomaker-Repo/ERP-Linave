@@ -18,7 +18,7 @@ const MOCK_DIRETOR_FINANCEIRO_EMAIL = 'diretor.financeiro@linave.com.br';
 
 // Itens do grupo Financeiro (cada seção é uma aba própria no sidebar).
 const FINANCEIRO_ITEM_IDS = new Set([
-  'finDashboard', 'finOs', 'finSolicitacao', 'finAprovacoes', 'finPagar', 'finNfe',
+  'finDashboard', 'finSolicitacao', 'finAprovacoes', 'finPagar', 'finNfe',
   'finReceber', 'finLocacao', 'finPrevisao', 'finBancos', 'finDepartamentos', 'finHistorico',
 ]);
 
@@ -88,7 +88,6 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
       items: [
         // Operação
         { id: 'finDashboard', label: 'Dashboard Financeiro', icon: LayoutDashboard },
-        { id: 'finOs', label: 'OS Emitidas', icon: ClipboardList },
         { id: 'finSolicitacao', label: 'Solicitação de Pagamento', icon: FilePlus },
         { id: 'finAprovacoes', label: 'Aprovações', icon: CheckCircle2 },
         { id: 'finPagar', label: 'Contas a Pagar', icon: Banknote },

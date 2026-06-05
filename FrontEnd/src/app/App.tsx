@@ -35,7 +35,6 @@ function getAbaForSection(section: string): { aba: string; item: string } {
     
     // Financeiro (cada seção é um item próprio do sidebar)
     'finDashboard': { aba: 'financeiro', item: 'dashboard' },
-    'finOs': { aba: 'financeiro', item: 'os' },
     'finSolicitacao': { aba: 'financeiro', item: 'solicitacao' },
     'finAprovacoes': { aba: 'financeiro', item: 'aprovacoes' },
     'finPagar': { aba: 'financeiro', item: 'pagar' },
