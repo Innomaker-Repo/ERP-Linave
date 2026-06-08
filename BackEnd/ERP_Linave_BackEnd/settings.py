@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "corsheaders",
     "ComercialApp",
+    "AlmoxarifadoApp",
     'rest_framework_simplejwt',
 ]
 

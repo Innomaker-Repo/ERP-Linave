@@ -6,6 +6,13 @@ import { Input } from '../../../modules/shared/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../modules/shared/ui/select';
 import { useErp } from '../../../context/ErpContext';
 import { getOrdensServico, getOsOptionLabel, getOsOptionValue, type OrdemServicoResumo, isOsAlvo } from '../../../../services/ordensServico';
+import {
+  getEstoqueCompleto,
+  criarItem, atualizarItem, deletarItem,
+  criarTipoGas, deletarTipoGas,
+  criarAlocacaoGas, deletarAlocacaoGas,
+  criarHistoricoBaixa, criarHistoricoAlocacao,
+} from '../../../../services/almoxarifado';
 import api from '../../../../services/api';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -18,6 +25,7 @@ interface StockColumn {
 
 interface StockRow {
   id: string;
+  _dbId?: number;
   tableName: string;
   values: Record<string, string>;
   searchText: string;
@@ -491,6 +499,10 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   const [isRomaneioModalOpen, setIsRomaneioModalOpen] = useState(false);
   const [romaneioOsId, setRomaneioOsId] = useState<string>('');
 
+  // Mapeamentos backend: gasType nome → id, allocation frontendId → backendId
+  const [gasTypeIds, setGasTypeIds] = useState<Record<string, number>>({});
+  const [allocationDbIds, setAllocationDbIds] = useState<Record<string, number>>({});
+
   useEffect(() => {
     let mounted = true;
 
@@ -538,49 +550,115 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   }, [isEquipAllocateModalOpen, availableOS, os]);
 
   useEffect(() => {
-    if (loading || hasHydratedPersistedState.current) return;
+    if (hasHydratedPersistedState.current) return;
+    let mounted = true;
 
-    if (almoxerifado && typeof almoxerifado === 'object') {
-      if (Array.isArray(almoxerifado.tables)) {
-        setTables(
-          almoxerifado.tables.map((table: StockTable) => ({
-            ...table,
-            columns: Array.isArray(table.columns) ? [...table.columns] : [],
-            rows: Array.isArray(table.rows)
-              ? table.rows.map((row) => ({ ...row, values: { ...(row.values || {}) } }))
-              : []
-          }))
-        );
-      }
+    const carregarEstoque = async () => {
+      try {
+        const data = await getEstoqueCompleto();
+        if (!mounted) return;
 
-      if (Array.isArray(almoxerifado.gasTypes)) {
-        setGasTypes(almoxerifado.gasTypes);
-      }
-
-      if (Array.isArray(almoxerifado.allocations)) {
-        setAllocations(almoxerifado.allocations);
-      }
-
-      if (Array.isArray(almoxerifado.baixasHistorico)) {
-        setBaixasHistorico(almoxerifado.baixasHistorico);
-      }
-
-      if (Array.isArray(almoxerifado.alocacoesHistorico)) {
-        setAlocacoesHistorico(almoxerifado.alocacoesHistorico);
-      }
-      if (Array.isArray(almoxerifado.selectedForRomaneio)) {
-        try {
-          setSelectedForRomaneio(new Set(almoxerifado.selectedForRomaneio));
-        } catch (e) {
+        // Mapear tabelas da API sobre as tabelas padrão (mantém colunas do frontend)
+        if (Array.isArray(data.tables) && data.tables.length > 0) {
+          setTables((prevTables) =>
+            prevTables.map((defaultTable) => {
+              const apiTable = data.tables.find((t) => t.name === defaultTable.name);
+              if (!apiTable || apiTable.rows.length === 0) return defaultTable;
+              return {
+                ...defaultTable,
+                rows: apiTable.rows.map((r) => ({
+                  id: r.id,
+                  _dbId: r._dbId,
+                  tableName: r.tableName,
+                  values: r.values as Record<string, string>,
+                  searchText: r.searchText,
+                })),
+              };
+            })
+          );
         }
+
+        if (Array.isArray(data.gasTypes) && data.gasTypes.length > 0) {
+          setGasTypes(data.gasTypes);
+        }
+
+        if (Array.isArray(data.allocations)) {
+          setAllocations(data.allocations.map((a) => ({
+            id: a.id,
+            supplierRowId: a.supplierRowId,
+            gasName: a.gasName,
+            quantity: a.quantity,
+            local: a.local,
+            serviceOS: a.serviceOS,
+          })));
+          // Reconstrói mapeamento allocation frontend id → backend id
+          const aMap: Record<string, number> = {};
+          data.allocations.forEach((a) => { aMap[a.id] = Number(a.id); });
+          setAllocationDbIds(aMap);
+        }
+
+        if (Array.isArray(data.baixasHistorico)) {
+          setBaixasHistorico(data.baixasHistorico.map((b: any) => ({
+            id: b.id,
+            dataBaixa: b.dataBaixa,
+            tableName: b.tableName,
+            itemLabel: b.itemLabel,
+            statusAnterior: b.statusAnterior,
+            motivo: b.motivo,
+            osId: b.osId,
+            osLabel: b.osLabel,
+            localizacao: b.localizacao,
+            serviceOS: b.serviceOS,
+            snapshot: b.snapshot || {},
+          })));
+        }
+
+        if (Array.isArray(data.alocacoesHistorico)) {
+          setAlocacoesHistorico(data.alocacoesHistorico.map((h: any) => ({
+            id: h.id,
+            action: h.action,
+            kind: h.kind,
+            dataEvento: h.dataEvento,
+            osId: h.osId,
+            osLabel: h.osLabel,
+            itemLabel: h.itemLabel,
+            tableName: h.tableName,
+            quantity: h.quantity,
+            local: h.local,
+            gasName: h.gasName,
+          })));
+        }
+
+        hasHydratedPersistedState.current = true;
+      } catch (err) {
+        console.warn('[EstoqueView] API indisponível, usando dados locais:', err);
+        // Fallback: tenta usar dados do context (localStorage via workspace)
+        if (mounted && almoxerifado && typeof almoxerifado === 'object') {
+          if (Array.isArray(almoxerifado.tables)) {
+            setTables(almoxerifado.tables.map((table: StockTable) => ({
+              ...table,
+              columns: Array.isArray(table.columns) ? [...table.columns] : [],
+              rows: Array.isArray(table.rows)
+                ? table.rows.map((row: StockRow) => ({ ...row, values: { ...(row.values || {}) } }))
+                : [],
+            })));
+          }
+          if (Array.isArray(almoxerifado.gasTypes)) setGasTypes(almoxerifado.gasTypes);
+          if (Array.isArray(almoxerifado.allocations)) setAllocations(almoxerifado.allocations);
+          if (Array.isArray(almoxerifado.baixasHistorico)) setBaixasHistorico(almoxerifado.baixasHistorico);
+          if (Array.isArray(almoxerifado.alocacoesHistorico)) setAlocacoesHistorico(almoxerifado.alocacoesHistorico);
+          if (Array.isArray(almoxerifado.selectedForRomaneio)) {
+            try { setSelectedForRomaneio(new Set(almoxerifado.selectedForRomaneio)); } catch {}
+          }
+        }
+        hasHydratedPersistedState.current = true;
       }
+    };
 
-      hasHydratedPersistedState.current = true;
-      return;
-    }
-
-    hasHydratedPersistedState.current = true;
-  }, [loading, almoxerifado]);
+    void carregarEstoque();
+    return () => { mounted = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!hasHydratedPersistedState.current) return;
@@ -588,6 +666,9 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   }, [tables, gasTypes, allocations, baixasHistorico, alocacoesHistorico, selectedForRomaneio]);
 
   const handleRemoveGas = (gasToRemove: string) => {
+    const dbId = gasTypeIds[gasToRemove];
+    if (dbId) deletarTipoGas(dbId).catch((e) => console.warn('API sync deletarTipoGas:', e));
+    setGasTypeIds((prev) => { const next = { ...prev }; delete next[gasToRemove]; return next; });
     setGasTypes((prev) => prev.filter((g) => g !== gasToRemove));
 
     const gasKeyToRemove = `gas${normalizeKey(gasToRemove)}`;
@@ -940,22 +1021,38 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     const osLabel = selectedOs ? getOsOptionLabel(selectedOs as any) : osId;
     const osLocal = selectedOs ? getOsLocalExecution(selectedOs) : '';
 
-    setBaixasHistorico((prev) => [
-      {
-        id: `baixa-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        dataBaixa,
-        tableName: baixaTargetRow.tableName,
-        itemLabel: itemName,
-        statusAnterior: baixaTargetRow.values.status || '',
-        motivo,
-        osId,
-        osLabel,
-        localizacao: baixaTargetRow.values.localizacao || osLocal || '',
-        serviceOS: osLabel,
-        snapshot: { ...baixaTargetRow.values }
-      },
-      ...prev
-    ]);
+    const baixaRecord = {
+      id: `baixa-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      dataBaixa,
+      tableName: baixaTargetRow.tableName,
+      itemLabel: itemName,
+      statusAnterior: baixaTargetRow.values.status || '',
+      motivo,
+      osId,
+      osLabel,
+      localizacao: baixaTargetRow.values.localizacao || osLocal || '',
+      serviceOS: osLabel,
+      snapshot: { ...baixaTargetRow.values }
+    };
+
+    setBaixasHistorico((prev) => [baixaRecord, ...prev]);
+
+    // Sincroniza com o backend
+    if (baixaTargetRow._dbId) {
+      deletarItem(baixaTargetRow._dbId).catch((e) => console.warn('API sync deletarItem:', e));
+    }
+    criarHistoricoBaixa({
+      data_baixa: dataBaixa,
+      tabela_nome: baixaTargetRow.tableName,
+      item_label: itemName,
+      status_anterior: baixaTargetRow.values.status || '',
+      motivo,
+      os_id: osId,
+      os_label: osLabel,
+      localizacao: baixaTargetRow.values.localizacao || osLocal || '',
+      service_os: osLabel,
+      snapshot: { ...baixaTargetRow.values },
+    }).catch((e) => console.warn('API sync criarHistoricoBaixa:', e));
 
     setTables((previous) => previous.map((table) => {
       if (table.name !== baixaTargetRow.tableName) return table;
@@ -1090,6 +1187,36 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       ))
     );
 
+    // Sincroniza com o backend
+    const searchTxt = Object.values(payload).join(' ');
+    if (wasEditing && editingRowTarget) {
+      const existingRow = table.rows.find((r) => r.id === editingRowTarget.rowId);
+      const dbId = existingRow?._dbId;
+      if (dbId) {
+        atualizarItem(dbId, { values: payload, search_text: searchTxt } as any)
+          .catch((e) => console.warn('API sync atualizarItem:', e));
+      } else {
+        // Item sem _dbId (criado antes da integração): cria no backend
+        criarItem({ tabela_nome: table.name, item_id: nextRow.id, values: payload, search_text: searchTxt })
+          .then((res) => {
+            setTables((prev) => prev.map((t) => t.name === table.name
+              ? { ...t, rows: t.rows.map((r) => r.id === nextRow.id ? { ...r, _dbId: res.id } : r) }
+              : t
+            ));
+          })
+          .catch((e) => console.warn('API sync criarItem (fallback edição):', e));
+      }
+    } else {
+      criarItem({ tabela_nome: table.name, item_id: nextRow.id, values: payload, search_text: searchTxt })
+        .then((res) => {
+          setTables((prev) => prev.map((t) => t.name === table.name
+            ? { ...t, rows: t.rows.map((r) => r.id === nextRow.id ? { ...r, _dbId: res.id } : r) }
+            : t
+          ));
+        })
+        .catch((e) => console.warn('API sync criarItem:', e));
+    }
+
     setFiltro('');
     setIsRegisterOpen(false);
     setEditingRowTarget(null);
@@ -1154,6 +1281,26 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       },
       ...prev
     ]);
+
+    // Sincroniza com o backend
+    if (supplierRow._dbId) {
+      criarAlocacaoGas({
+        fornecedor_item: supplierRow._dbId,
+        gas_nome: gasName,
+        quantidade: requestedQuantity,
+        local,
+        service_os: serviceOS,
+      }).then((res) => {
+        setAllocationDbIds((prev) => ({ ...prev, [newAlloc.id]: res.id }));
+      }).catch((e) => console.warn('API sync criarAlocacaoGas:', e));
+    }
+    criarHistoricoAlocacao({
+      action: 'alocar', kind: 'gases',
+      os_id: serviceOS, os_label: serviceOS,
+      item_label: gasName, tabela_nome: 'Alugados - Gases',
+      quantidade: requestedQuantity, local, gas_nome: gasName,
+    }).catch((e) => console.warn('API sync criarHistoricoAlocacao:', e));
+
     setIsAllocateModalOpen(false);
     setAllocateForm({ supplierRowId: '', gasName: '', quantity: '1', local: '', serviceOS: '' });
     setExpandedGasRows(prev => new Set(prev).add(supplierRowId));
@@ -1182,6 +1329,19 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
         },
         ...prev
       ]);
+      // Sincroniza com o backend
+      const dbId = allocationDbIds[allocationId];
+      if (dbId) {
+        deletarAlocacaoGas(dbId).catch((e) => console.warn('API sync deletarAlocacaoGas:', e));
+      }
+      criarHistoricoAlocacao({
+        action: 'desalocar', kind: 'gases',
+        os_id: allocationToRemove.serviceOS, os_label: allocationToRemove.serviceOS,
+        item_label: allocationToRemove.gasName, tabela_nome: 'Alugados - Gases',
+        quantidade: allocationToRemove.quantity, local: allocationToRemove.local,
+        gas_nome: allocationToRemove.gasName,
+      }).catch((e) => console.warn('API sync criarHistoricoAlocacao (desalocar):', e));
+      setAllocationDbIds((prev) => { const next = { ...prev }; delete next[allocationId]; return next; });
     }
     setExpandedGasRows((prev) => new Set(prev).add(supplierRowId));
   };
@@ -1229,6 +1389,23 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       },
       ...prev
     ]);
+
+    // Sincroniza com o backend
+    if (row._dbId) {
+      const nextValues = { ...row.values };
+      delete nextValues.serviceOS;
+      delete nextValues.localizacao;
+      if (normalizeKey(nextValues.status || '') === 'alocado') nextValues.status = getDefaultStatusForTable(row.tableName);
+      atualizarItem(row._dbId, { values: nextValues } as any)
+        .catch((e) => console.warn('API sync atualizarItem (desalocar):', e));
+    }
+    criarHistoricoAlocacao({
+      action: 'desalocar',
+      kind: (row.tableName === 'Alugados - Equipamentos' ? 'equipamentos' : row.tableName === 'Materiais' ? 'materiais' : 'outros') as any,
+      os_id: row.values.serviceOS || '', os_label: row.values.serviceOS || '',
+      item_label: row.values.material || row.values.equipamento || row.values.item || 'Item',
+      tabela_nome: row.tableName, local: row.values.localizacao || '',
+    }).catch((e) => console.warn('API sync criarHistoricoAlocacao (desalocar equip):', e));
   };
 
   const handleSaveEquipAllocation = () => {
@@ -1276,6 +1453,27 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       },
       ...prev
     ]);
+
+    // Sincroniza com o backend
+    const targetTable = tables.find((t) => t.name === equipAllocateForm.tableName);
+    const targetRow = targetTable?.rows.find((r) => r.id === equipAllocateForm.rowId);
+    if (targetRow?._dbId) {
+      const updatedValues = {
+        ...targetRow.values,
+        status: 'Alocado',
+        localizacao: equipAllocateForm.local,
+        serviceOS: equipAllocateForm.osId,
+      };
+      atualizarItem(targetRow._dbId, { values: updatedValues } as any)
+        .catch((e) => console.warn('API sync atualizarItem (alocar equip):', e));
+    }
+    criarHistoricoAlocacao({
+      action: 'alocar',
+      kind: (equipAllocateForm.tableName === 'Alugados - Equipamentos' ? 'equipamentos' : equipAllocateForm.tableName === 'Materiais' ? 'materiais' : 'outros') as any,
+      os_id: equipAllocateForm.osId, os_label: equipAllocateForm.osId,
+      item_label: equipAllocateForm.equipName,
+      tabela_nome: equipAllocateForm.tableName, local: equipAllocateForm.local,
+    }).catch((e) => console.warn('API sync criarHistoricoAlocacao (alocar equip):', e));
 
     setIsEquipAllocateModalOpen(false);
     setEquipAllocateForm({ rowId: '', tableName: '', equipName: '', local: '', osId: '' });
@@ -1990,6 +2188,9 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                               setGasTypes((prev) => [...prev, trimmed]);
                               setNewGasName('');
                               setRegisterValues((prev) => ({ ...prev, [`gas${normalizeKey(trimmed)}`]: '0' }));
+                              criarTipoGas(trimmed)
+                                .then((res) => setGasTypeIds((prev) => ({ ...prev, [trimmed]: res.id })))
+                                .catch((e) => console.warn('API sync criarTipoGas:', e));
                             }
                           }}
                           className="inline-flex h-12 items-center gap-2 rounded-xl bg-cyan-600 px-5 text-xs font-bold uppercase tracking-wider text-white shadow-sm transition hover:bg-cyan-500"

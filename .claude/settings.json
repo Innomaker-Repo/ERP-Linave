@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python manage.py makemigrations AlmoxarifadoApp)",
+      "Bash(python manage.py migrate AlmoxarifadoApp)",
+      "Bash(npx tsc *)",
+      "Bash(python manage.py check AlmoxarifadoApp)"
+    ]
+  }
+}
