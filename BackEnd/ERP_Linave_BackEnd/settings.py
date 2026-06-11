@@ -93,6 +93,9 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'ERP_Linave_BackEnd.wsgi.application'
 
+# Usa BigAutoField por padrão em todos os models (elimina os warnings W042).
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
 
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases

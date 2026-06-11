@@ -5,109 +5,6 @@ from django.contrib.auth.models import AbstractUser
 from django.conf import settings
 
 
-def build_default_workspace_data():
-    return {
-        'empresa': None,
-        'users': [],
-        'pendingUsers': [],
-        'clientes': [],
-        'funcionarios': [],
-        'equipes': [],
-        'obras': [],
-        'os': [],
-        'alocacoes': [],
-        'registrosHoras': [],
-        'folhaPagamento': [],
-        'financeiro': [],
-        'compras': [],
-        'fornecedores': [],
-        'horas': [],
-        'usuarios': [],
-        'config': {
-            'empresaNome': 'Linave ERP Demo',
-            'empresasPrestadoras': [
-                {
-                    'id': 'EMP-LINAVE',
-                    'nome': 'Linave',
-                    'cnpj': '',
-                    'endereco': '',
-                    'contato': '',
-                    'email': '',
-                    'ativa': True,
-                },
-                {
-                    'id': 'EMP-SERVINAVE',
-                    'nome': 'Servinave',
-                    'cnpj': '',
-                    'endereco': 'Rua Miguel de Lemos, 44 Fundos - Ponta D\'areia',
-                    'contato': '+55 (21) 2620-1850',
-                    'email': 'comercial@servinave.com.br',
-                    'ativa': True,
-                },
-            ],
-        },
-        'listas': {
-            'departamentos': [],
-            'categorias': [],
-            'prioridades': [],
-        },
-        '_counters': {},
-        '_osCounters': {},
-    }
-
-
-def normalize_workspace_data(data):
-    defaults = build_default_workspace_data()
-
-    if not isinstance(data, dict):
-        return defaults
-
-    normalized = {**defaults, **data}
-
-    for key in (
-        'users',
-        'pendingUsers',
-        'clientes',
-        'funcionarios',
-        'equipes',
-        'obras',
-        'os',
-        'alocacoes',
-        'registrosHoras',
-        'folhaPagamento',
-        'financeiro',
-        'compras',
-        'fornecedores',
-        'horas',
-        'usuarios',
-    ):
-        normalized[key] = data.get(key, defaults[key]) if isinstance(data.get(key, defaults[key]), list) else []
-
-    for key in ('config', 'listas', '_counters', '_osCounters'):
-        source = data.get(key, {}) if isinstance(data.get(key, {}), dict) else {}
-        normalized[key] = {**defaults[key], **source}
-
-    normalized_os = []
-    for item in normalized.get('os', []):
-        if not isinstance(item, dict):
-            continue
-        horas = item.get('horasTrabalhadasPorServico', [])
-        if not isinstance(horas, list):
-            horas = []
-        normalized_os.append({
-            **item,
-            'horasTrabalhadasPorServico': horas,
-        })
-    normalized['os'] = normalized_os
-
-    normalized['empresa'] = data.get('empresa', defaults['empresa'])
-
-    # Comercial clients must be managed directly by the SQL backend.
-    # Do not persist workspace-local client collections.
-    normalized['clientes'] = []
-
-    return normalized
-
 class Cliente(models.Model):
     
     TIPO_CHOICES = [('Fisica', 'Pessoa Física'), ('Juridica', 'Pessoa Jurídica')]
@@ -127,6 +24,43 @@ class Cliente(models.Model):
 
     def __str__(self):
         return f'Razão Social: {self.razao_social}'
+
+
+class Fornecedor(models.Model):
+    """Cadastro de fornecedores (parceiros/suprimentos).
+
+    Espelha o padrão de Cliente. Os nomes camelCase usados no frontend
+    (razaoSocial, cnpj, descricaoEstadual, naturezaFornecimento, criadoPor/criadoEm)
+    são traduzidos no serviço do frontend (fornecedoresService.ts).
+    """
+
+    TIPO_CHOICES = [('Serviços', 'Serviços'), ('Empresas', 'Empresas')]
+    STATUS_CHOICES = [('Ativo', 'Ativo'), ('Inativo', 'Inativo')]
+    NATUREZA_CHOICES = [('ITEM', 'Item'), ('SERVICO', 'Serviço')]
+
+    id = models.BigAutoField(primary_key=True)
+    workspace = models.ForeignKey(
+        'Workspace', on_delete=models.SET_NULL, null=True, blank=True, related_name='fornecedores'
+    )
+    razao_social = models.CharField(max_length=200)
+    documento = models.CharField(max_length=20, null=True, blank=True)  # CNPJ/CPF (não-único: dados legados podem repetir/vazio)
+    contato = models.CharField(max_length=255, null=True, blank=True)
+    endereco = models.TextField(null=True, blank=True)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='Ativo')
+    tipo = models.CharField(max_length=20, choices=TIPO_CHOICES, default='Serviços')
+    descricao_estadual = models.CharField(max_length=100, null=True, blank=True)
+    natureza_fornecimento = models.CharField(max_length=10, choices=NATUREZA_CHOICES, default='SERVICO')
+    criado_por_nome = models.CharField(max_length=150, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['razao_social']
+        verbose_name = 'Fornecedor'
+        verbose_name_plural = 'Fornecedores'
+
+    def __str__(self):
+        return self.razao_social
 
 
 class Negocio(models.Model):
@@ -509,7 +443,6 @@ class OrdemServico(models.Model):
 class Workspace(models.Model):
     admin_email = models.EmailField(unique=True)
     empresa_nome = models.CharField(max_length=150, default="Linave ERP")
-    data = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -560,3 +493,210 @@ class PropostaComercial(models.Model):
         return f"Proposta Comercial {self.id} - {self.cliente.razao_social} - Valor: {self.preco}"
     
 #--------------------- Fim Proposta Comercial ------------------
+
+#--------------------- Financeiro ------------------
+# Os registros financeiros vêm de um "FinRecord" discriminado por `tipo` no frontend
+# (useFin.ts/finData.ts). Cada tipo ganha sua própria tabela com colunas tipadas para os
+# campos consultáveis + um campo `extra` (JSON) que preserva qualquer campo adicional do
+# frontend sem risco de perda de dado. O `record_id` guarda o id-string gerado no frontend
+# (ex.: "CP-ABC", "SP-001"), que a UI usa para referências (parentId, seleção etc.).
+
+class FinanceiroBase(models.Model):
+    record_id = models.CharField(max_length=80, unique=True)
+    empresa = models.CharField(max_length=50, blank=True, default='')
+    status = models.CharField(max_length=60, blank=True, default='')
+    extra = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        abstract = True
+
+
+class Banco(FinanceiroBase):
+    nome = models.CharField(max_length=150, blank=True, default='')
+    tipo = models.CharField(max_length=80, blank=True, default='')
+    pix = models.CharField(max_length=255, blank=True, default='')
+
+    def __str__(self):
+        return f'Banco {self.nome}'
+
+
+class SolicitacaoPagamento(FinanceiroBase):
+    solicitante = models.CharField(max_length=150, blank=True, default='')
+    tipo = models.CharField(max_length=80, blank=True, default='')  # tipo/forma de pagamento
+    vinculo_tipo = models.CharField(max_length=30, blank=True, default='')  # 'OS' | 'Departamento'
+    vinculo_valor = models.CharField(max_length=120, blank=True, default='')
+    fornecedor = models.CharField(max_length=200, blank=True, default='')
+    documento = models.CharField(max_length=150, blank=True, default='')
+    valor = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    compra = models.CharField(max_length=20, blank=True, default='')
+    vencimento = models.CharField(max_length=20, blank=True, default='')
+    forma = models.CharField(max_length=120, blank=True, default='')
+    descricao = models.TextField(blank=True, default='')
+    anexos = models.JSONField(default=list, blank=True)
+
+    def __str__(self):
+        return f'Solicitação {self.record_id}'
+
+
+class ContaPagar(FinanceiroBase):
+    type = models.CharField(max_length=10, default='single')  # 'single' | 'parent' | 'child'
+    parent_record_id = models.CharField(max_length=80, blank=True, null=True)
+    parcela = models.CharField(max_length=20, blank=True, default='')
+    total_parcelas = models.IntegerField(default=1)
+    vinculo_tipo = models.CharField(max_length=30, blank=True, default='')
+    vinculo_valor = models.CharField(max_length=120, blank=True, default='')
+    fornecedor = models.CharField(max_length=200, blank=True, default='')
+    tipo = models.CharField(max_length=80, blank=True, default='')
+    documento = models.CharField(max_length=150, blank=True, default='')
+    valor = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    vencimento = models.CharField(max_length=20, blank=True, default='')
+    banco = models.CharField(max_length=150, blank=True, default='')
+    forma = models.CharField(max_length=120, blank=True, default='')
+    anexos = models.JSONField(default=list, blank=True)
+    comprovantes = models.JSONField(default=list, blank=True)
+    valor_pago = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    data_pagamento = models.CharField(max_length=20, blank=True, default='')
+    juros_pago = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+
+    def __str__(self):
+        return f'Conta a Pagar {self.record_id}'
+
+
+class NotaFiscal(FinanceiroBase):
+    # kind diferencia a solicitação de NFe ('nfeReq') da NFe emitida/arquivada ('nfe').
+    kind = models.CharField(max_length=10, default='nfe')
+    source_id = models.CharField(max_length=80, blank=True, default='')
+    os = models.CharField(max_length=120, blank=True, default='')
+    cliente = models.CharField(max_length=200, blank=True, default='')
+    numero = models.CharField(max_length=80, blank=True, default='')
+    emissao = models.CharField(max_length=20, blank=True, default='')
+    valor = models.DecimalField(max_digits=15, decimal_places=2, default=0)  # original
+    liquido = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    vencimento = models.CharField(max_length=20, blank=True, default='')
+    forma = models.CharField(max_length=160, blank=True, default='')
+    tipo_nfe = models.CharField(max_length=60, blank=True, default='')
+    contrato = models.CharField(max_length=120, blank=True, default='')
+    anexos = models.JSONField(default=list, blank=True)
+
+    def __str__(self):
+        return f'NFe {self.record_id} ({self.kind})'
+
+
+class ContaReceber(FinanceiroBase):
+    origem = models.CharField(max_length=60, blank=True, default='')
+    cliente = models.CharField(max_length=200, blank=True, default='')
+    referencia = models.CharField(max_length=160, blank=True, default='')
+    valor_original = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    valor_liquido = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    vencimento_recebimento = models.CharField(max_length=20, blank=True, default='')
+    recebido = models.BooleanField(default=False)
+    data_recebimento = models.CharField(max_length=20, blank=True, default='')
+    valor_recebido = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    banco_recebimento = models.CharField(max_length=150, blank=True, default='')
+
+    def __str__(self):
+        return f'Conta a Receber {self.record_id}'
+
+
+class EstudoLocacao(FinanceiroBase):
+    tipo = models.CharField(max_length=80, blank=True, default='')
+    unidade = models.CharField(max_length=120, blank=True, default='')
+    vincula_os = models.CharField(max_length=120, blank=True, default='')
+    cobranca = models.CharField(max_length=160, blank=True, default='')
+
+    def __str__(self):
+        return f'Locação {self.record_id}'
+#--------------------- Fim Financeiro ------------------
+
+#--------------------- Compras ------------------
+# Uma RequisicaoCompra é um documento agregado: traz `itens` e `budgetDetails` (cotações)
+# aninhados que o kanban manipula em conjunto. Guardamos o agregado completo em `extra`
+# (round-trip fiel para a UI) e replicamos os campos de topo em colunas tipadas para
+# consultas/relatórios. O histórico é o snapshot do pedido concluído.
+
+class RequisicaoCompra(models.Model):
+    record_id = models.CharField(max_length=80, unique=True)
+    solicitante = models.CharField(max_length=150, blank=True, default='')
+    departamento = models.CharField(max_length=150, blank=True, default='')
+    centro_custo = models.CharField(max_length=120, blank=True, default='')
+    stage = models.CharField(max_length=40, blank=True, default='')
+    approval_route = models.CharField(max_length=40, blank=True, null=True)
+    purchase_state = models.CharField(max_length=30, blank=True, default='')
+    budget_value = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    extra = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f'Requisição {self.record_id}'
+
+
+class CompraHistorico(models.Model):
+    record_id = models.CharField(max_length=80, unique=True)
+    solicitante = models.CharField(max_length=150, blank=True, default='')
+    departamento = models.CharField(max_length=150, blank=True, default='')
+    centro_custo = models.CharField(max_length=120, blank=True, default='')
+    finalizado_em = models.CharField(max_length=40, blank=True, default='')
+    finalizado_por = models.CharField(max_length=150, blank=True, default='')
+    budget_value = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    extra = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f'Compra Histórico {self.record_id}'
+#--------------------- Fim Compras ------------------
+
+#--------------------- Almoxarifado / Estoque ------------------
+# O estoque/almoxarifado é um agregado coeso que as telas (EstoqueView etc.) manipulam
+# como um único objeto (tables, gasTypes, allocations, históricos, romaneios...). Guardamos
+# o objeto completo em `data` (round-trip fiel para a UI) numa linha singleton, com algumas
+# projeções em colunas para consulta. Tira o estoque do blob do workspace e do localStorage.
+
+class EstoqueAlmoxarifado(models.Model):
+    data = models.JSONField(default=dict, blank=True)  # objeto completo (fonte para a UI)
+    version = models.IntegerField(default=2)
+    tables = models.JSONField(default=list, blank=True)
+    gas_types = models.JSONField(default=list, blank=True)
+    allocations = models.JSONField(default=list, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f'Estoque/Almoxarifado (v{self.version})'
+#--------------------- Fim Almoxarifado ------------------
+
+#--------------------- Alocações ------------------
+# Vincula um funcionário a uma Obra/Negócio e/ou a uma OS. Hoje funcionário/obra/os
+# ainda são referenciados por id-string (funcionário é do RH, fora do escopo; obra/os
+# saem do blob na consolidação do Comercial). Guardamos o registro completo em `extra`.
+
+class Alocacao(models.Model):
+    record_id = models.CharField(max_length=80, unique=True)
+    funcionario_id = models.CharField(max_length=120, blank=True, default='')
+    obra_id = models.CharField(max_length=120, blank=True, null=True)
+    os_id = models.CharField(max_length=120, blank=True, null=True)
+    data_inicio = models.CharField(max_length=20, blank=True, default='')
+    data_fim = models.CharField(max_length=20, blank=True, null=True)
+    status = models.CharField(max_length=30, blank=True, default='Ativa')
+    extra = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f'Alocação {self.record_id}'
+#--------------------- Fim Alocações ------------------
+
+#--------------------- Configurações ------------------
+# Configurações da empresa (nome, empresas prestadoras) e listas auxiliares
+# (departamentos, categorias, prioridades). São objetos de configuração singleton,
+# lidos em muitos lugares como `ctx.config`/`ctx.listas`; guardamos cada um numa coluna
+# JSON desta linha única para tirá-los do blob do workspace.
+
+class ConfiguracaoApp(models.Model):
+    config = models.JSONField(default=dict, blank=True)   # { empresaNome, empresasPrestadoras, ... }
+    listas = models.JSONField(default=dict, blank=True)   # { departamentos, categorias, prioridades }
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return 'Configurações do app'
+#--------------------- Fim Configurações ------------------

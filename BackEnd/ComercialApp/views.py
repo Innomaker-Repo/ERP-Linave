@@ -3,22 +3,15 @@ from rest_framework.response import Response
 from rest_framework.decorators import api_view
 from django.db import transaction
 from .models import (
-    Cliente, Negocio, Servico, User,
+    Cliente, Negocio, Servico,
     Levantamento, MDO, Material, Servico_terceirizado, Orcamento, Ativ_prevista, Resumo_orcamento,
-    OrdemServico, Workspace, normalize_workspace_data, Escopo, PropostaComercial
+    OrdemServico, Escopo, PropostaComercial, Fornecedor
 )
 from .serializers import (
-    ClienteSerializer, NegocioSerializer, ServicoSerializer, UserSerializer,
-    OrcamentoSerializer, LevantamentoSerializer, Resumo_orcamentoSerializer,
-    MDOSerializer, MaterialSerializer, Ativ_previstaSerializer, ServicosTerceirizadosSerializer,
-    OrdemServicoSerializer, WorkspaceSerializer, EscopoSerializer, PropostaComercialSerializer
+    ClienteSerializer, NegocioSerializer, ServicoSerializer,
+    OrcamentoSerializer, OrdemServicoSerializer, EscopoSerializer,
+    PropostaComercialSerializer, FornecedorSerializer
 )
-from django.http import FileResponse
-from django.conf import settings
-import os
-
-import logging
-logger = logging.getLogger(__name__)
 
 # --- ViewSets Básicos ---
 class ClienteViewSet(viewsets.ModelViewSet):
@@ -40,37 +33,9 @@ class ClienteViewSet(viewsets.ModelViewSet):
         )
 
 
-class UserViewSet(viewsets.ModelViewSet):
-    queryset = User.objects.all()
-    serializer_class = UserSerializer
-
-class ServicoViewSet(viewsets.ModelViewSet):
-    queryset = Servico.objects.all()
-    serializer_class = ServicoSerializer
-
-class MDOViewSet(viewsets.ModelViewSet):
-    queryset = MDO.objects.all()
-    serializer_class = MDOSerializer
-
-class MaterialViewSet(viewsets.ModelViewSet):
-    queryset = Material.objects.all()
-    serializer_class = MaterialSerializer
-
-class AtividadeViewSet(viewsets.ModelViewSet):
-    queryset = Ativ_prevista.objects.all()
-    serializer_class = Ativ_previstaSerializer
-
-class TerceirizadoViewSet(viewsets.ModelViewSet):
-    queryset = Servico_terceirizado.objects.all()
-    serializer_class = ServicosTerceirizadosSerializer
-
-class LevantamentoViewSet(viewsets.ModelViewSet):
-    queryset = Levantamento.objects.all()
-    serializer_class = LevantamentoSerializer
-
-class OrcamentoViewSet(viewsets.ModelViewSet):
-    queryset = Orcamento.objects.all()   
-    serializer_class = OrcamentoSerializer 
+class FornecedorViewSet(viewsets.ModelViewSet):
+    queryset = Fornecedor.objects.all()
+    serializer_class = FornecedorSerializer
 
 #NEGÓCIOS
 # --- ViewSet de Negócio com Lógica Customizada ---  
@@ -78,16 +43,6 @@ class NegocioViewSet(viewsets.ModelViewSet):
     
     queryset = Negocio.objects.select_related('cliente').prefetch_related('servicos').all()
     serializer_class = NegocioSerializer
-
-    def list(self, request, *args, **kwargs):
-        try:
-            response = super().list(request, *args, **kwargs)
-            print(f"DEBUG: Enviando {len(response.data)} negócios para o React")
-            return response
-        except Exception as e:
-            with open('django_debug.log', 'a') as f:
-                f.write(f"ERRO GET NEGOCIOS: {str(e)}\n")
-            raise
 
     @transaction.atomic
     def create(self, request, *args, **kwargs):
@@ -140,13 +95,6 @@ class NegocioViewSet(viewsets.ModelViewSet):
     
 #ORÇAMENTOS
 # --- Funções Customizadas ---
-@api_view(['GET'])
-def visualizar_orcamento(request, filename):
-    file_path = os.path.join(settings.MEDIA_ROOT, 'documentos_negocios', filename)
-    if not os.path.exists(file_path):
-        return Response({'error': 'Arquivo não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
-    return FileResponse(open(file_path, 'rb'), content_type='application/pdf')
-
 @api_view(['POST'])
 def criar_orcamento(request):
     with transaction.atomic():
@@ -355,36 +303,155 @@ class OrdemServicoViewSet(viewsets.ModelViewSet):
         )
 
 
-@api_view(['GET', 'POST', 'PUT', 'PATCH'])
-@transaction.atomic
-def workspace_data(request, admin_email):
-    workspace, created = Workspace.objects.get_or_create(
-        admin_email=admin_email,
-        defaults={'data': normalize_workspace_data({})}
-    )
+@api_view(['GET', 'POST', 'PUT'])
+def configuracoes_data(request):
+    """Configurações da empresa + listas auxiliares (singleton).
+
+    GET  -> {'config': {...}, 'listas': {...}}
+    POST/PUT -> recebe {'config'?: {...}, 'listas'?: {...}} e substitui o(s) que vier.
+    """
+    from .models import ConfiguracaoApp
+
+    inst = ConfiguracaoApp.objects.first()
 
     if request.method == 'GET':
-        response_data = WorkspaceSerializer(workspace).data
-        if isinstance(response_data, dict) and 'data' in response_data:
-            response_data['data']['clientes'] = []
-        return Response(response_data, status=status.HTTP_200_OK)
+        return Response(
+            {
+                'config': (inst.config if inst and isinstance(inst.config, dict) else None),
+                'listas': (inst.listas if inst and isinstance(inst.listas, dict) else None),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    payload = request.data if isinstance(request.data, dict) else {}
+    if inst is None:
+        inst = ConfiguracaoApp.objects.create()
+    if 'config' in payload and isinstance(payload['config'], dict):
+        inst.config = payload['config']
+    if 'listas' in payload and isinstance(payload['listas'], dict):
+        inst.listas = payload['listas']
+    inst.save()
+
+    return Response({'config': inst.config, 'listas': inst.listas}, status=status.HTTP_200_OK)
+
+
+@api_view(['GET', 'POST', 'PUT'])
+def alocacoes_data(request):
+    """Estado das Alocações (funcionário ↔ obra/OS).
+
+    GET  -> lista de alocações (registro completo via `extra`).
+    POST/PUT -> recebe a lista completa e substitui (replace-all).
+    """
+    from .models import Alocacao
+    from django.db import transaction
+
+    if request.method == 'GET':
+        return Response([
+            (a.extra if isinstance(a.extra, dict) else {}) for a in Alocacao.objects.all()
+        ], status=status.HTTP_200_OK)
+
+    payload = request.data
+    if isinstance(payload, dict):
+        payload = payload.get('alocacoes', payload.get('data', []))
+    if not isinstance(payload, list):
+        return Response({'error': 'Esperado um array de alocações.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    with transaction.atomic():
+        Alocacao.objects.all().delete()
+        seen = set()
+        instances = []
+        for rec in payload:
+            if not isinstance(rec, dict):
+                continue
+            rid = str(rec.get('id') or '').strip()
+            if not rid or rid in seen:
+                continue
+            seen.add(rid)
+            instances.append(Alocacao(
+                record_id=rid,
+                funcionario_id=str(rec.get('funcionarioId') or '')[:120],
+                obra_id=(str(rec.get('obraId'))[:120] if rec.get('obraId') else None),
+                os_id=(str(rec.get('osId'))[:120] if rec.get('osId') else None),
+                data_inicio=str(rec.get('dataInicio') or '')[:20],
+                data_fim=(str(rec.get('dataFim'))[:20] if rec.get('dataFim') else None),
+                status=str(rec.get('status') or 'Ativa')[:30],
+                extra=rec,
+            ))
+        Alocacao.objects.bulk_create(instances)
+
+    return Response([
+        (a.extra if isinstance(a.extra, dict) else {}) for a in Alocacao.objects.all()
+    ], status=status.HTTP_200_OK)
+
+
+@api_view(['GET', 'POST', 'PUT'])
+def almoxarifado_data(request):
+    """Estado do Estoque/Almoxarifado (objeto agregado único).
+
+    GET  -> objeto de almoxarifado (ou null se ainda não existir).
+    POST/PUT -> recebe o objeto completo e substitui o agregado (singleton).
+    """
+    from .almox_sync import read as almox_read, replace as almox_replace
+
+    if request.method == 'GET':
+        return Response(almox_read(), status=status.HTTP_200_OK)
 
     payload = request.data
     if isinstance(payload, dict) and set(payload.keys()) == {'data'}:
         payload = payload.get('data')
+    return Response(almox_replace(payload if isinstance(payload, dict) else {}), status=status.HTTP_200_OK)
 
-    serializer = WorkspaceSerializer(
-        workspace,
-        data={
-            'admin_email': admin_email,
-            'data': normalize_workspace_data(payload if isinstance(payload, dict) else {}),
-        },
-        partial=request.method == 'PATCH'
+
+@api_view(['GET', 'POST', 'PUT'])
+def financeiro_data(request):
+    """Estado financeiro como lista unificada de FinRecord.
+
+    GET  -> retorna todos os registros (Banco, Solicitação, Conta a Pagar, NFe,
+            Conta a Receber, Locação) no formato que o frontend (useFin) consome.
+    POST/PUT -> recebe a lista completa de FinRecord e substitui todo o estado
+            (espelha o comportamento antigo do blob, que reescrevia tudo).
+    """
+    from .financeiro_sync import read_all, replace_all
+
+    if request.method == 'GET':
+        return Response(read_all(), status=status.HTTP_200_OK)
+
+    payload = request.data
+    if isinstance(payload, dict):
+        payload = payload.get('financeiro', payload.get('data', []))
+    if not isinstance(payload, list):
+        return Response({'error': 'Esperado um array de registros financeiros.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    total = replace_all(payload)
+    return Response({'message': 'Financeiro sincronizado.', 'total': total, 'financeiro': read_all()}, status=status.HTTP_200_OK)
+
+
+@api_view(['GET', 'POST', 'PUT'])
+def compras_data(request):
+    """Estado de Compras (requisições do kanban + histórico de compras concluídas).
+
+    GET  -> {'compras': [...requisições...], 'comprasHistorico': [...histórico...]}
+    POST/PUT -> recebe {'compras'?: [...], 'comprasHistorico'?: [...]} e substitui
+            (replace-all) apenas a(s) coleção(ões) presente(s) no corpo.
+    """
+    from .compras_sync import read_requisicoes, read_historico, replace_requisicoes, replace_historico
+
+    if request.method == 'GET':
+        return Response(
+            {'compras': read_requisicoes(), 'comprasHistorico': read_historico()},
+            status=status.HTTP_200_OK,
+        )
+
+    payload = request.data if isinstance(request.data, dict) else {}
+    if 'compras' in payload:
+        replace_requisicoes(payload.get('compras') or [])
+    if 'comprasHistorico' in payload:
+        replace_historico(payload.get('comprasHistorico') or [])
+
+    return Response(
+        {'compras': read_requisicoes(), 'comprasHistorico': read_historico()},
+        status=status.HTTP_200_OK,
     )
-    serializer.is_valid(raise_exception=True)
-    serializer.save()
-
-    return Response(serializer.data, status=status.HTTP_201_CREATED if created and request.method == 'POST' else status.HTTP_200_OK)
 
 
 @api_view(['GET'])

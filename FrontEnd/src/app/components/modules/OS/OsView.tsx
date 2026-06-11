@@ -572,8 +572,19 @@ export function OsView({ searchQuery }: OSViewProps) {
     toast.success('OS criada e enviada para produção com sucesso!');
   };
 
-  const handleDeleteOS = (osId: string) => {
+  const handleDeleteOS = async (osId: string) => {
     if (!window.confirm('Tem certeza que deseja deletar esta OS consolidada?')) return;
+    // Exclui no SQL usando o id numérico (backendId); o id da UI é o numero_os (LN-0001/26).
+    const osItem = (Array.isArray(os) ? os : []).find((o: any) => String(o.id) === String(osId));
+    const backendId = (osItem as any)?.backendId;
+    if (backendId != null) {
+      try {
+        await deleteOrdemServico(backendId);
+      } catch {
+        alert('Erro ao excluir a OS no banco de dados.');
+        return;
+      }
+    }
     saveEntity('os', listaOS.filter((item) => item.id !== osId));
   };
 

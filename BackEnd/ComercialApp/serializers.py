@@ -3,10 +3,10 @@ from decimal import Decimal
 from rest_framework import serializers
 from .models import (
     Cliente, Negocio, Servico, User,
-    Levantamento, MDO, Ativ_prevista, Material, 
+    Levantamento, MDO, Ativ_prevista, Material,
     Servico_terceirizado, Orcamento, Resumo_orcamento,
-    OrdemServico, Workspace, normalize_workspace_data,
-    Escopo, PropostaComercial
+    OrdemServico,
+    Escopo, PropostaComercial, Fornecedor
 )
 
 # ----------------- Core ------------------
@@ -41,6 +41,12 @@ class ClienteSerializer(serializers.ModelSerializer):
             # Retorna o cliente existente em vez de dar erro
             return Cliente.objects.get(documento=doc)
         return super().create(validated_data)
+
+class FornecedorSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Fornecedor
+        fields = '__all__'
+
 
 class NegocioResumoSerializer(serializers.ModelSerializer):
     class Meta:
@@ -391,33 +397,6 @@ class OrcamentoSerializer(serializers.ModelSerializer):
             'valorPorUnidade': float(valor_por_unidade)
         }
 
-    def create(self, validated_data):
-        data = self.initial_data
-        # ... (código anterior de criação de levantamento e resumo)
-
-        # Crie o orçamento garantindo que observacoes não seja None
-        orcamento = Orcamento.objects.create(
-            levantamento=levantamento,
-            resumo=resumo,
-            observacoes_setor_orcamento=data.get('observacoes', '') or '',
-            numero_orcamento=data.get('numeroOrcamento', '') or '',
-            **validated_data
-        )
-
-        # Salva itens filhos com conversão de tipos explícita
-        for mdo in data.get('mao_de_obra', []):
-            MDO.objects.create(
-                orcamento=orcamento, 
-                fnc=mdo.get('fnc'),
-                qnt=int(mdo.get('qnt') or 0),
-                dias=int(mdo.get('dias') or 0),
-                custo_unit_dia=Decimal(str(mdo.get('custo_unit_dia') or 0)),
-                observacao=mdo.get('observacao', '')
-            )
-            
-        # ... Repita essa lógica de conversão Decimal(str()) para Materiais e Terceirizados
-        return orcamento
-
 # --------------------- Ordem de Servico (OS) ---------------------
 
 class OrdemServicoSerializer(serializers.ModelSerializer):
@@ -508,27 +487,3 @@ class OrdemServicoSerializer(serializers.ModelSerializer):
         
         validated_data['numero_os'] = numero_os
         return super().create(validated_data)
-
-class WorkspaceSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Workspace
-        fields = '__all__'
-        read_only_fields = ('created_at', 'updated_at')
-
-    def validate_data(self, value):
-        return normalize_workspace_data(value)
-
-    def create(self, validated_data):
-        validated_data['data'] = normalize_workspace_data(
-            validated_data.get('data', {})
-        )
-        return super().create(validated_data)
-
-    def update(self, instance, validated_data):
-        if 'data' in validated_data:
-            instance.data = normalize_workspace_data(
-                validated_data['data']
-            )
-            validated_data.pop('data', None)
-
-        return super().update(instance, validated_data)

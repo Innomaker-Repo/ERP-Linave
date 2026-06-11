@@ -1,6 +1,12 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { getCachedWorkspace, loadWorkspace, saveWorkspace, setActiveAdminEmail, setCachedWorkspace } from '../services/workspaceStorage';
-import { getClientes, createCliente, updateCliente, deleteCliente as deleteClienteApi } from '../../services/comercialService';
+import React, { createContext, useContext, useState, useEffect } from 'react';
+import { getClientes, createCliente, updateCliente, deleteCliente as deleteClienteApi, getNegocios, getOrdensServico } from '../../services/comercialService';
+import { mapNegociosToObras, mapOrdensToOs } from '../../services/obrasMapper';
+import { getFornecedores, createFornecedor, updateFornecedor, deleteFornecedor as deleteFornecedorApi } from '../../services/fornecedoresService';
+import { getFinanceiro, syncFinanceiro } from '../../services/financeiroService';
+import { getCompras, syncCompras, syncComprasHistorico } from '../../services/comprasService';
+import { getAlmoxarifado, syncAlmoxarifado } from '../../services/almoxarifadoService';
+import { getAlocacoes, syncAlocacoes } from '../../services/alocacoesService';
+import { getConfiguracoes, syncConfig, syncListas } from '../../services/configuracoesService';
 
 
 const cloneDeep = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -917,13 +923,13 @@ const createInitialData = (savedData: any) => {
   const sanitizedData = {
     ...baseData,
     clientes: [], // Commercial clients are sourced directly from backend SQL.
-    financeiro: sanitizeCollection('financeiro', savedData.financeiro),
-    compras: Array.isArray(savedData.compras) ? savedData.compras : [],
-    comprasHistorico: Array.isArray(savedData.comprasHistorico) ? savedData.comprasHistorico : [],
-    os: sanitizeCollection('os', savedData.os),
+    financeiro: [], // Financeiro agora vem do backend SQL (hidratado via getFinanceiro).
+    compras: [], // Compras agora vêm do backend SQL (hidratadas via getCompras).
+    comprasHistorico: [], // Histórico de compras também vem do backend SQL.
+    os: [], // OS agora vem do backend SQL (hidratada via getOrdensServico).
     usuarios: Array.isArray(savedData.usuarios) ? savedData.usuarios : [],
     equipes: Array.isArray(savedData.equipes) ? savedData.equipes : [],
-    fornecedores: sanitizeCollection('fornecedores', savedData.fornecedores),
+    fornecedores: [], // Fornecedores agora vêm do backend SQL (hidratados via getFornecedores).
     horas: Array.isArray(savedData.horas) ? savedData.horas : [],
     almoxerifado: savedData.almoxerifado && typeof savedData.almoxerifado === 'object'
       ? {
@@ -990,6 +996,8 @@ interface ErpContextData {
   saveConfig: (novaConfig: any) => Promise<void>;
   saveCliente: (cliente: any) => Promise<any>;
   deleteCliente: (id: any) => Promise<void>;
+  saveFornecedor: (fornecedor: any) => Promise<any>;
+  deleteFornecedor: (id: any) => Promise<void>;
   uploadFileToDrive: (file: File) => Promise<string | null>;
   // Drafts (autosave) API
   saveDraft: (key: string, payload: any) => Promise<void>;
@@ -1017,33 +1025,49 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   
   const [data, setData] = useState<any>(() => createInitialData(null));
-  const saveQueueRef = useRef(Promise.resolve());
 
   useEffect(() => {
     let mounted = true;
 
     const hydrateWorkspace = async () => {
-      // Usa o dono do workspace (tenant) quando houver, para que vários usuários da mesma
-      // empresa (admin, gerente, diretor) compartilhem os mesmos dados.
-      const adminEmail = userSession?.workspaceOwner || userSession?.email || 'admin@modo-teste.com';
-      setActiveAdminEmail(adminEmail);
-
+      // Todos os dados vêm do SQL (sem blob de workspace). O estado já inicia com os
+      // defaults (createInitialData(null)); aqui só hidratamos as coleções do backend.
       try {
-        const saved = await loadWorkspace(adminEmail);
+        const [backendClientes, backendFornecedores, backendFinanceiro, backendCompras, backendAlmox, backendAlocacoes, backendNegocios, backendOrdens, backendConfiguracoes] = await Promise.all([
+          getClientes(),
+          getFornecedores(),
+          getFinanceiro(),
+          getCompras(),
+          getAlmoxarifado(),
+          getAlocacoes(),
+          getNegocios(),
+          getOrdensServico(),
+          getConfiguracoes(),
+        ]);
         if (!mounted) return;
-        setData(createInitialData(saved));
+        const clientesMapa: Record<string, string> = {};
+        (Array.isArray(backendClientes) ? backendClientes : []).forEach((c: any) => {
+          clientesMapa[String(c.id)] = c.razaoSocial || c.razao_social || '';
+        });
+        const obrasFromSql = mapNegociosToObras(backendNegocios, clientesMapa);
+        const osFromSql = mapOrdensToOs(backendOrdens);
+        setData((prevData: any) => ({
+          ...prevData,
+          clientes: backendClientes,
+          fornecedores: backendFornecedores,
+          financeiro: backendFinanceiro,
+          compras: backendCompras.compras,
+          comprasHistorico: backendCompras.comprasHistorico,
+          almoxerifado: backendAlmox ?? prevData.almoxerifado,
+          alocacoes: backendAlocacoes,
+          obras: obrasFromSql,
+          os: osFromSql,
+          // config/listas: usa o que vier do SQL; senão mantém os defaults já carregados.
+          config: backendConfiguracoes.config ?? prevData.config,
+          listas: backendConfiguracoes.listas ?? prevData.listas,
+        }));
       } catch (error) {
-        if (!mounted) return;
-        console.error('Erro ao carregar workspace do backend', error);
-        setData(createInitialData(null));
-      }
-
-      try {
-        const backendClientes = await getClientes();
-        if (!mounted) return;
-        setData((prevData: any) => ({ ...prevData, clientes: backendClientes }));
-      } catch (error) {
-        console.error('Erro ao carregar clientes SQL', error);
+        console.error('Erro ao carregar dados SQL (clientes/fornecedores/financeiro/compras)', error);
       } finally {
         if (mounted) {
           setLoading(false);
@@ -1103,6 +1127,42 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const saveFornecedor = async (fornecedor: any) => {
+    try {
+      // ids vindos do SQL são numéricos; ids legados do blob começam com "FOR-".
+      const idNumerico = typeof fornecedor?.id === 'number' || /^\d+$/.test(String(fornecedor?.id || ''));
+      const savedFornecedor = idNumerico
+        ? await updateFornecedor(fornecedor.id, fornecedor)
+        : await createFornecedor(fornecedor);
+
+      setData((prevData: any) => {
+        const atuais = Array.isArray(prevData.fornecedores) ? prevData.fornecedores : [];
+        const semItem = atuais.filter((item: any) => item.id !== savedFornecedor.id);
+        return { ...prevData, fornecedores: [...semItem, savedFornecedor] };
+      });
+
+      return savedFornecedor;
+    } catch (error) {
+      console.error('Erro ao salvar fornecedor no backend', error);
+      throw error;
+    }
+  };
+
+  const deleteFornecedor = async (id: any) => {
+    try {
+      if (typeof id === 'number' || /^\d+$/.test(String(id))) {
+        await deleteFornecedorApi(id);
+      }
+    } catch (error) {
+      console.error('Erro ao excluir fornecedor no backend', error);
+    } finally {
+      setData((prevData: any) => ({
+        ...prevData,
+        fornecedores: (prevData.fornecedores || []).filter((item: any) => item.id !== id),
+      }));
+    }
+  };
+
   // Removed: loginComGoogle - agora apenas simula
   const loginComGoogle = async (token: string, email: string) => {
     showTestAlert('Google Login');
@@ -1113,7 +1173,6 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     const session = { ...user, token: null };
     setUserSession(session);
     window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
-    setActiveAdminEmail(session.workspaceOwner || session.email || 'admin@modo-teste.com');
   };
 
   // Persiste localmente no workspace em browser storage
@@ -1123,9 +1182,6 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
 
     if (collection === 'clientes') {
       console.warn('saveEntity("clientes") is deprecated. Use saveCliente() to persist clients to backend SQL.');
-      const currentWorkspace = getCachedWorkspace(adminEmail);
-      const nextWorkspace = { ...currentWorkspace, clientes: [] };
-      setCachedWorkspace(adminEmail, nextWorkspace);
       setData((prevData: any) => ({ ...prevData, clientes: newData }));
       return;
     }
