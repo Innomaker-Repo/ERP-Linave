@@ -1,6 +1,12 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { getCachedWorkspace, loadWorkspace, saveWorkspace, setActiveAdminEmail, setCachedWorkspace } from '../services/workspaceStorage';
-import { getClientes, createCliente, updateCliente, deleteCliente as deleteClienteApi } from '../../services/comercialService';
+import React, { createContext, useContext, useState, useEffect } from 'react';
+import { getClientes, createCliente, updateCliente, deleteCliente as deleteClienteApi, getNegocios, getOrdensServico } from '../../services/comercialService';
+import { mapNegociosToObras, mapOrdensToOs } from '../../services/obrasMapper';
+import { getFornecedores, createFornecedor, updateFornecedor, deleteFornecedor as deleteFornecedorApi } from '../../services/fornecedoresService';
+import { getFinanceiro, syncFinanceiro } from '../../services/financeiroService';
+import { getCompras, syncCompras, syncComprasHistorico } from '../../services/comprasService';
+import { getAlmoxarifado, syncAlmoxarifado } from '../../services/almoxarifadoService';
+import { getAlocacoes, syncAlocacoes } from '../../services/alocacoesService';
+import { getConfiguracoes, syncConfig, syncListas } from '../../services/configuracoesService';
 
 
 const cloneDeep = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -887,13 +893,13 @@ const createInitialData = (savedData: any) => {
   const sanitizedData = {
     ...baseData,
     clientes: [], // Commercial clients are sourced directly from backend SQL.
-    financeiro: sanitizeCollection('financeiro', savedData.financeiro),
-    compras: Array.isArray(savedData.compras) ? savedData.compras : [],
-    comprasHistorico: Array.isArray(savedData.comprasHistorico) ? savedData.comprasHistorico : [],
-    os: sanitizeCollection('os', savedData.os),
+    financeiro: [], // Financeiro agora vem do backend SQL (hidratado via getFinanceiro).
+    compras: [], // Compras agora vêm do backend SQL (hidratadas via getCompras).
+    comprasHistorico: [], // Histórico de compras também vem do backend SQL.
+    os: [], // OS agora vem do backend SQL (hidratada via getOrdensServico).
     usuarios: Array.isArray(savedData.usuarios) ? savedData.usuarios : [],
     equipes: Array.isArray(savedData.equipes) ? savedData.equipes : [],
-    fornecedores: sanitizeCollection('fornecedores', savedData.fornecedores),
+    fornecedores: [], // Fornecedores agora vêm do backend SQL (hidratados via getFornecedores).
     horas: Array.isArray(savedData.horas) ? savedData.horas : [],
     almoxerifado: savedData.almoxerifado && typeof savedData.almoxerifado === 'object'
       ? {
@@ -960,6 +966,8 @@ interface ErpContextData {
   saveConfig: (novaConfig: any) => Promise<void>;
   saveCliente: (cliente: any) => Promise<any>;
   deleteCliente: (id: any) => Promise<void>;
+  saveFornecedor: (fornecedor: any) => Promise<any>;
+  deleteFornecedor: (id: any) => Promise<void>;
   uploadFileToDrive: (file: File) => Promise<string | null>;
 }
 
@@ -983,33 +991,49 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   
   const [data, setData] = useState<any>(() => createInitialData(null));
-  const saveQueueRef = useRef(Promise.resolve());
 
   useEffect(() => {
     let mounted = true;
 
     const hydrateWorkspace = async () => {
-      // Usa o dono do workspace (tenant) quando houver, para que vários usuários da mesma
-      // empresa (admin, gerente, diretor) compartilhem os mesmos dados.
-      const adminEmail = userSession?.workspaceOwner || userSession?.email || 'admin@modo-teste.com';
-      setActiveAdminEmail(adminEmail);
-
+      // Todos os dados vêm do SQL (sem blob de workspace). O estado já inicia com os
+      // defaults (createInitialData(null)); aqui só hidratamos as coleções do backend.
       try {
-        const saved = await loadWorkspace(adminEmail);
+        const [backendClientes, backendFornecedores, backendFinanceiro, backendCompras, backendAlmox, backendAlocacoes, backendNegocios, backendOrdens, backendConfiguracoes] = await Promise.all([
+          getClientes(),
+          getFornecedores(),
+          getFinanceiro(),
+          getCompras(),
+          getAlmoxarifado(),
+          getAlocacoes(),
+          getNegocios(),
+          getOrdensServico(),
+          getConfiguracoes(),
+        ]);
         if (!mounted) return;
-        setData(createInitialData(saved));
+        const clientesMapa: Record<string, string> = {};
+        (Array.isArray(backendClientes) ? backendClientes : []).forEach((c: any) => {
+          clientesMapa[String(c.id)] = c.razaoSocial || c.razao_social || '';
+        });
+        const obrasFromSql = mapNegociosToObras(backendNegocios, clientesMapa);
+        const osFromSql = mapOrdensToOs(backendOrdens);
+        setData((prevData: any) => ({
+          ...prevData,
+          clientes: backendClientes,
+          fornecedores: backendFornecedores,
+          financeiro: backendFinanceiro,
+          compras: backendCompras.compras,
+          comprasHistorico: backendCompras.comprasHistorico,
+          almoxerifado: backendAlmox ?? prevData.almoxerifado,
+          alocacoes: backendAlocacoes,
+          obras: obrasFromSql,
+          os: osFromSql,
+          // config/listas: usa o que vier do SQL; senão mantém os defaults já carregados.
+          config: backendConfiguracoes.config ?? prevData.config,
+          listas: backendConfiguracoes.listas ?? prevData.listas,
+        }));
       } catch (error) {
-        if (!mounted) return;
-        console.error('Erro ao carregar workspace do backend', error);
-        setData(createInitialData(null));
-      }
-
-      try {
-        const backendClientes = await getClientes();
-        if (!mounted) return;
-        setData((prevData: any) => ({ ...prevData, clientes: backendClientes }));
-      } catch (error) {
-        console.error('Erro ao carregar clientes SQL', error);
+        console.error('Erro ao carregar dados SQL (clientes/fornecedores/financeiro/compras)', error);
       } finally {
         if (mounted) {
           setLoading(false);
@@ -1069,6 +1093,42 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const saveFornecedor = async (fornecedor: any) => {
+    try {
+      // ids vindos do SQL são numéricos; ids legados do blob começam com "FOR-".
+      const idNumerico = typeof fornecedor?.id === 'number' || /^\d+$/.test(String(fornecedor?.id || ''));
+      const savedFornecedor = idNumerico
+        ? await updateFornecedor(fornecedor.id, fornecedor)
+        : await createFornecedor(fornecedor);
+
+      setData((prevData: any) => {
+        const atuais = Array.isArray(prevData.fornecedores) ? prevData.fornecedores : [];
+        const semItem = atuais.filter((item: any) => item.id !== savedFornecedor.id);
+        return { ...prevData, fornecedores: [...semItem, savedFornecedor] };
+      });
+
+      return savedFornecedor;
+    } catch (error) {
+      console.error('Erro ao salvar fornecedor no backend', error);
+      throw error;
+    }
+  };
+
+  const deleteFornecedor = async (id: any) => {
+    try {
+      if (typeof id === 'number' || /^\d+$/.test(String(id))) {
+        await deleteFornecedorApi(id);
+      }
+    } catch (error) {
+      console.error('Erro ao excluir fornecedor no backend', error);
+    } finally {
+      setData((prevData: any) => ({
+        ...prevData,
+        fornecedores: (prevData.fornecedores || []).filter((item: any) => item.id !== id),
+      }));
+    }
+  };
+
   // Removed: loginComGoogle - agora apenas simula
   const loginComGoogle = async (token: string, email: string) => {
     showTestAlert('Google Login');
@@ -1079,40 +1139,120 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     const session = { ...user, token: null };
     setUserSession(session);
     window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
-    setActiveAdminEmail(session.workspaceOwner || session.email || 'admin@modo-teste.com');
   };
 
-  // Salva o workspace no estado local e sincroniza com o backend.
+  // Atualiza o estado e persiste no SQL conforme a coleção. Não há mais blob de
+  // workspace: cada coleção tem seu próprio endpoint (ou é projeção do SQL).
   const saveEntity = async (collection: string, newData: any): Promise<void> => {
-    const adminEmail = userSession?.workspaceOwner || userSession?.email || 'admin@modo-teste.com';
-    setActiveAdminEmail(adminEmail);
-
     if (collection === 'clientes') {
       console.warn('saveEntity("clientes") is deprecated. Use saveCliente() to persist clients to backend SQL.');
-      const currentWorkspace = getCachedWorkspace(adminEmail);
-      const nextWorkspace = { ...currentWorkspace, clientes: [] };
-      setCachedWorkspace(adminEmail, nextWorkspace);
       setData((prevData: any) => ({ ...prevData, clientes: newData }));
       return;
     }
 
-    const executeSave = async () => {
-      const currentWorkspace = getCachedWorkspace(adminEmail);
-      const nextWorkspace = { ...currentWorkspace, [collection]: newData };
+    if (collection === 'fornecedores') {
+      console.warn('saveEntity("fornecedores") is deprecated. Use saveFornecedor() to persist to backend SQL.');
+      setData((prevData: any) => ({ ...prevData, fornecedores: newData }));
+      return;
+    }
 
-      setCachedWorkspace(adminEmail, nextWorkspace);
-      setData(nextWorkspace);
+    if (collection === 'financeiro') {
+      // Financeiro é persistido no SQL via replace-all (preserva o shape FinRecord),
+      // então useFin e todas as telas do Financeiro seguem inalterados.
+      setData((prevData: any) => ({ ...prevData, financeiro: newData }));
+      try {
+        await syncFinanceiro(Array.isArray(newData) ? newData : []);
+      } catch (error) {
+        console.error('Erro ao sincronizar financeiro no backend', error);
+      }
+      return;
+    }
 
-      const savedWorkspace = await saveWorkspace(adminEmail, nextWorkspace);
-      setData(savedWorkspace);
-      return savedWorkspace;
-    };
+    if (collection === 'compras') {
+      // Requisições de compra persistidas no SQL (replace-all), shape preservado.
+      setData((prevData: any) => ({ ...prevData, compras: newData }));
+      try {
+        await syncCompras(Array.isArray(newData) ? newData : []);
+      } catch (error) {
+        console.error('Erro ao sincronizar compras no backend', error);
+      }
+      return;
+    }
 
-    const queuedSave = saveQueueRef.current.then(executeSave, executeSave);
-    saveQueueRef.current = queuedSave.then(() => undefined, () => undefined);
+    if (collection === 'comprasHistorico') {
+      setData((prevData: any) => ({ ...prevData, comprasHistorico: newData }));
+      try {
+        await syncComprasHistorico(Array.isArray(newData) ? newData : []);
+      } catch (error) {
+        console.error('Erro ao sincronizar histórico de compras no backend', error);
+      }
+      return;
+    }
 
-    await queuedSave;
-    console.log(`${collection} atualizado:`, Array.isArray(newData) ? newData.length : Object.keys(newData || {}).length, 'itens');
+    if (collection === 'almoxerifado') {
+      // Estoque/almoxarifado é um objeto agregado; persistido no SQL via replace (singleton).
+      setData((prevData: any) => ({ ...prevData, almoxerifado: newData }));
+      try {
+        await syncAlmoxarifado(newData || {});
+      } catch (error) {
+        console.error('Erro ao sincronizar almoxarifado no backend', error);
+      }
+      return;
+    }
+
+    if (collection === 'alocacoes') {
+      setData((prevData: any) => ({ ...prevData, alocacoes: newData }));
+      try {
+        await syncAlocacoes(Array.isArray(newData) ? newData : []);
+      } catch (error) {
+        console.error('Erro ao sincronizar alocações no backend', error);
+      }
+      return;
+    }
+
+    if (collection === 'obras') {
+      // `obras` é uma projeção dos Negócios SQL (com seus orçamentos/propostas/serviços).
+      // A persistência real já acontece via os endpoints comerciais (criarNegocio,
+      // createOrcamento, criarProposta, atualizarNegocio); aqui só atualizamos o estado
+      // otimisticamente. No reload, `obras` é re-hidratado do SQL. Sem blob.
+      setData((prevData: any) => ({ ...prevData, obras: newData }));
+      return;
+    }
+
+    if (collection === 'os') {
+      // `os` é projeção das Ordens de Serviço SQL. A persistência real acontece via
+      // criarOrdemServico / deleteOrdemServico / atualizarStatusOs (chamados nas telas);
+      // aqui só atualizamos o estado otimisticamente. No reload, re-hidrata do SQL. Sem blob.
+      setData((prevData: any) => ({ ...prevData, os: newData }));
+      return;
+    }
+
+    if (collection === 'config') {
+      // Configurações da empresa persistidas no SQL (linha singleton). Sem blob.
+      setData((prevData: any) => ({ ...prevData, config: newData }));
+      try {
+        await syncConfig(newData || {});
+      } catch (error) {
+        console.error('Erro ao sincronizar config no backend', error);
+      }
+      return;
+    }
+
+    if (collection === 'listas') {
+      // Listas auxiliares persistidas no SQL (linha singleton). Sem blob.
+      setData((prevData: any) => ({ ...prevData, listas: newData }));
+      try {
+        await syncListas(newData || {});
+      } catch (error) {
+        console.error('Erro ao sincronizar listas no backend', error);
+      }
+      return;
+    }
+
+    // Coleção sem destino relacional dedicado (ex.: RH ainda não migrado): atualiza
+    // apenas o estado em memória, sem blob.
+    console.warn(`saveEntity("${collection}") sem persistência SQL — atualizado só em memória.`);
+    setData((prevData: any) => ({ ...prevData, [collection]: newData }));
   };
 
   // Simula upload de arquivo - sem enviar para nenhum lugar
@@ -1132,7 +1272,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
 
  
   return (
-    <ErpContext.Provider value={{ userSession, setUserSession, loading, loginComGoogle, loginDireto, logout, saveEntity, saveListas, saveConfig, saveCliente, deleteCliente, uploadFileToDrive, ...data }}>
+    <ErpContext.Provider value={{ userSession, setUserSession, loading, loginComGoogle, loginDireto, logout, saveEntity, saveListas, saveConfig, saveCliente, deleteCliente, saveFornecedor, deleteFornecedor, uploadFileToDrive, ...data }}>
       {children}
     </ErpContext.Provider>
   );

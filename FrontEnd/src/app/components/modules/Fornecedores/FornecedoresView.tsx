@@ -3,7 +3,7 @@ import { useErp } from '../../../context/ErpContext';
 import { Factory, Plus, Save, X, Edit2, Trash2, Phone, MapPin } from 'lucide-react';
 
 export function FornecedoresView({ searchQuery }: { searchQuery: string }) {
-  const { fornecedores, saveEntity, userSession } = useErp();
+  const { fornecedores, saveFornecedor, userSession } = useErp();
   const [showForm, setShowForm] = useState(false);
   const [selectedFornecedor, setSelectedFornecedor] = useState<any | null>(null);
   const [fornecedor, setFornecedor] = useState({
@@ -29,22 +29,23 @@ export function FornecedoresView({ searchQuery }: { searchQuery: string }) {
 
   const resolveNaturezaFornecimento = (tipo: string) => (tipo === 'Empresas' ? 'ITEM' : 'SERVICO');
 
-  const salvar = () => {
+  const salvar = async () => {
     const erro = validar();
     if (erro) return window.alert(erro);
 
     const novoRegistro = {
       ...fornecedor,
       naturezaFornecimento: resolveNaturezaFornecimento(fornecedor.tipo),
-      id: `FOR-${Date.now()}`,
       criadoPor: userSession?.username || 'sistema',
-      criadoEm: new Date().toISOString(),
     };
 
-    const novo = [...(fornecedores || []), novoRegistro];
-    saveEntity('fornecedores', novo);
-    setShowForm(false);
-    setFornecedor({ razaoSocial: '', cnpj: '', contato: '', endereco: '', status: 'Ativo', tipo: 'Serviços', descricaoEstadual: '' });
+    try {
+      await saveFornecedor(novoRegistro);
+      setShowForm(false);
+      setFornecedor({ razaoSocial: '', cnpj: '', contato: '', endereco: '', status: 'Ativo', tipo: 'Serviços', descricaoEstadual: '' });
+    } catch {
+      window.alert('Erro ao salvar fornecedor. Verifique a conexão com o servidor e tente novamente.');
+    }
   };
 
   const lista = (fornecedores || []).filter((f: any) => f.razaoSocial?.toLowerCase().includes(searchQuery.toLowerCase()));

@@ -198,6 +198,28 @@ export const criarOrdemServico = async (dadosOS: any) => {
     }
 };
 
+// Exclui uma OS no backend (id numérico do SQL)
+export const deleteOrdemServico = async (id: number | string) => {
+    try {
+        await api.delete(`ordens-servico/${id}/`);
+    } catch (error) {
+        console.error(`Erro ao excluir OS ${id}:`, (error as any)?.response?.data || error);
+        throw error;
+    }
+};
+
+// Atualiza apenas o status de uma OS (id numérico do SQL).
+// payload: { status_os?, status_envio?, status_aprovacao? }
+export const atualizarStatusOs = async (id: number | string, payload: any) => {
+    try {
+        const response = await api.patch(`ordens-servico/${id}/atualizar-status/`, payload);
+        return response.data;
+    } catch (error) {
+        console.error(`Erro ao atualizar status da OS ${id}:`, (error as any)?.response?.data || error);
+        throw error;
+    }
+};
+
 // Busca todas as Ordens de Serviço
 export const getOrdensServicoPorNegocio = async (negocioId: number) => {
     try {

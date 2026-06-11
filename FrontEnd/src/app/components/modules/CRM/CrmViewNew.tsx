@@ -13,13 +13,14 @@ import { getCachedWorkspace } from '../../../services/workspaceStorage';
 import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
 import { isEmpresaLinave, getLogoUrlForEmpresa } from '../../../utils/company';
 // Substitua as importações antigas por esta única:
-import { 
-    getNegocios, 
-    getClientes, 
+import {
+    getNegocios,
+    getClientes,
     getNegociosDoCliente,
-    criarNegocio,        
+    criarNegocio,
     atualizarNegocio,
-    excluirNegocio // Adicionado aqui!
+    excluirNegocio, // Adicionado aqui!
+    atualizarStatusOs
 } from '../../../../services/comercialService';
 
 
@@ -1574,11 +1575,23 @@ const initialServico: Servico = {
     }
   };
 
-  const handleEnviarOS = () => {
+  const handleEnviarOS = async () => {
     if (!selectedObraDetalhes) return;
 
     const osDoNegocio = (os || []).filter(o => o.obraId === selectedObraDetalhes.id);
     if (osDoNegocio.length === 0) return;
+
+    // Persiste o envio no SQL (atualizar-status) usando o backendId de cada OS.
+    for (const o of osDoNegocio) {
+      const backendId = (o as any)?.backendId;
+      if (backendId != null) {
+        try {
+          await atualizarStatusOs(backendId, { status_envio: 'enviada' });
+        } catch (err) {
+          console.error('Erro ao enviar OS no backend:', err);
+        }
+      }
+    }
 
     // Marcar todas as OS como enviadas
     const osAtualizadas = osDoNegocio.map((o: any) => ({
@@ -1587,8 +1600,8 @@ const initialServico: Servico = {
     }));
 
     // Atualizar a lista de OS
-    const novaListaOS = os?.map((o: any) => 
-      osDoNegocio.some((os: any) => os.id === o.id) 
+    const novaListaOS = os?.map((o: any) =>
+      osDoNegocio.some((os: any) => os.id === o.id)
         ? osAtualizadas.find((oa: any) => oa.id === o.id)
         : o
     ) || osAtualizadas;
@@ -1597,8 +1610,24 @@ const initialServico: Servico = {
     toast.success('Ordem(ns) de Serviço enviada(s) com sucesso!');
   };
 
-  const atualizarOSPorId = (osId: string, atualizacao: any) => {
+  const atualizarOSPorId = async (osId: string, atualizacao: any) => {
     const listaAtual = Array.isArray(os) ? os : [];
+    // Persiste a mudança de status no SQL (atualizar-status) via backendId.
+    const osItem = listaAtual.find((item: any) => String(item.id) === String(osId));
+    const backendId = (osItem as any)?.backendId;
+    if (backendId != null) {
+      const payload: any = {};
+      if (atualizacao.statusOs !== undefined) payload.status_os = atualizacao.statusOs;
+      if (atualizacao.statusEnvio !== undefined) payload.status_envio = atualizacao.statusEnvio;
+      if (atualizacao.statusAprovacao !== undefined) payload.status_aprovacao = atualizacao.statusAprovacao;
+      if (Object.keys(payload).length > 0) {
+        try {
+          await atualizarStatusOs(backendId, payload);
+        } catch (err) {
+          console.error('Erro ao atualizar status da OS no backend:', err);
+        }
+      }
+    }
     const novaLista = listaAtual.map((item: any) => (
       item.id === osId ? { ...item, ...atualizacao } : item
     ));
