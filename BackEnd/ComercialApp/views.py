@@ -5,12 +5,12 @@ from django.db import transaction
 from .models import (
     Cliente, Negocio, Servico,
     Levantamento, MDO, Material, Servico_terceirizado, Orcamento, Ativ_prevista, Resumo_orcamento,
-    OrdemServico, Escopo, PropostaComercial, Fornecedor
+    OrdemServico, Escopo, PropostaComercial, Fornecedor, Medicao
 )
 from .serializers import (
     ClienteSerializer, NegocioSerializer, ServicoSerializer,
     OrcamentoSerializer, OrdemServicoSerializer, EscopoSerializer,
-    PropostaComercialSerializer, FornecedorSerializer
+    PropostaComercialSerializer, FornecedorSerializer, MedicaoSerializer
 )
 
 # --- ViewSets Básicos ---
@@ -602,3 +602,48 @@ class PropostaComercialViewSet(viewsets.ModelViewSet):
             "proposta": serializer.data,
             "escopos": escopos_objs
         }, status=status.HTTP_201_CREATED)
+
+
+# --------------------- Medição ---------------------
+
+class MedicaoViewSet(viewsets.ModelViewSet):
+    """Medições (por OS). Suporta filtros ?ordem_servico= / ?negocio= / ?status=."""
+    queryset = Medicao.objects.select_related('negocio', 'ordem_servico').prefetch_related('itens').all()
+    serializer_class = MedicaoSerializer
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        os_id = request.query_params.get('ordem_servico')
+        negocio_id = request.query_params.get('negocio')
+        status_filtro = request.query_params.get('status')
+        if os_id:
+            queryset = queryset.filter(ordem_servico_id=os_id)
+        if negocio_id:
+            queryset = queryset.filter(negocio_id=negocio_id)
+        if status_filtro:
+            queryset = queryset.filter(status=status_filtro)
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
+
+@api_view(['PATCH'])
+def atualizar_status_medicao(request, pk):
+    """Aprova/recusa uma medição. Payload: {status: 'aprovada'|'recusada'|'pendente', motivo_recusa?}."""
+    try:
+        medicao = Medicao.objects.get(id=pk)
+    except Medicao.DoesNotExist:
+        return Response({'error': 'Medição não encontrada'}, status=status.HTTP_404_NOT_FOUND)
+
+    novo_status = request.data.get('status')
+    if novo_status not in ('pendente', 'aprovada', 'recusada'):
+        return Response({'error': 'status inválido'}, status=status.HTTP_400_BAD_REQUEST)
+
+    medicao.status = novo_status
+    if novo_status == 'aprovada':
+        from django.utils import timezone
+        medicao.data_aprovacao = timezone.now().date().isoformat()
+    if 'motivo_recusa' in request.data:
+        medicao.motivo_recusa = request.data['motivo_recusa'] or ''
+    medicao.save()
+
+    return Response(MedicaoSerializer(medicao).data, status=status.HTTP_200_OK)

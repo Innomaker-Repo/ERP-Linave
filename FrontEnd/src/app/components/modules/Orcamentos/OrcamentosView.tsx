@@ -92,8 +92,9 @@ const findClienteById = (clientes: any[], clienteId: any) =>
 
 
 export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
-  const { obras, saveEntity } = useErp() as any;
+  const { obras, os, saveEntity } = useErp() as any;
   const [listaClientesOrc, setListaClientesOrc] = useState<any[]>([]);
+  const [filtroOs, setFiltroOs] = useState<string>('');
   const [showForm, setShowForm] = useState(false);
   const [selectedObra, setSelectedObra] = useState<any>(null);
   const [loadingData, setLoadingData] = useState(false);
@@ -311,8 +312,18 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
 
   const isOrcamentoEditavel = (obra: any) => obra?.categoria === 'Planejamento';
 
+  // Filtro por OS: mantém apenas os negócios ligados à OS selecionada.
+  const passaFiltroOs = (obra: any) => {
+    if (!filtroOs) return true;
+    return (Array.isArray(os) ? os : []).some(
+      (o: any) => String(o.obraId) === String(obra.id) && String(o.ordemServicoNumero) === String(filtroOs),
+    );
+  };
+  const osDisponiveis = Array.from(new Set((Array.isArray(os) ? os : []).map((o: any) => o.ordemServicoNumero).filter(Boolean)));
+
   // Topo: negócios sem orçamento, com orçamento recusado, pendente de reorçamento, ou com rascunho.
   const projetosAOrcar = (obras || [])
+    .filter(passaFiltroOs)
     .filter((obra: any) => {
       if (obra.categoria !== 'Planejamento') return false;
       const ultimoOrcamento = obterUltimoOrcamento(obra);
@@ -337,7 +348,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     });
 
   // Aguardando aprovação interna: negócios em Planejamento com orçamento pendente.
-  const projetosAguardandoAprovacao = (obras || []).filter((obra: any) => {
+  const projetosAguardandoAprovacao = (obras || []).filter(passaFiltroOs).filter((obra: any) => {
     if (obra.categoria !== 'Planejamento') return false;
     if (obra.requerReorcamento) return false; // marcado para reorçamento → sai daqui
     const ultimoOrcamento = obterUltimoOrcamento(obra);
@@ -345,7 +356,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   });
 
   // Histórico: negócios com orçamento aprovado (fora do Planejamento).
-  const obrasComOrcamentos = (obras || []).filter((obra: any) => {
+  const obrasComOrcamentos = (obras || []).filter(passaFiltroOs).filter((obra: any) => {
     const ultimoOrcamento = obterUltimoOrcamento(obra);
     if (obra.requerReorcamento) return false;
     if (obra.categoria === 'Planejamento') return false;
@@ -1523,6 +1534,17 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       {/* PROJETOS À ORÇAR */}
       {!showForm ? (
         <div className="space-y-8">
+          {/* FILTRO POR OS */}
+          {osDisponiveis.length > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-white/40 text-xs font-bold uppercase tracking-widest">Filtrar por OS</span>
+              <select value={filtroOs} onChange={(e) => setFiltroOs(e.target.value)} className="bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-white text-xs">
+                <option value="">Todas as OS</option>
+                {osDisponiveis.map((n: any) => <option key={n} value={n}>{n}</option>)}
+              </select>
+              {filtroOs && <button onClick={() => setFiltroOs('')} className="text-white/40 text-xs underline">limpar</button>}
+            </div>
+          )}
           {/* SEÇÃO 1: PROJETOS SEM ORÇAMENTO */}
           <div>
             <h2 className="text-2xl font-black text-white uppercase mb-4">Projetos à Orçar</h2>

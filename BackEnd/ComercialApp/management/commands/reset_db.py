@@ -48,4 +48,9 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.WARNING(f"Banco '{name}' recriado vazio. Aplicando schema..."))
         call_command('migrate', interactive=False, verbosity=1)
+
+        # Semeia os dados fixos (OS internas 1000 Linave / 2000 Servinave).
+        from ComercialApp.management.commands.seed_os_interna import seed_os_interna
+        seed_os_interna(self.stdout)
+
         self.stdout.write(self.style.SUCCESS("Banco pronto! Schema completo aplicado — nada mais a migrar."))

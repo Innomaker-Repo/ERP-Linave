@@ -98,6 +98,9 @@ class Negocio(models.Model):
     status = models.CharField(max_length=50, default='Aguardando orçamento')
     orcamento_realizado = models.BooleanField(default=False)
     requer_reorcamento = models.BooleanField(default=True)
+    # Negócio "fake" de uso interno (café, papel, etc.): aparece como centro de custo em
+    # Compras/Almoxarifado/Alocação, mas fica fora do CRM/Orçamento/Proposta/Medição.
+    uso_interno = models.BooleanField(default=False)
     tipo_servico = models.CharField(max_length=100, null=True, blank=True) # Recebe o tipo principal do form
 
     data_solicitacao = models.DateField(null=True, blank=True)
@@ -493,6 +496,59 @@ class PropostaComercial(models.Model):
         return f"Proposta Comercial {self.id} - {self.cliente.razao_social} - Valor: {self.preco}"
     
 #--------------------- Fim Proposta Comercial ------------------
+
+#--------------------- Medição ------------------
+# A medição é feita por OS (uma OS/negócio pode ter várias medições — histórico por BM/período).
+# Só uma medição APROVADA libera a finalização do serviço. Substitui a medição que antes era
+# feita no card de Finalização do CRM.
+
+class Medicao(models.Model):
+    STATUS_CHOICES = [('pendente', 'Pendente'), ('aprovada', 'Aprovada'), ('recusada', 'Recusada')]
+
+    id = models.BigAutoField(primary_key=True)
+    negocio = models.ForeignKey(Negocio, on_delete=models.CASCADE, related_name='medicoes')
+    ordem_servico = models.ForeignKey(OrdemServico, on_delete=models.SET_NULL, null=True, blank=True, related_name='medicoes')
+    numero_medicao = models.CharField(max_length=40, blank=True, default='')  # ex.: LN-0001/26-001 (versionado)
+    versao = models.IntegerField(default=1)
+    numero_bm = models.CharField(max_length=50, blank=True, default='')
+    empresa = models.CharField(max_length=100, blank=True, default='')
+    cliente = models.CharField(max_length=200, blank=True, default='')
+    cnpj = models.CharField(max_length=30, blank=True, default='')
+    data_emissao = models.CharField(max_length=20, blank=True, default='')
+    embarcacao = models.CharField(max_length=150, blank=True, default='')
+    periodo = models.CharField(max_length=120, blank=True, default='')
+    representante_cliente = models.CharField(max_length=200, blank=True, default='')
+    representante_prestadora = models.CharField(max_length=200, blank=True, default='')
+    valor_total = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pendente')
+    motivo_recusa = models.TextField(blank=True, default='')
+    data_aprovacao = models.CharField(max_length=20, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Medição'
+        verbose_name_plural = 'Medições'
+
+    def __str__(self):
+        return f'Medição {self.id} - BM {self.numero_bm} ({self.status})'
+
+
+class MedicaoItem(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    medicao = models.ForeignKey(Medicao, on_delete=models.CASCADE, related_name='itens')
+    item = models.CharField(max_length=20, blank=True, default='')
+    descricao = models.TextField(blank=True, default='')
+    unidade = models.CharField(max_length=20, blank=True, default='')
+    quantidade_produzida = models.DecimalField(max_digits=15, decimal_places=4, default=0)
+    valor_unitario = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    total = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    observacoes = models.TextField(blank=True, default='')
+
+    def __str__(self):
+        return f'Item {self.item} - {self.descricao[:30]}'
+#--------------------- Fim Medição ------------------
 
 #--------------------- Financeiro ------------------
 # Os registros financeiros vêm de um "FinRecord" discriminado por `tipo` no frontend

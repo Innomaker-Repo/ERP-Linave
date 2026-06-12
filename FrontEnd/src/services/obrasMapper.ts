@@ -41,6 +41,7 @@ export const mapNegocioToObra = (n: any, clientesMapa: Record<string, string> = 
     orcamentos: Array.isArray(n?.orcamentos) ? n.orcamentos : [],
     propostas: Array.isArray(n?.propostas) ? n.propostas : [],
     documentosNegocio: Array.isArray(n?.documentos) ? n.documentos : (Array.isArray(n?.arquivos) ? n.arquivos : []),
+    usoInterno: Boolean(n?.uso_interno),
     os: [],
   };
 };
@@ -87,6 +88,7 @@ export const mapOrdemToOs = (o: any) => {
     dataAprovacao: o?.data_aprovacao ?? undefined,
     documentoAssinaturaAprovacao: o?.documento_assinatura_aprovacao ?? null,
     tipoDocumento: 'consolidada' as const,
+    usoInterno: Boolean(o?.negocio_detalhes?.uso_interno),
   };
 };
 
