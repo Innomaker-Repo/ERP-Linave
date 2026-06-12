@@ -260,16 +260,26 @@ export function PropostaView() {
     setPropostaForm(prev => ({ ...prev, preco: `R$ ${formatted}` }));
   }, [propostaForm.precoItens]);
 
+  // Filtro por OS: mantém apenas os negócios ligados à OS selecionada.
+  const passaFiltroOs = (obra: any) => {
+    if (!filtroOs) return true;
+    return (Array.isArray(os) ? os : []).some((o: any) =>
+      String(o.ordemServicoNumero) === String(filtroOs) &&
+      (String(o.obraId) === String(obra.id) || String(o.negocioBackendId) === String(obra.negocioBackendId ?? obra.backendId)),
+    );
+  };
+  const osDisponiveis = Array.from(new Set((Array.isArray(os) ? os : []).map((o: any) => o.ordemServicoNumero).filter(Boolean)));
+
   // Negócios em Negociação
   const negociosNegociacao = listaNegocios.filter((obra: any) => obra.categoria === 'Negociação');
-  const negociosParaProposta = negociosNegociacao.filter((obra: any) => {
+  const negociosParaProposta = negociosNegociacao.filter(passaFiltroOs).filter((obra: any) => {
     if (!Array.isArray(obra.propostas) || obra.propostas.length === 0) return true;
     const ultimaProposta = obra.propostas[obra.propostas.length - 1];
     return ultimaProposta?.status === 'recusada';
   });
 
   // Todas as obras com propostas (independente do status)
-  const obrasComPropostas = listaNegocios.filter((obra: any) => obra.propostas && obra.propostas.length > 0);
+  const obrasComPropostas = listaNegocios.filter(passaFiltroOs).filter((obra: any) => obra.propostas && obra.propostas.length > 0);
 
   const criarLinhaEscopo = (colunas: string[]): EscopoLinha => ({
     id: `linha-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -788,6 +798,18 @@ export function PropostaView() {
           <h1 className="text-3xl font-black text-white">FAZER PROPOSTA</h1>
           <p className="text-white/50 text-xs mt-1">Crie propostas comerciais para negócios em negociação</p>
         </div>
+
+        {/* FILTRO POR OS */}
+        {osDisponiveis.length > 0 && (
+          <div className="flex items-center gap-2">
+            <span className="text-white/40 text-xs font-bold uppercase tracking-widest">Filtrar por OS</span>
+            <select value={filtroOs} onChange={(e) => setFiltroOs(e.target.value)} className="bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-white text-xs">
+              <option value="">Todas as OS</option>
+              {osDisponiveis.map((n: any) => <option key={n} value={n}>{n}</option>)}
+            </select>
+            {filtroOs && <button onClick={() => setFiltroOs('')} className="text-white/40 text-xs underline">limpar</button>}
+          </div>
+        )}
 
         {/* SEÇÃO 1: NEGÓCIOS EM NEGOCIAÇÃO (SEM PROPOSTA) */}
         {negociosNegociacao.length > 0 && (

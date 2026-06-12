@@ -5,7 +5,7 @@ import {
   ShoppingCart, DollarSign, BarChart3, Settings, Factory,
   HeartHandshake, List, Clock, ChevronDown, ChevronRight,
   Briefcase, Wrench, Activity, FileText, Zap, CheckCircle2, Trash2, LayoutGrid, Package2, History,
-  FilePlus, Banknote, ScrollText, Wallet, Building2, TrendingUp, Landmark, Tags
+  FilePlus, Banknote, ScrollText, Wallet, Building2, TrendingUp, Landmark, Tags, Ruler
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -74,7 +74,10 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
         // Fazer Ordem de Serviço
         { id: 'fazerOs', label: 'Fazer OS', icon: Zap },
 
-        // Histórico local de negócios com medição concluída
+        // Medição (por OS) — só aprovada libera finalização
+        { id: 'medicao', label: 'Medição', icon: Ruler },
+
+        // Histórico de negócios com medição aprovada/finalizada
         { id: 'finalizadosComercial', label: 'Finalizados', icon: CheckCircle2 },
         
         // Base de Clientes

@@ -7,6 +7,7 @@ import { getCompras, syncCompras, syncComprasHistorico } from '../../services/co
 import { getAlmoxarifado, syncAlmoxarifado } from '../../services/almoxarifadoService';
 import { getAlocacoes, syncAlocacoes } from '../../services/alocacoesService';
 import { getConfiguracoes, syncConfig, syncListas } from '../../services/configuracoesService';
+import { getMedicoes } from '../../services/medicoesService';
 
 
 const cloneDeep = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -833,6 +834,7 @@ const createInitialData = (savedData: any) => {
     compras: [],
     comprasHistorico: [],
     os: [],
+    medicoes: [],
     alocacoes: [],
     registrosHoras: [],
     folhaPagamento: [],
@@ -998,6 +1000,7 @@ interface ErpContextData {
   deleteCliente: (id: any) => Promise<void>;
   saveFornecedor: (fornecedor: any) => Promise<any>;
   deleteFornecedor: (id: any) => Promise<void>;
+  refreshMedicoes: () => Promise<any[]>;
   uploadFileToDrive: (file: File) => Promise<string | null>;
   // Drafts (autosave) API
   saveDraft: (key: string, payload: any) => Promise<void>;
@@ -1033,7 +1036,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
       // Todos os dados vêm do SQL (sem blob de workspace). O estado já inicia com os
       // defaults (createInitialData(null)); aqui só hidratamos as coleções do backend.
       try {
-        const [backendClientes, backendFornecedores, backendFinanceiro, backendCompras, backendAlmox, backendAlocacoes, backendNegocios, backendOrdens, backendConfiguracoes] = await Promise.all([
+        const [backendClientes, backendFornecedores, backendFinanceiro, backendCompras, backendAlmox, backendAlocacoes, backendNegocios, backendOrdens, backendConfiguracoes, backendMedicoes] = await Promise.all([
           getClientes(),
           getFornecedores(),
           getFinanceiro(),
@@ -1043,6 +1046,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
           getNegocios(),
           getOrdensServico(),
           getConfiguracoes(),
+          getMedicoes(),
         ]);
         if (!mounted) return;
         const clientesMapa: Record<string, string> = {};
@@ -1062,6 +1066,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
           alocacoes: backendAlocacoes,
           obras: obrasFromSql,
           os: osFromSql,
+          medicoes: backendMedicoes,
           // config/listas: usa o que vier do SQL; senão mantém os defaults já carregados.
           config: backendConfiguracoes.config ?? prevData.config,
           listas: backendConfiguracoes.listas ?? prevData.listas,
@@ -1160,6 +1165,18 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
         ...prevData,
         fornecedores: (prevData.fornecedores || []).filter((item: any) => item.id !== id),
       }));
+    }
+  };
+
+  // Recarrega as medições do SQL para o estado global (chamado após criar/aprovar/recusar).
+  const refreshMedicoes = async (): Promise<any[]> => {
+    try {
+      const medicoes = await getMedicoes();
+      setData((prevData: any) => ({ ...prevData, medicoes }));
+      return medicoes;
+    } catch (error) {
+      console.error('Erro ao recarregar medições', error);
+      return [];
     }
   };
 

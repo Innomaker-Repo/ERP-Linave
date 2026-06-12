@@ -344,6 +344,7 @@ const initialServico: Servico = {
               orcamentos: n.orcamentos || [],
               propostas: n.propostas || [],
               documentosNegocio: obraExistente.documentosNegocio || n.documentos || n.arquivos || [],
+              usoInterno: Boolean(n.uso_interno),
             };
           });
 
@@ -2199,19 +2200,43 @@ const initialServico: Servico = {
     }
   };
 
+  // Retorna a medição APROVADA do negócio (criada/aprovada na aba Comercial → Medição).
+  const medicaoAprovadaDe = (obra: any) => (Array.isArray(medicoes) ? medicoes : []).find(
+    (m: any) => String(m.negocioBackendId) === String(obra?.negocioBackendId) && m.status === 'aprovada',
+  );
+
+  // Baixa o PDF de uma medição aprovada.
+  const handleBaixarMedicaoAprovada = async (med: any) => {
+    if (!med) return;
+    const cliente = listaClientesCRM.find((c: any) => c.razaoSocial === med.cliente);
+    try {
+      await handleDownloadMedicaoPDF({
+        empresa: med.empresa, cliente: med.cliente, cnpj: med.cnpj, clienteCnpj: med.cnpj,
+        dataEmissao: med.dataEmissao, embarcacao: med.embarcacao, numeroBM: med.numeroBM,
+        periodo: med.periodo, representanteCliente: med.representanteCliente,
+        representanteLinave: med.representanteLinave, tabelaItens: med.itens,
+      }, cliente || {}, { id: med.ordemServicoNumero });
+    } catch (e) {
+      toast.error('Erro ao gerar o PDF da medição.');
+    }
+  };
+
   const possuiOSAprovadaParaFinalizacao = (obraId: string) => {
     const osDoNegocio = (os || []).filter((item: any) => item.obraId === obraId);
-    // Basta a OS estar enviada e aprovada — não exige mais o anexo de assinatura.
-    return osDoNegocio.some((item: any) => (
-      item.statusEnvio === 'enviada'
-      && item.statusAprovacao === 'aprovada'
+    const osOk = osDoNegocio.some((item: any) => (
+      item.statusEnvio === 'enviada' && item.statusAprovacao === 'aprovada'
     ));
+    if (!osOk) return false;
+    // Novo fluxo: só uma medição APROVADA (feita na aba Medição) libera a finalização.
+    const obra = negociosBackend.find((o: any) => o.id === obraId);
+    return Boolean(medicaoAprovadaDe(obra));
   };
 
 
 const obrasOrdenadas = useMemo(() => {
     return negociosBackend.filter((obra: any) => {
       if (obra.categoria === 'Arquivado') return false;
+      if (obra.usoInterno) return false; // negócios de uso interno não aparecem no CRM
       if (!searchQuery) return true;
 
       const termo = searchQuery.toLowerCase();
@@ -2602,24 +2627,19 @@ const obrasOrdenadas = useMemo(() => {
                                 <p className="text-purple-100 text-xs mt-1">{temOS ? `${osAprovadas} aprovada(s)` : 'Nenhuma OS vinculada'}</p>
                               </div>
 
-                              {(obra.dadosMediacao || obra.finalizadoComMediacao) ? (
-                                <button
-                                  onClick={(e) => handleEditarMediacao(obra, e)}
-                                  className="w-full py-2 rounded-lg bg-gradient-to-r from-amber-500/30 to-orange-500/30 hover:from-amber-500/50 hover:to-orange-500/50 border border-amber-400/40 text-amber-200 text-[11px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5"
-                                >
-                                  <Pencil size={13} /> Editar Medição
-                                </button>
-                              ) : (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleAbrirDocumentoMediacao(obra);
-                                  }}
-                                  className="w-full py-2 rounded-lg bg-gradient-to-r from-emerald-500/30 to-cyan-500/30 hover:from-emerald-500/50 hover:to-cyan-500/50 border border-emerald-400/40 text-emerald-200 text-[11px] font-black uppercase tracking-wider transition-all"
-                                >
-                                  <FileText size={14} className="inline mr-1" /> Criar Documento de Medição
-                                </button>
-                              )}
+                              {(() => {
+                                const medApr = medicaoAprovadaDe(obra);
+                                return medApr ? (
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); handleBaixarMedicaoAprovada(medApr); }}
+                                    className="w-full py-2 rounded-lg bg-gradient-to-r from-emerald-500/30 to-cyan-500/30 hover:from-emerald-500/50 hover:to-cyan-500/50 border border-emerald-400/40 text-emerald-200 text-[11px] font-black uppercase tracking-wider transition-all"
+                                  >
+                                    <FileText size={14} className="inline mr-1" /> Baixar Medição
+                                  </button>
+                                ) : (
+                                  <p className="text-[10px] text-white/40 text-center px-1 py-1">Medição é feita na aba Medição.</p>
+                                );
+                              })()}
                               <button
                                 onClick={(e) => handleArquivarNegocio(obra, e)}
                                 className="w-full py-2 rounded-lg bg-gradient-to-r from-gray-500/20 to-gray-600/20 hover:from-amber-500/20 hover:to-amber-600/20 border border-gray-500/30 hover:border-amber-400/50 text-gray-300 hover:text-amber-200 text-[11px] font-black uppercase tracking-wider transition-all"
@@ -3556,23 +3576,19 @@ const obrasOrdenadas = useMemo(() => {
                       Para avançar para Finalização: a OS precisa estar enviada e aprovada.
                     </p>
 
-                    {selectedObraDetalhes.categoria === 'Finalização' && (
-                      (selectedObraDetalhes.dadosMediacao || selectedObraDetalhes.finalizadoComMediacao) ? (
+                    {selectedObraDetalhes.categoria === 'Finalização' && (() => {
+                      const medApr = medicaoAprovadaDe(selectedObraDetalhes);
+                      return medApr ? (
                         <button
-                          onClick={() => handleEditarMediacao(selectedObraDetalhes, { stopPropagation: () => {} } as any)}
-                          className="w-full bg-gradient-to-r from-amber-500/30 to-orange-500/30 hover:from-amber-500/50 hover:to-orange-500/50 border border-amber-400/40 text-amber-300 hover:text-amber-100 rounded-lg py-2.5 font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
-                        >
-                          <Pencil size={16} /> Editar Medição
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => handleAbrirDocumentoMediacao(selectedObraDetalhes)}
+                          onClick={() => handleBaixarMedicaoAprovada(medApr)}
                           className="w-full bg-gradient-to-r from-emerald-500/30 to-cyan-500/30 hover:from-emerald-500/50 hover:to-cyan-500/50 border border-emerald-400/40 text-emerald-300 hover:text-emerald-100 rounded-lg py-2.5 font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
                         >
-                          <FileText size={16} /> Criar Documento de Medição
+                          <FileText size={16} /> Baixar Documento de Medição
                         </button>
-                      )
-                    )}
+                      ) : (
+                        <p className="text-[11px] text-white/40">A medição é feita na aba <b className="text-emerald-300">Comercial → Medição</b> e precisa ser aprovada.</p>
+                      );
+                    })()}
                   </div>
                 );
               })()}

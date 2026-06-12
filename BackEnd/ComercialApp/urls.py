@@ -2,9 +2,10 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
     NegocioViewSet, ClienteViewSet, OrdemServicoViewSet,
-    PropostaComercialViewSet, FornecedorViewSet,
+    PropostaComercialViewSet, FornecedorViewSet, MedicaoViewSet,
     criar_orcamento,
     ordens_servico_por_cliente, ordens_servico_por_negocio, atualizar_status_os,
+    atualizar_status_medicao,
     financeiro_data, compras_data, almoxarifado_data, alocacoes_data, configuracoes_data
 )
 
@@ -15,6 +16,7 @@ router.register(r'fornecedores', FornecedorViewSet)
 router.register(r'negocios', NegocioViewSet)
 router.register(r'ordens-servico', OrdemServicoViewSet, basename='ordem-servico')
 router.register(r'propostas-comerciais', PropostaComercialViewSet, basename='proposta-comercial')
+router.register(r'medicoes', MedicaoViewSet, basename='medicao')
 
 urlpatterns = [
     # Estado financeiro (lista unificada de FinRecord; GET lê, POST substitui tudo)
@@ -39,6 +41,7 @@ urlpatterns = [
     path('os-por-cliente/<int:cliente_id>/', ordens_servico_por_cliente, name='os-por-cliente'),
     path('os-por-negocio/<int:negocio_id>/', ordens_servico_por_negocio, name='os-por-negocio'),
     path('ordens-servico/<int:pk>/atualizar-status/', atualizar_status_os, name='atualizar-status-os'),
+    path('medicoes/<int:pk>/atualizar-status/', atualizar_status_medicao, name='atualizar-status-medicao'),
 
     # Rotas automáticas do Router (sempre no final)
     path('', include(router.urls)),

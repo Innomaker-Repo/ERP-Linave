@@ -6,7 +6,8 @@ from .models import (
     Levantamento, MDO, Ativ_prevista, Material,
     Servico_terceirizado, Orcamento, Resumo_orcamento,
     OrdemServico,
-    Escopo, PropostaComercial, Fornecedor
+    Escopo, PropostaComercial, Fornecedor,
+    Medicao, MedicaoItem
 )
 
 # ----------------- Core ------------------
@@ -487,3 +488,51 @@ class OrdemServicoSerializer(serializers.ModelSerializer):
         
         validated_data['numero_os'] = numero_os
         return super().create(validated_data)
+
+
+# --------------------- Medição ---------------------
+
+class MedicaoItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MedicaoItem
+        exclude = ['medicao']
+
+
+class MedicaoSerializer(serializers.ModelSerializer):
+    itens = MedicaoItemSerializer(many=True, required=False)
+    ordem_servico_numero = serializers.CharField(source='ordem_servico.numero_os', read_only=True, default='')
+    cliente_negocio = serializers.CharField(source='negocio.cliente.razao_social', read_only=True, default='')
+
+    class Meta:
+        model = Medicao
+        fields = '__all__'
+
+    def create(self, validated_data):
+        from django.utils import timezone
+        itens = validated_data.pop('itens', [])
+        medicao = Medicao(**validated_data)
+        # Versionamento por OS: LN/SN-<negocio>/<ano>-<NNN>. Cada nova medição da mesma OS
+        # incrementa a versão (001, 002, 003...). Difere do A/B/C de orçamento/proposta/OS.
+        negocio = medicao.negocio
+        ordem = medicao.ordem_servico
+        base_qs = Medicao.objects.filter(ordem_servico=ordem) if ordem else Medicao.objects.filter(negocio=negocio)
+        versao = base_qs.count() + 1
+        prefixo = 'SN' if 'servinave' in str(getattr(negocio, 'empresa_prestadora', '')).lower() else 'LN'
+        ano = timezone.now().strftime('%y')
+        medicao.versao = versao
+        medicao.numero_medicao = f"{prefixo}-{str(negocio.id).zfill(4)}/{ano}-{str(versao).zfill(3)}"
+        medicao.save()
+        for item in itens:
+            MedicaoItem.objects.create(medicao=medicao, **item)
+        return medicao
+
+    def update(self, instance, validated_data):
+        itens = validated_data.pop('itens', None)
+        for field, value in validated_data.items():
+            setattr(instance, field, value)
+        instance.save()
+        if itens is not None:
+            instance.itens.all().delete()
+            for item in itens:
+                MedicaoItem.objects.create(medicao=instance, **item)
+        return instance

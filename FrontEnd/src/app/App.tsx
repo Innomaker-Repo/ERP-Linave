@@ -31,6 +31,7 @@ function getAbaForSection(section: string): { aba: string; item: string } {
     'proposta': { aba: 'comercial', item: 'proposta' },
     'fazerOs': { aba: 'comercial', item: 'fazerOs' },
     'orcamentos': { aba: 'comercial', item: 'orcamentos' },
+    'medicao': { aba: 'comercial', item: 'medicao' },
     'finalizadosComercial': { aba: 'comercial', item: 'finalizadosComercial' },
     
     // Financeiro (cada seção é um item próprio do sidebar)
