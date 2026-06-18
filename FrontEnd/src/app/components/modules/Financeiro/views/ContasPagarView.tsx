@@ -1,14 +1,14 @@
-import React, { useState } from 'react';
-import { Plus, Download, Save, Banknote, Split, Paperclip } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { Plus, Download, Save, Banknote, Split, Paperclip, CalendarClock } from 'lucide-react';
 import {
   FinCard, Toolbar, DataTable, Th, Td, Btn, StatusTag, CompanyTag, TypeTag, Pill, EmptyRow,
   FinModal, Field, Input, Select, Textarea, Kpi, labelCls,
 } from '../finUi';
-import { br, money, num, todayStr, genFinId, download } from '../finData';
+import { br, money, num, todayStr, genFinId, download, days, FORMAS_PAGAMENTO, TIPOS_REEMBOLSO } from '../finData';
 import { useFin, type FinRecord } from '../useFin';
 import { useFinFilters } from '../finFilters';
-
-const TIPOS = ['Passagem', 'Almoço', 'Abastecimento', 'Fornecedor', 'Material', 'Outro'];
+import { uploadDocumento } from '../../../../../services/documentosService';
+import { toast } from 'sonner';
 
 export function ContasPagarView() {
   const { records, empresas, oss, departamentos, addRecord, updateRecord, parcelarConta, pagarConta } = useFin();
@@ -64,16 +64,35 @@ export function ContasPagarView() {
 
   // ---- Modal parcelar ----
   const [parcelando, setParcelando] = useState<FinRecord | null>(null);
-  const [parc, setParc] = useState({ n: '2', intervalo: '30' });
+  const [parc, setParc] = useState({ n: '2', intervalo: '30', dataInicio: todayStr });
+
+  const abrirParcelar = (p: FinRecord) => {
+    setParc({ n: '2', intervalo: '30', dataInicio: p.vencimento || todayStr });
+    setParcelando(p);
+  };
+
+  // Prévia dos próximos pagamentos (parcela, vencimento, valor) — espelha parcelarConta.
+  const parcelasPreview = useMemo(() => {
+    if (!parcelando) return [] as { parcela: string; vencimento: string; valor: number }[];
+    const n = Math.max(2, Math.floor(Number(parc.n) || 0));
+    const total = num(parcelando.valor);
+    const base = Math.floor((total / n) * 100) / 100;
+    const sobra = Math.round((total - base * n) * 100) / 100;
+    return Array.from({ length: n }, (_, i) => ({
+      parcela: `${i + 1}/${n}`,
+      vencimento: days(parc.dataInicio || todayStr, Number(parc.intervalo) * i),
+      valor: i === n - 1 ? Math.round((base + sobra) * 100) / 100 : base,
+    }));
+  }, [parcelando, parc]);
 
   const confirmarParcelar = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!parcelando) return;
     setSalvando(true);
     try {
-      await parcelarConta(parcelando.id, Number(parc.n), Number(parc.intervalo));
+      await parcelarConta(parcelando.id, Number(parc.n), Number(parc.intervalo), parc.dataInicio);
       setParcelando(null);
-      setParc({ n: '2', intervalo: '30' });
+      setParc({ n: '2', intervalo: '30', dataInicio: todayStr });
     } finally {
       setSalvando(false);
     }
@@ -81,12 +100,30 @@ export function ContasPagarView() {
 
   // ---- Modal pagar ----
   const [pagando, setPagando] = useState<FinRecord | null>(null);
-  const [pay, setPay] = useState({ dataPagamento: todayStr, valorPago: '', banco: '', houveJuros: 'Não', jurosPago: '', motivoJuros: '', comprovante: '' });
+  // `comprovante` guarda a URL (/media/...) do documento persistido; `comprovanteNome`
+  // é só o rótulo amigável exibido. `enviandoComprovante` controla o estado de upload.
+  const [pay, setPay] = useState({ dataPagamento: todayStr, valorPago: '', banco: '', houveJuros: 'Não', jurosPago: '', motivoJuros: '', comprovante: '', comprovanteNome: '' });
+  const [enviandoComprovante, setEnviandoComprovante] = useState(false);
   const setPayF = (k: string, v: string) => setPay((p) => ({ ...p, [k]: v }));
 
   const abrirPagamento = (p: FinRecord) => {
     setPagando(p);
-    setPay({ dataPagamento: todayStr, valorPago: String(p.valorPago || p.valor || ''), banco: p.banco || '', houveJuros: 'Não', jurosPago: '', motivoJuros: '', comprovante: '' });
+    setPay({ dataPagamento: todayStr, valorPago: String(p.valorPago || p.valor || ''), banco: p.banco || '', houveJuros: 'Não', jurosPago: '', motivoJuros: '', comprovante: '', comprovanteNome: '' });
+  };
+
+  // Sobe o comprovante para a tabela Documento (vinculado ao id da conta) e guarda a URL.
+  const handleSelecionarComprovante = async (file: File | undefined) => {
+    if (!file || !pagando) return;
+    setEnviandoComprovante(true);
+    try {
+      const doc = await uploadDocumento(file, { vinculoTipo: 'financeiro', vinculoId: pagando.id, categoria: 'fin_comprovante' });
+      setPay((p) => ({ ...p, comprovante: doc.url, comprovanteNome: doc.nome }));
+      toast.success('Comprovante anexado e salvo no banco.');
+    } catch {
+      toast.error('Não foi possível enviar o comprovante.');
+    } finally {
+      setEnviandoComprovante(false);
+    }
   };
 
   const exportarCsv = () => {
@@ -160,7 +197,7 @@ export function ContasPagarView() {
             <Td>
               <div className="flex gap-2">
                 {p.type !== 'parent' && <Btn small variant="secondary" onClick={() => abrirEdicao(p)}>Editar</Btn>}
-                {p.type === 'single' && p.status !== 'Pago' && <Btn small variant="blue" onClick={() => setParcelando(p)}><Split size={12} /> Parcelar</Btn>}
+                {p.type === 'single' && p.status !== 'Pago' && <Btn small variant="blue" onClick={() => abrirParcelar(p)}><Split size={12} /> Parcelar</Btn>}
                 {p.type !== 'parent' && p.status !== 'Pago' && <Btn small variant="green" onClick={() => abrirPagamento(p)}><Banknote size={12} /> Pagar</Btn>}
               </div>
             </Td>
@@ -195,8 +232,8 @@ export function ContasPagarView() {
                 </Select>
               </Field>
             )}
-            <Field label="Tipo" span={3}>
-              <Select value={form.tipoPagamento} onChange={(e) => setF('tipoPagamento', e.target.value)}>{TIPOS.map((t) => <option key={t}>{t}</option>)}</Select>
+            <Field label="Tipo (reembolso/adiantamento)" span={3}>
+              <Select value={form.tipoPagamento} onChange={(e) => setF('tipoPagamento', e.target.value)}>{TIPOS_REEMBOLSO.map((t) => <option key={t}>{t}</option>)}</Select>
             </Field>
 
             <Field label="Fornecedor" span={6}><Input value={form.fornecedor} onChange={(e) => setF('fornecedor', e.target.value)} /></Field>
@@ -210,7 +247,12 @@ export function ContasPagarView() {
                 {bancos.map((b) => <option key={b}>{b}</option>)}
               </Select>
             </Field>
-            <Field label="Forma" span={6}><Input value={form.forma} onChange={(e) => setF('forma', e.target.value)} placeholder="Boleto / PIX..." /></Field>
+            <Field label="Forma" span={6}>
+              <Select value={form.forma} onChange={(e) => setF('forma', e.target.value)}>
+                <option value="">Selecione...</option>
+                {FORMAS_PAGAMENTO.map((f) => <option key={f}>{f}</option>)}
+              </Select>
+            </Field>
 
             <Field label="Observação" span={12}><Textarea value={form.obs} onChange={(e) => setF('obs', e.target.value)} /></Field>
             <div className="col-span-12 flex justify-end gap-2">
@@ -223,19 +265,44 @@ export function ContasPagarView() {
 
       {/* MODAL: parcelar */}
       {parcelando && (
-        <FinModal title={`Parcelar ${parcelando.id}`} hint={`Total ${money(num(parcelando.valor))} → gera conta mãe e parcelas filhas.`} onClose={() => setParcelando(null)}>
+        <FinModal wide title={`Parcelar ${parcelando.id}`} hint={`Total ${money(num(parcelando.valor))} → gera conta mãe e parcelas filhas.`} onClose={() => setParcelando(null)}>
           <form className="grid grid-cols-12 gap-4" onSubmit={confirmarParcelar}>
-            <Field label="Nº de parcelas" span={6}><Input type="number" min="2" value={parc.n} onChange={(e) => setParc((p) => ({ ...p, n: e.target.value }))} /></Field>
-            <Field label="Intervalo" span={6}>
+            <Field label="Nº de parcelas" span={4}><Input type="number" min="2" value={parc.n} onChange={(e) => setParc((p) => ({ ...p, n: e.target.value }))} /></Field>
+            <Field label="Data de início das parcelas" span={4}><Input type="date" value={parc.dataInicio} onChange={(e) => setParc((p) => ({ ...p, dataInicio: e.target.value }))} /></Field>
+            <Field label="Intervalo" span={4}>
               <Select value={parc.intervalo} onChange={(e) => setParc((p) => ({ ...p, intervalo: e.target.value }))}>
                 <option value="30">Mensal</option><option value="15">Quinzenal</option><option value="7">Semanal</option>
               </Select>
             </Field>
+
             <div className="col-span-12">
-              <p className="text-xs text-white/45">
-                {Number(parc.n) >= 2 ? `${parc.n}x de aprox. ${money(num(parcelando.valor) / Number(parc.n))}` : 'Informe ao menos 2 parcelas.'}
-              </p>
+              <p className="mb-2 flex items-center gap-2 text-xs font-black uppercase tracking-widest text-sky-300"><CalendarClock size={14} /> Próximos pagamentos</p>
+              {Number(parc.n) >= 2 ? (
+                <div className="overflow-hidden rounded-xl border border-white/10">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-white/5 text-white/50 text-xs uppercase tracking-wider">
+                        <th className="px-4 py-2 text-left">Parcela</th>
+                        <th className="px-4 py-2 text-left">Vencimento</th>
+                        <th className="px-4 py-2 text-right">Valor</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {parcelasPreview.map((pr) => (
+                        <tr key={pr.parcela} className="border-t border-white/5">
+                          <td className="px-4 py-2 font-bold text-white">{pr.parcela}</td>
+                          <td className="px-4 py-2 text-white/70">{br(pr.vencimento)}</td>
+                          <td className="px-4 py-2 text-right font-bold text-emerald-300">{money(pr.valor)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-xs text-white/45">Informe ao menos 2 parcelas.</p>
+              )}
             </div>
+
             <div className="col-span-12 flex justify-end gap-2">
               <Btn type="button" variant="ghost" onClick={() => setParcelando(null)}>Cancelar</Btn>
               <Btn type="submit" variant="blue" disabled={salvando || Number(parc.n) < 2}><Split size={15} /> {salvando ? 'Parcelando...' : 'Parcelar'}</Btn>
@@ -270,9 +337,14 @@ export function ContasPagarView() {
             <div className="col-span-12">
               <label className={labelCls}>Comprovante de pagamento * (obrigatório)</label>
               <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-dashed border-white/15 bg-[#0b1220] px-4 py-4 text-sm text-white/60 transition-colors hover:border-amber-500/40">
-                <Paperclip size={16} /> {pay.comprovante || 'Anexar comprovante (PDF, imagem...)'}
-                <input type="file" className="hidden" onChange={(e) => setPayF('comprovante', e.target.files?.[0]?.name || '')} />
+                <Paperclip size={16} /> {enviandoComprovante ? 'Enviando...' : (pay.comprovanteNome || 'Anexar comprovante (PDF, imagem...)')}
+                <input type="file" className="hidden" disabled={enviandoComprovante} onChange={(e) => handleSelecionarComprovante(e.target.files?.[0])} />
               </label>
+              {pay.comprovante && (
+                <a href={pay.comprovante} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block text-xs font-bold text-amber-300 underline">
+                  Ver comprovante anexado
+                </a>
+              )}
             </div>
 
             <div className="col-span-12 grid grid-cols-2 gap-3">
@@ -282,7 +354,7 @@ export function ContasPagarView() {
 
             <div className="col-span-12 flex justify-end gap-2">
               <Btn type="button" variant="ghost" onClick={() => setPagando(null)}>Cancelar</Btn>
-              <Btn type="submit" variant="green" disabled={salvando || !pay.banco || !pay.comprovante}>
+              <Btn type="submit" variant="green" disabled={salvando || enviandoComprovante || !pay.banco || !pay.comprovante}>
                 <Banknote size={15} /> {salvando ? 'Registrando...' : 'Confirmar pagamento'}
               </Btn>
             </div>

@@ -113,7 +113,7 @@ export const BOARD_COLUMNS: Array<{ id: BoardStage; title: string; subtitle: str
   {
     id: 'COMPRADOS',
     title: 'Compras',
-    subtitle: 'Itens iniciam em Comprar; serviços em À contratar — avançam por item',
+    subtitle: 'Marque cada item como comprado/contratado: gera a conta a pagar e vai ao histórico (NFe pendente)',
     icon: CheckCircle2,
     accent: 'from-emerald-500/20 to-emerald-500/5 border-emerald-500/20 text-emerald-300',
   },
@@ -270,4 +270,80 @@ export const formatCurrency = (value: number | null | undefined) => {
   }
 
   return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+};
+
+// ---------------------------------------------------------------------------
+// Histórico de Compras — agora um registro POR ITEM comprado/contratado.
+// Cada item que sai do kanban (ao ser marcado "Comprado"/"Contratado") gera o
+// seu próprio registro no histórico, carregando o estado de estoque e o status
+// da NF do fornecedor (NFe de entrada). A exibição reagrupa por pedido.
+// ---------------------------------------------------------------------------
+export type HistoricoNfeStatus = 'pendente' | 'lancada';
+export type HistoricoPurchaseState = 'comprado' | 'estoque' | 'contratado';
+
+export interface CompraHistoricoRegistro {
+  id: string; // `${pedidoId}::${itemId}` — único (exigido pelo backend)
+  pedidoId: string;
+  centroCusto: string;
+  solicitante: string;
+  departamento: string;
+  itemId: string;
+  itemNome: string;
+  itemDescricao: string;
+  categoria: string;
+  qtd: number;
+  un: string;
+  naturezaFornecimento: 'ITEM' | 'SERVICO';
+  fornecedor: string;
+  valor: number | null;
+  prazoEntrega: string;
+  condicaoPagamento: string;
+  purchaseState: HistoricoPurchaseState;
+  nfeStatus: HistoricoNfeStatus;
+  nfeNumero?: string;
+  nfeAnexos?: string[];
+  contaPagarId?: string;
+  compradoEm: string;
+  compradoPor: string;
+  estoqueOkEm?: string;
+  estoqueOkPor?: string;
+  nfeLancadaEm?: string;
+  nfeLancadaPor?: string;
+}
+
+export const historicoRecordId = (pedidoId: string, itemId: string) => `${pedidoId}::${itemId}`;
+
+// Monta o registro de histórico (1 por item) a partir do pedido + item + cotação selecionada.
+export const buildHistoricoRecord = (
+  request: RequisicaoCompra,
+  item: ItemCompra,
+  detail: QuoteItem | null,
+  userLabel: string,
+  contaPagarId?: string,
+): CompraHistoricoRegistro => {
+  const isItem = (detail?.naturezaFornecimento || item.naturezaFornecimento) === 'ITEM';
+
+  return {
+    id: historicoRecordId(request.id, item.id),
+    pedidoId: request.id,
+    centroCusto: request.centroCusto,
+    solicitante: request.solicitante,
+    departamento: request.departamento,
+    itemId: item.id,
+    itemNome: item.nome,
+    itemDescricao: item.descricao,
+    categoria: item.categoria,
+    qtd: item.qtd,
+    un: item.un,
+    naturezaFornecimento: isItem ? 'ITEM' : 'SERVICO',
+    fornecedor: detail?.fornecedorSelecionado || item.fornecedor || '',
+    valor: detail?.valorSelecionado ?? null,
+    prazoEntrega: detail?.prazoEntregaSelecionado || '',
+    condicaoPagamento: detail?.condicaoPagamentoSelecionada || '',
+    purchaseState: isItem ? 'comprado' : 'contratado',
+    nfeStatus: 'pendente',
+    contaPagarId,
+    compradoEm: new Date().toISOString(),
+    compradoPor: userLabel,
+  };
 };

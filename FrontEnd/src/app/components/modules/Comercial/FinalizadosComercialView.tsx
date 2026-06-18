@@ -9,6 +9,7 @@ import { downloadDocument, getDocumentHref } from '../../../utils/documentDownlo
 import { handleDownloadOrcamentoPDF } from '../CRM/handleDownloadOrcamentoPDF';
 import { handleDownloadOSPDF } from '../CRM/handleDownloadOSPDF';
 import { handleDownloadPropostaPDF } from '../CRM/handleDownloadPropostaPDF';
+import { handleDownloadMedicaoPDF } from '../CRM/handleDownloadMedicaoPDF';
 import { isEmpresaLinave, getLogoUrlForEmpresa } from '../../../utils/company';
 
 interface FinalizadosComercialViewProps {
@@ -16,8 +17,17 @@ interface FinalizadosComercialViewProps {
 }
 
 export function FinalizadosComercialView({ searchQuery }: FinalizadosComercialViewProps) {
-  const { obras, clientes, os, saveEntity } = useErp();
+  const { obras, clientes, os, saveEntity, medicoes, config } = useErp() as any;
   const [selectedObra, setSelectedObra] = useState<any>(null);
+
+  // Negócios (por id de backend) que têm ao menos uma medição registrada no SQL.
+  const negociosComMedicaoSql = useMemo(() => {
+    const set = new Set<string>();
+    (Array.isArray(medicoes) ? medicoes : []).forEach((m: any) => {
+      if (m?.negocioBackendId != null) set.add(String(m.negocioBackendId));
+    });
+    return set;
+  }, [medicoes]);
 
   const safeNumber = (value: any) => {
     const n = Number(value);
@@ -80,7 +90,9 @@ export function FinalizadosComercialView({ searchQuery }: FinalizadosComercialVi
         if (obra?.ocultarDosFinalizados) return false;
         const isArquivado = obra?.categoria === 'Arquivado';
         const temMediacao =
-          obterDocsMediacao(obra).length > 0 || Boolean(obra?.finalizadoComMediacao);
+          obterDocsMediacao(obra).length > 0 ||
+          Boolean(obra?.finalizadoComMediacao) ||
+          negociosComMedicaoSql.has(String(obra?.negocioBackendId));
         if (!isArquivado && !temMediacao) return false;
         if (!searchQuery) return true;
         const termo = searchQuery.toLowerCase();
@@ -98,7 +110,7 @@ export function FinalizadosComercialView({ searchQuery }: FinalizadosComercialVi
         const db = new Date(b?.dataArquivamento || b?.dataFinalizacaoLocal || b?.dataCadastro || 0).getTime();
         return db - da;
       });
-  }, [obras, clientes, searchQuery]);
+  }, [obras, clientes, searchQuery, negociosComMedicaoSql]);
 
   return (
     <div className="p-8 space-y-6 animate-in fade-in duration-500">
@@ -224,6 +236,8 @@ export function FinalizadosComercialView({ searchQuery }: FinalizadosComercialVi
           obra={selectedObra}
           clientes={clientes}
           os={os}
+          medicoes={medicoes}
+          config={config}
           onClose={() => setSelectedObra(null)}
           onDownload={handleDownloadDocumento}
           encontrarDocumento={encontrarDocumento}
@@ -285,6 +299,8 @@ export function NegocioDetalheModal({
   obra,
   clientes,
   os,
+  medicoes,
+  config,
   onClose,
   onDownload,
   encontrarDocumento,
@@ -325,6 +341,48 @@ export function NegocioDetalheModal({
   );
 
   const isArquivado = obra?.categoria === 'Arquivado';
+
+  // Início/Término previsto do NEGÓCIO: o negócio não guarda essas datas, então as
+  // derivamos das OS dele (menor início, maior término). Datas ISO ordenam lexicograficamente.
+  const datasInicioOs = osDoNegocio.map((o: any) => o.dataInicioPrevisto).filter(Boolean).sort();
+  const datasTerminoOs = osDoNegocio.map((o: any) => o.dataTerminoPrevisto).filter(Boolean).sort();
+  const inicioPrevistoNegocio =
+    obra.dataPrevistaInicio || obra.inicioPrevisto || datasInicioOs[0] || '';
+  const terminoPrevistoNegocio =
+    obra.dataPrevistaFinal || obra.fimPrevisto || datasTerminoOs[datasTerminoOs.length - 1] || '';
+
+  // Medições registradas no SQL para este negócio (a medição virou tela própria/SQL).
+  const medicoesDoNegocio = (Array.isArray(medicoes) ? medicoes : []).filter(
+    (m: any) => String(m?.negocioBackendId) === String(obra?.negocioBackendId),
+  );
+
+  const baixarMedicaoPDF = async (medicao: any) => {
+    const prestadora = (config?.empresasPrestadoras || []).find(
+      (e: any) => String(e?.nome || '').toLowerCase() === String(medicao.empresa || '').toLowerCase(),
+    );
+    try {
+      await handleDownloadMedicaoPDF(
+        {
+          empresa: medicao.empresa,
+          cliente: medicao.cliente,
+          empresaCnpj: prestadora?.cnpj || '',
+          clienteCnpj: medicao.cnpj,
+          dataEmissao: medicao.dataEmissao,
+          embarcacao: medicao.embarcacao,
+          numeroBM: medicao.numeroBM,
+          periodo: medicao.periodo,
+          representanteCliente: medicao.representanteCliente,
+          representanteLinave: medicao.representanteLinave,
+          tabelaItens: medicao.itens,
+        },
+        clienteCtx || {},
+        { id: medicao.ordemServicoNumero },
+      );
+      toast.success('PDF da medição gerado!');
+    } catch {
+      toast.error('Erro ao gerar o PDF da medição.');
+    }
+  };
 
   const pd = (v: any) => safeNumber(v).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
 
@@ -407,8 +465,8 @@ export function NegocioDetalheModal({
               <Field label="Status" value={obra.status} />
               <Field label="Solicitante" value={obra.solicitante} />
               <Field label="Empresa Prestadora" value={obra.empresaPrestadora} />
-              <Field label="Início Previsto" value={formatDate(obra.dataPrevistaInicio)} />
-              <Field label="Término Previsto" value={formatDate(obra.dataPrevistaFinal)} />
+              <Field label="Início Previsto" value={inicioPrevistoNegocio ? formatDate(inicioPrevistoNegocio) : '-'} />
+              <Field label="Término Previsto" value={terminoPrevistoNegocio ? formatDate(terminoPrevistoNegocio) : '-'} />
               {isArquivado && (
                 <Field label="Arquivado em" value={formatDate(obra.dataArquivamento)} />
               )}
@@ -534,76 +592,47 @@ export function NegocioDetalheModal({
             </Section>
           )}
 
-          {/* DADOS DE MEDIÇÃO */}
-          {obra?.dadosMediacao && (
-            <Section title="Dados da Medição" color="amber">
-              <div className="grid grid-cols-2 gap-4">
-                <Field label="Empresa" value={obra.dadosMediacao.empresa} />
-                <Field label="Cliente" value={obra.dadosMediacao.cliente} />
-                <Field label="CNPJ" value={obra.dadosMediacao.cnpj} />
-                <Field label="Embarcação" value={obra.dadosMediacao.embarcacao} />
-                <Field label="Número BM" value={obra.dadosMediacao.numeroBM} />
-                <Field label="Período" value={obra.dadosMediacao.periodo} />
-                <Field label="Data Emissão" value={formatDate(obra.dadosMediacao.dataEmissao)} />
-                <Field label="Representante Cliente" value={obra.dadosMediacao.representanteCliente} />
-                <Field label="Representante Linave" value={obra.dadosMediacao.representanteLinave} />
+          {/* MEDIÇÕES (SQL) — a medição virou tela própria com tabela SQL; aqui listamos as
+              do negócio e geramos o documento sob demanda (sempre atualizado, sem preview em branco). */}
+          {medicoesDoNegocio.length > 0 && (
+            <Section title={`Medições (${medicoesDoNegocio.length})`} color="amber">
+              <div className="space-y-2">
+                {medicoesDoNegocio.map((med: any) => (
+                  <div
+                    key={med.id}
+                    className="flex items-center justify-between bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 gap-3"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-white text-sm font-bold truncate">
+                        {med.numeroMedicao || med.ordemServicoNumero || 'Medição'}
+                        <span className="text-white/40 font-normal ml-2">BM {med.numeroBM || '—'}</span>
+                      </p>
+                      <p className="text-white/40 text-xs">
+                        {med.periodo || 'sem período'} • {formatDate(med.dataEmissao)} • R$ {pd(med.valorTotal)}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span
+                        className={`px-2 py-0.5 rounded text-[10px] font-black uppercase border ${
+                          med.status === 'aprovada'
+                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                            : med.status === 'recusada'
+                            ? 'bg-red-500/20 text-red-300 border-red-500/40'
+                            : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                        }`}
+                      >
+                        {med.status || 'pendente'}
+                      </span>
+                      <button
+                        onClick={() => baixarMedicaoPDF(med)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded text-[10px] font-black uppercase transition bg-blue-600 hover:bg-blue-700 text-white"
+                      >
+                        <Download size={12} /> Documento
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
-
-              {Array.isArray(obra.dadosMediacao.tabelaItens) && obra.dadosMediacao.tabelaItens.length > 0 && (
-                <div className="mt-3">
-                  <p className="text-white/40 text-[10px] uppercase tracking-widest mb-2">Itens Medidos</p>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="text-white/40 border-b border-white/10">
-                          <th className="text-left pb-1 pr-3">Descrição</th>
-                          <th className="text-left pb-1 pr-3">Unid.</th>
-                          <th className="text-right pb-1 pr-3">Qtd Prev.</th>
-                          <th className="text-right pb-1 pr-3">Qtd Real.</th>
-                          <th className="text-right pb-1">Valor Unit.</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {obra.dadosMediacao.tabelaItens.map((item: any, i: number) => (
-                          <tr key={item.id || i} className="border-b border-white/5 text-white/70">
-                            <td className="py-1 pr-3">{item.descricao || '-'}</td>
-                            <td className="py-1 pr-3">{item.unidade || '-'}</td>
-                            <td className="py-1 pr-3 text-right">{item.quantidadePrevista || '-'}</td>
-                            <td className="py-1 pr-3 text-right">{item.quantidadeRealizada || '-'}</td>
-                            <td className="py-1 text-right">{item.valorUnitario || '-'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {Array.isArray(obra.dadosMediacao.tabelaRecursos) && obra.dadosMediacao.tabelaRecursos.length > 0 && (
-                <div className="mt-3">
-                  <p className="text-white/40 text-[10px] uppercase tracking-widest mb-2">Recursos</p>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="text-white/40 border-b border-white/10">
-                          <th className="text-left pb-1 pr-3">Função</th>
-                          <th className="text-right pb-1 pr-3">Período</th>
-                          <th className="text-right pb-1">Horas</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {obra.dadosMediacao.tabelaRecursos.map((rec: any, i: number) => (
-                          <tr key={rec.id || i} className="border-b border-white/5 text-white/70">
-                            <td className="py-1 pr-3">{rec.funcao || '-'}</td>
-                            <td className="py-1 pr-3 text-right">{rec.periodo || '-'}</td>
-                            <td className="py-1 text-right">{rec.horas || '-'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
             </Section>
           )}
 

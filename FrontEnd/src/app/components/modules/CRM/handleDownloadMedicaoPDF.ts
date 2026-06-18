@@ -104,7 +104,13 @@ export const handleDownloadMedicaoPDF = async (
     
     const nomeHeader = isLinave ? 'BM- LINAVE Serviços Navais & Offshore' : 'BM- SERVINAVE';
     const razaoSocialPrestadora = isLinave ? 'W.L.M LINAVE Serviços Navais e Offshore' : 'SERVINAVE';
-    const cnpjPrestadora = isLinave ? '34.282.247/0001-60' : documentoMediacaoForm.cnpj || '';
+    // CNPJ da PRESTADORA (Linave/Servinave). Linave é fixo; para as demais usamos o CNPJ
+    // cadastrado da empresa prestadora (empresaCnpj/cnpjPrestadora). NUNCA o CNPJ do cliente.
+    const cnpjPrestadora = isLinave
+      ? '34.282.247/0001-60'
+      : (documentoMediacaoForm.empresaCnpj || documentoMediacaoForm.cnpjPrestadora || '');
+    // CNPJ do CLIENTE (coluna da direita). `cnpj` legado também carregava o do cliente.
+    const cnpjCliente = documentoMediacaoForm.clienteCnpj || documentoMediacaoForm.cnpj || '';
     
     const logoUrl = isLinave ? '/image2.jpg' : '/image1.png';
     let logoImg: HTMLImageElement | null = null;
@@ -170,7 +176,7 @@ export const handleDownloadMedicaoPDF = async (
     };
 
     drawRowFields('Empresa:', razaoSocialPrestadora, 'Cliente:', documentoMediacaoForm.cliente || '', true, true);
-    drawRowFields('CNPJ:', cnpjPrestadora, 'CNPJ:', documentoMediacaoForm.clienteCnpj || '12.345.678/0001-90', true, false);
+    drawRowFields('CNPJ:', cnpjPrestadora, 'CNPJ:', cnpjCliente, true, false);
     drawRowFields('Data emissao:', formatarDataParaBr(documentoMediacaoForm.dataEmissao) || '', 'Embarcaçao:', documentoMediacaoForm.embarcacao || '', true, false);
     drawRowFields('Negócio / Nr. BM:', `${numeroNegocio}${documentoMediacaoForm.numeroBM ? ` • BM ${documentoMediacaoForm.numeroBM}` : ''}`, 'Periodo:', documentoMediacaoForm.periodo || '', true, false);
 

@@ -7,6 +7,8 @@
  * (`servicos`, `orcamentos`, `propostas`) já vêm do SQL via NegocioSerializer.
  */
 
+import { mapDocsApiToFront } from './documentosService';
+
 const prefixoEmpresa = (empresa?: string) =>
   String(empresa || '').toLowerCase().includes('servinave') ? 'SN' : 'LN';
 
@@ -20,6 +22,12 @@ export const formatNegocioId = (negocio: any): string => {
 export const mapNegocioToObra = (n: any, clientesMapa: Record<string, string> = {}) => {
   const idFormatado = formatNegocioId(n);
   const idClienteStr = String(n?.cliente ?? '');
+  // Documentos persistidos no SQL (tabela Documento) vêm aninhados em `n.documentos`.
+  // Separamos o documento assinado pelo cliente (categoria própria) dos demais anexos.
+  const docsApi = Array.isArray(n?.documentos) ? n.documentos : (Array.isArray(n?.arquivos) ? n.arquivos : []);
+  const docsFront = mapDocsApiToFront(docsApi);
+  const documentoClienteAssinado = docsFront.find((d) => d.categoria === 'cliente_assinado') || null;
+  const documentosNegocio = docsFront.filter((d) => d.categoria !== 'cliente_assinado');
   return {
     id: idFormatado,
     nome: n?.nome_negocio,
@@ -40,7 +48,8 @@ export const mapNegocioToObra = (n: any, clientesMapa: Record<string, string> = 
     negocioBackendId: n?.id,
     orcamentos: Array.isArray(n?.orcamentos) ? n.orcamentos : [],
     propostas: Array.isArray(n?.propostas) ? n.propostas : [],
-    documentosNegocio: Array.isArray(n?.documentos) ? n.documentos : (Array.isArray(n?.arquivos) ? n.arquivos : []),
+    documentosNegocio,
+    documentoClienteAssinado,
     usoInterno: Boolean(n?.uso_interno),
     os: [],
   };
@@ -59,6 +68,9 @@ export const mapNegociosToObras = (negocios: any[], clientesMapa: Record<string,
 export const mapOrdemToOs = (o: any) => {
   const numero = String(o?.numero_os ?? o?.numeroOs ?? o?.id ?? '').trim();
   const negocioId = o?.negocio ?? o?.negocio_detalhes?.id;
+  // Assinatura/aprovação da OS: persistida na tabela Documento (categoria 'os_assinatura').
+  const docsOs = mapDocsApiToFront(Array.isArray(o?.documentos) ? o.documentos : []);
+  const assinatura = docsOs.find((d) => d.categoria === 'os_assinatura') || null;
   const obraId = negocioId != null
     ? formatNegocioId({ id: negocioId, empresa_prestadora: o?.negocio_detalhes?.empresa_prestadora })
     : '';
@@ -86,7 +98,7 @@ export const mapOrdemToOs = (o: any) => {
     statusEnvio: o?.status_envio ?? 'pendente',
     statusAprovacao: o?.status_aprovacao ?? 'pendente',
     dataAprovacao: o?.data_aprovacao ?? undefined,
-    documentoAssinaturaAprovacao: o?.documento_assinatura_aprovacao ?? null,
+    documentoAssinaturaAprovacao: assinatura,
     tipoDocumento: 'consolidada' as const,
     usoInterno: Boolean(o?.negocio_detalhes?.uso_interno),
   };

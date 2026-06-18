@@ -14,5 +14,8 @@ dist/
 # Banco de Dados
 *.sqlite3
 
+# Uploads de documentos (binários servidos via MEDIA_ROOT; não versionar)
+BackEnd/media/
+
 #vscode
 .vscode

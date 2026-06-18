@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { Send, CheckCircle2 } from 'lucide-react';
 import { FinCard, Toolbar, Field, Input, Select, Textarea, FileInput, Btn } from '../finUi';
-import { todayStr, genFinId, num } from '../finData';
+import { todayStr, genFinId, num, FORMAS_PAGAMENTO, TIPOS_REEMBOLSO } from '../finData';
 import { useFin } from '../useFin';
-
-const TIPOS = ['Passagem', 'Almoço', 'Abastecimento', 'Fornecedor', 'Material', 'Outro'];
+import { uploadDocumento } from '../../../../../services/documentosService';
+import { toast } from 'sonner';
 
 const fornecedorNome = (f: any) =>
   f?.razaoSocial || f?.razao_social || f?.nomeFantasia || f?.nome_fantasia || f?.nome || '';
@@ -12,7 +12,7 @@ const fornecedorNome = (f: any) =>
 export function SolicitacaoView() {
   const { empresas, oss, departamentos, fornecedores, addRecord } = useFin();
   const [vinculo, setVinculo] = useState<'OS' | 'Departamento'>('OS');
-  const [anexos, setAnexos] = useState<string[]>([]);
+  const [anexos, setAnexos] = useState<File[]>([]);
   const [salvando, setSalvando] = useState(false);
   const [ok, setOk] = useState(false);
 
@@ -36,8 +36,21 @@ export function SolicitacaoView() {
     if (!form.solicitante.trim() || !form.fornecedor.trim() || !num(form.valor)) return;
     setSalvando(true);
     try {
+      // Gera o id primeiro para vincular os documentos; sobe os anexos e guarda as URLs.
+      const id = genFinId('SP');
+      let anexosUrls: string[] = [];
+      if (anexos.length) {
+        const resultados = await Promise.allSettled(
+          anexos.map((file) => uploadDocumento(file, { vinculoTipo: 'financeiro', vinculoId: id, categoria: 'fin_anexo' }))
+        );
+        anexosUrls = resultados
+          .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
+          .map((r) => r.value.url);
+        const falhas = resultados.length - anexosUrls.length;
+        if (falhas > 0) toast.error(`${falhas} anexo(s) não puderam ser enviados.`);
+      }
       await addRecord({
-        id: genFinId('SP'),
+        id,
         tipo: 'solicitacao',
         status: 'Aguardando aprovação',
         empresa: form.empresa,
@@ -52,7 +65,7 @@ export function SolicitacaoView() {
         vencimento: form.vencimento,
         forma: form.forma,
         descricao: form.descricao,
-        anexos,
+        anexos: anexosUrls,
       });
       setOk(true);
       setForm((p) => ({ ...p, solicitante: '', fornecedor: '', documento: '', valor: '', forma: '', descricao: '' }));
@@ -77,8 +90,8 @@ export function SolicitacaoView() {
           </Select>
         </Field>
         <Field label="Solicitante" span={3}><Input value={form.solicitante} onChange={(e) => set('solicitante', e.target.value)} placeholder="Nome do solicitante" /></Field>
-        <Field label="Tipo" span={3}>
-          <Select value={form.tipo} onChange={(e) => set('tipo', e.target.value)}>{TIPOS.map((t) => <option key={t}>{t}</option>)}</Select>
+        <Field label="Tipo (reembolso/adiantamento)" span={3}>
+          <Select value={form.tipo} onChange={(e) => set('tipo', e.target.value)}>{TIPOS_REEMBOLSO.map((t) => <option key={t}>{t}</option>)}</Select>
         </Field>
         <Field label="Vincular a" span={3}>
           <Select value={vinculo} onChange={(e) => { setVinculo(e.target.value as any); set('vinculoValor', ''); }}>
@@ -118,7 +131,12 @@ export function SolicitacaoView() {
         <Field label="Valor" span={3}><Input type="number" step="0.01" value={form.valor} onChange={(e) => set('valor', e.target.value)} placeholder="0,00" /></Field>
         <Field label="Data compra" span={3}><Input type="date" value={form.compra} onChange={(e) => set('compra', e.target.value)} /></Field>
         <Field label="Vencimento" span={3}><Input type="date" value={form.vencimento} onChange={(e) => set('vencimento', e.target.value)} /></Field>
-        <Field label="Forma solicitada" span={3}><Input value={form.forma} onChange={(e) => set('forma', e.target.value)} placeholder="PIX / Boleto..." /></Field>
+        <Field label="Forma solicitada" span={3}>
+          <Select value={form.forma} onChange={(e) => set('forma', e.target.value)}>
+            <option value="">Selecione...</option>
+            {FORMAS_PAGAMENTO.map((f) => <option key={f}>{f}</option>)}
+          </Select>
+        </Field>
 
         <Field label="Anexar documento / imagem" span={12}>
           <FileInput label="Anexar NF, boleto, recibo, PDF ou foto" value={anexos} onChange={setAnexos} />

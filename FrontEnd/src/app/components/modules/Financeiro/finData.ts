@@ -11,6 +11,30 @@ export const todayStr = new Date().toISOString().slice(0, 10);
 
 export const num = (v: any) => Number(String(v ?? 0).replace(',', '.')) || 0;
 
+// ---------- Listas fixas (Financeiro) ----------
+// Formas de pagamento/recebimento — fixas em todo o módulo Financeiro.
+export const FORMAS_PAGAMENTO = [
+  'Pix',
+  'Cartão de crédito',
+  'Cartão de débito',
+  'Dinheiro',
+  'Boleto bancário',
+  'Transferência bancária',
+];
+
+// Tipo de reembolso / adiantamento (usado em Solicitação e Contas a Pagar).
+export const TIPOS_REEMBOLSO = [
+  'Viagens',
+  'Salário',
+  'Adiantamento',
+  'Passagem',
+  'Alimentação',
+  'Abastecimento',
+  'Material',
+  'Fornecedor',
+  'Outro',
+];
+
 export const days = (d: string, n: number) => {
   const x = new Date(d + 'T00:00:00');
   x.setDate(x.getDate() + n);
@@ -366,4 +390,116 @@ export const download = (text: string, filename: string, type = 'text/plain;char
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+};
+
+// ---------- Contas a Pagar: builder puro (única ou mãe+filhas) ----------
+// Reaproveitado pelo kanban de Compras ao marcar um item como comprado. Espelha
+// a lógica de useFin (addRecord / parcelarConta), porém puro: devolve os FinRecord
+// prontos para um único saveEntity('financeiro', [...build, ...financeiro]).
+export interface ContaPagarBase {
+  empresa: Empresa | string;
+  vinculoTipo: 'OS' | 'Departamento';
+  vinculoValor: string;
+  fornecedor: string;
+  tipoPagamento: string;
+  documento: string;
+  valor: number;
+  vencimento: string;
+  banco: string;
+  forma: string;
+  obs?: string;
+}
+
+export interface ParcelamentoOpcoes {
+  parcelar: boolean;
+  nParcelas?: number;
+  intervaloDias?: number;
+  dataInicio?: string;
+}
+
+export const buildContasPagar = (
+  base: ContaPagarBase,
+  parcelamento?: ParcelamentoOpcoes,
+): Record<string, any>[] => {
+  const now = new Date().toISOString();
+  const ts = Date.now().toString(36).toUpperCase();
+  const parentId = `CP-${ts}`;
+  const total = num(base.valor);
+
+  const comum = {
+    tipo: 'contaPagar' as FinTipo,
+    empresa: base.empresa,
+    vinculoTipo: base.vinculoTipo,
+    vinculoValor: base.vinculoValor,
+    fornecedor: base.fornecedor,
+    tipoPagamento: base.tipoPagamento,
+    documento: base.documento,
+    forma: base.forma,
+    banco: base.banco,
+    obs: base.obs || '',
+  };
+
+  if (!parcelamento?.parcelar) {
+    return [{
+      id: parentId,
+      type: 'single',
+      parentId: null,
+      parcela: '-',
+      totalParcelas: 1,
+      valor: total,
+      vencimento: base.vencimento || todayStr,
+      status: 'Aberto',
+      valorPago: 0,
+      jurosPago: 0,
+      comprovantes: [],
+      dataPagamento: '',
+      createdAt: now,
+      ...comum,
+    }];
+  }
+
+  const n = Math.max(2, Math.floor(parcelamento.nParcelas || 2));
+  const intervalo = Math.max(1, Math.floor(parcelamento.intervaloDias || 30));
+  const inicio = parcelamento.dataInicio || base.vencimento || todayStr;
+  const baseValor = Math.floor((total / n) * 100) / 100;
+  const sobra = Math.round((total - baseValor * n) * 100) / 100;
+
+  const mae = {
+    id: parentId,
+    type: 'parent',
+    parentId: null,
+    parcela: 'Mãe',
+    totalParcelas: n,
+    valor: total,
+    vencimento: inicio,
+    status: 'Parcelado',
+    valorPago: 0,
+    jurosPago: 0,
+    comprovantes: [],
+    dataPagamento: '',
+    createdAt: now,
+    ...comum,
+  };
+
+  const filhas = Array.from({ length: n }, (_, i) => {
+    const idx = i + 1;
+    return {
+      id: `${parentId}-${String(idx).padStart(2, '0')}`,
+      type: 'child',
+      parentId,
+      parcela: `${idx}/${n}`,
+      totalParcelas: n,
+      valor: idx === n ? Math.round((baseValor + sobra) * 100) / 100 : baseValor,
+      vencimento: days(inicio, intervalo * (idx - 1)),
+      status: 'Aberto',
+      valorPago: 0,
+      jurosPago: 0,
+      comprovantes: [],
+      dataPagamento: '',
+      createdAt: now,
+      ...comum,
+    };
+  });
+
+  return [mae, ...filhas];
 };

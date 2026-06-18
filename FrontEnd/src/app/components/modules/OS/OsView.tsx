@@ -291,6 +291,8 @@ export function OsView({ searchQuery }: OSViewProps) {
   const [formData, setFormData] = useState<OsFormData>(criarInitialOsData());
   const [diasPrevistos, setDiasPrevistos] = useState<number>(0);
   const [tipoDias, setTipoDias] = useState<'uteis' | 'corridos'>('corridos');
+  // id numérico (SQL) da OS em edição. null = criando uma nova OS.
+  const [editandoOsBackendId, setEditandoOsBackendId] = useState<number | null>(null);
 
   const inputClass = 'w-full bg-[#0b1220] border border-white/10 p-3 rounded-lg text-white text-sm outline-none focus:border-amber-500 transition-all placeholder:text-white/20';
   const labelClass = 'text-[9px] font-black text-white/40 uppercase tracking-widest ml-1 mb-1.5 block';
@@ -516,6 +518,52 @@ export function OsView({ searchQuery }: OSViewProps) {
     }));
   };
 
+  // Abre o formulário "fazer OS" já preenchido com uma OS existente, em modo edição.
+  const handleEditarOS = (osItem: any) => {
+    setEditandoOsBackendId(osItem?.backendId ?? null);
+
+    // Reconstrói "dias previstos" a partir das datas salvas, para que o término continue
+    // coerente caso o usuário altere a data de início durante a edição.
+    const ini = osItem?.dataInicioPrevisto ? new Date(osItem.dataInicioPrevisto) : null;
+    const fim = osItem?.dataTerminoPrevisto ? new Date(osItem.dataTerminoPrevisto) : null;
+    if (ini && fim && !isNaN(ini.getTime()) && !isNaN(fim.getTime())) {
+      const dias = Math.max(0, Math.round((fim.getTime() - ini.getTime()) / 86400000));
+      setDiasPrevistos(dias);
+    } else {
+      setDiasPrevistos(0);
+    }
+    setTipoDias('corridos');
+
+    const base = criarInitialOsData();
+    setFormData({
+      ...base,
+      backendId: osItem?.backendId ?? null,
+      id: String(osItem?.ordemServicoNumero || osItem?.id || ''),
+      obraId: osItem?.obraId || '',
+      clienteId: String(osItem?.clienteId || ''),
+      negocioBackendId: osItem?.negocioBackendId ?? null,
+      cliente: osItem?.cliente || '',
+      projeto: osItem?.projeto || '',
+      equipamento: osItem?.equipamento || '',
+      local: osItem?.local || '',
+      dataEmissao: osItem?.dataEmissao || base.dataEmissao,
+      cc: osItem?.cc || '',
+      dataInicioPrevisto: osItem?.dataInicioPrevisto || '',
+      dataTerminoPrevisto: osItem?.dataTerminoPrevisto || '',
+      ordemServicoNumero: String(osItem?.ordemServicoNumero || osItem?.id || ''),
+      supervisorEncarregado: osItem?.supervisorEncarregado || '',
+      descricaoGeralServico: osItem?.descricaoGeralServico || '',
+      aSerIncluido: { ...base.aSerIncluido, ...(osItem?.aSerIncluido || {}) },
+      maoObra: { ...base.maoObra, ...(osItem?.maoObra || {}) },
+      horasTrabalhadasPorServico: Array.isArray(osItem?.horasTrabalhadasPorServico) ? osItem.horasTrabalhadasPorServico : [],
+      statusOs: osItem?.statusOs || 'emproducao',
+      statusEnvio: osItem?.statusEnvio || 'enviada',
+      statusAprovacao: osItem?.statusAprovacao || 'pendente',
+      documentoAssinaturaAprovacao: osItem?.documentoAssinaturaAprovacao || null,
+    } as any);
+    setShowFormNovaOS(true);
+  };
+
   const handleSaveOS = async () => {
     if (!formData.obraId) {
       return alert('Selecione uma obra para criar a OS.');
@@ -525,19 +573,23 @@ export function OsView({ searchQuery }: OSViewProps) {
       return alert('Defina a data inicial prevista da OS.');
     }
 
+    const editando = editandoOsBackendId != null;
+
     const totalDiasOrcamento = diasPrevistos > 0 ? diasPrevistos : somarDiasDoOrcamento(formData.resumoConsolidado?.orcamento);
-    if (totalDiasOrcamento <= 0) {
-      return alert('Não foi possível calcular a data final porque o orçamento não informa dias suficientes.');
-    }
-
-    const dataTerminoPrevisto = calcularDataTerminoPrevisto(formData.dataInicioPrevisto, totalDiasOrcamento, tipoDias);
+    // Recalcula o término quando há dias previstos; ao editar sem dias, mantém o término já salvo.
+    const dataTerminoPrevisto = totalDiasOrcamento > 0
+      ? calcularDataTerminoPrevisto(formData.dataInicioPrevisto, totalDiasOrcamento, tipoDias)
+      : formData.dataTerminoPrevisto;
     if (!dataTerminoPrevisto) {
-      return alert('Não foi possível calcular a data final da OS.');
+      return alert('Não foi possível calcular a data final da OS. Verifique a data inicial e os dias previstos.');
     }
 
-    const jaExisteConsolidada = osEmProducao.some((item) => item.obraId === formData.obraId);
-    if (jaExisteConsolidada) {
-      return alert('Já existe uma OS consolidada para este negócio.');
+    // Só bloqueia duplicidade ao CRIAR; ao editar, a OS já existe e deve ser atualizada.
+    if (!editando) {
+      const jaExisteConsolidada = osEmProducao.some((item) => item.obraId === formData.obraId);
+      if (jaExisteConsolidada) {
+        return alert('Já existe uma OS consolidada para este negócio. Use "Editar" para alterá-la.');
+      }
     }
 
     const hhTotal =
@@ -550,6 +602,7 @@ export function OsView({ searchQuery }: OSViewProps) {
       formData.maoObra.cq +
       formData.maoObra.sms;
 
+    // Ao editar, preserva os status atuais da OS (não regredir uma OS já aprovada/enviada).
     const novaOS: OsFormData = {
       ...formData,
       dataTerminoPrevisto,
@@ -564,12 +617,15 @@ export function OsView({ searchQuery }: OSViewProps) {
       }
     };
 
-    // Remove rascunho anterior da mesma obra, se existir
+    // Remove rascunho anterior da mesma obra e, em edição, a versão antiga desta OS.
     const semRascunho = listaOS.filter((item) => !(item.obraId === formData.obraId && item.statusOs === 'rascunho'));
-    saveEntity('os', [...semRascunho, novaOS]);
+    const semOsAntiga = editando ? semRascunho.filter((item) => item.id !== novaOS.id) : semRascunho;
+    saveEntity('os', [...semOsAntiga, novaOS]);
     setShowFormNovaOS(false);
     setFormData(criarInitialOsData());
-    toast.success('OS criada e enviada para produção com sucesso!');
+    setEditandoOsBackendId(null);
+    setDiasPrevistos(0);
+    toast.success(editando ? 'OS atualizada com sucesso!' : 'OS criada e enviada para produção com sucesso!');
   };
 
   const handleDeleteOS = async (osId: string) => {
@@ -738,6 +794,8 @@ Geração: ${new Date().toLocaleString('pt-BR')}
         </div>
         <button
           onClick={() => {
+            setEditandoOsBackendId(null);
+            setDiasPrevistos(0);
             setFormData(criarInitialOsData());
             setShowFormNovaOS(true);
           }}
@@ -772,6 +830,12 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                         {osExistente.statusOs === 'rascunho' ? 'Rascunho' : osExistente.statusAprovacao === 'aprovada' ? 'Aprovada' : 'Pendente'}
                       </span>
                       <button
+                        onClick={() => handleEditarOS(osExistente)}
+                        className="px-4 py-2 bg-amber-500/20 border border-amber-500/40 text-amber-300 rounded-lg font-black text-xs hover:bg-amber-500/30 transition flex items-center gap-2"
+                      >
+                        <Pencil size={14} /> Editar
+                      </button>
+                      <button
                         onClick={() => handleDownloadOSFromList(osExistente)}
                         className="px-4 py-2 bg-blue-500/20 border border-blue-500/40 text-blue-300 rounded-lg font-black text-xs hover:bg-blue-500/30 transition flex items-center gap-2"
                       >
@@ -793,6 +857,8 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                   ) : (
                     <button
                       onClick={() => {
+                        setEditandoOsBackendId(null);
+                        setDiasPrevistos(0);
                         setFormData(criarInitialOsData());
                         handleObraChange(obra.id);
                         setShowFormNovaOS(true);
@@ -827,7 +893,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <button onClick={() => setShowFormNovaOS(false)} className="p-2 bg-white/5 rounded-full hover:bg-white/10 transition">
+                <button onClick={() => { setShowFormNovaOS(false); setEditandoOsBackendId(null); setDiasPrevistos(0); }} className="p-2 bg-white/5 rounded-full hover:bg-white/10 transition">
                   <X size={24} className="text-white/60" />
                 </button>
               </div>
@@ -1096,7 +1162,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                   onClick={handleSaveOS}
                   className="flex-1 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-white py-3 rounded-lg font-black uppercase text-sm tracking-widest transition-all shadow-lg shadow-emerald-900/30 flex items-center justify-center gap-2"
                 >
-                  <Zap size={18} /> Enviar para Produção
+                  <Zap size={18} /> {editandoOsBackendId != null ? 'Salvar Alterações' : 'Enviar para Produção'}
                 </button>
                 <button
                   onClick={handleSaveRascunhoOS}
@@ -1105,7 +1171,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                   <FileText size={16} /> Salvar Rascunho
                 </button>
                 <button
-                  onClick={() => setShowFormNovaOS(false)}
+                  onClick={() => { setShowFormNovaOS(false); setEditandoOsBackendId(null); setDiasPrevistos(0); }}
                   className="px-8 bg-white/5 text-white py-3 rounded-lg font-black uppercase text-sm hover:bg-white/10 transition"
                 >
                   Cancelar

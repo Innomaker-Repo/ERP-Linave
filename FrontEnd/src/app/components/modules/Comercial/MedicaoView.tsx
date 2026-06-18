@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { isOsAprovada } from '../../../../services/ordensServico';
 import { criarMedicao, atualizarStatusMedicao } from '../../../../services/medicoesService';
 import { handleDownloadMedicaoPDF } from '../CRM/handleDownloadMedicaoPDF';
-import { genFinId, todayStr } from '../Financeiro/finData';
+import { genFinId, todayStr, FORMAS_PAGAMENTO } from '../Financeiro/finData';
 
 const TIPOS_NFE = ['NFe Serviço', 'NFe Alocado', 'Nota de débito', 'Outro'];
 
@@ -243,10 +243,14 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
   const handleDownload = async (medicao: any) => {
     const obra = obrasById.get(`${medicao.obraId || ''}`) || obrasById.get(medicao.ordemServicoNumero) || {};
     const cli = (Array.isArray(clientes) ? clientes : []).find((c: any) => c.razaoSocial === medicao.cliente);
+    // CNPJ da prestadora vem do cadastro de Empresas Prestadoras (config), nunca do cliente.
+    const prestadora = (config?.empresasPrestadoras || []).find(
+      (e: any) => String(e?.nome || '').toLowerCase() === String(medicao.empresa || '').toLowerCase(),
+    );
     const documentoMediacaoForm = {
       empresa: medicao.empresa,
       cliente: medicao.cliente,
-      cnpj: medicao.cnpj,
+      empresaCnpj: prestadora?.cnpj || '',
       clienteCnpj: medicao.cnpj,
       dataEmissao: medicao.dataEmissao,
       embarcacao: medicao.embarcacao,
@@ -457,7 +461,10 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
                   <input type="date" value={nfeForm.dataEmitir} onChange={(e) => setNfeForm({ ...nfeForm, dataEmitir: e.target.value })} className={nfeInputCls} />
                 </NfeField>
                 <NfeField label="Forma pagamento/recebimento">
-                  <input value={nfeForm.forma} onChange={(e) => setNfeForm({ ...nfeForm, forma: e.target.value })} placeholder="Ex.: Boleto 30 dias após emissão" className={nfeInputCls} />
+                  <select value={nfeForm.forma} onChange={(e) => setNfeForm({ ...nfeForm, forma: e.target.value })} className={nfeInputCls}>
+                    <option value="">Selecione...</option>
+                    {FORMAS_PAGAMENTO.map((f: string) => <option key={f} value={f}>{f}</option>)}
+                  </select>
                 </NfeField>
                 <NfeField label="Tipo NFe">
                   <select value={nfeForm.tipoNfe} onChange={(e) => setNfeForm({ ...nfeForm, tipoNfe: e.target.value })} className={nfeInputCls}>

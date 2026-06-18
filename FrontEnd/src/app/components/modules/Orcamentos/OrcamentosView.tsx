@@ -603,7 +603,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       // Tenta persistir no backend sem bloquear em caso de erro
       try {
         const payload = buildOrcamentoPayload(orcamentoData, selectedObra, negocioId, clienteId);
-        await createOrcamento({ ...payload, finalizar: false, versao: novoOrcamento.versao });
+        await createOrcamento({ ...payload, finalizar: false, versao: novoOrcamento.versao, numeroOrcamento: novoOrcamento.numeroOrcamento });
       } catch (backendErr) {
         console.warn('Rascunho salvo localmente; erro no backend:', backendErr);
       }
@@ -686,7 +686,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       const { novoOrcamento, orcamentosExistentes, reorcPendente, ultimoEhRascunho } = construirNovoOrcamento('pendente');
 
       const payload = buildOrcamentoPayload(orcamentoData, selectedObra, negocioId, clienteId);
-      await createOrcamento({ ...payload, finalizar: true, versao: novoOrcamento.versao });
+      await createOrcamento({ ...payload, finalizar: true, versao: novoOrcamento.versao, numeroOrcamento: novoOrcamento.numeroOrcamento });
 
       const obraAtualizada = {
         ...selectedObra,

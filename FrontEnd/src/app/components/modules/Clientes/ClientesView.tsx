@@ -488,6 +488,8 @@ import { NegocioDetalheModal } from '../Comercial/FinalizadosComercialView';
           obra={negocioDetalhe}
           clientes={listaClientes}
           os={os}
+          medicoes={medicoes}
+          config={config}
           onClose={() => setNegocioDetalhe(null)}
           onDownload={handleDownloadDocumento}
           encontrarDocumento={encontrarDocumento}
