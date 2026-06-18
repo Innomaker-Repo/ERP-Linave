@@ -7,8 +7,33 @@ from .models import (
     Servico_terceirizado, Orcamento, Resumo_orcamento,
     OrdemServico,
     Escopo, PropostaComercial, Fornecedor,
-    Medicao, MedicaoItem
+    Medicao, MedicaoItem, Documento
 )
+
+# ----------------- Documentos ------------------
+
+class DocumentoSerializer(serializers.ModelSerializer):
+    # `arquivo` é o binário recebido no upload (write-only); na leitura expomos `url`.
+    arquivo = serializers.FileField(write_only=True)
+    # URL RELATIVA (/media/...). Mantida relativa de propósito: o frontend acessa
+    # tudo via mesmo origem (proxy do Vite / túnel ngrok único), sem CORS. Não usar
+    # build_absolute_uri (injetaria localhost:8000 e quebraria pelo túnel).
+    url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Documento
+        fields = [
+            'id', 'arquivo', 'url', 'nome_original', 'tipo', 'tamanho',
+            'categoria', 'vinculo_tipo', 'vinculo_id', 'uploaded_at',
+        ]
+        read_only_fields = ['url', 'tamanho', 'uploaded_at']
+
+    def get_url(self, obj):
+        try:
+            return obj.arquivo.url if obj.arquivo else None
+        except ValueError:
+            return None
+
 
 # ----------------- Core ------------------
 
@@ -65,10 +90,15 @@ class NegocioSerializer(serializers.ModelSerializer):
     cliente_detalhes = ClienteSerializer(source='cliente', read_only=True)
     orcamentos = serializers.SerializerMethodField()
     propostas = serializers.SerializerMethodField()
+    documentos = serializers.SerializerMethodField()
 
     class Meta:
         model = Negocio
         fields = '__all__'
+
+    def get_documentos(self, obj):
+        docs = Documento.objects.filter(vinculo_tipo='negocio', vinculo_id=str(obj.id))
+        return DocumentoSerializer(docs, many=True, context=self.context).data
 
     # No serializers.py, dentro da classe NegocioSerializer
     def get_orcamentos(self, obj):
@@ -420,7 +450,8 @@ class OrdemServicoSerializer(serializers.ModelSerializer):
         required=False,
         allow_null=True
     )
-    
+    documentos = serializers.SerializerMethodField()
+
     class Meta:
         model = OrdemServico
         fields = [
@@ -433,9 +464,13 @@ class OrdemServicoSerializer(serializers.ModelSerializer):
             'a_ser_incluido', 'mao_obra', 'horas_trabalhadas_servico',
             'status_os', 'status_envio', 'status_aprovacao',
             'data_aprovacao', 'documento_assinatura_aprovacao',
-            'created_at', 'updated_at'
+            'documentos', 'created_at', 'updated_at'
         ]
         read_only_fields = ('id', 'data_emissao', 'created_at', 'updated_at', 'cliente', 'negocio')
+
+    def get_documentos(self, obj):
+        docs = Documento.objects.filter(vinculo_tipo='os', vinculo_id=str(obj.id))
+        return DocumentoSerializer(docs, many=True, context=self.context).data
     
     def create(self, validated_data):
         from datetime import datetime

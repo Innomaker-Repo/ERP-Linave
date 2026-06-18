@@ -3,6 +3,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     NegocioViewSet, ClienteViewSet, OrdemServicoViewSet,
     PropostaComercialViewSet, FornecedorViewSet, MedicaoViewSet,
+    DocumentoViewSet,
     criar_orcamento,
     ordens_servico_por_cliente, ordens_servico_por_negocio, atualizar_status_os,
     atualizar_status_medicao,
@@ -17,6 +18,7 @@ router.register(r'negocios', NegocioViewSet)
 router.register(r'ordens-servico', OrdemServicoViewSet, basename='ordem-servico')
 router.register(r'propostas-comerciais', PropostaComercialViewSet, basename='proposta-comercial')
 router.register(r'medicoes', MedicaoViewSet, basename='medicao')
+router.register(r'documentos', DocumentoViewSet, basename='documento')
 
 urlpatterns = [
     # Estado financeiro (lista unificada de FinRecord; GET lê, POST substitui tudo)

@@ -1,19 +1,25 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
-import { ArrowRight, CheckCircle2, CircleDollarSign, Eye, Package, Plus, Send, ShoppingCart, Trash2, Users, X } from 'lucide-react';
+import { ArrowRight, Banknote, CalendarClock, CheckCircle2, CircleDollarSign, Eye, Package, Plus, Send, ShoppingCart, Split, Trash2, Users, X } from 'lucide-react';
 import {
   APPROVAL_LIMIT,
   BOARD_COLUMNS,
   approvalRouteLabel,
+  buildHistoricoRecord,
   formatCurrency,
   podeSelecionarFornecedorGerente,
   purchaseStateLabel,
   resolveApprovalRoute,
-  type PurchaseState,
   type QuoteFornecedor,
   type QuoteItem,
   type RequisicaoCompra,
 } from './comprasLocal';
+import { FinModal, Field, Input, Select, Textarea, Btn } from '../Financeiro/finUi';
+import {
+  br, money, num, todayStr, days,
+  FORMAS_PAGAMENTO, TIPOS_REEMBOLSO, empresaFromCC, buildContasPagar,
+  type Empresa,
+} from '../Financeiro/finData';
 
 type QuoteSupplierDraft = {
   id: string;
@@ -35,6 +41,29 @@ type QuoteModalState = {
   mode: 'edit' | 'view';
 } | null;
 
+// Formulário do popup "Conta a Pagar" disparado ao marcar um item como comprado/contratado.
+type BuyFormState = {
+  empresa: string;
+  fornecedor: string;
+  tipoPagamento: string;
+  documento: string;
+  valor: string;
+  vencimento: string;
+  banco: string;
+  forma: string;
+  obs: string;
+  parcelar: boolean;
+  nParcelas: string;
+  intervalo: string;
+  dataInicio: string;
+};
+
+const emptyBuyForm = (): BuyFormState => ({
+  empresa: 'Linave', fornecedor: '', tipoPagamento: 'Material', documento: '', valor: '',
+  vencimento: todayStr, banco: '', forma: '', obs: '',
+  parcelar: false, nParcelas: '2', intervalo: '30', dataInicio: todayStr,
+});
+
 const createSupplierDraft = (seed?: Partial<QuoteSupplierDraft>): QuoteSupplierDraft => ({
   id: seed?.id || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
   fornecedor: seed?.fornecedor || '',
@@ -55,16 +84,6 @@ const resolveNaturezaFromSupplierName = (supplierName: string, supplierCatalog: 
   const supplier = supplierCatalog.find((entry) => String(entry?.razaoSocial || '') === supplierName);
   return supplier?.naturezaFornecimento === 'ITEM' ? 'ITEM' : 'SERVICO';
 };
-
-  const getItemPurchaseStateOptions = (naturezaFornecimento: 'ITEM' | 'SERVICO') => (
-    naturezaFornecimento === 'ITEM'
-      ? (['comprar', 'comprado', 'entregue', 'estoque'] as PurchaseState[])
-      : (['aContratar', 'contratado'] as PurchaseState[])
-  );
-
-  const getDefaultItemPurchaseState = (naturezaFornecimento: 'ITEM' | 'SERVICO'): PurchaseState => (
-    naturezaFornecimento === 'ITEM' ? 'comprar' : 'aContratar'
-  );
 
 const buildDraftRows = (request: RequisicaoCompra): QuoteRowDraft[] =>
   request.itens.map((item) => {
@@ -147,14 +166,34 @@ const calculateBudgetDetails = (
 };
 
 export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
-  const { userSession, fornecedores, compras, comprasHistorico, saveEntity } = useErp();
+  const { userSession, fornecedores, compras, comprasHistorico, financeiro, config, saveEntity } = useErp() as any;
   const [requests, setRequests] = useState<RequisicaoCompra[]>(() => (Array.isArray(compras) ? compras : []));
   const [quoteModal, setQuoteModal] = useState<QuoteModalState>(null);
   const [quoteRows, setQuoteRows] = useState<Record<string, QuoteRowDraft[]>>({});
 
+  // Popup "Conta a Pagar" (marcar item como comprado/contratado).
+  const [buyModal, setBuyModal] = useState<{ requestId: string; itemId: string } | null>(null);
+  const [buyForm, setBuyForm] = useState<BuyFormState>(emptyBuyForm());
+  const [buySaving, setBuySaving] = useState(false);
+  const setBuyF = (k: keyof BuyFormState, v: string | boolean) => setBuyForm((prev) => ({ ...prev, [k]: v }));
+
   const supplierOptions = useMemo(
     () => (Array.isArray(fornecedores) ? fornecedores : []).filter((supplier: any) => supplier?.razaoSocial),
     [fornecedores]
+  );
+
+  // Opções para o popup de Conta a Pagar (empresas prestadoras e bancos cadastrados).
+  const empresasOptions = useMemo<string[]>(() => {
+    const lista = (config?.empresasPrestadoras || [])
+      .filter((e: any) => e?.ativa !== false)
+      .map((e: any) => e?.nome)
+      .filter(Boolean);
+    return lista.length ? lista : ['Linave', 'Servinave'];
+  }, [config]);
+
+  const bancosOptions = useMemo<string[]>(
+    () => (Array.isArray(financeiro) ? financeiro : []).filter((r: any) => r?.tipo === 'banco').map((b: any) => b.nome).filter(Boolean),
+    [financeiro]
   );
 
   // Apenas o gerente comercial / diretor financeiro (mockados) enxergam e operam a etapa
@@ -357,16 +396,136 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
     }));
   };
 
-  const handleChangePurchaseState = (requestId: string, itemId: string, purchaseState: PurchaseState) => {
-    patchRequest(requestId, (request) => ({
-      ...request,
-      itens: request.itens.map((item) => (
-        item.id === itemId
-          ? { ...item, purchaseState }
-          : item
-      )),
-      updatedAt: new Date().toISOString(),
+  // Abre o popup de Conta a Pagar pré-preenchido com a cotação selecionada do item.
+  const openBuyModal = (requestId: string, itemId: string) => {
+    const request = requests.find((r) => r.id === requestId);
+    if (!request) return;
+    const item = request.itens.find((it) => it.id === itemId);
+    if (!item) return;
+    const detail = (request.budgetDetails || []).find((d) => d.itemId === itemId) || null;
+    const isItem = (detail?.naturezaFornecimento || item.naturezaFornecimento) === 'ITEM';
+
+    setBuyForm({
+      empresa: empresaFromCC(request.centroCusto, (empresasOptions[0] as Empresa) || 'Linave'),
+      fornecedor: detail?.fornecedorSelecionado || item.fornecedor || '',
+      tipoPagamento: isItem ? 'Material' : 'Fornecedor',
+      documento: '',
+      valor: detail?.valorSelecionado != null ? String(detail.valorSelecionado) : '',
+      vencimento: todayStr,
+      banco: '',
+      forma: '',
+      obs: [
+        detail?.prazoEntregaSelecionado ? `Entrega: ${detail.prazoEntregaSelecionado}` : '',
+        detail?.condicaoPagamentoSelecionada ? `Pagto: ${detail.condicaoPagamentoSelecionada}` : '',
+      ].filter(Boolean).join(' • '),
+      parcelar: false,
+      nParcelas: '2',
+      intervalo: '30',
+      dataInicio: todayStr,
+    });
+    setBuyModal({ requestId, itemId });
+  };
+
+  const closeBuyModal = () => setBuyModal(null);
+
+  const buyContext = useMemo(() => {
+    if (!buyModal) return null;
+    const request = requests.find((r) => r.id === buyModal.requestId) || null;
+    const item = request?.itens.find((it) => it.id === buyModal.itemId) || null;
+    const detail = (request?.budgetDetails || []).find((d) => d.itemId === buyModal.itemId) || null;
+    return request && item ? { request, item, detail } : null;
+  }, [buyModal, requests]);
+
+  const buyIsItem = buyContext
+    ? (buyContext.detail?.naturezaFornecimento || buyContext.item.naturezaFornecimento) === 'ITEM'
+    : true;
+
+  // Prévia das parcelas (espelha buildContasPagar) quando "Parcelar" está marcado.
+  const buyParcelasPreview = useMemo(() => {
+    if (!buyModal || !buyForm.parcelar) return [] as { parcela: string; vencimento: string; valor: number }[];
+    const n = Math.max(2, Math.floor(Number(buyForm.nParcelas) || 0));
+    const total = num(buyForm.valor);
+    const base = Math.floor((total / n) * 100) / 100;
+    const sobra = Math.round((total - base * n) * 100) / 100;
+    return Array.from({ length: n }, (_, i) => ({
+      parcela: `${i + 1}/${n}`,
+      vencimento: days(buyForm.dataInicio || todayStr, Number(buyForm.intervalo) * i),
+      valor: i === n - 1 ? Math.round((base + sobra) * 100) / 100 : base,
     }));
+  }, [buyModal, buyForm]);
+
+  // Confirma a compra do item: cria a(s) Conta(s) a Pagar, registra no Histórico (NFe
+  // pendente) e remove o item do kanban (removendo o card se ele ficar vazio).
+  const handleConfirmBuy = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!buyModal || !buyContext) return;
+    const { request, item, detail } = buyContext;
+
+    if (!buyForm.fornecedor.trim() || !num(buyForm.valor)) {
+      window.alert('Informe o fornecedor e o valor da conta a pagar.');
+      return;
+    }
+    if (buyForm.parcelar && Number(buyForm.nParcelas) < 2) {
+      window.alert('Para parcelar, informe ao menos 2 parcelas.');
+      return;
+    }
+
+    setBuySaving(true);
+    try {
+      const contas = buildContasPagar(
+        {
+          empresa: buyForm.empresa,
+          vinculoTipo: 'OS',
+          vinculoValor: request.centroCusto,
+          fornecedor: buyForm.fornecedor.trim(),
+          tipoPagamento: buyForm.tipoPagamento,
+          documento: buyForm.documento.trim(),
+          valor: num(buyForm.valor),
+          vencimento: buyForm.vencimento,
+          banco: buyForm.banco,
+          forma: buyForm.forma,
+          obs: buyForm.obs,
+        },
+        {
+          parcelar: buyForm.parcelar,
+          nParcelas: Number(buyForm.nParcelas),
+          intervaloDias: Number(buyForm.intervalo),
+          dataInicio: buyForm.dataInicio,
+        },
+      );
+      const contaPagarId = contas[0]?.id as string | undefined;
+
+      // 1) Financeiro — cria a(s) conta(s) a pagar (única ou mãe+filhas).
+      await saveEntity?.('financeiro', [...contas, ...(Array.isArray(financeiro) ? financeiro : [])]);
+
+      // 2) Histórico de Compras — um registro por item, NFe do fornecedor pendente.
+      const userLabel = userSession?.nome || userSession?.email || 'sistema';
+      const registro = buildHistoricoRecord(request, item, detail, userLabel, contaPagarId);
+      const historicoAtual = Array.isArray(comprasHistorico) ? comprasHistorico : [];
+      const historicoSemDuplicado = historicoAtual.filter((r: any) => r?.id !== registro.id);
+      await saveEntity?.('comprasHistorico', [registro, ...historicoSemDuplicado]);
+
+      // 3) Compras — remove o item do card; remove o card se ficar sem itens.
+      //    O efeito de auto-save persiste a coleção `compras` no SQL.
+      setRequests((current) =>
+        current
+          .map((r) =>
+            r.id === request.id
+              ? {
+                  ...r,
+                  itens: r.itens.filter((it) => it.id !== item.id),
+                  budgetDetails: (r.budgetDetails || []).filter((d) => d.itemId !== item.id),
+                  updatedAt: new Date().toISOString(),
+                }
+              : r,
+          )
+          .filter((r) => r.itens.length > 0),
+      );
+
+      setBuyModal(null);
+    } finally {
+      setBuySaving(false);
+    }
   };
 
   const handleReturnToSolicitations = (requestId: string) => {
@@ -376,35 +535,6 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
       approvalRoute: null,
       updatedAt: new Date().toISOString(),
     }));
-  };
-
-  const handleDeleteRequest = (requestId: string) => {
-    const request = requests.find((item) => item.id === requestId);
-    if (!request) return;
-
-    const shouldDelete = window.confirm('Concluir esta compra e enviá-la para o histórico? Ela sairá do kanban.');
-    if (!shouldDelete) return;
-
-    // Excluir o card = dar a compra como concluída: arquiva o pedido inteiro (com todos os
-    // itens e a cotação selecionada) no histórico de compras antes de removê-lo do kanban.
-    const registroHistorico = {
-      ...request,
-      finalizadoEm: new Date().toISOString(),
-      finalizadoPor: userSession?.nome || userSession?.email || '',
-    };
-    const historicoAtual = Array.isArray(comprasHistorico) ? comprasHistorico : [];
-    void saveEntity?.('comprasHistorico', [registroHistorico, ...historicoAtual]);
-
-    setRequests((current) => current.filter((item) => item.id !== requestId));
-    setQuoteRows((current) => {
-      const next = { ...current };
-      delete next[requestId];
-      return next;
-    });
-
-    if (quoteModal?.requestId === requestId) {
-      setQuoteModal(null);
-    }
   };
 
   const handleSelectSupplier = (requestId: string, itemId: string, fornecedorSelecionado: string) => {
@@ -732,33 +862,35 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
                         {request.stage === 'COMPRADOS' && (
                           <div className="space-y-2 pt-1">
                             <div className="space-y-3">
-                              {request.itens.map((item) => (
-                                <div key={`${request.id}-${item.id}`} className="rounded-xl border border-white/10 bg-white/[0.03] p-3 space-y-3">
-                                  <div className="flex items-start justify-between gap-3">
-                                    <div>
-                                      <p className="text-white text-sm font-semibold">{item.descricao || item.nome}</p>
-                                      <p className="text-white/40 text-[11px] mt-1">{item.naturezaFornecimento === 'ITEM' ? 'Item' : 'Serviço'}</p>
+                              {request.itens.map((item) => {
+                                const detail = (request.budgetDetails || []).find((d) => d.itemId === item.id) || null;
+                                const isItem = (detail?.naturezaFornecimento || item.naturezaFornecimento) === 'ITEM';
+                                return (
+                                  <div key={`${request.id}-${item.id}`} className="rounded-xl border border-white/10 bg-white/[0.03] p-3 space-y-3">
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div>
+                                        <p className="text-white text-sm font-semibold">{item.descricao || item.nome}</p>
+                                        <p className="text-white/40 text-[11px] mt-1">
+                                          {isItem ? 'Item' : 'Serviço'}
+                                          {detail?.fornecedorSelecionado ? ` • ${detail.fornecedorSelecionado}` : ''}
+                                          {detail?.valorSelecionado != null ? ` • ${formatCurrency(detail.valorSelecionado)}` : ''}
+                                        </p>
+                                      </div>
+                                      <span className="text-[10px] uppercase tracking-widest text-amber-300/80 font-black">{isItem ? 'A comprar' : 'A contratar'}</span>
                                     </div>
-                                    <span className="text-[10px] uppercase tracking-widest text-violet-300/80 font-black">{purchaseStateLabel[item.purchaseState]}</span>
+                                    <button
+                                      onClick={() => openBuyModal(request.id, item.id)}
+                                      className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all"
+                                    >
+                                      <Banknote size={14} /> {isItem ? 'Marcar como comprado' : 'Marcar como contratado'}
+                                    </button>
                                   </div>
-                                  <label className="text-[11px] font-bold uppercase tracking-widest text-white/40">Estado de compra</label>
-                                  <select
-                                    className="w-full bg-[#101826] border border-white/10 rounded-xl p-3 text-white text-sm outline-none focus:border-emerald-500 cursor-pointer"
-                                    value={item.purchaseState}
-                                    onChange={(event) => handleChangePurchaseState(request.id, item.id, event.target.value as PurchaseState)}
-                                  >
-                                    {getItemPurchaseStateOptions(item.naturezaFornecimento).map((state) => (
-                                      <option key={state} value={state}>
-                                        {purchaseStateLabel[state]}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </div>
-                              ))}
+                                );
+                              })}
                             </div>
-                            <button onClick={() => handleDeleteRequest(request.id)} className="w-full flex items-center justify-center gap-2 bg-red-600/80 hover:bg-red-500 text-white px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all">
-                              <Trash2 size={14} /> Excluir card
-                            </button>
+                            <p className="text-[11px] text-white/40 rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                              Ao confirmar, geramos a conta a pagar, o item sai do kanban para o Histórico como <strong className="text-white/70">NFe pendente</strong> e, se for item, vai para a tela de estoque.
+                            </p>
                           </div>
                         )}
                       </article>
@@ -973,6 +1105,116 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
             </div>
           </div>
         </div>
+      )}
+
+      {buyModal && buyContext && (
+        <FinModal
+          wide
+          title={buyIsItem ? 'Marcar como comprado · Conta a Pagar' : 'Marcar como contratado · Conta a Pagar'}
+          hint="Crie a conta a pagar com os dados do financeiro. Ao confirmar, o item sai do kanban e vai ao Histórico como NFe pendente."
+          onClose={closeBuyModal}
+        >
+          <form className="grid grid-cols-12 gap-4" onSubmit={handleConfirmBuy}>
+            <div className="col-span-12 rounded-xl border border-white/10 bg-[#0b1220] px-4 py-3 text-sm">
+              <span className="text-white/40 text-[10px] uppercase tracking-widest font-black">Item</span>
+              <p className="text-white font-semibold mt-1">{buyContext.item.descricao || buyContext.item.nome} • {buyContext.item.qtd} {buyContext.item.un}</p>
+            </div>
+
+            <Field label="Empresa" span={3}>
+              <Select value={buyForm.empresa} onChange={(e) => setBuyF('empresa', e.target.value)}>
+                {empresasOptions.map((emp) => <option key={emp}>{emp}</option>)}
+              </Select>
+            </Field>
+            <Field label="Vínculo (OS / Centro de custo)" span={5}>
+              <Input value={buyContext.request.centroCusto} disabled />
+            </Field>
+            <Field label="Tipo" span={4}>
+              <Select value={buyForm.tipoPagamento} onChange={(e) => setBuyF('tipoPagamento', e.target.value)}>
+                {TIPOS_REEMBOLSO.map((t) => <option key={t}>{t}</option>)}
+              </Select>
+            </Field>
+
+            <Field label="Fornecedor" span={6}><Input value={buyForm.fornecedor} onChange={(e) => setBuyF('fornecedor', e.target.value)} /></Field>
+            <Field label="Documento (NF / boleto)" span={3}><Input value={buyForm.documento} onChange={(e) => setBuyF('documento', e.target.value)} placeholder="Opcional" /></Field>
+            <Field label="Valor total" span={3}><Input type="number" step="0.01" value={buyForm.valor} onChange={(e) => setBuyF('valor', e.target.value)} /></Field>
+
+            <Field label="Vencimento" span={3}><Input type="date" value={buyForm.vencimento} onChange={(e) => setBuyF('vencimento', e.target.value)} /></Field>
+            <Field label="Banco" span={3}>
+              <Select value={buyForm.banco} onChange={(e) => setBuyF('banco', e.target.value)}>
+                <option value="">{bancosOptions.length ? 'A definir...' : 'Nenhum banco cadastrado'}</option>
+                {bancosOptions.map((b) => <option key={b}>{b}</option>)}
+              </Select>
+            </Field>
+            <Field label="Forma de pagamento" span={6}>
+              <Select value={buyForm.forma} onChange={(e) => setBuyF('forma', e.target.value)}>
+                <option value="">Selecione...</option>
+                {FORMAS_PAGAMENTO.map((f) => <option key={f}>{f}</option>)}
+              </Select>
+            </Field>
+
+            <Field label="Observação" span={12}><Textarea value={buyForm.obs} onChange={(e) => setBuyF('obs', e.target.value)} /></Field>
+
+            <div className="col-span-12 rounded-xl border border-white/10 bg-[#0b1220] p-4 space-y-3">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={buyForm.parcelar}
+                  onChange={(e) => setBuyF('parcelar', e.target.checked)}
+                  className="h-5 w-5 accent-emerald-500 cursor-pointer"
+                />
+                <span className="text-sm font-bold text-white flex items-center gap-2"><Split size={14} /> Foi parcelado?</span>
+              </label>
+
+              {buyForm.parcelar && (
+                <>
+                  <div className="grid grid-cols-12 gap-4">
+                    <Field label="Nº de parcelas" span={4}><Input type="number" min="2" value={buyForm.nParcelas} onChange={(e) => setBuyF('nParcelas', e.target.value)} /></Field>
+                    <Field label="Início das parcelas" span={4}><Input type="date" value={buyForm.dataInicio} onChange={(e) => setBuyF('dataInicio', e.target.value)} /></Field>
+                    <Field label="Intervalo" span={4}>
+                      <Select value={buyForm.intervalo} onChange={(e) => setBuyF('intervalo', e.target.value)}>
+                        <option value="30">Mensal</option><option value="15">Quinzenal</option><option value="7">Semanal</option>
+                      </Select>
+                    </Field>
+                  </div>
+                  {buyParcelasPreview.length > 0 && (
+                    <div className="overflow-hidden rounded-xl border border-white/10">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-white/5 text-white/50 text-xs uppercase tracking-wider">
+                            <th className="px-4 py-2 text-left">Parcela</th>
+                            <th className="px-4 py-2 text-left">Vencimento</th>
+                            <th className="px-4 py-2 text-right">Valor</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {buyParcelasPreview.map((pr) => (
+                            <tr key={pr.parcela} className="border-t border-white/5">
+                              <td className="px-4 py-2 font-bold text-white">{pr.parcela}</td>
+                              <td className="px-4 py-2 text-white/70">{br(pr.vencimento)}</td>
+                              <td className="px-4 py-2 text-right font-bold text-emerald-300">{money(pr.valor)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="col-span-12 flex items-center justify-between gap-2">
+              <p className="text-[11px] text-white/40 flex items-center gap-2">
+                <CalendarClock size={13} /> Total: <strong className="text-emerald-300">{money(num(buyForm.valor))}</strong>
+              </p>
+              <div className="flex gap-2">
+                <Btn type="button" variant="ghost" onClick={closeBuyModal}>Cancelar</Btn>
+                <Btn type="submit" variant="green" disabled={buySaving}>
+                  <Banknote size={15} /> {buySaving ? 'Confirmando...' : (buyIsItem ? 'Comprar e gerar conta' : 'Contratar e gerar conta')}
+                </Btn>
+              </div>
+            </div>
+          </form>
+        </FinModal>
       )}
     </>
   );

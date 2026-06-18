@@ -7,7 +7,7 @@ import { downloadDocument, getDocumentHref } from '../../../utils/documentDownlo
 import { NegocioDetalheModal } from '../Comercial/FinalizadosComercialView';
 
 export function ClientesView({ searchQuery }: { searchQuery: string }) {
-  const { obras, os, userSession } = useErp();
+  const { obras, os, userSession, medicoes, config } = useErp() as any;
   const [negocioDetalhe, setNegocioDetalhe] = useState<any>(null);
 
   // Helpers compartilhados com o modal de detalhes do negócio
@@ -583,6 +583,8 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
           obra={negocioDetalhe}
           clientes={listaClientes}
           os={os}
+          medicoes={medicoes}
+          config={config}
           onClose={() => setNegocioDetalhe(null)}
           onDownload={handleDownloadDocumento}
           encontrarDocumento={encontrarDocumento}

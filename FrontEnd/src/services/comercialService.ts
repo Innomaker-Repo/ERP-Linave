@@ -198,6 +198,18 @@ export const criarOrdemServico = async (dadosOS: any) => {
     }
 };
 
+// Atualiza uma OS existente no backend (PATCH parcial; id numérico do SQL).
+// Não renumera a OS (o numero_os só é gerado na criação).
+export const atualizarOrdemServico = async (id: number | string, dadosOS: any) => {
+    try {
+        const response = await api.patch(`ordens-servico/${id}/`, dadosOS);
+        return response.data;
+    } catch (error) {
+        console.error(`Erro ao atualizar OS ${id}:`, (error as any)?.response?.data || error);
+        throw error;
+    }
+};
+
 // Exclui uma OS no backend (id numérico do SQL)
 export const deleteOrdemServico = async (id: number | string) => {
     try {

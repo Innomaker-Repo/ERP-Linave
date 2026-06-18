@@ -1,12 +1,14 @@
 import React, { useMemo, useState } from 'react';
-import { Plus, FileCheck2 } from 'lucide-react';
+import { Plus, FileCheck2, ExternalLink } from 'lucide-react';
 import {
   FinCard, Toolbar, DataTable, Th, Td, Btn, StatusTag, CompanyTag, Pill, AlertBar, EmptyRow,
-  FinModal, Field, Input, Select, Kpi, FileInput,
+  FinModal, Field, Input, Select, FileInput,
 } from '../finUi';
-import { br, money, num, todayStr, genFinId, TAX_DEFAULTS, calcNfeLiquido, type NfeSolicitacao } from '../finData';
+import { br, money, num, todayStr, genFinId, TAX_DEFAULTS, calcNfeLiquido, FORMAS_PAGAMENTO, type NfeSolicitacao } from '../finData';
 import { useFin } from '../useFin';
 import { useFinFilters } from '../finFilters';
+import { uploadDocumento } from '../../../../../services/documentosService';
+import { toast } from 'sonner';
 
 const TIPOS_NFE = ['NFe Serviço', 'NFe Alocado', 'Nota de débito', 'Outro'];
 
@@ -25,7 +27,7 @@ export function NfeView() {
 
   const [emitindo, setEmitindo] = useState<NfeSolicitacao | null>(null);
   const [nf, setNf] = useState(emptyNf());
-  const [nfeAnexos, setNfeAnexos] = useState<string[]>([]);
+  const [nfeAnexos, setNfeAnexos] = useState<File[]>([]);
   const setNfField = (k: string, v: string) => setNf((p) => ({ ...p, [k]: v }));
   const [salvando, setSalvando] = useState(false);
 
@@ -40,9 +42,12 @@ export function NfeView() {
     () => calcNfeLiquido(original, { cofins: num(nf.cofins), csll: num(nf.csll), inss: num(nf.inss), ir: num(nf.ir), pis: num(nf.pis), iss: num(nf.iss) }),
     [original, nf.cofins, nf.csll, nf.inss, nf.ir, nf.pis, nf.iss],
   );
-  const impCofins = original * num(nf.cofins) / 100;
-  const impCsll = original * num(nf.csll) / 100;
-  const impOutros = original * (num(nf.inss) + num(nf.ir) + num(nf.pis) + num(nf.iss)) / 100;
+  // Todos os impostos detalhados (nome, % e valor) — sem resumo "Outros".
+  const impostosLista = ([
+    ['COFINS', nf.cofins], ['CSLL', nf.csll], ['INSS', nf.inss],
+    ['IR', nf.ir], ['PIS', nf.pis], ['ISS', nf.iss],
+  ] as [string, string][]).map(([nome, pct]) => ({ nome, pct: num(pct), valor: original * num(pct) / 100 }));
+  const totalImpostos = impostosLista.reduce((s, i) => s + i.valor, 0);
 
   const abrirEmissao = (sol: NfeSolicitacao) => {
     setEmitindo(sol);
@@ -55,9 +60,21 @@ export function NfeView() {
     if (!emitindo || !nf.numero.trim() || nfeAnexos.length === 0) return; // anexo da NFe obrigatório
     setSalvando(true);
     try {
+      // Sobe os anexos da NFe (vinculados à solicitação) e guarda as URLs no registro.
+      const resultados = await Promise.allSettled(
+        nfeAnexos.map((file) => uploadDocumento(file, { vinculoTipo: 'financeiro', vinculoId: emitindo.id, categoria: 'fin_anexo' }))
+      );
+      const anexosUrls = resultados
+        .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
+        .map((r) => r.value.url);
+      if (anexosUrls.length === 0) {
+        toast.error('Não foi possível enviar o anexo da NFe. Tente novamente.');
+        return;
+      }
       await emitirNfe(emitindo, {
         numero: nf.numero, emissao: nf.emissao, original, liquido,
         baixado: num(nf.baixado), vencimento: nf.vencimento, contrato: nf.contrato, cliente: nf.cliente,
+        anexos: anexosUrls,
       });
       setEmitindo(null);
     } finally {
@@ -142,22 +159,45 @@ export function NfeView() {
             <Field label="Vencimento do recebimento" span={6}><Input type="date" value={nf.vencimento} onChange={(e) => setNfField('vencimento', e.target.value)} /></Field>
             <Field label="Contrato / OS / P.O" span={6}><Input value={nf.contrato} onChange={(e) => setNfField('contrato', e.target.value)} /></Field>
 
-            <div className="col-span-12 grid grid-cols-2 gap-3 md:grid-cols-4">
-              <Kpi label="COFINS" value={money(impCofins)} />
-              <Kpi label="CSLL" value={money(impCsll)} />
-              <Kpi label="Outros impostos" value={money(impOutros)} />
-              <Kpi label="Líquido" value={money(liquido)} />
+            <div className="col-span-12 rounded-xl border border-white/10 bg-[#0b1220] p-4">
+              <p className="mb-3 text-xs font-black uppercase tracking-widest text-amber-300">Impostos retidos (detalhado)</p>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+                {impostosLista.map((imp) => (
+                  <div key={imp.nome} className="rounded-lg border border-white/5 bg-[#101f3d] p-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-black uppercase tracking-wider text-white/60">{imp.nome}</span>
+                      <span className="text-[10px] text-white/30">{imp.pct}%</span>
+                    </div>
+                    <p className="mt-1 font-bold text-white">{money(imp.valor)}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <div className="rounded-lg border border-red-500/20 bg-red-500/[0.06] p-3">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-red-300/70">Total de impostos</p>
+                  <p className="text-lg font-black text-red-300">{money(totalImpostos)}</p>
+                </div>
+                <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/[0.06] p-3">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-emerald-300/70">Líquido a receber</p>
+                  <p className="text-lg font-black text-emerald-300">{money(liquido)}</p>
+                </div>
+              </div>
             </div>
 
             <Field label="NFe emitida (anexo obrigatório)" span={12}>
               <FileInput label="Anexar PDF / XML / imagem da NFe emitida" value={nfeAnexos} onChange={setNfeAnexos} />
             </Field>
 
-            <div className="col-span-12 flex justify-end gap-2">
-              <Btn type="button" variant="ghost" onClick={() => setEmitindo(null)}>Cancelar</Btn>
-              <Btn type="submit" variant="green" disabled={salvando || !nf.numero.trim() || nfeAnexos.length === 0}>
-                <FileCheck2 size={15} /> {salvando ? 'Arquivando...' : 'Emitir, anexar e arquivar'}
+            <div className="col-span-12 flex flex-wrap items-center justify-between gap-2">
+              <Btn type="button" variant="secondary" onClick={() => window.open('https://www.nfse.gov.br/EmissorNacional/Login', '_blank', 'noopener,noreferrer')}>
+                <ExternalLink size={15} /> Emissor Nacional NFSe
               </Btn>
+              <div className="flex gap-2">
+                <Btn type="button" variant="ghost" onClick={() => setEmitindo(null)}>Cancelar</Btn>
+                <Btn type="submit" variant="green" disabled={salvando || !nf.numero.trim() || nfeAnexos.length === 0}>
+                  <FileCheck2 size={15} /> {salvando ? 'Arquivando...' : 'Emitir, anexar e arquivar'}
+                </Btn>
+              </div>
             </div>
           </form>
         </FinModal>
@@ -182,7 +222,12 @@ export function NfeView() {
             <Field label="Cliente" span={6}><Input value={sf.cliente} onChange={(e) => setSfField('cliente', e.target.value)} /></Field>
             <Field label="Valor NFe" span={3}><Input type="number" step="0.01" value={sf.valor} onChange={(e) => setSfField('valor', e.target.value)} /></Field>
             <Field label="Data para emitir" span={3}><Input type="date" value={sf.dataEmitir} onChange={(e) => setSfField('dataEmitir', e.target.value)} /></Field>
-            <Field label="Forma de recebimento" span={12}><Input value={sf.forma} onChange={(e) => setSfField('forma', e.target.value)} placeholder="Ex.: Boleto 30 dias após emissão" /></Field>
+            <Field label="Forma de recebimento" span={12}>
+              <Select value={sf.forma} onChange={(e) => setSfField('forma', e.target.value)}>
+                <option value="">Selecione...</option>
+                {FORMAS_PAGAMENTO.map((f) => <option key={f}>{f}</option>)}
+              </Select>
+            </Field>
             <div className="col-span-12 flex justify-end gap-2">
               <Btn type="button" variant="ghost" onClick={() => setSolicitando(false)}>Cancelar</Btn>
               <Btn type="submit" variant="amber" disabled={salvando}>Enviar para NFe</Btn>

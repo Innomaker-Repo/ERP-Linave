@@ -12,6 +12,7 @@ import { handleDownloadOSPDF as gerarOSPDF } from './handleDownloadOSPDF';
 import { getCachedWorkspace } from '../../../services/workspaceStorage';
 import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
 import { isEmpresaLinave, getLogoUrlForEmpresa } from '../../../utils/company';
+import { uploadDocumento, excluirDocumento } from '../../../../services/documentosService';
 // Substitua as importações antigas por esta única:
 import {
     getNegocios,
@@ -43,7 +44,10 @@ interface DocumentoNegocio {
   tipo: string;
   tamanho: number;
   dataUpload: string;
-  conteudo: string;
+  conteudo?: string;     // base64 (legado) OU = url (documentos persistidos no SQL)
+  url?: string;          // URL relativa /media/... do documento persistido
+  backendId?: number;    // id da linha Documento no SQL (para excluir)
+  file?: File;           // arquivo bruto, só enquanto o negócio ainda não foi criado
 }
 
 interface LinhaTabelaMediacao {
@@ -937,16 +941,16 @@ const initialServico: Servico = {
     if (arquivosPermitidos.length === 0) return;
 
     try {
-      const novosDocumentos: DocumentoNegocio[] = await Promise.all(
-        arquivosPermitidos.map(async (file) => ({
-          id: `doc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          nome: file.name,
-          tipo: file.type || (file.name.toLowerCase().endsWith('.csv') ? 'text/csv' : 'application/pdf'),
-          tamanho: file.size,
-          dataUpload: new Date().toISOString(),
-          conteudo: await fileToDataUrl(file)
-        }))
-      );
+      // Negócio ainda não existe no banco: guardamos o File bruto e só fazemos o
+      // upload de verdade depois que o negócio é criado (handleSave), quando temos o id.
+      const novosDocumentos: DocumentoNegocio[] = arquivosPermitidos.map((file) => ({
+        id: `doc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        nome: file.name,
+        tipo: file.type || (file.name.toLowerCase().endsWith('.csv') ? 'text/csv' : 'application/pdf'),
+        tamanho: file.size,
+        dataUpload: new Date().toISOString(),
+        file,
+      }));
 
       setFormData(prev => ({
         ...prev,
@@ -1149,31 +1153,45 @@ const initialServico: Servico = {
       return;
     }
 
-    try {
-      const documentoClienteAssinado: DocumentoNegocio = {
-        id: `doc-cliente-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        nome: arquivo.name,
-        tipo: arquivo.type || (isPdf ? 'application/pdf' : 'image/jpeg'),
-        tamanho: arquivo.size,
-        dataUpload: new Date().toISOString(),
-        conteudo: await fileToDataUrl(arquivo)
-      };
+    const obraAtual = (obras || []).find((o: any) => o.id === obra.id) || obra;
+    const negocioId = obraAtual.negocioBackendId;
+    if (!negocioId) {
+      toast.error('Negócio sem identificador no banco — não foi possível anexar.');
+      return;
+    }
 
-      const obraAtual = (obras || []).find((o: any) => o.id === obra.id) || obra;
+    try {
+      // Substitui o anterior (slot único): remove o documento assinado antigo do banco.
+      const anterior = obraAtual.documentoClienteAssinado;
+      if (anterior?.backendId) {
+        try { await excluirDocumento(anterior.backendId); } catch { /* segue mesmo se falhar */ }
+      }
+
+      const documentoClienteAssinado = await uploadDocumento(arquivo, {
+        vinculoTipo: 'negocio',
+        vinculoId: negocioId,
+        categoria: 'cliente_assinado',
+      });
+
       persistirObraAtualizada({
         ...obraAtual,
         documentoClienteAssinado
       });
 
-      toast.success('Documento assinado do cliente anexado com sucesso.');
+      toast.success('Documento assinado do cliente anexado e salvo no banco.');
     } catch (error) {
       toast.error('Não foi possível anexar o documento do cliente.');
     }
   };
 
-  const handleRemoverDocumentoClienteAssinado = (obra: any) => {
+  const handleRemoverDocumentoClienteAssinado = async (obra: any) => {
     const obraAtual = (obras || []).find((o: any) => o.id === obra.id) || obra;
     if (!obraAtual.documentoClienteAssinado) return;
+
+    const backendId = obraAtual.documentoClienteAssinado.backendId;
+    if (backendId) {
+      try { await excluirDocumento(backendId); } catch { /* prossegue mesmo se falhar */ }
+    }
 
     persistirObraAtualizada({
       ...obraAtual,
@@ -1200,20 +1218,28 @@ const initialServico: Servico = {
 
     if (arquivosPermitidos.length === 0) return;
 
+    const negocioId = obraAtual.negocioBackendId;
+    if (!negocioId) {
+      toast.error('Negócio sem identificador no banco — não foi possível anexar.');
+      return;
+    }
+
     try {
-      const novosDocumentos: DocumentoNegocio[] = await Promise.all(
-        arquivosPermitidos.map(async (file) => ({
-          id: `doc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          nome: file.name,
-          tipo: file.type || (file.name.toLowerCase().endsWith('.csv') ? 'text/csv' : 'application/pdf'),
-          tamanho: file.size,
-          dataUpload: new Date().toISOString(),
-          conteudo: await fileToDataUrl(file)
-        }))
+      const resultados = await Promise.allSettled(
+        arquivosPermitidos.map((file) =>
+          uploadDocumento(file, { vinculoTipo: 'negocio', vinculoId: negocioId, categoria: 'negocio' })
+        )
       );
+      const novosDocumentos = resultados
+        .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
+        .map((r) => r.value);
+      const falhas = resultados.length - novosDocumentos.length;
+      if (falhas > 0) toast.error(`${falhas} documento(s) não puderam ser enviados.`);
+      if (novosDocumentos.length === 0) return;
 
       const documentosAtuais = Array.isArray(obraAtual.documentosNegocio) ? obraAtual.documentosNegocio : [];
       aplicarAlteracaoDocumentosNoNegocio(obraAtual, [...documentosAtuais, ...novosDocumentos]);
+      toast.success(`${novosDocumentos.length} documento(s) anexado(s) e salvo(s) no banco.`);
     } catch (error) {
       toast.error('Não foi possível anexar os documentos.');
     }
@@ -1289,6 +1315,27 @@ const initialServico: Servico = {
           const dadosNegocio = respostaBackend.negocio || respostaBackend;
           const dadosServicos = respostaBackend.servicos || formData.servicos;
 
+          // Agora que o negócio existe no banco, sobe os documentos anexados no form
+          // (guardados como File) para a tabela Documento, vinculados ao id do negócio.
+          let documentosPersistidos: any[] = [];
+          if (dadosNegocio.id) {
+            const arquivosParaSubir = formData.documentosNegocio.filter((d) => d.file instanceof File);
+            const resultados = await Promise.allSettled(
+              arquivosParaSubir.map((d) =>
+                uploadDocumento(d.file as File, {
+                  vinculoTipo: 'negocio',
+                  vinculoId: dadosNegocio.id,
+                  categoria: 'negocio',
+                })
+              )
+            );
+            documentosPersistidos = resultados
+              .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
+              .map((r) => r.value);
+            const falhas = resultados.length - documentosPersistidos.length;
+            if (falhas > 0) toast.error(`${falhas} documento(s) não puderam ser enviados.`);
+          }
+
           // 3. Monta o objeto de forma totalmente segura ANTES de fechar a tela
           const negocioFormatado = {
             id: `${getPrefixoEmpresa(dadosNegocio.empresa_prestadora || formData.empresaPrestadora)}-${String(dadosNegocio.id || Date.now()).padStart(4, '0')}/${String(new Date().getFullYear()).slice(-2)}`, 
@@ -1309,7 +1356,7 @@ const initialServico: Servico = {
             dataSolicitacao: dadosNegocio.data_solicitacao || formData.dataSolicitacao || new Date().toISOString().split('T')[0],
             orcamentos: [],
             propostas: [],
-            documentosNegocio: []
+            documentosNegocio: documentosPersistidos
           };
 
           toast.success(`${formData.servicos.length} Serviço(s) criado(s) com sucesso no Banco de Dados!`);
@@ -1689,18 +1736,29 @@ const initialServico: Servico = {
       return;
     }
 
+    // A assinatura é persistida na tabela Documento, vinculada ao id (SQL) da OS.
+    const osItem = (Array.isArray(os) ? os : []).find((item: any) => String(item.id) === String(osId));
+    const osBackendId = (osItem as any)?.backendId;
+    if (osBackendId == null) {
+      toast.error('OS sem identificador no banco — não foi possível anexar a assinatura.');
+      return;
+    }
+
     try {
-      const documentoAssinaturaAprovacao = {
-        id: `assinatura-os-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        nome: arquivo.name,
-        tipo: arquivo.type || (isPdf ? 'application/pdf' : 'image/jpeg'),
-        tamanho: arquivo.size,
-        dataUpload: new Date().toISOString(),
-        conteudo: await fileToDataUrl(arquivo)
-      };
+      // Slot único: remove a assinatura anterior do banco antes de subir a nova.
+      const anterior = (osItem as any)?.documentoAssinaturaAprovacao;
+      if (anterior?.backendId) {
+        try { await excluirDocumento(anterior.backendId); } catch { /* segue mesmo se falhar */ }
+      }
+
+      const documentoAssinaturaAprovacao = await uploadDocumento(arquivo, {
+        vinculoTipo: 'os',
+        vinculoId: osBackendId,
+        categoria: 'os_assinatura',
+      });
 
       atualizarOSPorId(osId, { documentoAssinaturaAprovacao });
-      toast.success('Assinatura da OS anexada com sucesso.');
+      toast.success('Assinatura da OS anexada e salva no banco.');
     } catch (error) {
       toast.error('Não foi possível anexar a assinatura da OS.');
     }
@@ -3723,21 +3781,6 @@ const obrasOrdenadas = useMemo(() => {
                     <div>
                       <p className="text-white/50 text-xs mb-1 font-black">Encerramento</p>
                       <p className="text-white whitespace-pre-wrap">{ultimaProposta.encerramento || '−'}</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Assinatura */}
-                <div className="bg-white/5 border border-white/10 rounded-xl p-6 space-y-3">
-                  <h3 className="text-white font-black text-lg">ASSINATURA</h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-white/50 text-xs mb-1">Nome</p>
-                      <p className="text-white font-bold">{ultimaProposta.assinaturaNome || '−'}</p>
-                    </div>
-                    <div>
-                      <p className="text-white/50 text-xs mb-1">Cargo</p>
-                      <p className="text-white font-bold">{ultimaProposta.assinaturaCargo || '−'}</p>
                     </div>
                   </div>
                 </div>

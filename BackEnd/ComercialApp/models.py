@@ -755,4 +755,50 @@ class ConfiguracaoApp(models.Model):
 
     def __str__(self):
         return 'Configurações do app'
+
+
+#--------------------- Documentos (upload genérico) ------------------
+# Tabela única e reutilizável para TODO upload de documento do sistema. O binário
+# fica em disco (MEDIA_ROOT, via FileField) e o banco guarda o caminho + metadados.
+# O vínculo é genérico (vinculo_tipo + vinculo_id) para servir Negócio, OS, Financeiro
+# etc. sem acoplar a esquemas que são reescritos por replace-all (ex.: Financeiro).
+#   - vinculo_tipo: 'negocio' | 'os' | 'financeiro' | ...
+#   - vinculo_id:   id do registro vinculado (string: id numérico do Negócio/OS ou
+#                   id de negócio do FinRecord, ex.: 'CP-0001')
+#   - categoria:    "slot"/subtipo do documento dentro do vínculo (ver CATEGORIA_CHOICES)
+
+def documento_upload_path(instance, filename):
+    tipo = (instance.vinculo_tipo or 'gerais').strip() or 'gerais'
+    return f'documentos/{tipo}/{filename}'
+
+
+class Documento(models.Model):
+    CATEGORIA_CHOICES = [
+        ('negocio', 'Documento do Negócio'),
+        ('cliente_assinado', 'Documento assinado pelo cliente'),
+        ('os_assinatura', 'Assinatura/aprovação de OS'),
+        ('fin_anexo', 'Anexo financeiro'),
+        ('fin_comprovante', 'Comprovante de pagamento'),
+        ('outro', 'Outro'),
+    ]
+
+    id = models.BigAutoField(primary_key=True)
+    arquivo = models.FileField(upload_to=documento_upload_path)
+    nome_original = models.CharField(max_length=255, blank=True, default='')
+    tipo = models.CharField(max_length=120, blank=True, default='')   # mime-type
+    tamanho = models.BigIntegerField(default=0)                       # bytes
+    categoria = models.CharField(max_length=40, choices=CATEGORIA_CHOICES, default='outro')
+    vinculo_tipo = models.CharField(max_length=40, blank=True, default='')
+    vinculo_id = models.CharField(max_length=120, blank=True, default='')
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-uploaded_at']
+        indexes = [models.Index(fields=['vinculo_tipo', 'vinculo_id'])]
+        verbose_name = 'Documento'
+        verbose_name_plural = 'Documentos'
+
+    def __str__(self):
+        return f'{self.nome_original or self.arquivo.name} ({self.vinculo_tipo}:{self.vinculo_id})'
+#--------------------- Fim Documentos ------------------
 #--------------------- Fim Configurações ------------------

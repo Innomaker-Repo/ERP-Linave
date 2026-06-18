@@ -41,6 +41,7 @@ type OrcamentoPayload = {
   observacoes?: string;
   finalizar?: boolean;
   versao?: string;
+  numeroOrcamento?: string;
 };
 
 const parseDecimal = (value: any): number => {

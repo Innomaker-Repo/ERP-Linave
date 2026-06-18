@@ -1,9 +1,9 @@
 from django.contrib import admin
 from .models import (
     Cliente, Negocio, Servico, User,
-    Levantamento, MDO, Ativ_prevista, Material, 
+    Levantamento, MDO, Ativ_prevista, Material,
     Servico_terceirizado, Resumo_orcamento, Orcamento,
-    OrdemServico, Workspace
+    OrdemServico, Workspace, Documento
 )
 
 # 1. Define the Child Tables (The "N" items)
@@ -56,3 +56,10 @@ admin.site.register(User)
 admin.site.register(Levantamento)
 admin.site.register(OrdemServico)
 admin.site.register(Workspace)
+
+
+@admin.register(Documento)
+class DocumentoAdmin(admin.ModelAdmin):
+    list_display = ('id', 'nome_original', 'categoria', 'vinculo_tipo', 'vinculo_id', 'tamanho', 'uploaded_at')
+    list_filter = ('categoria', 'vinculo_tipo')
+    search_fields = ('nome_original', 'vinculo_id')

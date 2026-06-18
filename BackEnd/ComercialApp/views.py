@@ -1,16 +1,18 @@
 from rest_framework import viewsets, status
 from rest_framework.response import Response
 from rest_framework.decorators import api_view
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.db import transaction
 from .models import (
     Cliente, Negocio, Servico,
     Levantamento, MDO, Material, Servico_terceirizado, Orcamento, Ativ_prevista, Resumo_orcamento,
-    OrdemServico, Escopo, PropostaComercial, Fornecedor, Medicao
+    OrdemServico, Escopo, PropostaComercial, Fornecedor, Medicao, Documento
 )
 from .serializers import (
     ClienteSerializer, NegocioSerializer, ServicoSerializer,
     OrcamentoSerializer, OrdemServicoSerializer, EscopoSerializer,
-    PropostaComercialSerializer, FornecedorSerializer, MedicaoSerializer
+    PropostaComercialSerializer, FornecedorSerializer, MedicaoSerializer,
+    DocumentoSerializer
 )
 
 # --- ViewSets Básicos ---
@@ -624,6 +626,48 @@ class MedicaoViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(status=status_filtro)
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
+
+
+# --------------------- Documentos (upload genérico) ---------------------
+
+class DocumentoViewSet(viewsets.ModelViewSet):
+    """Upload e recuperação de documentos (genérico, reutilizável).
+
+    - POST  multipart/form-data: campo `arquivo` (binário) + `vinculo_tipo`,
+            `vinculo_id`, `categoria`. O binário vai para o disco (MEDIA_ROOT) e a
+            linha no banco guarda caminho + metadados.
+    - GET   ?vinculo_tipo=&vinculo_id=&categoria= filtra os documentos de um vínculo.
+    - DELETE remove o registro (e o arquivo do disco).
+    """
+    queryset = Documento.objects.all()
+    serializer_class = DocumentoSerializer
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        params = self.request.query_params
+        vinculo_tipo = params.get('vinculo_tipo')
+        vinculo_id = params.get('vinculo_id')
+        categoria = params.get('categoria')
+        if vinculo_tipo:
+            qs = qs.filter(vinculo_tipo=vinculo_tipo)
+        if vinculo_id is not None and vinculo_id != '':
+            qs = qs.filter(vinculo_id=str(vinculo_id))
+        if categoria:
+            qs = qs.filter(categoria=categoria)
+        return qs
+
+    def perform_create(self, serializer):
+        arquivo = self.request.data.get('arquivo')
+        nome = getattr(arquivo, 'name', '') or self.request.data.get('nome_original', '')
+        tamanho = getattr(arquivo, 'size', 0) or 0
+        content_type = getattr(arquivo, 'content_type', '') or self.request.data.get('tipo', '')
+        serializer.save(nome_original=nome, tamanho=tamanho, tipo=content_type)
+
+    def perform_destroy(self, instance):
+        # Remove também o binário do disco (sem apagar o registro deixaria órfãos).
+        instance.arquivo.delete(save=False)
+        instance.delete()
 
 
 @api_view(['PATCH'])

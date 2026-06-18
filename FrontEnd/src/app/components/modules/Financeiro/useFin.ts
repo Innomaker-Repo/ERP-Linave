@@ -185,7 +185,7 @@ export function useFin() {
   // Emite e arquiva a NFe: registra a NFe e cria a Conta a Receber (uma única escrita).
   const emitirNfe = async (
     sol: NfeSolicitacao,
-    payload: { numero: string; emissao: string; original: number; liquido: number; baixado: number; vencimento: string; contrato: string; cliente: string },
+    payload: { numero: string; emissao: string; original: number; liquido: number; baixado: number; vencimento: string; contrato: string; cliente: string; anexos?: string[] },
   ) => {
     const ts = Date.now().toString(36).toUpperCase();
     const now = new Date().toISOString();
@@ -201,6 +201,7 @@ export function useFin() {
       liquido: payload.liquido,
       vencimento: payload.vencimento,
       contrato: payload.contrato,
+      anexos: payload.anexos || [],
       createdAt: now,
     };
     const receber: FinRecord = {
@@ -224,7 +225,7 @@ export function useFin() {
 
   // Parcela uma conta a pagar: cria a conta mãe (valor total) e as parcelas filhas
   // (cada uma com vencimento, valor e status próprios) — numa única escrita.
-  const parcelarConta = async (id: string, nParcelas: number, intervaloDias: number) => {
+  const parcelarConta = async (id: string, nParcelas: number, intervaloDias: number, dataInicio?: string) => {
     const src = financeiro.find((r) => r.id === id);
     if (!src) return;
     const n = Math.max(2, Math.floor(nParcelas));
@@ -245,7 +246,7 @@ export function useFin() {
         parcela: `${i}/${n}`,
         totalParcelas: n,
         valor: i === n ? Math.round((base + sobra) * 100) / 100 : base,
-        vencimento: days(src.vencimento || todayStr, intervaloDias * (i - 1)),
+        vencimento: days(dataInicio || src.vencimento || todayStr, intervaloDias * (i - 1)),
         status: 'Aberto',
         valorPago: 0,
         jurosPago: 0,

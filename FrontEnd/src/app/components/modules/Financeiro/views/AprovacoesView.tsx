@@ -79,9 +79,15 @@ export function AprovacoesView() {
             <p className="mb-1.5 text-[11px] font-black uppercase tracking-widest text-white/40">Anexos</p>
             {(detalhe.anexos || []).length ? (
               <div className="flex flex-wrap gap-2">
-                {(detalhe.anexos as string[]).map((a, i) => (
-                  <span key={i} className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-bold text-white/70">📄 {a}</span>
-                ))}
+                {(detalhe.anexos as string[]).map((a, i) => {
+                  const ehUrl = /^(https?:|\/media\/)/.test(String(a));
+                  const nome = ehUrl ? decodeURIComponent(String(a).split('/').pop() || 'documento') : String(a);
+                  return ehUrl ? (
+                    <a key={i} href={a} target="_blank" rel="noopener noreferrer" className="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs font-bold text-amber-200 hover:bg-amber-500/20">📄 {nome}</a>
+                  ) : (
+                    <span key={i} className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-bold text-white/70">📄 {nome}</span>
+                  );
+                })}
               </div>
             ) : <p className="text-sm text-white/40">Nenhum anexo.</p>}
           </div>

@@ -156,10 +156,12 @@ export function Select({ children, ...rest }: React.SelectHTMLAttributes<HTMLSel
   );
 }
 
-// Input de arquivo que captura o(s) nome(s) do(s) arquivo(s) selecionado(s).
+// Input de arquivo que mantém os arquivos brutos (File[]) selecionados. O upload de
+// verdade (para a tabela Documento) é feito por quem usa, no submit, quando já se tem
+// o id do registro para vincular. Aqui só capturamos os arquivos e exibimos os nomes.
 export function FileInput({
-  label = 'Anexar arquivo', value = [] as string[], onChange, multiple = true,
-}: { label?: string; value?: string[]; onChange: (names: string[]) => void; multiple?: boolean }) {
+  label = 'Anexar arquivo', value = [] as File[], onChange, multiple = true,
+}: { label?: string; value?: File[]; onChange: (files: File[]) => void; multiple?: boolean }) {
   return (
     <div>
       <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-dashed border-white/15 bg-[#0b1220] px-4 py-4 text-sm text-white/60 transition-colors hover:border-amber-500/40">
@@ -168,13 +170,16 @@ export function FileInput({
           type="file"
           multiple={multiple}
           className="hidden"
-          onChange={(e) => onChange(Array.from(e.target.files || []).map((f) => f.name))}
+          onChange={(e) => {
+            const novos = Array.from(e.target.files || []);
+            onChange(multiple ? [...value, ...novos] : novos);
+          }}
         />
       </label>
       {value.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-2">
-          {value.map((n, i) => (
-            <span key={i} className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-bold text-white/70">📄 {n}</span>
+          {value.map((f, i) => (
+            <span key={i} className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-bold text-white/70">📄 {f.name}</span>
           ))}
         </div>
       )}
