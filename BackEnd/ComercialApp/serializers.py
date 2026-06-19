@@ -2,7 +2,7 @@ import re
 from decimal import Decimal
 from rest_framework import serializers
 from .models import (
-    Cliente, Negocio, Servico, User,
+    Cliente, Negocio, Servico, User, ItemAlocacao,
     Levantamento, MDO, Ativ_prevista, Material,
     Servico_terceirizado, Orcamento, Resumo_orcamento,
     OrdemServico,
@@ -85,8 +85,20 @@ class NegocioResumoSerializer(serializers.ModelSerializer):
             'data_solicitacao'
         ]
 
+class ItemAlocacaoSerializer(serializers.ModelSerializer):
+    valor_total = serializers.ReadOnlyField()
+
+    class Meta:
+        model = ItemAlocacao
+        fields = [
+            'id', 'equipamento', 'estoque_ref', 'unidade', 'quantidade',
+            'observacao', 'valor_indenizacao', 'valor_locacao', 'valor_total',
+        ]
+
+
 class NegocioSerializer(serializers.ModelSerializer):
     servicos = ServicoSerializer(many=True, required=False)
+    itens_alocacao = ItemAlocacaoSerializer(many=True, required=False)
     cliente_detalhes = ClienteSerializer(source='cliente', read_only=True)
     orcamentos = serializers.SerializerMethodField()
     propostas = serializers.SerializerMethodField()
@@ -123,18 +135,23 @@ class NegocioSerializer(serializers.ModelSerializer):
         propostas = obj.negocio_propostas.all()
         return PropostaComercialResumoSerializer(propostas, many=True).data
 
-    # Ensina o Django a salvar os serviços junto com o Negócio
+    # Ensina o Django a salvar os serviços + itens de alocação junto com o Negócio
     def create(self, validated_data):
-        # 1. Tira a lista de serviços do pacote principal
+        # 1. Tira as listas aninhadas do pacote principal
         servicos_data = validated_data.pop('servicos', [])
-        
+        itens_alocacao_data = validated_data.pop('itens_alocacao', [])
+
         # 2. Cria o Negócio no banco de dados primeiro
         negocio = Negocio.objects.create(**validated_data)
-        
+
         # 3. Cria cada serviço e vincula ao negócio
         for servico_data in servicos_data:
             Servico.objects.create(negocio=negocio, **servico_data)
-            
+
+        # 4. Cria cada item de locação (sem precificação ainda — vem no Orçamento)
+        for item_data in itens_alocacao_data:
+            ItemAlocacao.objects.create(negocio=negocio, **item_data)
+
         return negocio
 
 # ------------------ Orçamento Items -------------------
@@ -308,6 +325,21 @@ class OrcamentoSerializer(serializers.ModelSerializer):
         if obj.levantamento and hasattr(obj.levantamento, 'dados_servicos'):
             dados_servicos = [ServicoSerializer(servico).data for servico in obj.levantamento.dados_servicos]
 
+        # Itens de locação (camelCase para o frontend) — fonte é o Negócio
+        negocio = obj.levantamento.negocio if obj.levantamento else None
+        modalidade = negocio.modalidade if negocio else 'servico'
+        itens_alocacao = [{
+            'id': str(item.id),
+            'equipamento': item.equipamento or '',
+            'estoqueRef': item.estoque_ref or '',
+            'unidade': item.unidade or '',
+            'quantidade': float(item.quantidade or 0),
+            'observacao': item.observacao or '',
+            'valorIndenizacao': float(item.valor_indenizacao or 0),
+            'valorLocacao': float(item.valor_locacao or 0),
+            'valorTotal': float(item.valor_total or 0),
+        } for item in (negocio.itens_alocacao.all() if negocio else [])]
+
         # IMPORTANTE: o frontend (CRM, Orçamentos, OS e PDFs) lê os itens em camelCase
         # com os nomes dos campos do formulário (funcao, descricao, custoUnit, valorTotal...).
         # Por isso mapeamos aqui os campos crus dos models para esse formato, já incluindo
@@ -359,6 +391,8 @@ class OrcamentoSerializer(serializers.ModelSerializer):
             'escopoOrcamento': '',
             'documentosReferencia': str(obj.levantamento.arquivos_negocio) if obj.levantamento else '',
             'dadosServicos': dados_servicos,
+            'modalidade': modalidade,
+            'itensAlocacao': itens_alocacao,
             'maoDeObra': mao_de_obra,
             'materiais': materiais,
             'terceirizados': terceirizados,
@@ -367,10 +401,22 @@ class OrcamentoSerializer(serializers.ModelSerializer):
             'margem': float(obj.resumo.margem) if obj.resumo else 0,
             'oh': float(obj.resumo.OH) if obj.resumo else 0,
             'impostos': float(obj.resumo.impostos) if obj.resumo else 0,
+            'impostosLocacao': float(obj.resumo.impostos_locacao) if obj.resumo else 0,
             'quantidadeItensProduzidos': float(obj.resumo.qnt) if obj.resumo else 0
         }
 
     def get_valores(self, obj):
+        # Subtotal de locação BRUTO (Σ qtd × valor_locacao) — separado do preço de serviços.
+        negocio = obj.levantamento.negocio if obj.levantamento else None
+        subtotal_locacao_bruto = sum(
+            (Decimal(item.valor_total or 0) for item in (negocio.itens_alocacao.all() if negocio else [])),
+            Decimal(0),
+        )
+        # Imposto da locação é calculado À PARTE do imposto de serviço.
+        impostos_locacao_pct = Decimal(getattr(obj.resumo, 'impostos_locacao', 0) or 0) if obj.resumo else Decimal(0)
+        valor_impostos_locacao = (subtotal_locacao_bruto * impostos_locacao_pct) / Decimal(100)
+        subtotal_locacao = subtotal_locacao_bruto + valor_impostos_locacao  # subtotal de locação COM imposto
+
         if not obj.resumo:
             return {
                 'totalMaoDeObra': 0,
@@ -386,6 +432,11 @@ class OrcamentoSerializer(serializers.ModelSerializer):
                 'valorImpostos': 0,
                 'totalSemImposto': 0,
                 'precoFinal': 0,
+                'subtotalLocacaoBruto': float(subtotal_locacao_bruto),
+                'impostosLocacao': float(impostos_locacao_pct),
+                'valorImpostosLocacao': float(valor_impostos_locacao),
+                'subtotalLocacao': float(subtotal_locacao),
+                'totalGeral': float(subtotal_locacao),
                 'quantidadeItensProduzidos': 0,
                 'valorPorUnidade': 0
             }
@@ -424,6 +475,11 @@ class OrcamentoSerializer(serializers.ModelSerializer):
             'valorImpostos': float(valor_impostos),
             'totalSemImposto': float(total_sem_imposto),
             'precoFinal': float(preco_final),
+            'subtotalLocacaoBruto': float(subtotal_locacao_bruto),
+            'impostosLocacao': float(impostos_locacao_pct),
+            'valorImpostosLocacao': float(valor_impostos_locacao),
+            'subtotalLocacao': float(subtotal_locacao),
+            'totalGeral': float(preco_final + subtotal_locacao),
             'quantidadeItensProduzidos': float(qnt),
             'valorPorUnidade': float(valor_por_unidade)
         }

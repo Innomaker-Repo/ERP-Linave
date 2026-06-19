@@ -10,6 +10,8 @@ import {
 
 import { getNegocios, getClientes, getOrdensPorNegocio, atualizarNegocio } from '../../../../services/comercialService';
 import { getBackendUrl } from '../../../../services/network';
+import { temServico, temLocacao } from '../../../utils/modalidade';
+import { getEstoqueItens } from '../../../utils/estoqueItens';
 
 interface MaoDeObra {
   id: string;
@@ -47,6 +49,18 @@ interface Terceirizado {
   quantidade: string;
   pesoFator: string;
   custoUnit: string;
+  valorTotal: string;
+  observacao: string;
+}
+
+interface ItemLocacao {
+  id: string;
+  equipamento: string;
+  estoqueRef: string;
+  unidade: string;
+  quantidade: string;
+  valorIndenizacao: string;
+  valorLocacao: string;
   valorTotal: string;
   observacao: string;
 }
@@ -92,7 +106,10 @@ const findClienteById = (clientes: any[], clienteId: any) =>
 
 
 export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
-  const { obras, os, saveEntity } = useErp() as any;
+  const { obras, os, saveEntity, almoxerifado } = useErp() as any;
+
+  // Itens do Estoque para o dropdown de Equipamento da seção Locação.
+  const estoqueItensOrc = React.useMemo(() => getEstoqueItens(almoxerifado), [almoxerifado]);
   const [listaClientesOrc, setListaClientesOrc] = useState<any[]>([]);
   const [filtroOs, setFiltroOs] = useState<string>('');
   const [showForm, setShowForm] = useState(false);
@@ -143,6 +160,20 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
               requerReorcamento: n.requer_reorcamento !== undefined ? n.requer_reorcamento : true,
               orcamentoRealizado: n.orcamento_realizado || false,
               servicos: n.servicos || [],
+              modalidade: n.modalidade || 'servico',
+              itensAlocacao: Array.isArray(n.itens_alocacao)
+                ? n.itens_alocacao.map((it: any) => ({
+                    id: String(it?.id ?? ''),
+                    equipamento: it?.equipamento || '',
+                    estoqueRef: it?.estoque_ref || '',
+                    unidade: it?.unidade || 'un',
+                    quantidade: Number(it?.quantidade) || 0,
+                    observacao: it?.observacao || '',
+                    valorIndenizacao: Number(it?.valor_indenizacao) || 0,
+                    valorLocacao: Number(it?.valor_locacao) || 0,
+                    valorTotal: Number(it?.valor_total) || 0,
+                  }))
+                : [],
               negocioBackendId: n.id,
               orcamentos: n.orcamentos || [],
               propostas: n.propostas || [],
@@ -247,14 +278,21 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     atividades: [{ id: '1', atividade: '', dias: '', observacao: '' }],
     materiais: [{ id: '1', descricao: '', unidade: 'un', quantidade: '', pesoFator: '', custoUnit: '', valorTotal: '0.00', observacao: '', origemTerceiros: 'Nao' as const }] as Material[],
     terceirizados: [{ id: '1', descricao: '', unidade: 'serv', quantidade: '', pesoFator: '1', custoUnit: '', valorTotal: '0.00', observacao: '' }],
+    itensAlocacao: [] as ItemLocacao[],
     observacoes: '',
     margem: '15',
     oh: '5',
     impostos: '18',
+    impostosLocacao: '0',
     quantidadeItensProduzidos: ''
   });
 
   const [orcamentoData, setOrcamentoData] = useState(getInitialOrcamentoData);
+
+  // Modalidade do negócio selecionado governa quais seções aparecem no orçamento.
+  const modalidadeOrc = selectedObra?.modalidade || 'servico';
+  const orcTemServico = temServico(modalidadeOrc);
+  const orcTemLocacao = temLocacao(modalidadeOrc);
 
   useEffect(() => {
     if (!showForm || !selectedObra) return;
@@ -465,6 +503,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
             margem: String(ultimoOrcamento.resumo?.margem ?? initialDefaults.margem),
             oh: String(ultimoOrcamento.resumo?.OH ?? initialDefaults.oh),
             impostos: String(ultimoOrcamento.resumo?.impostos ?? initialDefaults.impostos),
+            impostosLocacao: String(ultimoOrcamento.resumo?.impostos_locacao ?? ultimoOrcamento.data?.impostosLocacao ?? initialDefaults.impostosLocacao),
             quantidadeItensProduzidos: String(ultimoOrcamento.resumo?.qnt || ''),
           }
         : initialDefaults;
@@ -510,7 +549,22 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       equipamento: ordem?.equipamento || obra.equipamento || baseData.equipamento || '',
       supervisor: ordem?.supervisor_encarregado || ordem?.supervisor || obra.supervisor || baseData.supervisor || '',
       centroCusto: ordem?.cc || ordem?.centro_custo || obra.centroCusto || baseData.centroCusto || '',
-      dadosServicos
+      dadosServicos,
+      // Itens de locação vêm do Negócio (já com qualquer precificação anterior). O Orçamento
+      // permite editar/precificar (valor de indenização e de locação) e adicionar/remover.
+      itensAlocacao: (Array.isArray(obra.itensAlocacao) && obra.itensAlocacao.length)
+        ? obra.itensAlocacao.map((it: any) => ({
+            id: String(it.id || Date.now() + Math.random()),
+            equipamento: it.equipamento || '',
+            estoqueRef: it.estoqueRef || it.equipamento || '',
+            unidade: it.unidade || 'un',
+            quantidade: String(it.quantidade ?? ''),
+            valorIndenizacao: it.valorIndenizacao ? String(it.valorIndenizacao) : '',
+            valorLocacao: it.valorLocacao ? String(it.valorLocacao) : '',
+            valorTotal: toMoneyString((Number(it.quantidade) || 0) * (Number(it.valorLocacao) || 0)),
+            observacao: it.observacao || '',
+          }))
+        : ((baseData as any).itensAlocacao || []),
     };
 
     try {
@@ -539,6 +593,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
         margem: String(ultimoOrcamento.valores.margem ?? prev.margem),
         oh: String(ultimoOrcamento.valores.oh ?? prev.oh),
         impostos: String(ultimoOrcamento.valores.impostos ?? prev.impostos),
+        impostosLocacao: String(ultimoOrcamento.valores.impostosLocacao ?? prev.impostosLocacao),
         quantidadeItensProduzidos: String(ultimoOrcamento.valores.quantidadeItensProduzidos ?? prev.quantidadeItensProduzidos)
       }));
     }
@@ -583,6 +638,10 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     const impostoVal = (semImposto * impostosPct) / 100;
     const precoFinal = semImposto + impostoVal;
     const qtd = Number(orcamentoData.quantidadeItensProduzidos) || 0;
+    const subLocacaoBruto = (orcamentoData.itensAlocacao || []).reduce((s: number, i: any) => s + pd(i.valorTotal), 0);
+    const impLocacaoPct = pd(orcamentoData.impostosLocacao);
+    const valorImpLocacao = (subLocacaoBruto * impLocacaoPct) / 100;
+    const subLocacao = subLocacaoBruto + valorImpLocacao;  // subtotal de locação COM imposto
     return {
       totalMaoDeObra: totalMDO, totalMateriais: totalMat, totalTerceirizados: totalTer,
       totalBruto, totalSemImposto: semImposto, subtotal: totalBruto,
@@ -590,6 +649,11 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       valorMargem: margemVal, valorOH: ohVal, valorImpostos: impostoVal,
       precoFinal, quantidadeItensProduzidos: qtd,
       valorPorUnidade: qtd > 0 ? precoFinal / qtd : 0,
+      subtotalLocacaoBruto: subLocacaoBruto,
+      impostosLocacao: impLocacaoPct,
+      valorImpostosLocacao: valorImpLocacao,
+      subtotalLocacao: subLocacao,
+      totalGeral: precoFinal + subLocacao,
     };
   };
 
@@ -670,6 +734,9 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
 
     if (!orcamentoData.numeroOrcamento.trim()) { alert("Número do orçamento é obrigatório."); return; }
     if (!orcamentoData.solicitante.trim()) { alert("Solicitante é obrigatório."); return; }
+
+    // Validações específicas de SERVIÇO — só aplicam quando a modalidade contempla serviço.
+    if (orcTemServico) {
     if (!orcamentoData.escopoOrcamento.trim()) { alert("Escopo do orçamento é obrigatório."); return; }
     const qtdItens = Number(orcamentoData.quantidadeItensProduzidos);
     if (!qtdItens || qtdItens < 1) { alert("Quantidade de itens produzidos é obrigatória para concluir o orçamento."); return; }
@@ -712,6 +779,17 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       if (!isAtividadeRowFilled(item)) continue;
       if (!item.atividade.trim()) { alert("Nome da atividade obrigatório."); return; }
       const d = parseNumber(item.dias); if (isNaN(d) || d <= 0) { alert(`Dias inválido para a atividade "${item.atividade}".`); return; }
+    }
+    } // fim das validações de SERVIÇO
+
+    // Validações de LOCAÇÃO — exige itens com equipamento e valor de locação.
+    if (orcTemLocacao) {
+      const itensLocValidos = (orcamentoData.itensAlocacao || []).filter(i => i.equipamento.trim());
+      if (itensLocValidos.length === 0) { alert("Adicione ao menos um item de locação na seção Locação."); return; }
+      for (const i of itensLocValidos) {
+        if (!(parseDecimal(i.valorLocacao) > 0)) { alert(`Informe o valor unitário de locação do item "${i.equipamento}".`); return; }
+        if (!(parseDecimal(i.quantidade) > 0)) { alert(`Informe a quantidade do item "${i.equipamento}".`); return; }
+      }
     }
 
     const negocioId = selectedObra.negocioBackendId || extrairIdProjetoDoNumero(selectedObra.id);
@@ -993,11 +1071,22 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       const totalTerceiros = terceirizadosData.reduce((sum: number, item: any) => sum + parseDecimal(item.valorTotal || '0'), 0);
       const atividadesData = (orcamento.data.atividades || []).filter((item: any) => item.atividade);
       const totalDias = atividadesData.reduce((sum: number, item: any) => sum + parseDecimal(item.dias || '0'), 0);
-      
+
+      // Locação (imposto da locação calculado à parte do imposto de serviço)
+      const itensAlocacaoData = (orcamento.data.itensAlocacao || []).filter((item: any) => item.equipamento);
+      const subtotalLocacaoBruto = safeNumber(orcamento.valores?.subtotalLocacaoBruto ?? itensAlocacaoData.reduce((sum: number, item: any) => sum + parseDecimal(item.valorTotal || '0'), 0));
+      const impostosLocacaoPct = safeNumber(orcamento.valores?.impostosLocacao ?? orcamento.data?.impostosLocacao ?? 0);
+      const valorImpostosLocacao = safeNumber(orcamento.valores?.valorImpostosLocacao ?? (subtotalLocacaoBruto * impostosLocacaoPct) / 100);
+      const subtotalLocacao = safeNumber(orcamento.valores?.subtotalLocacao ?? (subtotalLocacaoBruto + valorImpostosLocacao));
+      const totalGeral = safeNumber(orcamento.valores?.totalGeral ?? (precoFinal + subtotalLocacao));
+      // Locação pura (sem nenhum item de serviço): esconde as seções de serviço no PDF.
+      const temServicoPdf = !(itensAlocacaoData.length > 0 && maoDeObraData.length === 0 && materiaisData.length === 0 && terceirizadosData.length === 0);
+
       const totalItens = maoDeObraData.length + materiaisData.length + terceirizadosData.length;
       const precoPorItem = totalItens > 0 ? precoFinal / totalItens : 0;
 
-      // ===== Seção A - MÃO DE OBRA =====
+      // ===== Seção A - MÃO DE OBRA ===== (serviço; oculto em locação pura)
+      if (temServicoPdf) {
       x = margin;
       doc.setFont('Arial', 'bold');
       doc.setFontSize(9);
@@ -1076,6 +1165,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       doc.setTextColor(0, 0, 0);
       doc.rect(x, y, laborColWidths[6], cellHeight);
       y += cellHeight + 2;
+      } // fim Seção A (serviço)
 
       // ===== Seção B - CONSUMÍVEIS E MATERIAIS =====
       if (materiaisData && materiaisData.length > 0) {
@@ -1241,7 +1331,90 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
         y += cellHeight + 2;
       }
 
-      // ===== Seção E - CUSTO TOTAL =====
+      // ===== Seção D - LOCAÇÃO =====
+      if (itensAlocacaoData && itensAlocacaoData.length > 0) {
+        const headersLocacao = ['Item', 'Equipamento', 'Un', 'Qtd', 'Vl Indeniz', 'Vl Locação', 'Total'];
+
+        x = margin;
+        doc.setFont('Arial', 'bold');
+        doc.setFontSize(9);
+        doc.text('D', x + 2, y + 3);
+        doc.rect(x, y, baseColWidth, cellHeight);
+        x += baseColWidth;
+        doc.setTextColor(255, 0, 0);
+        doc.text('LOCAÇÃO DE EQUIPAMENTOS', x + 2, y + 3);
+        doc.rect(x, y, baseColWidth * 9, cellHeight);
+        doc.setTextColor(0, 0, 0);
+        y += cellHeight;
+
+        x = margin;
+        headersLocacao.forEach((h, index) => {
+          const colWidth = materialsColWidths[index];
+          doc.setFont('Arial', 'bold');
+          doc.setFontSize(7);
+          doc.text(h, x + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
+          doc.rect(x, y, colWidth, cellHeight);
+          x += colWidth;
+        });
+        y += cellHeight;
+
+        itensAlocacaoData.forEach((item: any, idx: number) => {
+          x = margin;
+          doc.setFont('Arial', 'normal');
+          doc.setFontSize(7);
+
+          doc.text(String(idx + 1), x + 0.5, y + 2.5);
+          doc.rect(x, y, materialsColWidths[0], cellHeight);
+          x += materialsColWidths[0];
+
+          drawCellWithAutoWrap(x, y, materialsColWidths[1], cellHeight, item.equipamento || '');
+          x += materialsColWidths[1];
+
+          doc.text(item.unidade || '', x + 0.5, y + 2.5);
+          doc.rect(x, y, materialsColWidths[2], cellHeight);
+          x += materialsColWidths[2];
+
+          doc.text(String(item.quantidade || ''), x + 0.5, y + 2.5);
+          doc.rect(x, y, materialsColWidths[3], cellHeight);
+          x += materialsColWidths[3];
+
+          doc.text(String(item.valorIndenizacao ? parseFloat(item.valorIndenizacao).toFixed(2) : ''), x + 0.5, y + 2.5);
+          doc.rect(x, y, materialsColWidths[4], cellHeight);
+          x += materialsColWidths[4];
+
+          doc.text(String(item.valorLocacao ? parseFloat(item.valorLocacao).toFixed(2) : ''), x + 0.5, y + 2.5);
+          doc.rect(x, y, materialsColWidths[5], cellHeight);
+          x += materialsColWidths[5];
+
+          doc.setFont('Arial', 'bold');
+          doc.setTextColor(255, 0, 0);
+          doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
+          doc.setTextColor(0, 0, 0);
+          doc.setFont('Arial', 'normal');
+          doc.rect(x, y, materialsColWidths[6], cellHeight);
+          x += materialsColWidths[6];
+
+          y += cellHeight;
+        });
+
+        // Sub-total locação
+        x = margin;
+        doc.setFont('Arial', 'bold');
+        doc.setFontSize(8);
+        doc.setTextColor(255, 0, 0);
+        doc.text('Sub-total Locação', x + 0.5, y + 2.5);
+        doc.setTextColor(0, 0, 0);
+        doc.rect(x, y, sumWidths(materialsColWidths.slice(0, -1)), cellHeight);
+        x += sumWidths(materialsColWidths.slice(0, -1));
+        doc.setTextColor(255, 0, 0);
+        doc.text(subtotalLocacaoBruto.toFixed(2), x + 0.5, y + 2.5);
+        doc.setTextColor(0, 0, 0);
+        doc.rect(x, y, materialsColWidths[6], cellHeight);
+        y += cellHeight + 2;
+      }
+
+      // ===== Seção E - CUSTO TOTAL ===== (serviço; oculto em locação pura)
+      if (temServicoPdf) {
       x = margin;
       doc.setFont('Arial', 'bold');
       doc.setFontSize(9);
@@ -1292,6 +1465,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
         }
         y += cellHeight;
       });
+      } // fim Seção E (serviço)
 
       // ===== RESUMO FINAL =====
       x = margin;
@@ -1301,6 +1475,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       doc.rect(x, y, baseColWidth * 10, cellHeight);
       y += cellHeight;
 
+      if (temServicoPdf) {
       x = margin;
       doc.setFont('Arial', 'normal');
       doc.setFontSize(8);
@@ -1326,12 +1501,42 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       x = margin;
       doc.setFont('Arial', 'normal');
       doc.setFontSize(8);
+      doc.text('Valor Serviços:', x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth * 5, cellHeight);
+      x += baseColWidth * 5;
+      doc.setFont('Arial', 'bold');
+      doc.text(`R$ ${precoFinal.toFixed(2)}`, x + 0.5, y + 2.5);
+      doc.rect(x, y, baseColWidth * 5, cellHeight);
+      y += cellHeight;
+      }
+
+      if (subtotalLocacaoBruto > 0) {
+      const drawResumoRow = (label: string, valor: string) => {
+        x = margin;
+        doc.setFont('Arial', 'normal');
+        doc.setFontSize(8);
+        doc.text(label, x + 0.5, y + 2.5);
+        doc.rect(x, y, baseColWidth * 5, cellHeight);
+        x += baseColWidth * 5;
+        doc.setFont('Arial', 'bold');
+        doc.text(valor, x + 0.5, y + 2.5);
+        doc.rect(x, y, baseColWidth * 5, cellHeight);
+        y += cellHeight;
+      };
+      drawResumoRow('Subtotal Locação (s/ imposto):', `R$ ${subtotalLocacaoBruto.toFixed(2)}`);
+      drawResumoRow(`Impostos Locação (${impostosLocacaoPct}%):`, `R$ ${valorImpostosLocacao.toFixed(2)}`);
+      drawResumoRow('Subtotal Locação (c/ imposto):', `R$ ${subtotalLocacao.toFixed(2)}`);
+      }
+
+      x = margin;
+      doc.setFont('Arial', 'normal');
+      doc.setFontSize(8);
       doc.text('Valor Total:', x + 0.5, y + 2.5);
       doc.rect(x, y, baseColWidth * 5, cellHeight);
       x += baseColWidth * 5;
       doc.setFont('Arial', 'bold');
       doc.setTextColor(255, 0, 0);
-      doc.text(`R$ ${precoFinal.toFixed(2)}`, x + 0.5, y + 2.5);
+      doc.text(`R$ ${totalGeral.toFixed(2)}`, x + 0.5, y + 2.5);
       doc.setTextColor(0, 0, 0);
       doc.rect(x, y, baseColWidth * 5, cellHeight);
 
@@ -1491,6 +1696,43 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     });
   };
 
+  // --- LOCAÇÃO (itens alocados precificados) ---
+  const recalcularItemLocacao = (item: ItemLocacao): ItemLocacao => {
+    const total = parseDecimal(item.quantidade) * parseDecimal(item.valorLocacao);
+    return { ...item, valorTotal: toMoneyString(total) };
+  };
+
+  const updateItemLocacao = (id: string, changes: Partial<ItemLocacao>) => {
+    setOrcamentoData(prev => ({
+      ...prev,
+      itensAlocacao: (prev.itensAlocacao || []).map(item => {
+        if (item.id !== id) return item;
+        const merged = { ...item, ...changes };
+        // Ao trocar o equipamento pelo dropdown, herda a unidade cadastrada no Estoque.
+        if (changes.equipamento !== undefined) {
+          merged.estoqueRef = changes.equipamento || '';
+          const it = estoqueItensOrc.find(e => e.nome === changes.equipamento);
+          if (it && (!merged.unidade || merged.unidade === 'un')) merged.unidade = it.unidade;
+        }
+        return recalcularItemLocacao(merged);
+      })
+    }));
+  };
+
+  const addItemLocacao = () => {
+    setOrcamentoData(prev => ({
+      ...prev,
+      itensAlocacao: [...(prev.itensAlocacao || []), { id: Date.now().toString(), equipamento: '', estoqueRef: '', unidade: 'un', quantidade: '', valorIndenizacao: '', valorLocacao: '', valorTotal: '0.00', observacao: '' }]
+    }));
+  };
+
+  const removeItemLocacao = (id: string) => {
+    setOrcamentoData(prev => ({
+      ...prev,
+      itensAlocacao: (prev.itensAlocacao || []).filter(i => i.id !== id)
+    }));
+  };
+
   // Calcular totais
   const totalMaoDeObra = orcamentoData.maoDeObra.reduce((sum, item) => sum + (parseDecimal(item.valorTotal) || 0), 0);
   const totalMateriais = orcamentoData.materiais.reduce((sum, item) => sum + (parseDecimal(item.valorTotal) || 0), 0);
@@ -1506,6 +1748,11 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   const totalSemImposto = totalBruto + margemValor + ohValor;
   const impostoValor = (totalSemImposto * impostosPercentual) / 100;
   const precoFinal = totalSemImposto + impostoValor;
+  const subtotalLocacaoBruto = (orcamentoData.itensAlocacao || []).reduce((sum, item) => sum + (parseDecimal(item.valorTotal) || 0), 0);
+  const impostosLocacaoPercentual = parseFloat(orcamentoData.impostosLocacao) || 0;
+  const valorImpostosLocacao = (subtotalLocacaoBruto * impostosLocacaoPercentual) / 100;
+  const subtotalLocacao = subtotalLocacaoBruto + valorImpostosLocacao;  // subtotal de locação COM imposto
+  const totalGeral = precoFinal + subtotalLocacao;
 
   const inputClass = "w-full bg-[#0b1220] border border-white/10 p-3 rounded-lg text-white text-sm outline-none focus:border-amber-500 transition-all placeholder:text-white/20";
   const labelClass = "text-[9px] font-black text-white/40 uppercase tracking-widest ml-1 mb-1.5 block";
@@ -2093,6 +2340,8 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
             </div>
           </div>
 
+          {/* SECTIONS 2-5: SERVIÇO — só aparecem quando a modalidade contempla serviço */}
+          {orcTemServico && (<>
           {/* SECTION 2: MÃO DE OBRA */}
           <div className="bg-[#101f3d] rounded-2xl border border-white/5 p-6">
             <div className="flex justify-between items-center mb-6">
@@ -2338,6 +2587,99 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
               </div>
             </div>
           </div>
+          </>)}
+
+          {/* SECÇÃO: LOCAÇÃO — só quando a modalidade contempla locação */}
+          {orcTemLocacao && (
+          <div className="bg-[#101f3d] rounded-2xl border border-cyan-500/20 p-6">
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h3 className="text-xl font-black text-white uppercase">Locação</h3>
+                <p className="text-white/50 text-xs mt-1">Selecione equipamentos do Estoque e informe quantidades e valores de locação</p>
+              </div>
+              <button
+                onClick={addItemLocacao}
+                className="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-white rounded-lg font-black text-xs uppercase transition flex items-center gap-2"
+              >
+                <Plus size={16} /> Adicionar Item
+              </button>
+            </div>
+
+            {estoqueItensOrc.length === 0 && (
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-xs text-amber-200 font-semibold mb-4">
+                Nenhum equipamento de estoque salvo foi encontrado. Cadastre itens no Almoxarifado para aparecerem neste menu.
+              </div>
+            )}
+
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="text-left text-[10px] font-black text-white/40 uppercase tracking-widest">
+                    <th className="px-3 py-2">Equipamento</th>
+                    <th className="px-3 py-2">Unidade</th>
+                    <th className="px-3 py-2">Quantidade</th>
+                    <th className="px-3 py-2">Valor Unit. Indenização</th>
+                    <th className="px-3 py-2">Valor Unit. Locação</th>
+                    <th className="px-3 py-2">Valor Total</th>
+                    <th className="px-3 py-2 text-center">Ação</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(orcamentoData.itensAlocacao || []).length === 0 && (
+                    <tr><td colSpan={7} className="px-3 py-4 text-white/40 text-sm">Nenhum item. Clique em "Adicionar Item".</td></tr>
+                  )}
+                  {(orcamentoData.itensAlocacao || []).map((item) => (
+                    <tr key={item.id} className="border-t border-white/5">
+                      <td className="px-3 py-2 min-w-[180px]">
+                        <select className={tableInputClass} value={item.equipamento} onChange={e => updateItemLocacao(item.id, { equipamento: e.target.value })}>
+                          <option value="">Selecione no Estoque...</option>
+                          {estoqueItensOrc.map(it => (<option key={it.nome} value={it.nome}>{it.nome}</option>))}
+                        </select>
+                      </td>
+                      <td className="px-3 py-2"><input type="text" className={tableInputClass} value={item.unidade} onChange={e => updateItemLocacao(item.id, { unidade: e.target.value })} /></td>
+                      <td className="px-3 py-2"><input type="number" min="0" className={tableInputClass} value={item.quantidade} onChange={e => updateItemLocacao(item.id, { quantidade: e.target.value })} /></td>
+                      <td className="px-3 py-2"><input type="number" min="0" className={tableInputClass} value={item.valorIndenizacao} onChange={e => updateItemLocacao(item.id, { valorIndenizacao: e.target.value })} placeholder="0,00" /></td>
+                      <td className="px-3 py-2"><input type="number" min="0" className={tableInputClass} value={item.valorLocacao} onChange={e => updateItemLocacao(item.id, { valorLocacao: e.target.value })} placeholder="0,00" /></td>
+                      <td className="px-3 py-2 text-white font-bold text-sm whitespace-nowrap">R$ {item.valorTotal}</td>
+                      <td className="px-3 py-2 text-center">
+                        <button onClick={() => removeItemLocacao(item.id)} className="p-1.5 hover:bg-red-500/20 rounded text-red-400" title="Remover"><Trash2 size={14} /></button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-4 pt-4 border-t border-white/10 flex flex-wrap items-end justify-between gap-4">
+              <div className="space-y-1.5 w-52">
+                <label className={labelClass}>Impostos Locação (%) <span className="text-red-400">*</span></label>
+                <input
+                  type="number"
+                  min="0"
+                  className={inputClass}
+                  value={orcamentoData.impostosLocacao}
+                  onChange={e => setOrcamentoData({ ...orcamentoData, impostosLocacao: e.target.value })}
+                  placeholder="0"
+                />
+                <p className="text-white/40 text-[10px]">Calculado à parte do imposto de serviço.</p>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <div className="bg-[#0b1220] border border-white/10 rounded-lg px-4 py-2.5">
+                  <p className="text-white/60 text-[10px] font-black uppercase tracking-widest">Subtotal (s/ imposto)</p>
+                  <p className="text-white font-black text-base text-right">R$ {subtotalLocacaoBruto.toFixed(2)}</p>
+                </div>
+                <div className="bg-[#0b1220] border border-white/10 rounded-lg px-4 py-2.5">
+                  <p className="text-white/60 text-[10px] font-black uppercase tracking-widest">Impostos Locação ({impostosLocacaoPercentual}%)</p>
+                  <p className="text-white font-black text-base text-right">R$ {valorImpostosLocacao.toFixed(2)}</p>
+                </div>
+                <div className="bg-[#0b1220] border border-cyan-500/30 rounded-lg px-4 py-2.5">
+                  <p className="text-cyan-300/80 text-[10px] font-black uppercase tracking-widest">Subtotal Locação (c/ imposto)</p>
+                  <p className="text-cyan-300 font-black text-lg text-right">R$ {subtotalLocacao.toFixed(2)}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          )}
 
           {/* SECTION 6: OBSERVAÇÕES */}
           <div className="bg-gradient-to-r from-amber-500/10 to-orange-500/10 rounded-2xl border border-amber-500/20 p-8">
@@ -2358,6 +2700,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
               <DollarSign size={20} /> Resumo Financeiro do Orçamento
             </h3>
 
+            {orcTemServico && (<>
             <div className="grid grid-cols-3 gap-4 mb-6">
               <div className="space-y-1.5">
                 <label className={labelClass}>Margem (%) <span className="text-red-400">*</span></label>
@@ -2450,6 +2793,27 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                 </div>
               </div>
             </div>
+            </>)}
+
+            {/* Resumo: 2 subtotais separados (serviço c/ imposto + locação c/ imposto) → total geral */}
+            {orcTemLocacao && (
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-6">
+              {orcTemServico && (
+                <div className="bg-[#101f3d] rounded-lg p-4 border border-amber-500/30">
+                  <p className="text-white/50 text-xs font-bold mb-2">SUBTOTAL SERVIÇO (c/ imposto)</p>
+                  <p className="text-amber-400 font-black text-lg">R$ {precoFinal.toFixed(2)}</p>
+                </div>
+              )}
+              <div className="bg-[#101f3d] rounded-lg p-4 border border-cyan-500/30">
+                <p className="text-white/50 text-xs font-bold mb-2">SUBTOTAL LOCAÇÃO (c/ imposto)</p>
+                <p className="text-cyan-300 font-black text-lg">R$ {subtotalLocacao.toFixed(2)}</p>
+              </div>
+              <div className="bg-[#101f3d] rounded-lg p-4 border border-emerald-500/30 shadow-lg shadow-emerald-500/10">
+                <p className="text-emerald-400 text-xs font-black mb-2 uppercase">Total Geral{orcTemServico ? ' (Serviço + Locação)' : ''}</p>
+                <p className="text-emerald-400 font-black text-2xl">R$ {totalGeral.toFixed(2)}</p>
+              </div>
+            </div>
+            )}
           </div>
 
           {/* SEÇÃO 8: BOTÕES DE AÇÃO */}

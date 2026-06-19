@@ -103,6 +103,16 @@ class Negocio(models.Model):
     uso_interno = models.BooleanField(default=False)
     tipo_servico = models.CharField(max_length=100, null=True, blank=True) # Recebe o tipo principal do form
 
+    # Modalidade do negócio: define se o fluxo é de Serviço, Locação (aluguel de
+    # equipamentos do Estoque) ou ambos. Governa as abas/seções em CRM/Orçamento/
+    # Proposta/OS/Medição. 'servico' = comportamento legado.
+    MODALIDADE_CHOICES = [
+        ('servico', 'Serviço'),
+        ('locacao', 'Locação'),
+        ('locacao_servico', 'Locação + Serviço'),
+    ]
+    modalidade = models.CharField(max_length=20, choices=MODALIDADE_CHOICES, default='servico')
+
     data_solicitacao = models.DateField(null=True, blank=True)
     arquivo_documento = models.FileField(upload_to='documentos_negocios/', null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -124,7 +134,37 @@ class Servico(models.Model):
 
     def __str__(self):
         return f"{self.tipo_servico} - {self.embarcacao}"
-    
+
+
+class ItemAlocacao(models.Model):
+    """Item de locação (aluguel) vinculado a um Negócio.
+
+    Fonte única da alocação no funil comercial. A *definição* (equipamento,
+    unidade, quantidade, observação) é preenchida na criação do Negócio (aba
+    Alocação do CRM). A *precificação* (valor de indenização e valor de locação)
+    é preenchida na etapa de Orçamento. Proposta/OS/Medição leem daqui.
+    """
+
+    id = models.BigAutoField(primary_key=True)
+    negocio = models.ForeignKey(Negocio, on_delete=models.CASCADE, related_name='itens_alocacao')
+    # Definição (aba Alocação do Negócio)
+    equipamento = models.CharField(max_length=200)               # nome do item (vem do dropdown do Estoque)
+    estoque_ref = models.CharField(max_length=120, blank=True, default='')  # rastreio opcional do item de estoque
+    unidade = models.CharField(max_length=20, blank=True, default='un')
+    quantidade = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    observacao = models.TextField(blank=True, default='')
+    # Precificação (etapa de Orçamento)
+    valor_indenizacao = models.DecimalField(max_digits=15, decimal_places=2, default=0)  # informativo (reposição)
+    valor_locacao = models.DecimalField(max_digits=15, decimal_places=2, default=0)      # preço final por unidade
+
+    @property
+    def valor_total(self):
+        return (self.quantidade or Decimal('0')) * (self.valor_locacao or Decimal('0'))
+
+    def __str__(self):
+        return f"Locação {self.equipamento} x{self.quantidade} (Negócio {self.negocio_id})"
+
+
 #--------------------- User ------------------
 class User(AbstractUser):
     workspace = models.ForeignKey(
@@ -288,7 +328,8 @@ class Resumo_orcamento(models.Model):
     #fields:
     margem = models.DecimalField(max_digits = 5, decimal_places = 2) #validators=[MinValueValidator(0),MaxValueValidator(100)]
     OH = models.DecimalField(max_digits=10, decimal_places = 2)
-    impostos = models.DecimalField(max_digits=5, decimal_places = 2)
+    impostos = models.DecimalField(max_digits=5, decimal_places = 2)  # imposto sobre os SERVIÇOS
+    impostos_locacao = models.DecimalField(max_digits=5, decimal_places=2, default=0)  # imposto sobre a LOCAÇÃO (calculado à parte)
     qnt = models.DecimalField(max_digits=12, decimal_places=2) #how many units of the final product or service are expected to be delivered, to be filled in the "Quantidade" field of the orçamento form, used to calculate the cost per unit in the Resumo_orcamento model and displayed in the "Custo por Unidade" field of the orçamento form.
     #---------------------------------------------------------------------------------
     # Calculation properties reach back through the Orcamento link
@@ -465,7 +506,8 @@ class Planilhas(models.Model):
 class Escopo(models.Model):
     id = models.BigAutoField(primary_key=True)
     proposta_link = models.ForeignKey('PropostaComercial', on_delete=models.SET_NULL, null=True, blank=True, related_name='proposta_escopo')
-    tipo = models.ForeignKey(Servico, on_delete=models.CASCADE, related_name='escopo_servico') # link to the Servico entry that this scope of services is about, to be selected from a dropdown list of existing Servico entries
+    # Nullable: um escopo de Locação não está ligado a um Servico (negócio só-locação não tem serviços).
+    tipo = models.ForeignKey(Servico, on_delete=models.CASCADE, null=True, blank=True, related_name='escopo_servico') # link to the Servico entry that this scope of services is about, to be selected from a dropdown list of existing Servico entries
     descricao = models.TextField() # free text field to specify the description of the scope of services
     
 
@@ -721,26 +763,6 @@ class EstoqueAlmoxarifado(models.Model):
     def __str__(self):
         return f'Estoque/Almoxarifado (v{self.version})'
 #--------------------- Fim Almoxarifado ------------------
-
-#--------------------- Alocações ------------------
-# Vincula um funcionário a uma Obra/Negócio e/ou a uma OS. Hoje funcionário/obra/os
-# ainda são referenciados por id-string (funcionário é do RH, fora do escopo; obra/os
-# saem do blob na consolidação do Comercial). Guardamos o registro completo em `extra`.
-
-class Alocacao(models.Model):
-    record_id = models.CharField(max_length=80, unique=True)
-    funcionario_id = models.CharField(max_length=120, blank=True, default='')
-    obra_id = models.CharField(max_length=120, blank=True, null=True)
-    os_id = models.CharField(max_length=120, blank=True, null=True)
-    data_inicio = models.CharField(max_length=20, blank=True, default='')
-    data_fim = models.CharField(max_length=20, blank=True, null=True)
-    status = models.CharField(max_length=30, blank=True, default='Ativa')
-    extra = models.JSONField(default=dict, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    def __str__(self):
-        return f'Alocação {self.record_id}'
-#--------------------- Fim Alocações ------------------
 
 #--------------------- Configurações ------------------
 # Configurações da empresa (nome, empresas prestadoras) e listas auxiliares

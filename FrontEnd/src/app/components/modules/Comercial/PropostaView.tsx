@@ -8,6 +8,7 @@ import Docxtemplater from 'docxtemplater';
 import { saveAs } from 'file-saver';
 import { getNegocios } from '../../../../services/comercial';
 import { getClientes, criarProposta, atualizarProposta, atualizarNegocio } from '../../../../services/comercialService';
+import { temServico, temLocacao } from '../../../utils/modalidade';
 
 interface EscopoLinha {
   id: string;
@@ -102,6 +103,20 @@ const mapNegocioToObra = (n: any): any => ({
     localExecucao: s.local_execucao,
     descricao: s.descricao,
   })),
+  modalidade: n.modalidade || 'servico',
+  itensAlocacao: Array.isArray(n.itens_alocacao)
+    ? n.itens_alocacao.map((it: any) => ({
+        id: String(it?.id ?? ''),
+        equipamento: it?.equipamento || '',
+        estoqueRef: it?.estoque_ref || '',
+        unidade: it?.unidade || 'un',
+        quantidade: Number(it?.quantidade) || 0,
+        observacao: it?.observacao || '',
+        valorIndenizacao: Number(it?.valor_indenizacao) || 0,
+        valorLocacao: Number(it?.valor_locacao) || 0,
+        valorTotal: Number(it?.valor_total) || 0,
+      }))
+    : [],
   propostas: (n.propostas || []).map((p: any) => ({
     id: p.id,
     versao: p.versao || '',
@@ -287,25 +302,32 @@ export function PropostaView() {
     valores: colunas.reduce((acc, coluna) => ({ ...acc, [coluna]: '' }), {} as Record<string, string>)
   });
 
+  // Bloco de escopo de Locação: tabela dos itens alocados (Equipamento/Unidade/Quantidade).
+  const criarEscopoLocacao = (obra: any): EscopoServico | null => {
+    const itens = Array.isArray(obra?.itensAlocacao) ? obra.itensAlocacao.filter((it: any) => it.equipamento) : [];
+    if (itens.length === 0) return null;
+    const colunas = ['Equipamento', 'Unidade', 'Quantidade'];
+    return {
+      id: `escopo-locacao-${obra?.id || 'geral'}`,
+      servicoId: '',
+      titulo: 'Locação de Equipamentos',
+      descricaoServico: 'Itens disponibilizados em regime de locação:',
+      textosDepois: [],
+      colunas,
+      linhas: itens.map((it: any) => ({
+        id: `linha-loc-${it.id || Math.random().toString(36).slice(2, 7)}`,
+        valores: { Equipamento: it.equipamento || '', Unidade: it.unidade || '', Quantidade: String(it.quantidade ?? '') }
+      }))
+    };
+  };
+
   const criarEscopoBasicoServicos = (obra: any): EscopoServico[] => {
-    const servicos = Array.isArray(obra?.servicos) ? obra.servicos : [];
+    const servicos = (temServico(obra?.modalidade) && Array.isArray(obra?.servicos)) ? obra.servicos : [];
+    const blocos: EscopoServico[] = [];
 
-    if (servicos.length === 0) {
+    servicos.forEach((servico: any, idx: number) => {
       const colunasPadrao = ['Descrição'];
-      return [{
-        id: `escopo-${obra?.id || 'geral'}-1`,
-        servicoId: '',
-        titulo: 'Serviço Geral',
-        descricaoServico: '',
-        textosDepois: [],
-        colunas: colunasPadrao,
-        linhas: [criarLinhaEscopo(colunasPadrao)]
-      }];
-    }
-
-    return servicos.map((servico: any, idx: number) => {
-      const colunasPadrao = ['Descrição'];
-      return {
+      blocos.push({
         id: `escopo-${obra.id}-${servico.id || idx + 1}`,
         servicoId: String(servico.id || idx + 1),
         titulo: `${idx + 1}. ${servico.tipo || 'Serviço'}${servico.localExecucao ? ` - ${servico.localExecucao}` : ''}`,
@@ -313,8 +335,30 @@ export function PropostaView() {
         textosDepois: [],
         colunas: colunasPadrao,
         linhas: [criarLinhaEscopo(colunasPadrao)]
-      };
+      });
     });
+
+    // Bloco de escopo de Locação (quando a modalidade contempla locação)
+    if (temLocacao(obra?.modalidade)) {
+      const locBloco = criarEscopoLocacao(obra);
+      if (locBloco) blocos.push(locBloco);
+    }
+
+    // Fallback: nenhum bloco (ex.: serviço sem serviços cadastrados) → bloco genérico
+    if (blocos.length === 0) {
+      const colunasPadrao = ['Descrição'];
+      blocos.push({
+        id: `escopo-${obra?.id || 'geral'}-1`,
+        servicoId: '',
+        titulo: 'Serviço Geral',
+        descricaoServico: '',
+        textosDepois: [],
+        colunas: colunasPadrao,
+        linhas: [criarLinhaEscopo(colunasPadrao)]
+      });
+    }
+
+    return blocos;
   };
 
   const gerarEscopoBasicoConsolidado = (escopos: EscopoServico[]): string => {
@@ -536,23 +580,36 @@ export function PropostaView() {
       escopoBasicoServicos: criarEscopoBasicoServicos(obra)
     };
 
-    // Inicializa itens de preço a partir dos valores do orçamento, quando existirem
+    // Inicializa a tabela de preço (D): serviços (do orçamento) + locação (dos itens alocados).
     try {
+      const precoItens: Array<{ id: string; nome?: string; quantidade: number; precoUnitario: number; total: number }> = [];
+      const incluiServico = temServico(obra?.modalidade);
+      const incluiLocacao = temLocacao(obra?.modalidade);
+
+      // Linha de serviços a partir do orçamento (quando houver)
       const orc = obra.orcamentoValores || null;
-      if (orc) {
+      if (incluiServico && orc) {
         const precoFinal = Number(orc.precoFinal ?? orc.valorTotalServico ?? 0) || 0;
-        // Quantidade e preço por unidade vêm do orçamento (chaves do backend: quantidadeItensProduzidos / valorPorUnidade)
-        const qnt = Number(orc.quantidadeItensProduzidos ?? orc.qnt ?? orc.quantidade ?? 1) || 1;
-        const unit = Number(orc.valorPorUnidade ?? (qnt > 0 ? precoFinal / qnt : precoFinal)) || 0;
-        const itemInit = {
-          id: `preco-orcamento-${Date.now()}`,
-          nome: 'Orçamento',
-          quantidade: qnt,
-          precoUnitario: unit,
-          total: precoFinal
-        };
-        base.precoItens = [itemInit];
-        base.preco = `R$ ${precoFinal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        if (precoFinal > 0) {
+          const qnt = Number(orc.quantidadeItensProduzidos ?? orc.qnt ?? orc.quantidade ?? 1) || 1;
+          const unit = Number(orc.valorPorUnidade ?? (qnt > 0 ? precoFinal / qnt : precoFinal)) || 0;
+          precoItens.push({ id: `preco-orcamento-${Date.now()}`, nome: 'Orçamento (Serviços)', quantidade: qnt, precoUnitario: unit, total: precoFinal });
+        }
+      }
+
+      // Linhas de locação: uma por item alocado (preço unitário = valor de locação)
+      if (incluiLocacao && Array.isArray(obra.itensAlocacao)) {
+        obra.itensAlocacao.filter((it: any) => it.equipamento).forEach((it: any, i: number) => {
+          const q = Number(it.quantidade) || 0;
+          const unit = Number(it.valorLocacao) || 0;
+          precoItens.push({ id: `preco-loc-${it.id || i}`, nome: it.equipamento, quantidade: q, precoUnitario: unit, total: Number(it.valorTotal) || q * unit });
+        });
+      }
+
+      if (precoItens.length > 0) {
+        base.precoItens = precoItens;
+        const totalProposta = precoItens.reduce((s, p) => s + (Number(p.total) || 0), 0);
+        base.preco = `R$ ${totalProposta.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
       }
     } catch (e) {
       // ignore

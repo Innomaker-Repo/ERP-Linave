@@ -272,9 +272,36 @@ export const handleDownloadPropostaPDF = (
       writeText(propostaForm.responsabilidadeContratante, 11, false, 'left', 5, 8);
     }
 
-    if (propostaForm.preco) {
+    const itensPreco = Array.isArray(propostaForm.precoItens) ? propostaForm.precoItens : [];
+    if (propostaForm.preco || itensPreco.length > 0) {
       writeText('D - Preco:', 11, true, 'left', 0, 4);
-      writeText(propostaForm.preco, 11, false, 'left', 5, 4);
+      if (itensPreco.length > 0) {
+        // Tabela D itemizada (serviços + itens de locação, conforme a modalidade).
+        ensureSpace(24);
+        const head = [['Item', 'Descrição', 'Quant.', 'Vl. Unit. R$', 'Vl. Total R$']];
+        const body = itensPreco.map((it: any, idx: number) => [
+          String(idx + 1),
+          it.nome || '',
+          String(it.quantidade ?? ''),
+          (Number(it.precoUnitario) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+          (Number(it.total) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+        ]);
+        const totalGeral = itensPreco.reduce((s: number, it: any) => s + (Number(it.total) || 0), 0);
+        body.push(['', 'Valor total previsto', '', '', totalGeral.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })]);
+        autoTable(doc, {
+          startY: y,
+          head,
+          body,
+          theme: 'grid',
+          margin: { left: margin + 5, right: margin },
+          headStyles: { fillColor: [230, 230, 230], textColor: [0, 0, 0], fontStyle: 'bold', fontSize: 9 },
+          styles: { fontSize: 9, cellPadding: 2, textColor: [0, 0, 0] },
+          columnStyles: { 0: { cellWidth: 12 }, 2: { cellWidth: 18 }, 3: { cellWidth: 28 }, 4: { cellWidth: 28 } },
+        });
+        y = (doc as any).lastAutoTable.finalY + 4;
+      } else if (propostaForm.preco) {
+        writeText(propostaForm.preco, 11, false, 'left', 5, 4);
+      }
       if (propostaForm.precoTextoLivre) {
         writeText(propostaForm.precoTextoLivre, 11, false, 'left', 5, 8);
       }

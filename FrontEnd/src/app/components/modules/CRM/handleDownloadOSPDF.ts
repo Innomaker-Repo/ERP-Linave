@@ -273,6 +273,30 @@ export const handleDownloadOSPDF = ({
     y = (doc as any).lastAutoTable.finalY + 5;
   }
 
+  // Locação: itens alocados (resumão da OS). Fonte = negócio (obra) ou orçamento.
+  const itensAlocacaoOS = (Array.isArray(obra?.itensAlocacao) && obra.itensAlocacao.length > 0)
+    ? obra.itensAlocacao
+    : (ultimoOrcamento?.data?.itensAlocacao || []);
+  const locacaoOS = (itensAlocacaoOS || []).filter((it: any) => it.equipamento);
+  if (locacaoOS.length > 0) {
+    autoTable(doc, {
+      startY: y,
+      head: [['EQUIPAMENTO (LOCAÇÃO)', 'UN', 'QTDE', 'VL. INDENIZ.', 'VL. LOCAÇÃO']],
+      body: locacaoOS.map((it: any) => [
+        it.equipamento || '',
+        it.unidade || '',
+        String(it.quantidade ?? ''),
+        (Number(it.valorIndenizacao) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+        (Number(it.valorLocacao) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      ]),
+      theme: 'grid',
+      headStyles: { fillColor: [230, 230, 230], textColor: [0, 0, 0], fontStyle: 'bold', fontSize: 8 },
+      styles: { fontSize: 7, cellPadding: 2, textColor: [0, 0, 0] },
+      margin: { left: margin, right: margin }
+    });
+    y = (doc as any).lastAutoTable.finalY + 5;
+  }
+
   const terceirizadosOS = ultimoOrcamento?.data?.terceirizados || [];
   if (terceirizadosOS.length > 0) {
     autoTable(doc, {

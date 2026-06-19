@@ -5,7 +5,6 @@ import { getFornecedores, createFornecedor, updateFornecedor, deleteFornecedor a
 import { getFinanceiro, syncFinanceiro } from '../../services/financeiroService';
 import { getCompras, syncCompras, syncComprasHistorico } from '../../services/comprasService';
 import { getAlmoxarifado, syncAlmoxarifado } from '../../services/almoxarifadoService';
-import { getAlocacoes, syncAlocacoes } from '../../services/alocacoesService';
 import { getConfiguracoes, syncConfig, syncListas } from '../../services/configuracoesService';
 import { getMedicoes } from '../../services/medicoesService';
 
@@ -1002,13 +1001,12 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
       // Todos os dados vêm do SQL (sem blob de workspace). O estado já inicia com os
       // defaults (createInitialData(null)); aqui só hidratamos as coleções do backend.
       try {
-        const [backendClientes, backendFornecedores, backendFinanceiro, backendCompras, backendAlmox, backendAlocacoes, backendNegocios, backendOrdens, backendConfiguracoes, backendMedicoes] = await Promise.all([
+        const [backendClientes, backendFornecedores, backendFinanceiro, backendCompras, backendAlmox, backendNegocios, backendOrdens, backendConfiguracoes, backendMedicoes] = await Promise.all([
           getClientes(),
           getFornecedores(),
           getFinanceiro(),
           getCompras(),
           getAlmoxarifado(),
-          getAlocacoes(),
           getNegocios(),
           getOrdensServico(),
           getConfiguracoes(),
@@ -1029,7 +1027,6 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
           compras: backendCompras.compras,
           comprasHistorico: backendCompras.comprasHistorico,
           almoxerifado: backendAlmox ?? prevData.almoxerifado,
-          alocacoes: backendAlocacoes,
           obras: obrasFromSql,
           os: osFromSql,
           medicoes: backendMedicoes,
@@ -1213,16 +1210,6 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
         await syncAlmoxarifado(newData || {});
       } catch (error) {
         console.error('Erro ao sincronizar almoxarifado no backend', error);
-      }
-      return;
-    }
-
-    if (collection === 'alocacoes') {
-      setData((prevData: any) => ({ ...prevData, alocacoes: newData }));
-      try {
-        await syncAlocacoes(Array.isArray(newData) ? newData : []);
-      } catch (error) {
-        console.error('Erro ao sincronizar alocações no backend', error);
       }
       return;
     }

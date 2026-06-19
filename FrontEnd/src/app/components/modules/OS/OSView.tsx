@@ -618,10 +618,16 @@ export function OsView({ searchQuery }: OSViewProps) {
       .map((escopo: any) => `${escopo.titulo}${escopo.descricaoServico ? ` - ${escopo.descricaoServico}` : ''}`)
       .join('\n');
 
+    const itensLocacao = (Array.isArray(obra?.itensAlocacao) ? obra.itensAlocacao : [])
+      .filter((it: any) => it.equipamento)
+      .map((it: any) => `• ${it.equipamento} — ${it.quantidade ?? ''} ${it.unidade || ''}`.trim())
+      .join('\n');
+
     return [
       'OS Consolidada gerada automaticamente a partir dos dados do negócio, orçamento e proposta.',
       servicosNegocio ? `\nServiços do negócio:\n${servicosNegocio}` : '',
       servicosOrcamento ? `\nItens do orçamento:\n${servicosOrcamento}` : '',
+      itensLocacao ? `\nItens em locação:\n${itensLocacao}` : '',
       resumoEscopo ? `\nEscopo básico da proposta:\n${resumoEscopo}` : ''
     ].join('\n').trim();
   };
@@ -1177,7 +1183,31 @@ export function OsView({ searchQuery }: OSViewProps) {
         });
         y = (doc as any).lastAutoTable.finalY + 5;
       }
-      
+
+      // --- TABELA DE LOCAÇÃO (itens alocados; resumão da OS) ---
+      const itensAlocacaoOS = (Array.isArray(selectedObraDetalhes?.itensAlocacao) && selectedObraDetalhes.itensAlocacao.length > 0)
+        ? selectedObraDetalhes.itensAlocacao
+        : (ultimoOrcamento?.data?.itensAlocacao || []);
+      const locacaoOS = (itensAlocacaoOS || []).filter((it: any) => it.equipamento);
+      if (locacaoOS.length > 0) {
+        autoTable(doc, {
+          startY: y,
+          head: [['EQUIPAMENTO (LOCAÇÃO)', 'UN', 'QTDE', 'VL. INDENIZ.', 'VL. LOCAÇÃO']],
+          body: locacaoOS.map((it: any) => [
+            it.equipamento || '',
+            it.unidade || '',
+            String(it.quantidade ?? ''),
+            (Number(it.valorIndenizacao) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            (Number(it.valorLocacao) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+          ]),
+          theme: 'grid',
+          headStyles: { fillColor: [230, 230, 230], textColor: [0,0,0], fontStyle: 'bold', fontSize: 8 },
+          styles: { fontSize: 7, cellPadding: 2, textColor: [0,0,0] },
+          margin: { left: margin, right: margin }
+        });
+        y = (doc as any).lastAutoTable.finalY + 5;
+      }
+
       // --- TABELA DE TERCEIRIZADOS ATUALIZADA (SEM VALORES) ---
       const terceirizadosOS = isConsolidada && osPrincipal.resumoConsolidado?.orcamento?.terceirizados?.length > 0
         ? osPrincipal.resumoConsolidado.orcamento.terceirizados

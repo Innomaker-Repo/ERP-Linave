@@ -13,6 +13,8 @@ import { getCachedWorkspace } from '../../../services/workspaceStorage';
 import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
 import { isEmpresaLinave, getLogoUrlForEmpresa } from '../../../utils/company';
 import { uploadDocumento, excluirDocumento } from '../../../../services/documentosService';
+import { MODALIDADES, temServico, temLocacao, modalidadeLabel } from '../../../utils/modalidade';
+import { getEstoqueItens } from '../../../utils/estoqueItens';
 // Substitua as importações antigas por esta única:
 import {
     getNegocios,
@@ -36,6 +38,15 @@ interface Servico {
   prazoDes: string;
   descricao: string;
   observacoes?: string;
+}
+
+interface ItemAlocacaoForm {
+  id: string;
+  equipamento: string;
+  estoqueRef: string;
+  unidade: string;
+  quantidade: string;
+  observacao: string;
 }
 
 interface DocumentoNegocio {
@@ -127,13 +138,16 @@ export const indexToVersaoAlfabetica = (index: number) => {
 };
 
 export function CrmViewNew({ searchQuery }: CrmViewProps) {
-  const { os, saveEntity, userSession, config, obras, medicoes } = useErp() as any;
+  const { os, saveEntity, userSession, config, obras, medicoes, almoxerifado } = useErp() as any;
+
+  // Itens do Estoque para o dropdown de Equipamento da aba Alocação.
+  const estoqueItens = useMemo(() => getEstoqueItens(almoxerifado), [almoxerifado]);
   const [listaClientesCRM, setListaClientesCRM] = useState<any[]>([]);
   const [negociosBackend, setNegociosBackend] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [clientesLoading, setClientesLoading] = useState(false);
   const [showFormNovoNegocio, setShowFormNovoNegocio] = useState(false);
-  const [novoNegocioTab, setNovoNegocioTab] = useState<'dados' | 'servicos' | 'documentos'>('dados');
+  const [novoNegocioTab, setNovoNegocioTab] = useState<'dados' | 'servicos' | 'alocacao' | 'documentos'>('dados');
   const [selectedObraDetalhes, setSelectedObraDetalhes] = useState<any>(null);
   const [showDetalhesObraModal, setShowDetalhesObraModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -222,18 +236,29 @@ const initialServico: Servico = {
     observacoes: ''
   };
 
+  const initialItemAlocacao: ItemAlocacaoForm = {
+    id: '',
+    equipamento: '',
+    estoqueRef: '',
+    unidade: 'un',
+    quantidade: '',
+    observacao: ''
+  };
+
   const initialForm = {
     empresaPrestadora: empresaPrestadoraPadrao,
     nomeNegocio: '',
     clienteId: '',
     cnpj: '',
     origemLead: '',
+    modalidade: 'servico',
     solicitante: '',
     cargo: '',
     telefone: '',
     email: '',
     dataSolicitacao: new Date().toISOString().split('T')[0],
     servicos: [{ ...initialServico, id: `servico-${Date.now()}` }],
+    itensAlocacao: [] as ItemAlocacaoForm[],
     fase: 'Pre-Venda' as FaseOS,
     docs: {
       requisitos: false,
@@ -250,12 +275,14 @@ const initialServico: Servico = {
   clienteId: '',
   cnpj: '',
   origemLead: '',
+  modalidade: 'servico',
   solicitante: '',
   cargo: '',
   telefone: '',
   email: '',
   dataSolicitacao: new Date().toISOString().split('T')[0],
   servicos: [{ ...initialServico, id: `servico-${Date.now()}` }],
+  itensAlocacao: [] as ItemAlocacaoForm[],
   fase: 'Pre-Venda' as FaseOS,
   docs: {
     requisitos: false,
@@ -290,6 +317,36 @@ const initialServico: Servico = {
       const updatedServicos = [...prev.servicos];
       updatedServicos[idx] = { ...updatedServicos[idx], [field]: value };
       return { ...prev, servicos: updatedServicos };
+    });
+  };
+
+  // --- FUNÇÕES DE MANIPULAÇÃO DE ITENS DE ALOCAÇÃO (LOCAÇÃO) ---
+  const handleAddItemAlocacao = () => {
+    setFormData(prev => ({
+      ...prev,
+      itensAlocacao: [...(prev.itensAlocacao || []), { ...initialItemAlocacao, id: `aloc-${Date.now()}` }]
+    }));
+  };
+
+  const handleRemoveItemAlocacao = (idx: number) => {
+    setFormData(prev => ({
+      ...prev,
+      itensAlocacao: (prev.itensAlocacao || []).filter((_, i) => i !== idx)
+    }));
+  };
+
+  const handleUpdateItemAlocacao = (idx: number, field: string, value: any) => {
+    setFormData(prev => {
+      const itens = [...(prev.itensAlocacao || [])];
+      const atual = { ...itens[idx], [field]: value };
+      // Ao escolher o equipamento no dropdown do Estoque, herda a unidade cadastrada.
+      if (field === 'equipamento') {
+        const itemEstoque = estoqueItens.find(it => it.nome === value);
+        atual.estoqueRef = value;
+        if (itemEstoque && (!atual.unidade || atual.unidade === 'un')) atual.unidade = itemEstoque.unidade;
+      }
+      itens[idx] = atual;
+      return { ...prev, itensAlocacao: itens };
     });
   };
 
@@ -339,6 +396,20 @@ const initialServico: Servico = {
               tipo: n.tipo_servico || (n.servicos?.[0]?.tipo_servico) || '',
               responsavelTecnico: n.solicitante || '',
               servicos: n.servicos || [],
+              modalidade: n.modalidade || obraExistente.modalidade || 'servico',
+              itensAlocacao: Array.isArray(n.itens_alocacao)
+                ? n.itens_alocacao.map((it: any) => ({
+                    id: String(it?.id ?? ''),
+                    equipamento: it?.equipamento || '',
+                    estoqueRef: it?.estoque_ref || '',
+                    unidade: it?.unidade || 'un',
+                    quantidade: Number(it?.quantidade) || 0,
+                    observacao: it?.observacao || '',
+                    valorIndenizacao: Number(it?.valor_indenizacao) || 0,
+                    valorLocacao: Number(it?.valor_locacao) || 0,
+                    valorTotal: Number(it?.valor_total) || 0,
+                  }))
+                : (obraExistente.itensAlocacao || []),
               negocioBackendId: n.id,
               orcamentos: n.orcamentos || [],
               propostas: n.propostas || [],
@@ -1268,34 +1339,61 @@ const initialServico: Servico = {
   };
 
   const handleSave = async () => {
-    if (!formData.nomeNegocio.trim() || !formData.clienteId || !formData.solicitante || formData.servicos.length === 0) {
-      return alert("Nome do Negócio, Cliente, Solicitante e pelo menos um Serviço são obrigatórios.");
+    const incluiServico = temServico(formData.modalidade);
+    const incluiLocacao = temLocacao(formData.modalidade);
+
+    if (!formData.nomeNegocio.trim() || !formData.clienteId || !formData.solicitante) {
+      return alert("Nome do Negócio, Cliente e Solicitante são obrigatórios.");
     }
 
-    if (!formData.servicos.some(s => s.descricao.trim())) {
-      return alert("Pelo menos um serviço deve ter uma descrição.");
+    if (incluiServico && (formData.servicos.length === 0 || !formData.servicos.some(s => s.descricao.trim()))) {
+      return alert("Adicione pelo menos um serviço com descrição na aba Serviços.");
+    }
+
+    if (incluiLocacao && !(formData.itensAlocacao || []).some(it => it.equipamento.trim())) {
+      return alert("Adicione pelo menos um item de equipamento na aba Alocação.");
     }
 
     // 1. Mapeamento para o formato exato que o NegocioSerializer (Django) exige
     // Não enviamos o 'id', deixamos o MySQL gerar o ID numérico (AUTO_INCREMENT)
+   const incluiServicoPayload = temServico(formData.modalidade);
+   const incluiLocacaoPayload = temLocacao(formData.modalidade);
+   const servicosPayload = incluiServicoPayload
+     ? formData.servicos.filter(s => s.descricao.trim() || s.tipo.trim())
+     : [];
+   const itensAlocacaoPayload = incluiLocacaoPayload
+     ? (formData.itensAlocacao || [])
+         .filter(it => it.equipamento.trim())
+         .map(it => ({
+           equipamento: it.equipamento.trim(),
+           estoque_ref: it.estoqueRef || it.equipamento.trim(),
+           unidade: it.unidade || 'un',
+           quantidade: parseFloat(String(it.quantidade).replace(',', '.')) || 0,
+           observacao: it.observacao || '',
+         }))
+     : [];
+
    const payloadDjango = {
       nome_negocio: formData.nomeNegocio.trim(),
-      cliente: parseInt(formData.clienteId, 10), 
+      cliente: parseInt(formData.clienteId, 10),
       empresa_prestadora: formData.empresaPrestadora,
       categoria: 'Planejamento',
       status: 'Aguardando orçamento', //  FORÇA O STATUS INICIAL PARA A TELA DE ORÇAMENTOS
+      modalidade: formData.modalidade,
       solicitante: formData.solicitante,
-      
+
       cargo: formData.cargo,
       telefone: formData.telefone,
-      email: formData.email, 
+      email: formData.email,
       data_solicitacao: formData.dataSolicitacao || null,
 
       //  ADICIONADO: O campo exato que o Django exigiu!
-      // Usamos o tipo do primeiro serviço adicionado na aba "Serviços"
-      tipo_servico: formData.servicos.length > 0 ? formData.servicos[0].tipo : 'Não informado',
-      
-      servicos: formData.servicos.map(s => ({
+      // Usamos o tipo do primeiro serviço; em locação pura, rotulamos como "Locação".
+      tipo_servico: servicosPayload.length > 0
+        ? servicosPayload[0].tipo
+        : (incluiLocacaoPayload ? 'Locação' : 'Não informado'),
+
+      servicos: servicosPayload.map(s => ({
         tipo_servico: s.tipo, //  Alterado aqui também por segurança
         tipo: s.tipo,         // Mantido caso o seu backend use ambos
         categoria: s.categoria || '',
@@ -1304,7 +1402,9 @@ const initialServico: Servico = {
         porto: s.porto || '',
         descricao: s.descricao,
         observacoes: s.observacoes || ''
-      }))
+      })),
+
+      itens_alocacao: itensAlocacaoPayload
     };
 
     try {
@@ -1313,7 +1413,32 @@ const initialServico: Servico = {
 
           // BLINDAGEM: O Django pode devolver o objeto de duas formas. Isso garante que o React não quebre lendo 'undefined'
           const dadosNegocio = respostaBackend.negocio || respostaBackend;
-          const dadosServicos = respostaBackend.servicos || formData.servicos;
+          const dadosServicos = respostaBackend.servicos || servicosPayload;
+
+          // Itens de alocação em camelCase para o restante do funil (Orçamento/Proposta/OS/Medição).
+          const itensAlocacaoFormatados = Array.isArray(dadosNegocio.itens_alocacao)
+            ? dadosNegocio.itens_alocacao.map((it: any) => ({
+                id: String(it.id ?? `aloc-${Math.random().toString(36).slice(2, 8)}`),
+                equipamento: it.equipamento || '',
+                estoqueRef: it.estoque_ref || '',
+                unidade: it.unidade || 'un',
+                quantidade: Number(it.quantidade) || 0,
+                observacao: it.observacao || '',
+                valorIndenizacao: Number(it.valor_indenizacao) || 0,
+                valorLocacao: Number(it.valor_locacao) || 0,
+                valorTotal: Number(it.valor_total) || 0,
+              }))
+            : itensAlocacaoPayload.map((it, i) => ({
+                id: `aloc-${Date.now()}-${i}`,
+                equipamento: it.equipamento,
+                estoqueRef: it.estoque_ref,
+                unidade: it.unidade,
+                quantidade: it.quantidade,
+                observacao: it.observacao,
+                valorIndenizacao: 0,
+                valorLocacao: 0,
+                valorTotal: 0,
+              }));
 
           // Agora que o negócio existe no banco, sobe os documentos anexados no form
           // (guardados como File) para a tabela Documento, vinculados ao id do negócio.
@@ -1348,7 +1473,9 @@ const initialServico: Servico = {
             requerReorcamento: true,        
             orcamentoRealizado: false,      
             solicitante: dadosNegocio.solicitante || formData.solicitante,
+            modalidade: dadosNegocio.modalidade || formData.modalidade,
             servicos: dadosServicos || [],
+            itensAlocacao: itensAlocacaoFormatados,
             negocioBackendId: dadosNegocio.id || Date.now(),
             versaoNegocio: 'A',
             tipo: dadosNegocio.tipo_servico || (dadosServicos?.[0]?.tipo) || '',
@@ -2277,6 +2404,12 @@ const obrasOrdenadas = useMemo(() => {
                   Serviços
                 </button>
                 <button
+                  onClick={() => setNovoNegocioTab('alocacao')}
+                  className={`flex-1 py-2 rounded-lg font-black text-xs uppercase tracking-widest transition ${novoNegocioTab === 'alocacao' ? 'bg-cyan-500 text-white' : 'text-white/60 hover:text-white hover:bg-white/5'}`}
+                >
+                  Alocação
+                </button>
+                <button
                   onClick={() => setNovoNegocioTab('documentos')}
                   className={`flex-1 py-2 rounded-lg font-black text-xs uppercase tracking-widest transition ${novoNegocioTab === 'documentos' ? 'bg-amber-500 text-[#0b1220]' : 'text-white/60 hover:text-white hover:bg-white/5'}`}
                 >
@@ -2289,10 +2422,10 @@ const obrasOrdenadas = useMemo(() => {
               <div className="bg-gradient-to-r from-blue-500/10 to-cyan-500/10 rounded-2xl border border-blue-500/20 p-6">
                 <h3 className="text-lg font-black text-white uppercase mb-4">Dados Principais</h3>
                 
-                <div className="grid grid-cols-2 gap-4 mb-4">
+                <div className="grid grid-cols-3 gap-4 mb-4">
                   <div className="space-y-1.5">
                     <label className={labelClass}>Empresa Prestadora *</label>
-                    <select 
+                    <select
                       className={inputClass}
                       value={formData.empresaPrestadora}
                       onChange={e => setFormData({...formData, empresaPrestadora: e.target.value})}
@@ -2307,7 +2440,7 @@ const obrasOrdenadas = useMemo(() => {
 
                   <div className="space-y-1.5">
                     <label className={labelClass}>Cliente *</label>
-                    <select 
+                    <select
                       className={inputClass}
                       value={formData.clienteId}
                       onChange={e => handleClienteChange(e.target.value)}
@@ -2317,6 +2450,25 @@ const obrasOrdenadas = useMemo(() => {
                       </option>
                       {listaClientesCRM.map(c => (
                         <option key={c.id} value={c.id}>{c.razaoSocial}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className={labelClass}>Modalidade *</label>
+                    <select
+                      className={inputClass}
+                      value={formData.modalidade}
+                      onChange={e => {
+                        const novaModalidade = e.target.value;
+                        setFormData({ ...formData, modalidade: novaModalidade });
+                        // Evita ficar numa aba bloqueada ao trocar de modalidade.
+                        if (novaModalidade === 'locacao' && novoNegocioTab === 'servicos') setNovoNegocioTab('alocacao');
+                        if (novaModalidade === 'servico' && novoNegocioTab === 'alocacao') setNovoNegocioTab('servicos');
+                      }}
+                    >
+                      {MODALIDADES.map((m) => (
+                        <option key={m.value} value={m.value}>{m.label}</option>
                       ))}
                     </select>
                   </div>
@@ -2406,8 +2558,18 @@ const obrasOrdenadas = useMemo(() => {
               </div>
               )}
 
-              {/* SEÇÃO 2: SERVIÇOS */}
-              {novoNegocioTab === 'servicos' && (
+              {/* SEÇÃO 2: SERVIÇOS — aviso quando a modalidade é somente Locação */}
+              {novoNegocioTab === 'servicos' && !temServico(formData.modalidade) && (
+              <div className="bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-2xl border border-purple-500/20 p-6">
+                <h3 className="text-lg font-black text-white uppercase mb-3">Serviços a Prestar</h3>
+                <div className="bg-[#0b1220] border border-purple-500/30 rounded-xl p-4 text-sm text-purple-200 font-semibold">
+                  Esta modalidade é somente Locação. Os serviços ficam desativados e a tabela de locação será montada no Orçamento.
+                </div>
+              </div>
+              )}
+
+              {/* SEÇÃO 2: SERVIÇOS — editor */}
+              {novoNegocioTab === 'servicos' && temServico(formData.modalidade) && (
               <div className="bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-2xl border border-purple-500/20 p-6">
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="text-lg font-black text-white uppercase">Serviços a Prestar *</h3>
@@ -2511,6 +2673,101 @@ const obrasOrdenadas = useMemo(() => {
                           onChange={e => handleUpdateServico(idx, 'observacoes', e.target.value)}
                           placeholder="Observações adicionais"
                         />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              )}
+
+              {/* SEÇÃO: ALOCAÇÃO — aviso quando a modalidade é somente Serviço */}
+              {novoNegocioTab === 'alocacao' && !temLocacao(formData.modalidade) && (
+              <div className="bg-gradient-to-r from-cyan-500/10 to-blue-500/10 rounded-2xl border border-cyan-500/20 p-6">
+                <h3 className="text-lg font-black text-white uppercase mb-3">Itens a Alocar</h3>
+                <div className="bg-[#0b1220] border border-cyan-500/30 rounded-xl p-4 text-sm text-cyan-200 font-semibold">
+                  Esta modalidade é somente Serviço. A alocação fica disponível para Locação ou Locação + Serviço.
+                </div>
+              </div>
+              )}
+
+              {/* SEÇÃO: ALOCAÇÃO — editor de itens */}
+              {novoNegocioTab === 'alocacao' && temLocacao(formData.modalidade) && (
+              <div className="bg-gradient-to-r from-cyan-500/10 to-blue-500/10 rounded-2xl border border-cyan-500/20 p-6">
+                <div className="flex justify-between items-center mb-1">
+                  <h3 className="text-lg font-black text-white uppercase">Itens a Alocar *</h3>
+                  <button
+                    onClick={handleAddItemAlocacao}
+                    className="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-white rounded-lg font-black text-xs uppercase transition"
+                  >
+                    <Plus size={16} className="inline mr-2" /> Adicionar Item
+                  </button>
+                </div>
+                <p className="text-white/50 text-xs mb-4">Materiais e equipamentos previstos para esta locação.</p>
+
+                {estoqueItens.length === 0 && (
+                  <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-xs text-amber-200 font-semibold mb-4">
+                    Nenhum item de estoque foi encontrado. Cadastre o equipamento no Estoque para ele aparecer no menu suspenso.
+                  </div>
+                )}
+
+                <div className="space-y-3">
+                  {(formData.itensAlocacao || []).length === 0 && (
+                    <p className="text-white/40 text-sm">Nenhum item adicionado. Clique em "Adicionar Item".</p>
+                  )}
+                  {(formData.itensAlocacao || []).map((item, idx) => (
+                    <div key={item.id} className="bg-[#0b1220] p-4 rounded-lg border border-white/5">
+                      <div className="grid grid-cols-12 gap-3 items-end">
+                        <div className="col-span-4 space-y-1.5">
+                          <label className={labelClass}>Equipamento *</label>
+                          <select
+                            className={inputClass}
+                            value={item.equipamento}
+                            onChange={e => handleUpdateItemAlocacao(idx, 'equipamento', e.target.value)}
+                          >
+                            <option value="">Selecione no Estoque...</option>
+                            {estoqueItens.map((it) => (
+                              <option key={it.nome} value={it.nome}>{it.nome}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="col-span-2 space-y-1.5">
+                          <label className={labelClass}>Unidade</label>
+                          <input
+                            className={inputClass}
+                            value={item.unidade}
+                            onChange={e => handleUpdateItemAlocacao(idx, 'unidade', e.target.value)}
+                            placeholder="un"
+                          />
+                        </div>
+                        <div className="col-span-2 space-y-1.5">
+                          <label className={labelClass}>Quantidade</label>
+                          <input
+                            type="number"
+                            min="0"
+                            className={inputClass}
+                            value={item.quantidade}
+                            onChange={e => handleUpdateItemAlocacao(idx, 'quantidade', e.target.value)}
+                            placeholder="0"
+                          />
+                        </div>
+                        <div className="col-span-3 space-y-1.5">
+                          <label className={labelClass}>Observação</label>
+                          <input
+                            className={inputClass}
+                            value={item.observacao}
+                            onChange={e => handleUpdateItemAlocacao(idx, 'observacao', e.target.value)}
+                            placeholder="Observação"
+                          />
+                        </div>
+                        <div className="col-span-1 flex justify-center pb-1">
+                          <button
+                            onClick={() => handleRemoveItemAlocacao(idx)}
+                            className="p-2 hover:bg-red-500/20 rounded text-red-400"
+                            title="Remover"
+                          >
+                            <X size={16} />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}
