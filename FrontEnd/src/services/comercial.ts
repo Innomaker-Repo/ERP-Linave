@@ -32,12 +32,14 @@ type OrcamentoPayload = {
     margem: number;
     OH: number;
     impostos: number;
+    impostos_locacao?: number;
     qnt: number;
   };
   mao_de_obra: any[];
   materiais: any[];
   terceirizados: any[];
   atividades: any[];
+  itens_alocacao?: any[];
   observacoes?: string;
   finalizar?: boolean;
   versao?: string;
@@ -203,6 +205,7 @@ const mapTerceirizadoItem = (item: any) => ({
       margem: parseDecimal(orcamentoData.margem || 0),
       OH: parseDecimal(orcamentoData.oh || 0),
       impostos: parseDecimal(orcamentoData.impostos || 0),
+      impostos_locacao: parseDecimal(orcamentoData.impostosLocacao || 0),
       qnt: parseDecimal(orcamentoData.quantidadeItensProduzidos || 0) // permite decimais
     },
     mao_de_obra: Array.isArray(orcamentoData.maoDeObra)
@@ -216,6 +219,21 @@ const mapTerceirizadoItem = (item: any) => ({
       : [],
     atividades: Array.isArray(orcamentoData.atividades)
       ? orcamentoData.atividades.filter((act: any) => act.atividade && act.atividade.trim() !== '').map(mapAtividadeItem)
+      : [],
+    // Itens de locação precificados — replace-all na fonte (o Negócio). Enviar sempre
+    // (lista vazia em negócio de serviço puro não afeta nada).
+    itens_alocacao: Array.isArray(orcamentoData.itensAlocacao)
+      ? orcamentoData.itensAlocacao
+          .filter((it: any) => String(it.equipamento || '').trim() !== '')
+          .map((it: any) => ({
+            equipamento: String(it.equipamento || '').trim(),
+            estoque_ref: String(it.estoqueRef || it.equipamento || '').trim(),
+            unidade: String(it.unidade || 'un'),
+            quantidade: parseDecimal(it.quantidade || 0),
+            observacao: String(it.observacao || '').trim(),
+            valor_indenizacao: parseDecimal(it.valorIndenizacao || 0),
+            valor_locacao: parseDecimal(it.valorLocacao || 0),
+          }))
       : [],
     observacoes: String(orcamentoData.observacoes || '').trim()
   };

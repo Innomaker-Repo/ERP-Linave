@@ -6,6 +6,7 @@ import { isOsAprovada } from '../../../../services/ordensServico';
 import { criarMedicao, atualizarStatusMedicao } from '../../../../services/medicoesService';
 import { handleDownloadMedicaoPDF } from '../CRM/handleDownloadMedicaoPDF';
 import { genFinId, todayStr, FORMAS_PAGAMENTO } from '../Financeiro/finData';
+import { temServico, temLocacao } from '../../../utils/modalidade';
 
 const TIPOS_NFE = ['NFe Serviço', 'NFe Alocado', 'Nota de débito', 'Outro'];
 
@@ -104,6 +105,38 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
   };
   const addLinha = () => setForm((f: any) => ({ ...f, itens: [...f.itens, novaLinha()] }));
   const removerLinha = (id: string) => setForm((f: any) => ({ ...f, itens: f.itens.filter((l: any) => l.id !== id) }));
+
+  // Puxa os itens medíveis da OS selecionada conforme a modalidade: uma linha por
+  // serviço (preço do orçamento) e/ou por item de locação (valor de locação).
+  const preencherItensDaOS = () => {
+    if (!contexto?.obra) return toast.error('Selecione uma OS aprovada.');
+    const obra = contexto.obra;
+    const linhas: any[] = [];
+
+    if (temServico(obra.modalidade)) {
+      const orcs = Array.isArray(obra.orcamentos) ? obra.orcamentos : [];
+      const ultimo = orcs.length ? orcs[orcs.length - 1] : null;
+      const valores = ultimo?.valores || obra.orcamentoValores || null;
+      const precoServico = Number(valores?.precoFinal ?? 0) || 0;
+      if (precoServico > 0) {
+        linhas.push({ ...novaLinha(), item: String(linhas.length + 1), descricao: 'Serviços (conforme orçamento)', unidade: 'vb', quantidadeProduzida: '1', valorUnitario: String(precoServico), total: String(precoServico) });
+      }
+    }
+
+    if (temLocacao(obra.modalidade)) {
+      (Array.isArray(obra.itensAlocacao) ? obra.itensAlocacao : [])
+        .filter((it: any) => it.equipamento)
+        .forEach((it: any) => {
+          const q = Number(it.quantidade) || 0;
+          const unit = Number(it.valorLocacao) || 0;
+          linhas.push({ ...novaLinha(), item: String(linhas.length + 1), descricao: it.equipamento, unidade: it.unidade || '', quantidadeProduzida: String(q), valorUnitario: String(unit), total: String(q * unit) });
+        });
+    }
+
+    if (linhas.length === 0) return toast.error('Nada para puxar: cadastre o orçamento (serviço) e/ou itens de locação.');
+    setForm((f: any) => ({ ...f, itens: linhas }));
+    toast.success(`${linhas.length} item(ns) puxado(s) da OS.`);
+  };
 
   const handleSalvar = async () => {
     if (!osSelecionada || !contexto) return toast.error('Selecione uma OS aprovada.');
@@ -338,8 +371,11 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
         {contexto && (
           <div className="bg-[#0b1220] rounded-xl border border-white/10 p-5 space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-emerald-300 text-sm font-black uppercase">Tabela de medição de serviços</h3>
-              <button onClick={addLinha} className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-xs font-black uppercase">+ Linha</button>
+              <h3 className="text-emerald-300 text-sm font-black uppercase">Tabela de medição (serviços e locação)</h3>
+              <div className="flex gap-2">
+                <button onClick={preencherItensDaOS} className="px-3 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-200 text-xs font-black uppercase">Puxar itens da OS</button>
+                <button onClick={addLinha} className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-xs font-black uppercase">+ Linha</button>
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[920px] text-xs border-collapse">

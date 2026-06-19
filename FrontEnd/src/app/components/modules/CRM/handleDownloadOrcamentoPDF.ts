@@ -147,6 +147,16 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
   const totalItens = maoDeObraData.length + materiaisData.length + terceirizadosData.length;
   const precoPorItem = totalItens > 0 ? precoFinal / totalItens : 0;
 
+  // Locação
+  const itensAlocacaoData = (dados.itensAlocacao || []).filter((item: any) => item.equipamento);
+  const subtotalLocacaoBruto = safeNumber(valores.subtotalLocacaoBruto ?? itensAlocacaoData.reduce((sum: number, item: any) => sum + parseDecimal(item.valorTotal || '0'), 0));
+  const impostosLocacaoPct = safeNumber(valores.impostosLocacao ?? dados.impostosLocacao ?? 0);
+  const valorImpostosLocacao = safeNumber(valores.valorImpostosLocacao ?? (subtotalLocacaoBruto * impostosLocacaoPct) / 100);
+  const subtotalLocacao = safeNumber(valores.subtotalLocacao ?? (subtotalLocacaoBruto + valorImpostosLocacao));
+  const totalGeral = safeNumber(valores.totalGeral ?? (precoFinal + subtotalLocacao));
+  const temServicoPdf = !(itensAlocacaoData.length > 0 && maoDeObraData.length === 0 && materiaisData.length === 0 && terceirizadosData.length === 0);
+
+  if (temServicoPdf) {
   x = margin;
   doc.setFont('Arial', 'bold');
   doc.setFontSize(9);
@@ -222,6 +232,7 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
   doc.setTextColor(0, 0, 0);
   doc.rect(x, y, laborColWidths[6], cellHeight);
   y += cellHeight + 2;
+  } // fim Seção A (serviço)
 
   if (materiaisData && materiaisData.length > 0) {
     const headersMateriais = ['Item', 'Descrição', 'Un', 'Qtd', 'Peso/Fat', 'Custo Un', 'Total'];
@@ -383,6 +394,89 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
     y += cellHeight + 2;
   }
 
+  // ===== Seção D - LOCAÇÃO =====
+  if (itensAlocacaoData && itensAlocacaoData.length > 0) {
+    const headersLocacao = ['Item', 'Equipamento', 'Un', 'Qtd', 'Vl Indeniz', 'Vl Locação', 'Total'];
+
+    x = margin;
+    doc.setFont('Arial', 'bold');
+    doc.setFontSize(9);
+    doc.text('D', x + 2, y + 3);
+    doc.rect(x, y, baseColWidth, cellHeight);
+    x += baseColWidth;
+    doc.setTextColor(255, 0, 0);
+    doc.text('LOCAÇÃO DE EQUIPAMENTOS', x + 2, y + 3);
+    doc.rect(x, y, baseColWidth * 9, cellHeight);
+    doc.setTextColor(0, 0, 0);
+    y += cellHeight;
+
+    x = margin;
+    headersLocacao.forEach((h, index) => {
+      const colWidth = materialsColWidths[index];
+      doc.setFont('Arial', 'bold');
+      doc.setFontSize(7);
+      doc.text(h, x + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
+      doc.rect(x, y, colWidth, cellHeight);
+      x += colWidth;
+    });
+    y += cellHeight;
+
+    itensAlocacaoData.forEach((item: any, idx: number) => {
+      x = margin;
+      doc.setFont('Arial', 'normal');
+      doc.setFontSize(7);
+
+      doc.text(String(idx + 1), x + 0.5, y + 2.5);
+      doc.rect(x, y, materialsColWidths[0], cellHeight);
+      x += materialsColWidths[0];
+
+      drawCellWithAutoWrap(x, y, materialsColWidths[1], cellHeight, item.equipamento || '');
+      x += materialsColWidths[1];
+
+      doc.text(item.unidade || '', x + 0.5, y + 2.5);
+      doc.rect(x, y, materialsColWidths[2], cellHeight);
+      x += materialsColWidths[2];
+
+      doc.text(String(item.quantidade || ''), x + 0.5, y + 2.5);
+      doc.rect(x, y, materialsColWidths[3], cellHeight);
+      x += materialsColWidths[3];
+
+      doc.text(String(item.valorIndenizacao ? parseFloat(item.valorIndenizacao).toFixed(2) : ''), x + 0.5, y + 2.5);
+      doc.rect(x, y, materialsColWidths[4], cellHeight);
+      x += materialsColWidths[4];
+
+      doc.text(String(item.valorLocacao ? parseFloat(item.valorLocacao).toFixed(2) : ''), x + 0.5, y + 2.5);
+      doc.rect(x, y, materialsColWidths[5], cellHeight);
+      x += materialsColWidths[5];
+
+      doc.setFont('Arial', 'bold');
+      doc.setTextColor(255, 0, 0);
+      doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
+      doc.setTextColor(0, 0, 0);
+      doc.setFont('Arial', 'normal');
+      doc.rect(x, y, materialsColWidths[6], cellHeight);
+      x += materialsColWidths[6];
+
+      y += cellHeight;
+    });
+
+    x = margin;
+    doc.setFont('Arial', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(255, 0, 0);
+    doc.text('Sub-total Locação', x + 0.5, y + 2.5);
+    doc.setTextColor(0, 0, 0);
+    doc.rect(x, y, sumWidths(materialsColWidths.slice(0, -1)), cellHeight);
+    x += sumWidths(materialsColWidths.slice(0, -1));
+    doc.setTextColor(255, 0, 0);
+    doc.text(subtotalLocacaoBruto.toFixed(2), x + 0.5, y + 2.5);
+    doc.setTextColor(0, 0, 0);
+    doc.rect(x, y, materialsColWidths[6], cellHeight);
+    y += cellHeight + 2;
+  }
+
+  // ===== Seção E - Cálculos Finais (serviço; oculto em locação pura) =====
+  if (temServicoPdf) {
   x = margin;
   doc.setFont('Arial', 'bold');
   doc.setFontSize(9);
@@ -427,6 +521,7 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
     }
     y += cellHeight;
   });
+  } // fim Seção E (serviço)
 
   x = margin;
   doc.setFont('Arial', 'bold');
@@ -435,6 +530,7 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
   doc.rect(x, y, baseColWidth * 10, cellHeight);
   y += cellHeight;
 
+  if (temServicoPdf) {
   x = margin;
   doc.setFont('Arial', 'normal');
   doc.setFontSize(8);
@@ -460,12 +556,42 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
   x = margin;
   doc.setFont('Arial', 'normal');
   doc.setFontSize(8);
+  doc.text('Valor Serviços:', x + 0.5, y + 2.5);
+  doc.rect(x, y, baseColWidth * 5, cellHeight);
+  x += baseColWidth * 5;
+  doc.setFont('Arial', 'bold');
+  doc.text(`R$ ${precoFinal.toFixed(2)}`, x + 0.5, y + 2.5);
+  doc.rect(x, y, baseColWidth * 5, cellHeight);
+  y += cellHeight;
+  }
+
+  if (subtotalLocacaoBruto > 0) {
+  const drawResumoRow = (label: string, valor: string) => {
+    x = margin;
+    doc.setFont('Arial', 'normal');
+    doc.setFontSize(8);
+    doc.text(label, x + 0.5, y + 2.5);
+    doc.rect(x, y, baseColWidth * 5, cellHeight);
+    x += baseColWidth * 5;
+    doc.setFont('Arial', 'bold');
+    doc.text(valor, x + 0.5, y + 2.5);
+    doc.rect(x, y, baseColWidth * 5, cellHeight);
+    y += cellHeight;
+  };
+  drawResumoRow('Subtotal Locação (s/ imposto):', `R$ ${subtotalLocacaoBruto.toFixed(2)}`);
+  drawResumoRow(`Impostos Locação (${impostosLocacaoPct}%):`, `R$ ${valorImpostosLocacao.toFixed(2)}`);
+  drawResumoRow('Subtotal Locação (c/ imposto):', `R$ ${subtotalLocacao.toFixed(2)}`);
+  }
+
+  x = margin;
+  doc.setFont('Arial', 'normal');
+  doc.setFontSize(8);
   doc.text('Valor Total:', x + 0.5, y + 2.5);
   doc.rect(x, y, baseColWidth * 5, cellHeight);
   x += baseColWidth * 5;
   doc.setFont('Arial', 'bold');
   doc.setTextColor(255, 0, 0);
-  doc.text(`R$ ${precoFinal.toFixed(2)}`, x + 0.5, y + 2.5);
+  doc.text(`R$ ${totalGeral.toFixed(2)}`, x + 0.5, y + 2.5);
   doc.setTextColor(0, 0, 0);
   doc.rect(x, y, baseColWidth * 5, cellHeight);
 

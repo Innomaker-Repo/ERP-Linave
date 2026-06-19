@@ -45,6 +45,20 @@ export const mapNegocioToObra = (n: any, clientesMapa: Record<string, string> = 
     tipo: n?.tipo_servico || n?.servicos?.[0]?.tipo_servico || '',
     responsavelTecnico: n?.solicitante || '',
     servicos: Array.isArray(n?.servicos) ? n.servicos : [],
+    modalidade: n?.modalidade || 'servico',
+    itensAlocacao: Array.isArray(n?.itens_alocacao)
+      ? n.itens_alocacao.map((it: any) => ({
+          id: String(it?.id ?? ''),
+          equipamento: it?.equipamento || '',
+          estoqueRef: it?.estoque_ref || '',
+          unidade: it?.unidade || 'un',
+          quantidade: Number(it?.quantidade) || 0,
+          observacao: it?.observacao || '',
+          valorIndenizacao: Number(it?.valor_indenizacao) || 0,
+          valorLocacao: Number(it?.valor_locacao) || 0,
+          valorTotal: Number(it?.valor_total) || 0,
+        }))
+      : [],
     negocioBackendId: n?.id,
     orcamentos: Array.isArray(n?.orcamentos) ? n.orcamentos : [],
     propostas: Array.isArray(n?.propostas) ? n.propostas : [],

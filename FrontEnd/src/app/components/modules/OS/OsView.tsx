@@ -437,10 +437,16 @@ export function OsView({ searchQuery }: OSViewProps) {
       .map((escopo: any) => `${escopo.titulo}${escopo.descricaoServico ? ` - ${escopo.descricaoServico}` : ''}`)
       .join('\n');
 
+    const itensLocacao = (Array.isArray(obra?.itensAlocacao) ? obra.itensAlocacao : [])
+      .filter((it: any) => it.equipamento)
+      .map((it: any) => `• ${it.equipamento} — ${it.quantidade ?? ''} ${it.unidade || ''}`.trim())
+      .join('\n');
+
     return [
       'OS Consolidada gerada automaticamente a partir dos dados do negócio, orçamento e proposta.',
       servicosNegocio ? `\nServiços do negócio:\n${servicosNegocio}` : '',
       servicosOrcamento ? `\nItens do orçamento:\n${servicosOrcamento}` : '',
+      itensLocacao ? `\nItens em locação:\n${itensLocacao}` : '',
       resumoEscopo ? `\nEscopo básico da proposta:\n${resumoEscopo}` : ''
     ].join('\n').trim();
   };

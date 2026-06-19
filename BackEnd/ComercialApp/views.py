@@ -4,7 +4,7 @@ from rest_framework.decorators import api_view
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.db import transaction
 from .models import (
-    Cliente, Negocio, Servico,
+    Cliente, Negocio, Servico, ItemAlocacao,
     Levantamento, MDO, Material, Servico_terceirizado, Orcamento, Ativ_prevista, Resumo_orcamento,
     OrdemServico, Escopo, PropostaComercial, Fornecedor, Medicao, Documento
 )
@@ -158,6 +158,7 @@ def criar_orcamento(request):
             'margem': resumo_data.get('margem', 0),
             'OH': resumo_data.get('OH', resumo_data.get('oh', 0)),
             'impostos': resumo_data.get('impostos', 0),
+            'impostos_locacao': resumo_data.get('impostos_locacao', resumo_data.get('impostosLocacao', 0)),
             'qnt': resumo_data.get('qnt', resumo_data.get('quantidadeItensProduzidos', 1)),
         }
         resumo_instance = getattr(orcamento_instance, 'resumo', None)
@@ -188,6 +189,39 @@ def criar_orcamento(request):
             if 'duração' in safe and 'duracao' not in safe:
                 safe['duracao'] = safe.pop('duração')
             Ativ_prevista.objects.create(orcamento=orcamento_instance, **safe)
+
+        # Itens de locação: replace-all na fonte (o Negócio), agora com precificação.
+        # Só age quando a chave é enviada (orçamento de serviço puro não mexe na alocação).
+        itens_alocacao = request.data.get('itens_alocacao', None)
+        if itens_alocacao is not None and negocio_id:
+            def _num(v):
+                try:
+                    if v in (None, ''):
+                        return 0
+                    return float(str(v).replace(',', '.'))
+                except (TypeError, ValueError):
+                    return 0
+            try:
+                negocio_aloc = Negocio.objects.get(id=negocio_id)
+                negocio_aloc.itens_alocacao.all().delete()
+                for item in (itens_alocacao if isinstance(itens_alocacao, list) else []):
+                    if not isinstance(item, dict):
+                        continue
+                    equipamento = str(item.get('equipamento') or '').strip()
+                    if not equipamento:
+                        continue
+                    ItemAlocacao.objects.create(
+                        negocio=negocio_aloc,
+                        equipamento=equipamento[:200],
+                        estoque_ref=str(item.get('estoque_ref') or item.get('estoqueRef') or '')[:120],
+                        unidade=str(item.get('unidade') or 'un')[:20],
+                        quantidade=_num(item.get('quantidade')),
+                        observacao=str(item.get('observacao') or ''),
+                        valor_indenizacao=_num(item.get('valor_indenizacao') if item.get('valor_indenizacao') is not None else item.get('valorIndenizacao')),
+                        valor_locacao=_num(item.get('valor_locacao') if item.get('valor_locacao') is not None else item.get('valorLocacao')),
+                    )
+            except Negocio.DoesNotExist:
+                pass
 
         finalizar = request.data.get('finalizar', False)
         if isinstance(finalizar, str):
@@ -335,55 +369,6 @@ def configuracoes_data(request):
     inst.save()
 
     return Response({'config': inst.config, 'listas': inst.listas}, status=status.HTTP_200_OK)
-
-
-@api_view(['GET', 'POST', 'PUT'])
-def alocacoes_data(request):
-    """Estado das Alocações (funcionário ↔ obra/OS).
-
-    GET  -> lista de alocações (registro completo via `extra`).
-    POST/PUT -> recebe a lista completa e substitui (replace-all).
-    """
-    from .models import Alocacao
-    from django.db import transaction
-
-    if request.method == 'GET':
-        return Response([
-            (a.extra if isinstance(a.extra, dict) else {}) for a in Alocacao.objects.all()
-        ], status=status.HTTP_200_OK)
-
-    payload = request.data
-    if isinstance(payload, dict):
-        payload = payload.get('alocacoes', payload.get('data', []))
-    if not isinstance(payload, list):
-        return Response({'error': 'Esperado um array de alocações.'}, status=status.HTTP_400_BAD_REQUEST)
-
-    with transaction.atomic():
-        Alocacao.objects.all().delete()
-        seen = set()
-        instances = []
-        for rec in payload:
-            if not isinstance(rec, dict):
-                continue
-            rid = str(rec.get('id') or '').strip()
-            if not rid or rid in seen:
-                continue
-            seen.add(rid)
-            instances.append(Alocacao(
-                record_id=rid,
-                funcionario_id=str(rec.get('funcionarioId') or '')[:120],
-                obra_id=(str(rec.get('obraId'))[:120] if rec.get('obraId') else None),
-                os_id=(str(rec.get('osId'))[:120] if rec.get('osId') else None),
-                data_inicio=str(rec.get('dataInicio') or '')[:20],
-                data_fim=(str(rec.get('dataFim'))[:20] if rec.get('dataFim') else None),
-                status=str(rec.get('status') or 'Ativa')[:30],
-                extra=rec,
-            ))
-        Alocacao.objects.bulk_create(instances)
-
-    return Response([
-        (a.extra if isinstance(a.extra, dict) else {}) for a in Alocacao.objects.all()
-    ], status=status.HTTP_200_OK)
 
 
 @api_view(['GET', 'POST', 'PUT'])

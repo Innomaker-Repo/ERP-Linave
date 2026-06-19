@@ -7,7 +7,7 @@ from .views import (
     criar_orcamento,
     ordens_servico_por_cliente, ordens_servico_por_negocio, atualizar_status_os,
     atualizar_status_medicao,
-    financeiro_data, compras_data, almoxarifado_data, alocacoes_data, configuracoes_data
+    financeiro_data, compras_data, almoxarifado_data, configuracoes_data
 )
 
 # Configuração do Router para ViewSets (Rotas automáticas)
@@ -29,9 +29,6 @@ urlpatterns = [
 
     # Estado do estoque/almoxarifado (objeto agregado; GET lê, POST substitui)
     path('almoxarifado/', almoxarifado_data, name='almoxarifado-data'),
-
-    # Estado das alocações (funcionário ↔ obra/OS; GET lê, POST substitui)
-    path('alocacoes/', alocacoes_data, name='alocacoes-data'),
 
     # Configurações da empresa + listas auxiliares (GET lê, POST substitui)
     path('configuracoes/', configuracoes_data, name='configuracoes-data'),

@@ -8,6 +8,7 @@ import Docxtemplater from 'docxtemplater';
 import { saveAs } from 'file-saver';
 import { getNegocios } from '../../../../services/comercial';
 import { getClientes, criarProposta, atualizarProposta, atualizarNegocio } from '../../../../services/comercialService';
+import { temServico, temLocacao } from '../../../utils/modalidade';
 
 interface EscopoLinha {
   id: string;
@@ -102,6 +103,20 @@ const mapNegocioToObra = (n: any): any => ({
     localExecucao: s.local_execucao,
     descricao: s.descricao,
   })),
+  modalidade: n.modalidade || 'servico',
+  itensAlocacao: Array.isArray(n.itens_alocacao)
+    ? n.itens_alocacao.map((it: any) => ({
+        id: String(it?.id ?? ''),
+        equipamento: it?.equipamento || '',
+        estoqueRef: it?.estoque_ref || '',
+        unidade: it?.unidade || 'un',
+        quantidade: Number(it?.quantidade) || 0,
+        observacao: it?.observacao || '',
+        valorIndenizacao: Number(it?.valor_indenizacao) || 0,
+        valorLocacao: Number(it?.valor_locacao) || 0,
+        valorTotal: Number(it?.valor_total) || 0,
+      }))
+    : [],
   propostas: (n.propostas || []).map((p: any) => ({
     id: p.id,
     versao: p.versao || '',
@@ -286,25 +301,32 @@ export function PropostaView() {
     valores: colunas.reduce((acc, coluna) => ({ ...acc, [coluna]: '' }), {} as Record<string, string>)
   });
 
+  // Bloco de escopo de Locação: tabela dos itens alocados (Equipamento/Unidade/Quantidade).
+  const criarEscopoLocacao = (obra: any): EscopoServico | null => {
+    const itens = Array.isArray(obra?.itensAlocacao) ? obra.itensAlocacao.filter((it: any) => it.equipamento) : [];
+    if (itens.length === 0) return null;
+    const colunas = ['Equipamento', 'Unidade', 'Quantidade'];
+    return {
+      id: `escopo-locacao-${obra?.id || 'geral'}`,
+      servicoId: '',
+      titulo: 'Locação de Equipamentos',
+      descricaoServico: 'Itens disponibilizados em regime de locação:',
+      textosDepois: [],
+      colunas,
+      linhas: itens.map((it: any) => ({
+        id: `linha-loc-${it.id || Math.random().toString(36).slice(2, 7)}`,
+        valores: { Equipamento: it.equipamento || '', Unidade: it.unidade || '', Quantidade: String(it.quantidade ?? '') }
+      }))
+    };
+  };
+
   const criarEscopoBasicoServicos = (obra: any): EscopoServico[] => {
-    const servicos = Array.isArray(obra?.servicos) ? obra.servicos : [];
+    const servicos = (temServico(obra?.modalidade) && Array.isArray(obra?.servicos)) ? obra.servicos : [];
+    const blocos: EscopoServico[] = [];
 
-    if (servicos.length === 0) {
+    servicos.forEach((servico: any, idx: number) => {
       const colunasPadrao = ['Descrição'];
-      return [{
-        id: `escopo-${obra?.id || 'geral'}-1`,
-        servicoId: '',
-        titulo: 'Serviço Geral',
-        descricaoServico: '',
-        textosDepois: [],
-        colunas: colunasPadrao,
-        linhas: [criarLinhaEscopo(colunasPadrao)]
-      }];
-    }
-
-    return servicos.map((servico: any, idx: number) => {
-      const colunasPadrao = ['Descrição'];
-      return {
+      blocos.push({
         id: `escopo-${obra.id}-${servico.id || idx + 1}`,
         servicoId: String(servico.id || idx + 1),
         titulo: `${idx + 1}. ${servico.tipo || 'Serviço'}${servico.localExecucao ? ` - ${servico.localExecucao}` : ''}`,
@@ -312,8 +334,30 @@ export function PropostaView() {
         textosDepois: [],
         colunas: colunasPadrao,
         linhas: [criarLinhaEscopo(colunasPadrao)]
-      };
+      });
     });
+
+    // Bloco de escopo de Locação (quando a modalidade contempla locação)
+    if (temLocacao(obra?.modalidade)) {
+      const locBloco = criarEscopoLocacao(obra);
+      if (locBloco) blocos.push(locBloco);
+    }
+
+    // Fallback: nenhum bloco (ex.: serviço sem serviços cadastrados) → bloco genérico
+    if (blocos.length === 0) {
+      const colunasPadrao = ['Descrição'];
+      blocos.push({
+        id: `escopo-${obra?.id || 'geral'}-1`,
+        servicoId: '',
+        titulo: 'Serviço Geral',
+        descricaoServico: '',
+        textosDepois: [],
+        colunas: colunasPadrao,
+        linhas: [criarLinhaEscopo(colunasPadrao)]
+      });
+    }
+
+    return blocos;
   };
 
   const gerarEscopoBasicoConsolidado = (escopos: EscopoServico[]): string => {
