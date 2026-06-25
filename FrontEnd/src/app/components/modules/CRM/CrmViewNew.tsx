@@ -31,7 +31,6 @@ import {
 interface Servico {
   id: string;
   tipo: string;
-  categoria: string;
   embarcacao: string;
   localExecucao: string;
   porto: string;
@@ -123,7 +122,7 @@ const COLUNAS: { id: CategoriaObra; titulo: string; icon: any; cor: string }[] =
 
 export const getPrefixoEmpresa = (empresaPrestadora?: string) => {
   if (!empresaPrestadora) return 'LN';
-  return empresaPrestadora.toLowerCase().includes('servinave') ? 'SN' : 'LN';
+  return empresaPrestadora.toLowerCase().includes('servinave') ? 'VTS' : 'LN';
 };
 
 export const indexToVersaoAlfabetica = (index: number) => {
@@ -227,7 +226,6 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
 const initialServico: Servico = {
     id: '',
     tipo: '',
-    categoria: '',
     embarcacao: '',
     localExecucao: '',
     porto: '',
@@ -374,7 +372,7 @@ const initialServico: Servico = {
           const obrasContextoAtual: any[] = Array.isArray(obras) ? obras : [];
 
           const formatados = dados.map((n: any) => {
-            const prefixo = String(n.empresa_prestadora || '').toLowerCase().includes('servinave') ? 'SN' : 'LN';
+            const prefixo = String(n.empresa_prestadora || '').toLowerCase().includes('servinave') ? 'VTS' : 'LN';
             const idFormatado = `${prefixo}-${String(n.id).padStart(4, '0')}/${String(new Date().getFullYear()).slice(-2)}`;
             const idClienteStr = String(n.cliente || '');
             // Preserva campos frontend-only (dadosMediacao, finalizadoComMediacao, documentosNegocio, etc.)
@@ -450,7 +448,7 @@ const initialServico: Servico = {
       || parseInt(String(obra.id || '').replace(/\D/g, ''), 10)
       || 0;
     const emp = String(obra.empresaPrestadora || '').toLowerCase();
-    const prefixo = emp.includes('servinave') ? 'SN'
+    const prefixo = emp.includes('servinave') ? 'VTS'
       : emp.includes('linave') ? 'LN'
       : getPrefixoEmpresa(obra.empresaPrestadora || 'LN');
     const idPadded = String(numericId).padStart(4, '0');
@@ -1396,7 +1394,6 @@ const initialServico: Servico = {
       servicos: servicosPayload.map(s => ({
         tipo_servico: s.tipo, //  Alterado aqui também por segurança
         tipo: s.tipo,         // Mantido caso o seu backend use ambos
-        categoria: s.categoria || '',
         embarcacao: s.embarcacao || '',
         local_execucao: s.localExecucao || '',
         porto: s.porto || '',
@@ -2596,26 +2593,15 @@ const obrasOrdenadas = useMemo(() => {
                         )}
                       </div>
 
-<div className="grid grid-cols-3 gap-3">
+<div className="grid grid-cols-2 gap-3">
                         <div className="space-y-1.5">
                           <label className={labelClass}>Tipo *</label>
-                          <input 
+                          <input
                             type="text"
                             className={inputClass}
                             value={servico.tipo}
                             onChange={e => handleUpdateServico(idx, 'tipo', e.target.value)}
                             placeholder="Ex: Pintura"
-                          />
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <label className={labelClass}>Categoria</label>
-                          <input 
-                            type="text"
-                            className={inputClass}
-                            value={servico.categoria}
-                            onChange={e => handleUpdateServico(idx, 'categoria', e.target.value)}
-                            placeholder="Ex: Acabamento"
                           />
                         </div>
 
@@ -2906,7 +2892,6 @@ const obrasOrdenadas = useMemo(() => {
                         <div className="p-4 grid grid-cols-2 gap-x-6 gap-y-3">
                           {[
                             ['Tipo',           servico.tipo          || servico.tipo_servico],
-                            ['Categoria',      servico.categoria],
                             ['Local de Execução', servico.localExecucao || servico.local_execucao],
                             ['Embarcação',     servico.embarcacao],
                             ['Porto',          servico.porto],
@@ -4221,7 +4206,7 @@ const obrasOrdenadas = useMemo(() => {
                           <div className="space-y-2">
                             {servicosDoNegocio.map((servico: any, idx: number) => (
                               <div key={idx} className="bg-[#111b2f] p-3 rounded text-xs border border-white/5">
-                                <p className="text-white font-bold mb-2">{servico.tipo} {servico.categoria && `- ${servico.categoria}`}</p>
+                                <p className="text-white font-bold mb-2">{servico.tipo}</p>
                                 <p className="text-white/70 mb-2 whitespace-pre-wrap">{servico.descricao}</p>
                                 <div className="grid grid-cols-3 gap-2 text-white/50 text-xs">
                                   {servico.embarcacao && <span>{servico.embarcacao}</span>}

@@ -6,7 +6,6 @@ import { AprovacoesView } from '../../components/modules/Financeiro/views/Aprova
 import { ContasPagarView } from '../../components/modules/Financeiro/views/ContasPagarView';
 import { NfeView } from '../../components/modules/Financeiro/views/NfeView';
 import { ContasReceberView } from '../../components/modules/Financeiro/views/ContasReceberView';
-import { LocacaoView } from '../../components/modules/Financeiro/views/LocacaoView';
 import { PrevisaoView } from '../../components/modules/Financeiro/views/PrevisaoView';
 import { BancosView } from '../../components/modules/Financeiro/views/BancosView';
 import { DepartamentosView } from '../../components/modules/Financeiro/views/DepartamentosView';
@@ -25,7 +24,6 @@ const VIEWS: Record<string, React.ComponentType> = {
   pagar: ContasPagarView,
   nfe: NfeView,
   receber: ContasReceberView,
-  locacao: LocacaoView,
   previsao: PrevisaoView,
   bancos: BancosView,
   departamentos: DepartamentosView,

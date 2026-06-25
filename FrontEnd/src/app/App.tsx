@@ -41,7 +41,6 @@ function getAbaForSection(section: string): { aba: string; item: string } {
     'finPagar': { aba: 'financeiro', item: 'pagar' },
     'finNfe': { aba: 'financeiro', item: 'nfe' },
     'finReceber': { aba: 'financeiro', item: 'receber' },
-    'finLocacao': { aba: 'financeiro', item: 'locacao' },
     'finPrevisao': { aba: 'financeiro', item: 'previsao' },
     'finBancos': { aba: 'financeiro', item: 'bancos' },
     'finDepartamentos': { aba: 'financeiro', item: 'departamentos' },
@@ -74,6 +73,7 @@ export default function App() {
   const { userSession, setUserSession, config, loading } = useErp();
   const [activeSection, setActiveSection] = useState('dashboard');
   const [searchQuery, setSearchQuery] = useState('');
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   //  Escuta o evento customizado para mudar a tela a partir de qualquer componente
   useEffect(() => {
@@ -115,9 +115,11 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-[#0b1220] overflow-hidden text-white font-sans">
-      <Sidebar activeSection={activeSection} setActiveSection={setActiveSection} />
+      {sidebarOpen && (
+        <Sidebar activeSection={activeSection} setActiveSection={setActiveSection} onClose={() => setSidebarOpen(false)} />
+      )}
       <main className="flex-1 overflow-y-auto bg-[#0b1220] flex flex-col">
-        <Header activeSection={activeSection} searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
+        <Header activeSection={activeSection} searchQuery={searchQuery} setSearchQuery={setSearchQuery} onToggleSidebar={() => setSidebarOpen(o => !o)} />
         
         <section className="flex-1 animate-in fade-in slide-in-from-bottom-2 duration-500 relative p-6">
           {(() => {

@@ -127,12 +127,19 @@ const mapNegocioToObra = (n: any): any => ({
     preco: p.preco !== null && p.preco !== undefined ? String(p.preco) : '',
     prazo: p.prazo || '',
     referencias: p.referencias || '',
+    referencia: p.referencias || '',                                  // alias (form/PDF leem singular)
     saudacao: p.saudacao || '',
     assunto: p.assunto || '',
     textoAbertura: p.textoAbertura || '',
     responsabilidadeContratada: p.responsabilidadeContratada || '',
+    responsabilidadeContratante: p.responsabilidadeContratante || '', // item C (PDF)
+    escopoC: p.responsabilidadeContratante || '',                     // alias p/ o form
+    condicoesGerais: p.condicoesGerais || '',                         // item E (PDF)
+    condicoesPagamento: p.condicoesPagamento || '',                   // item G (PDF)
+    encerramento: p.encerramento || '',
     escopoA: p.escopoA || '',
     escopoBasicoServicos: p.escopoBasicoServicos || [],
+    precoItens: p.precoItens || [],                                   // tabela D (PDF)
   })),
   orcamentoRealizado: n.orcamento_realizado,
   orcamentoValores: n.orcamentos?.[0]?.valores || null,
@@ -577,6 +584,8 @@ export function PropostaView() {
       atribuidoA: obra.responsavelComercial || '',
       cargoContato: obra.tipo || '',
       numeroProposta: gerarIdProposta(componentesId?.prefixo || 'LN', numeroSequencial, proximaVersaoLetra),
+      // Abertura já com o ID do negócio atual logo após "Proposta Técnica-Comercial".
+      textoAbertura: `Vimos através desta apresentar nossa Proposta Técnica-Comercial ${obra.id || ''}, para serviços, conforme escopo e delineamento realizado a bordo, conforme solicitado para vossa avaliação e aprovação.\n\n\nEstamos à disposição para quaisquer esclarecimentos que se façam necessários.\n\n\nAtenciosamente,\n\n\nDiretoria Comercial`,
       escopoBasicoServicos: criarEscopoBasicoServicos(obra)
     };
 
@@ -597,12 +606,15 @@ export function PropostaView() {
         }
       }
 
-      // Linhas de locação: uma por item alocado (preço unitário = valor de locação)
+      // Linhas de locação: uma por item alocado. O preço unitário já vem COM o imposto
+      // de locação do orçamento (calculado à parte), pra a proposta bater com o totalGeral.
       if (incluiLocacao && Array.isArray(obra.itensAlocacao)) {
+        const impLocPct = Number(orc?.impostosLocacao ?? 0) || 0;
+        const fatorImposto = 1 + impLocPct / 100;
         obra.itensAlocacao.filter((it: any) => it.equipamento).forEach((it: any, i: number) => {
           const q = Number(it.quantidade) || 0;
-          const unit = Number(it.valorLocacao) || 0;
-          precoItens.push({ id: `preco-loc-${it.id || i}`, nome: it.equipamento, quantidade: q, precoUnitario: unit, total: Number(it.valorTotal) || q * unit });
+          const unit = (Number(it.valorLocacao) || 0) * fatorImposto; // valor de locação + imposto
+          precoItens.push({ id: `preco-loc-${it.id || i}`, nome: it.equipamento, quantidade: q, precoUnitario: unit, total: q * unit });
         });
       }
 
@@ -640,10 +652,6 @@ export function PropostaView() {
     const numeroSequencial = componentesId?.numero || String(selectedObra.backendId).padStart(4, '0');
     const numeroProposta = gerarIdProposta(componentesId?.prefixo || 'LN', numeroSequencial, proximaVersaoLetra);
 
-    const escopoAConsolidado = propostaForm.escopoBasicoServicos.length > 0
-      ? gerarEscopoBasicoConsolidado(propostaForm.escopoBasicoServicos)
-      : propostaForm.escopoA;
-
     // As chaves devem bater com os nomes dos campos do PropostaComercialSerializer (camelCase)
     const payload = {
       cliente: selectedObra.clienteBackendId,
@@ -653,7 +661,8 @@ export function PropostaView() {
       referencias: propostaForm.referencia,
       saudacao: propostaForm.saudacao,
       assunto: propostaForm.assunto,
-      textoAbertura: escopoAConsolidado || propostaForm.textoAbertura,
+      // Abertura REAL (não mais o escopo achatado) — o escopo vai estruturado abaixo.
+      textoAbertura: propostaForm.textoAbertura,
       responsabilidadeContratada: propostaForm.responsabilidadeContratada,
       responsabilidadeContratante: propostaForm.escopoC,
       preco: parsePrecoParaDecimal(propostaForm.preco),
@@ -661,6 +670,9 @@ export function PropostaView() {
       condicoesPagamento: propostaForm.condicoesPagamento,
       prazo: propostaForm.prazo,
       encerramento: propostaForm.encerramento,
+      // Estrutura rica persistida FIELMENTE: escopo A (tabelas) + tabela D de preço.
+      escopoBasicoServicos: propostaForm.escopoBasicoServicos || [],
+      precoItens: propostaForm.precoItens || [],
     };
 
     try {
@@ -690,6 +702,17 @@ export function PropostaView() {
     } catch {
       alert('Erro ao salvar rascunho.');
     }
+  };
+
+  // Baixa o PDF usando os dados ATUAIS do formulário (sem precisar enviar/salvar).
+  const handleBaixarPropostaPreview = () => {
+    if (!selectedObra) return alert('Selecione uma obra primeiro.');
+    // O gerador do PDF lê `responsabilidadeContratante` (item C); no form esse campo é `escopoC`.
+    const propostaParaPdf = {
+      ...propostaForm,
+      responsabilidadeContratante: propostaForm.escopoC,
+    };
+    handleDownloadPropostaPDFWithLogo(propostaParaPdf, selectedObra);
   };
 
   // Gera DOCX a partir de template .docx (deve existir em /public/templates/LINAVE.docx e SERVINAVE.docx)
@@ -1628,7 +1651,14 @@ export function PropostaView() {
         >
           <ArrowLeft size={18} /> Voltar
         </button>
-        <button 
+        <button
+          onClick={handleBaixarPropostaPreview}
+          className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-lg font-black uppercase text-sm tracking-widest transition-all flex items-center justify-center gap-2"
+          title="Baixa o PDF com os dados atuais do formulário (sem precisar enviar)"
+        >
+          <Download size={18} /> Baixar PDF
+        </button>
+        <button
           onClick={handleSaveProposta}
           className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-black uppercase text-sm tracking-widest transition-all flex items-center justify-center gap-2"
         >

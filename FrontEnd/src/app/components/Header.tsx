@@ -1,19 +1,30 @@
 import React from 'react';
 import { useErp } from '../context/ErpContext';
-import { Search, UserCircle, LogOut } from 'lucide-react';
+import { Search, UserCircle, LogOut, PanelLeft } from 'lucide-react';
 
 interface HeaderProps {
   activeSection: string;
   searchQuery: string;
   setSearchQuery: (query: string) => void;
+  onToggleSidebar?: () => void;
 }
 
-export function Header({ activeSection, searchQuery, setSearchQuery }: HeaderProps) {
+export function Header({ activeSection, searchQuery, setSearchQuery, onToggleSidebar }: HeaderProps) {
   const { userSession, empresa, logout } = useErp();
 
   return (
     <header className="h-20 border-b border-white/5 bg-[#0b1220] flex items-center justify-between px-8">
-      <div className="flex items-center gap-8 flex-1">
+      <div className="flex items-center gap-6 flex-1">
+        {onToggleSidebar && (
+          <button
+            onClick={onToggleSidebar}
+            className="p-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-white/70 hover:text-white transition-all shrink-0"
+            title="Mostrar/ocultar menu"
+            aria-label="Mostrar/ocultar menu"
+          >
+            <PanelLeft size={18} />
+          </button>
+        )}
         <h1 className="text-white font-black uppercase tracking-tighter text-xl">
           {activeSection}
         </h1>

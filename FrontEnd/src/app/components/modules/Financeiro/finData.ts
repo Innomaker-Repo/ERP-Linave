@@ -234,7 +234,6 @@ export const FIN_NAV: FinNavGroup[] = [
       { id: 'pagar', label: 'Contas a Pagar' },
       { id: 'nfe', label: 'NFe' },
       { id: 'receber', label: 'Contas a Receber' },
-      { id: 'locacao', label: 'Locação' },
       { id: 'previsao', label: 'Previsão de Receita' },
     ],
   },
@@ -255,8 +254,7 @@ export const FIN_TITLES: Record<string, [string, string]> = {
   aprovacoes: ['Aprovações', 'Solicitações que podem virar Contas a Pagar.'],
   pagar: ['Contas a Pagar', 'Adicionar, editar, parcelar, pagar, registrar juros e comprovante.'],
   nfe: ['Solicitações e Emissão de NFe', 'Medição aprovada cria solicitação; emissão abre cálculos e cria recebível.'],
-  receber: ['Contas a Receber', 'Recebíveis por NFe, locação ou lançamento manual.'],
-  locacao: ['Locação · Módulo em estudo', 'Levantamento de regras antes de gerar cobranças.'],
+  receber: ['Contas a Receber', 'Recebíveis por NFe ou lançamento manual.'],
   previsao: ['Previsão de Receita', 'Baseada nos serviços/OS abertas.'],
   bancos: ['Bancos', 'Cadastro e filtro financeiro por banco.'],
   departamentos: ['Departamentos', 'Vínculo e aprovação por área.'],
@@ -268,10 +266,11 @@ export const recStatus = (r: ContaReceber) =>
   r.recebido ? 'Recebido' : isOld(r.vencimentoRecebimento) ? 'Vencido' : 'A receber';
 
 // ---------- Adaptação de dados reais do ERP ----------
-// O centro de custo / cc das OS usa prefixo LN (Linave) ou SN (Servinave).
+// O centro de custo / cc das OS usa prefixo LN (Linave) ou VTS (Servinave).
+// 'SN' é o prefixo legado da Servinave (dados antigos) — mantido para retrocompatibilidade.
 export const empresaFromCC = (cc?: string, fallback: Empresa = 'Linave'): Empresa => {
   const s = String(cc || '').trim().toUpperCase();
-  if (s.startsWith('SN')) return 'Servinave';
+  if (s.startsWith('VTS') || s.startsWith('SN')) return 'Servinave';
   if (s.startsWith('LN')) return 'Linave';
   return fallback;
 };

@@ -10,7 +10,7 @@
 import { mapDocsApiToFront } from './documentosService';
 
 const prefixoEmpresa = (empresa?: string) =>
-  String(empresa || '').toLowerCase().includes('servinave') ? 'SN' : 'LN';
+  String(empresa || '').toLowerCase().includes('servinave') ? 'VTS' : 'LN';
 
 export const formatNegocioId = (negocio: any): string => {
   const prefixo = prefixoEmpresa(negocio?.empresa_prestadora ?? negocio?.empresaPrestadora);

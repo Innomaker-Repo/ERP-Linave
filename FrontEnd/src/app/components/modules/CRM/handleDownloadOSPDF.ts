@@ -3,7 +3,7 @@ import autoTable from 'jspdf-autotable';
 
 const getPrefixoEmpresa = (empresaPrestadora?: string) => {
   if (!empresaPrestadora) return 'LN';
-  return empresaPrestadora.toLowerCase().includes('servinave') ? 'SN' : 'LN';
+  return empresaPrestadora.toLowerCase().includes('servinave') ? 'VTS' : 'LN';
 };
 
 const formatarEscopoBasicoParaTexto = (escopo: any): string => {
@@ -121,20 +121,24 @@ export const handleDownloadOSPDF = ({
   const dataInicio = osPrincipal.dataInicioPrevisto || obra?.dataPrevistaInicio;
   const dataTermino = osPrincipal.dataTerminoPrevisto || obra?.dataPrevistaFinal;
   const idProjetoForPrint = obra?.id || '';
+  const localOS = osPrincipal.local || osPrincipal.localExecucao || '';
+  // A OS é identificada pela EMBARCAÇÃO (do negócio); sem embarcação, usa o Local.
+  const embarcacaoOS = (Array.isArray(obra?.servicos) ? (obra.servicos.find((s: any) => s?.embarcacao)?.embarcacao) : '') || osPrincipal.embarcacao || '';
+  const projetoTexto = `${obra?.nome || ''}${idProjetoForPrint ? ' • ' + idProjetoForPrint : ''}`;
 
   printDado('CLIENTE:', cliente?.razaoSocial || '', margin + 2, y + 3.5);
   printDado('Início Previsto:', dataInicio ? new Date(dataInicio).toLocaleDateString('pt-BR') : '', margin + 102, y + 3.5);
   y += rowH;
 
-  printDado('PROJETO:', `${obra?.nome || ''}${idProjetoForPrint ? ' • ' + idProjetoForPrint : ''}`, margin + 2, y + 3.5);
+  printDado('EMBARCAÇÃO:', embarcacaoOS || localOS, margin + 2, y + 3.5);
   printDado('Térm. Previsto:', dataTermino ? new Date(dataTermino).toLocaleDateString('pt-BR') : '', margin + 102, y + 3.5);
   y += rowH;
 
-  printDado('EQUIPAMENTO:', osPrincipal.equipamento || osPrincipal.tipo || '', margin + 2, y + 3.5);
+  printDado('PROJETO:', projetoTexto, margin + 2, y + 3.5);
   printDado('OS Nº:', osPrincipal.ordemServicoNumero || '', margin + 102, y + 3.5);
   y += rowH;
 
-  printDado('LOCAL:', osPrincipal.local || osPrincipal.localExecucao || '', margin + 2, y + 3.5);
+  printDado('LOCAL:', localOS, margin + 2, y + 3.5);
   printDado('Encarregado:', osPrincipal.supervisorEncarregado || '', margin + 102, y + 3.5);
   y += rowH;
   y += 5;
@@ -323,7 +327,7 @@ export const handleDownloadOSPDF = ({
   }
 
   const prefixo = getPrefixoEmpresa(obra?.empresaPrestadora);
-  const nomeArquivo = `${prefixo || 'ERP'}_OS_${osPrincipal.ordemServicoNumero || '001'}_${new Date().getTime()}.pdf`;
+  const nomeArquivo = `OS_${String(osPrincipal.ordemServicoNumero || '001').replace(/[\\/]/g, '-')}.pdf`;
   const conteudoDataUrl = doc.output('datauristring');
   doc.save(nomeArquivo);
 

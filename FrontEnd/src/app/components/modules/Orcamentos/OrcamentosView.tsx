@@ -69,7 +69,6 @@ interface ServicoOrcamento {
   id: string;
   ordem: number;
   tipo: string;
-  categoria: string;
   embarcacao: string;
   localExecucao: string;
   porto: string;
@@ -262,7 +261,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   const getEmpresaPrefixo = (obra: any) => {
     const rawEmpresa = obra?.empresaPrestadora || '';
     const cleaned = (typeof rawEmpresa === 'string' ? rawEmpresa : (rawEmpresa.nome || '')).toLowerCase();
-    return cleaned.includes('servi') ? 'SN' : 'LN';
+    return cleaned.includes('servi') ? 'VTS' : 'LN';
   };
 
   const getInitialOrcamentoData = () => ({
@@ -427,8 +426,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     const dadosServicos: ServicoOrcamento[] = (obra.servicos || []).map((s: any, idx: number) => ({
       id: s.id || `${obra.id}-servico-${idx + 1}`,
       ordem: idx + 1,
-      tipo: s.tipo || '',
-      categoria: s.categoria || '',
+      tipo: s.tipo || s.tipo_servico || '',
       embarcacao: s.embarcacao || '',
       localExecucao: s.localExecucao || s.local_execucao || s.local || '',
       porto: s.porto || '',
@@ -439,7 +437,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     
     // Preencher escopo automaticamente com informações dos serviços
     const servicosInfo = dadosServicos
-      .map((s) => `• Serviço ${s.ordem}: ${s.tipo || 'Sem tipo'}${s.categoria ? ` (${s.categoria})` : ''}${s.localExecucao ? ` em ${s.localExecucao}` : ''}`)
+      .map((s) => `• Serviço ${s.ordem}: ${s.tipo || 'Sem tipo'}${s.embarcacao ? ` - Embarcação: ${s.embarcacao}` : ''}${s.localExecucao ? ` em ${s.localExecucao}` : ''}`)
       .join('\n');
     
     // Normaliza itens vindos do backend (campo snake_case) para o formato esperado pelo formulário
@@ -1542,7 +1540,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
 
       // Download
       const versaoArquivo = formatarVersaoOrcamento(orcamento.versao);
-      doc.save(`Orcamento_${orcamento.numeroOrcamento}${versaoArquivo ? `_v${versaoArquivo}` : ''}.pdf`);
+      doc.save(`Orcamento_${String(orcamento.numeroOrcamento || '001').replace(/[\\/]/g, '-')}${versaoArquivo ? `_v${versaoArquivo}` : ''}.pdf`);
     } catch (error) {
       console.error('Erro ao gerar PDF:', error);
       alert('Erro ao gerar PDF do orçamento');
@@ -2270,7 +2268,6 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                         <span className="text-amber-400 font-bold">{servico.tipo || 'Sem tipo'}</span>
                       </div>
                       <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-white/70">
-                        <p>Categoria: <span className="text-white">{servico.categoria || '−'}</span></p>
                         <p>Local: <span className="text-white">{servico.localExecucao || '−'}</span></p>
                         <p>Porto: <span className="text-white">{servico.porto || '−'}</span></p>
                         <p>Embarcação: <span className="text-white">{servico.embarcacao || '−'}</span></p>

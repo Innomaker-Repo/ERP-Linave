@@ -153,7 +153,6 @@ interface OsResumoConsolidado {
     servicos: Array<{
       ordem: number;
       tipo: string;
-      categoria: string;
       localExecucao: string;
       porto: string;
       descricao: string;
@@ -171,7 +170,6 @@ interface OsResumoConsolidado {
     dadosServicos: Array<{
       ordem: number;
       tipo: string;
-      categoria: string;
       embarcacao: string;
       localExecucao: string;
       porto: string;
@@ -503,7 +501,6 @@ export function OsView({ searchQuery }: OSViewProps) {
       dadosServicos: (Array.isArray(data.dadosServicos) ? data.dadosServicos : []).map((item: any) => ({
         ordem: item.ordem || 0,
         tipo: item.tipo_servico || item.tipo || '',
-        categoria: item.categoria || '',
         embarcacao: item.embarcacao || '',
         localExecucao: item.local_execucao || item.localExecucao || '',
         porto: item.porto || '',
@@ -681,7 +678,6 @@ export function OsView({ searchQuery }: OSViewProps) {
         servicos: (Array.isArray(obra.servicos) ? obra.servicos : []).map((servico: any, index: number) => ({
           ordem: index + 1,
           tipo: servico.tipo || '',
-          categoria: servico.categoria || '',
           localExecucao: servico.localExecucao || '',
           porto: servico.porto || '',
           descricao: servico.descricao || '',
@@ -1008,19 +1004,24 @@ export function OsView({ searchQuery }: OSViewProps) {
         idProjetoForPrint = selectedObraDetalhes.id;
       }
       
+      const localOS = osPrincipal.local || osPrincipal.localExecucao || '';
+      // A OS é identificada pela EMBARCAÇÃO (do negócio); sem embarcação, usa o Local.
+      const embarcacaoOS = (Array.isArray(selectedObraDetalhes?.servicos) ? (selectedObraDetalhes.servicos.find((s: any) => s?.embarcacao)?.embarcacao) : '') || osPrincipal.embarcacao || '';
+      const projetoTexto = `${selectedObraDetalhes?.nome || osPrincipal.projeto || ''}${idProjetoForPrint ? ' • ' + idProjetoForPrint : ''}`;
+
       printDado('CLIENTE:', cliente?.razaoSocial || cliente?.razao_social || osPrincipal.cliente || '', margin + 2, y + 3.5);
       printDado('Início Previsto:', dataInicio ? formatDateISO(dataInicio) : '', margin + 102, y + 3.5);
       y += rowH;
-      
-      printDado('PROJETO:', `${selectedObraDetalhes?.nome || osPrincipal.projeto || ''}${idProjetoForPrint ? ' • ' + idProjetoForPrint : ''}`, margin + 2, y + 3.5);
+
+      printDado('EMBARCAÇÃO:', embarcacaoOS || localOS, margin + 2, y + 3.5);
       printDado('Térm. Previsto:', dataTermino ? formatDateISO(dataTermino) : '', margin + 102, y + 3.5);
       y += rowH;
-      
-      printDado('EQUIPAMENTO:', osPrincipal.equipamento || osPrincipal.tipo || '', margin + 2, y + 3.5);
+
+      printDado('PROJETO:', projetoTexto, margin + 2, y + 3.5);
       printDado('OS Nº:', osPrincipal.ordemServicoNumero || '', margin + 102, y + 3.5);
       y += rowH;
-      
-      printDado('LOCAL:', osPrincipal.local || osPrincipal.localExecucao || '', margin + 2, y + 3.5);
+
+      printDado('LOCAL:', localOS, margin + 2, y + 3.5);
       printDado('Encarregado:', osPrincipal.supervisorEncarregado || '', margin + 102, y + 3.5);
       y += rowH;
       y += 5; 
@@ -1238,7 +1239,7 @@ export function OsView({ searchQuery }: OSViewProps) {
       }
       
       const prefixo = getPrefixoEmpresa(selectedObraDetalhes?.empresaPrestadora);
-      doc.save(`${prefixo || 'ERP'}_OS_${osPrincipal.ordemServicoNumero || '001'}_${new Date().getTime()}.pdf`);
+      doc.save(`OS_${String(osPrincipal.ordemServicoNumero || '001').replace(/[\\/]/g, '-')}.pdf`);
       
       toast.success('OS baixada em PDF com sucesso!');
     } catch (error) {
@@ -1693,7 +1694,7 @@ export function OsView({ searchQuery }: OSViewProps) {
                       {(formData.resumoConsolidado?.orcamento.dadosServicos || []).map((item, index) => (
                         <div key={`srv-orc-${index}`} className="bg-[#101f3d] rounded-2xl p-4 border border-white/10 text-sm text-white/80">
                           <p className="font-black text-white text-base">Serviço {item.ordem || index + 1}: {item.tipo || '-'}</p>
-                          <p className="mt-1">Categoria: {item.categoria || '-'} | Local: {item.localExecucao || '-'}</p>
+                          <p className="mt-1">Local: {item.localExecucao || '-'}</p>
                           <p className="mt-1">Descrição: {item.descricao || '-'}</p>
                         </div>
                       ))}
@@ -1846,7 +1847,7 @@ export function OsView({ searchQuery }: OSViewProps) {
                   {(selectedOS.resumoConsolidado?.orcamento.dadosServicos || []).map((item, index) => (
                     <div key={`dados-servico-${index}`} className="bg-[#0b1220] p-4 rounded-lg border border-white/10">
                       <p className="text-white font-bold text-base">Serviço {item.ordem || index + 1}: {item.tipo || '-'}</p>
-                      <p className="text-white/60 text-sm">Categoria: {item.categoria || '-'} | Local: {item.localExecucao || '-'}</p>
+                      <p className="text-white/60 text-sm">Local: {item.localExecucao || '-'}</p>
                       <p className="text-white/60 text-sm">Descrição: {item.descricao || '-'}</p>
                     </div>
                   ))}
