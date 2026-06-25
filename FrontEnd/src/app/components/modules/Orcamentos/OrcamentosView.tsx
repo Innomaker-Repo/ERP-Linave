@@ -11,7 +11,6 @@ import {
 import { getNegocios, getClientes, getOrdensPorNegocio, atualizarNegocio } from '../../../../services/comercialService';
 import { getBackendUrl } from '../../../../services/network';
 import { temServico, temLocacao } from '../../../utils/modalidade';
-import { getEstoqueItens } from '../../../utils/estoqueItens';
 
 interface MaoDeObra {
   id: string;
@@ -105,10 +104,8 @@ const findClienteById = (clientes: any[], clienteId: any) =>
 
 
 export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
-  const { obras, os, saveEntity, almoxerifado } = useErp() as any;
+  const { obras, os, saveEntity } = useErp() as any;
 
-  // Itens do Estoque para o dropdown de Equipamento da seção Locação.
-  const estoqueItensOrc = React.useMemo(() => getEstoqueItens(almoxerifado), [almoxerifado]);
   const [listaClientesOrc, setListaClientesOrc] = useState<any[]>([]);
   const [filtroOs, setFiltroOs] = useState<string>('');
   const [showForm, setShowForm] = useState(false);
@@ -1705,14 +1702,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       ...prev,
       itensAlocacao: (prev.itensAlocacao || []).map(item => {
         if (item.id !== id) return item;
-        const merged = { ...item, ...changes };
-        // Ao trocar o equipamento pelo dropdown, herda a unidade cadastrada no Estoque.
-        if (changes.equipamento !== undefined) {
-          merged.estoqueRef = changes.equipamento || '';
-          const it = estoqueItensOrc.find(e => e.nome === changes.equipamento);
-          if (it && (!merged.unidade || merged.unidade === 'un')) merged.unidade = it.unidade;
-        }
-        return recalcularItemLocacao(merged);
+        return recalcularItemLocacao({ ...item, ...changes });
       })
     }));
   };
@@ -2602,17 +2592,11 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
               </button>
             </div>
 
-            {estoqueItensOrc.length === 0 && (
-              <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-xs text-amber-200 font-semibold mb-4">
-                Nenhum equipamento de estoque salvo foi encontrado. Cadastre itens no Almoxarifado para aparecerem neste menu.
-              </div>
-            )}
-
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
                   <tr className="text-left text-[10px] font-black text-white/40 uppercase tracking-widest">
-                    <th className="px-3 py-2">Equipamento</th>
+                    <th className="px-3 py-2">Descrição</th>
                     <th className="px-3 py-2">Unidade</th>
                     <th className="px-3 py-2">Quantidade</th>
                     <th className="px-3 py-2">Valor Unit. Indenização</th>
@@ -2628,10 +2612,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                   {(orcamentoData.itensAlocacao || []).map((item) => (
                     <tr key={item.id} className="border-t border-white/5">
                       <td className="px-3 py-2 min-w-[180px]">
-                        <select className={tableInputClass} value={item.equipamento} onChange={e => updateItemLocacao(item.id, { equipamento: e.target.value })}>
-                          <option value="">Selecione no Estoque...</option>
-                          {estoqueItensOrc.map(it => (<option key={it.nome} value={it.nome}>{it.nome}</option>))}
-                        </select>
+                        <input type="text" className={tableInputClass} value={item.equipamento} onChange={e => updateItemLocacao(item.id, { equipamento: e.target.value })} placeholder="Descrição do item" />
                       </td>
                       <td className="px-3 py-2"><input type="text" className={tableInputClass} value={item.unidade} onChange={e => updateItemLocacao(item.id, { unidade: e.target.value })} /></td>
                       <td className="px-3 py-2"><input type="number" min="0" className={tableInputClass} value={item.quantidade} onChange={e => updateItemLocacao(item.id, { quantidade: e.target.value })} /></td>

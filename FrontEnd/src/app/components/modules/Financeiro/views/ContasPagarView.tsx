@@ -11,7 +11,7 @@ import { uploadDocumento } from '../../../../../services/documentosService';
 import { toast } from 'sonner';
 
 export function ContasPagarView() {
-  const { records, empresas, oss, departamentos, addRecord, updateRecord, parcelarConta, pagarConta } = useFin();
+  const { records, empresas, oss, addRecord, updateRecord, parcelarConta, pagarConta } = useFin();
   const { match } = useFinFilters();
   const rows = records('contaPagar').filter(match);
   const bancos = records('banco').map((b) => b.nome).filter(Boolean) as string[];
@@ -212,26 +212,12 @@ export function ContasPagarView() {
             <Field label="Empresa" span={3}>
               <Select value={form.empresa} onChange={(e) => setF('empresa', e.target.value)}>{empresas.map((emp) => <option key={emp}>{emp}</option>)}</Select>
             </Field>
-            <Field label="Vincular a" span={3}>
-              <Select value={form.vinculoTipo} onChange={(e) => { setF('vinculoTipo', e.target.value); setF('vinculoValor', ''); }}>
-                <option value="OS">OS emitida</option><option value="Departamento">Departamento</option>
+            <Field label="OS" span={3}>
+              <Select value={form.vinculoValor} onChange={(e) => setF('vinculoValor', e.target.value)}>
+                <option value="">{oss.length ? 'Selecione...' : 'Nenhuma OS'}</option>
+                {oss.map((o, i) => <option key={`${o.numero}-${i}`} value={o.numero}>{o.numero} - {o.cliente}</option>)}
               </Select>
             </Field>
-            {form.vinculoTipo === 'OS' ? (
-              <Field label="OS" span={3}>
-                <Select value={form.vinculoValor} onChange={(e) => setF('vinculoValor', e.target.value)}>
-                  <option value="">{oss.length ? 'Selecione...' : 'Nenhuma OS'}</option>
-                  {oss.map((o, i) => <option key={`${o.numero}-${i}`} value={o.numero}>{o.numero} - {o.cliente}</option>)}
-                </Select>
-              </Field>
-            ) : (
-              <Field label="Departamento" span={3}>
-                <Select value={form.vinculoValor} onChange={(e) => setF('vinculoValor', e.target.value)}>
-                  <option value="">{departamentos.length ? 'Selecione...' : 'Nenhum departamento'}</option>
-                  {departamentos.map((d) => <option key={d} value={d}>{d}</option>)}
-                </Select>
-              </Field>
-            )}
             <Field label="Tipo (reembolso/adiantamento)" span={3}>
               <Select value={form.tipoPagamento} onChange={(e) => setF('tipoPagamento', e.target.value)}>{TIPOS_REEMBOLSO.map((t) => <option key={t}>{t}</option>)}</Select>
             </Field>

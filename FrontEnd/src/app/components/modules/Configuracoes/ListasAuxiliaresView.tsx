@@ -49,42 +49,7 @@ export function ListasAuxiliaresView() {
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-        
-        {/* COLUNA DEPARTAMENTOS */}
-        <div className="bg-[#101f3d] p-6 rounded-[32px] border border-white/5 flex flex-col h-[500px]">
-          <div className="mb-4">
-            <h3 className="text-white font-bold uppercase text-sm flex items-center gap-2">
-              <List size={16} className="text-blue-400"/> Departamentos
-            </h3>
-            <p className="text-[9px] text-blue-400/60 mt-1 font-mono uppercase tracking-wide flex gap-1">
-              <Info size={10} /> Usado em: Funcionários, Compras
-            </p>
-          </div>
-          
-          <div className="flex gap-2 mb-4">
-            <input 
-              className="bg-[#0b1220] border border-white/10 p-3 rounded-xl text-white text-xs w-full outline-none focus:border-blue-500"
-              placeholder="Novo Depto..."
-              value={novoItem.departamento}
-              onChange={e => setNovoItem({...novoItem, departamento: e.target.value})}
-            />
-            <button onClick={() => addItem('departamentos', novoItem.departamento)} className="bg-blue-500 text-white p-3 rounded-xl hover:bg-blue-400 transition-colors">
-              <Plus size={16}/>
-            </button>
-          </div>
-
-          <div className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
-            {(config.departamentos || []).map((item: string, idx: number) => (
-              <div key={idx} className="flex justify-between items-center p-3 bg-[#0b1220] rounded-xl border border-white/5 group hover:border-blue-500/30 transition-all">
-                <span className="text-white/80 text-xs">{item}</span>
-                <button onClick={() => removeItem('departamentos', idx)} className="text-white/20 hover:text-red-500 transition-colors">
-                  <Trash2 size={14}/>
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
 
         {/* COLUNA CATEGORIAS */}
         <div className="bg-[#101f3d] p-6 rounded-[32px] border border-white/5 flex flex-col h-[500px]">

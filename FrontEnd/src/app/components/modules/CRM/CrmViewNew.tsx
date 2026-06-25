@@ -14,7 +14,6 @@ import { downloadDocument, getDocumentHref } from '../../../utils/documentDownlo
 import { isEmpresaLinave, getLogoUrlForEmpresa } from '../../../utils/company';
 import { uploadDocumento, excluirDocumento } from '../../../../services/documentosService';
 import { MODALIDADES, temServico, temLocacao, modalidadeLabel } from '../../../utils/modalidade';
-import { getEstoqueItens } from '../../../utils/estoqueItens';
 // Substitua as importações antigas por esta única:
 import {
     getNegocios,
@@ -137,10 +136,8 @@ export const indexToVersaoAlfabetica = (index: number) => {
 };
 
 export function CrmViewNew({ searchQuery }: CrmViewProps) {
-  const { os, saveEntity, userSession, config, obras, medicoes, almoxerifado } = useErp() as any;
+  const { os, saveEntity, userSession, config, obras, medicoes } = useErp() as any;
 
-  // Itens do Estoque para o dropdown de Equipamento da aba Alocação.
-  const estoqueItens = useMemo(() => getEstoqueItens(almoxerifado), [almoxerifado]);
   const [listaClientesCRM, setListaClientesCRM] = useState<any[]>([]);
   const [negociosBackend, setNegociosBackend] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -336,14 +333,7 @@ const initialServico: Servico = {
   const handleUpdateItemAlocacao = (idx: number, field: string, value: any) => {
     setFormData(prev => {
       const itens = [...(prev.itensAlocacao || [])];
-      const atual = { ...itens[idx], [field]: value };
-      // Ao escolher o equipamento no dropdown do Estoque, herda a unidade cadastrada.
-      if (field === 'equipamento') {
-        const itemEstoque = estoqueItens.find(it => it.nome === value);
-        atual.estoqueRef = value;
-        if (itemEstoque && (!atual.unidade || atual.unidade === 'un')) atual.unidade = itemEstoque.unidade;
-      }
-      itens[idx] = atual;
+      itens[idx] = { ...itens[idx], [field]: value };
       return { ...prev, itensAlocacao: itens };
     });
   };
@@ -2690,12 +2680,6 @@ const obrasOrdenadas = useMemo(() => {
                 </div>
                 <p className="text-white/50 text-xs mb-4">Materiais e equipamentos previstos para esta locação.</p>
 
-                {estoqueItens.length === 0 && (
-                  <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-xs text-amber-200 font-semibold mb-4">
-                    Nenhum item de estoque foi encontrado. Cadastre o equipamento no Estoque para ele aparecer no menu suspenso.
-                  </div>
-                )}
-
                 <div className="space-y-3">
                   {(formData.itensAlocacao || []).length === 0 && (
                     <p className="text-white/40 text-sm">Nenhum item adicionado. Clique em "Adicionar Item".</p>
@@ -2703,18 +2687,15 @@ const obrasOrdenadas = useMemo(() => {
                   {(formData.itensAlocacao || []).map((item, idx) => (
                     <div key={item.id} className="bg-[#0b1220] p-4 rounded-lg border border-white/5">
                       <div className="grid grid-cols-12 gap-3 items-end">
-                        <div className="col-span-4 space-y-1.5">
-                          <label className={labelClass}>Equipamento *</label>
-                          <select
+                        <div className="col-span-6 space-y-1.5">
+                          <label className={labelClass}>Descrição *</label>
+                          <input
+                            type="text"
                             className={inputClass}
                             value={item.equipamento}
                             onChange={e => handleUpdateItemAlocacao(idx, 'equipamento', e.target.value)}
-                          >
-                            <option value="">Selecione no Estoque...</option>
-                            {estoqueItens.map((it) => (
-                              <option key={it.nome} value={it.nome}>{it.nome}</option>
-                            ))}
-                          </select>
+                            placeholder="Descreva o item a alocar"
+                          />
                         </div>
                         <div className="col-span-2 space-y-1.5">
                           <label className={labelClass}>Unidade</label>
@@ -2725,7 +2706,7 @@ const obrasOrdenadas = useMemo(() => {
                             placeholder="un"
                           />
                         </div>
-                        <div className="col-span-2 space-y-1.5">
+                        <div className="col-span-3 space-y-1.5">
                           <label className={labelClass}>Quantidade</label>
                           <input
                             type="number"
@@ -2734,15 +2715,6 @@ const obrasOrdenadas = useMemo(() => {
                             value={item.quantidade}
                             onChange={e => handleUpdateItemAlocacao(idx, 'quantidade', e.target.value)}
                             placeholder="0"
-                          />
-                        </div>
-                        <div className="col-span-3 space-y-1.5">
-                          <label className={labelClass}>Observação</label>
-                          <input
-                            className={inputClass}
-                            value={item.observacao}
-                            onChange={e => handleUpdateItemAlocacao(idx, 'observacao', e.target.value)}
-                            placeholder="Observação"
                           />
                         </div>
                         <div className="col-span-1 flex justify-center pb-1">

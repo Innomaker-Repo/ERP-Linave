@@ -43,7 +43,6 @@ function getAbaForSection(section: string): { aba: string; item: string } {
     'finReceber': { aba: 'financeiro', item: 'receber' },
     'finPrevisao': { aba: 'financeiro', item: 'previsao' },
     'finBancos': { aba: 'financeiro', item: 'bancos' },
-    'finDepartamentos': { aba: 'financeiro', item: 'departamentos' },
     'finHistorico': { aba: 'financeiro', item: 'historico' },
     
     // Compras
@@ -63,7 +62,6 @@ function getAbaForSection(section: string): { aba: string; item: string } {
     
     // Configurações
     'usuarios': { aba: 'config', item: 'usuarios' },
-    'departamentos': { aba: 'config', item: 'departamentos' },
   };
   
   return mapping[section] || { aba: 'gestao', item: 'dashboard' };

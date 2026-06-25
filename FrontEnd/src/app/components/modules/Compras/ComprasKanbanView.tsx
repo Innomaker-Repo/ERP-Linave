@@ -691,7 +691,7 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
                         <div className="flex items-start justify-between gap-3">
                           <div>
                             <h5 className="text-white font-bold text-sm leading-tight">{request.centroCusto}</h5>
-                            <p className="text-white/45 text-[11px] mt-1">{request.solicitante} • {request.departamento || 'Solicitação de compras'}</p>
+                            <p className="text-white/45 text-[11px] mt-1">{request.solicitante || 'Solicitação de compras'}</p>
                           </div>
                           <button className="text-white/20 hover:text-white/60 transition-colors" title="Voltar para solicitações" onClick={() => handleReturnToSolicitations(request.id)}>
                             <ArrowRight size={14} className="rotate-180" />

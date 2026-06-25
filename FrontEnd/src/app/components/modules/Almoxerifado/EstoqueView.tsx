@@ -209,60 +209,45 @@ const getTableIconConfig = (tableName: string): { Icon: LucideIcon; badgeClass: 
   }
 };
 
-type StatusRule = {
-  defaultStatus: string;
-  positive: string[];
-  negative: string[];
-  options: string[];
-};
+// Status do estoque/Suprimentos: FIXO em 3 opções, sem possibilidade de outras.
+// Os mesmos 3 valores valem para TODAS as tabelas/telas de Suprimentos.
+const STATUS_OPTIONS = ['Disponível', 'Alocado', 'Em manutenção'];
+const STATUS_DEFAULT = 'Disponível';
 
-const STATUS_RULES: Record<string, StatusRule> = {
-  equipamentoseletricos: { defaultStatus: 'Funcionando', positive: ['Funcionando'], negative: ['Manutenção', 'Alocado'], options: ['Funcionando', 'Manutenção', 'Alocado'] },
-  extensaocabos: { defaultStatus: 'Funcionando', positive: ['Funcionando'], negative: ['Manutenção', 'Alocado'], options: ['Funcionando', 'Manutenção', 'Alocado'] },
-  bombahidrojato: { defaultStatus: 'Apto para uso', positive: ['Apto para uso'], negative: ['Não apto', 'Alocado'], options: ['Apto para uso', 'Não apto', 'Alocado'] },
-  instrumentos: { defaultStatus: 'Ok', positive: ['Ok'], negative: ['Aguardando calibração', 'Com defeito', 'Alocado'], options: ['Ok', 'Aguardando calibração', 'Com defeito', 'Alocado'] },
-  ferramentas: { defaultStatus: 'Adequada', positive: ['Adequada'], negative: ['Não para o uso', 'Alocado'], options: ['Adequada', 'Não para o uso', 'Alocado'] },
-  talhas: { defaultStatus: 'Ok', positive: ['Ok'], negative: ['Não consta', 'Alocado'], options: ['Ok', 'Não consta', 'Alocado'] },
-  controledeferramentas: { defaultStatus: 'Conferido', positive: ['Conferido'], negative: ['Pendente', 'Alocado'], options: ['Conferido', 'Pendente', 'Alocado'] },
-  materiais: { defaultStatus: 'Normal', positive: ['Normal'], negative: ['Crítico', 'Baixo'], options: ['Normal', 'Baixo', 'Crítico'] },
-  alugadosgases: { defaultStatus: 'Normal', positive: ['Normal'], negative: ['Crítico', 'Vazio'], options: ['Normal', 'Vazio', 'Crítico'] },
-  alugadosequipamentos: { defaultStatus: 'Normal', positive: ['Normal'], negative: ['Danificado', 'Não retornado', 'Alocado'], options: ['Normal', 'Danificado', 'Não retornado', 'Alocado'] }
-};
-
-const getStatusRule = (tableName?: string) => STATUS_RULES[normalizeKey(tableName || '')] || {
-  defaultStatus: 'Normal', positive: ['Normal'], negative: ['Crítico', 'Baixo', 'Manutenção', 'Pendente', 'Alocado'], options: ['Normal', 'Baixo', 'Crítico', 'Alocado']
-};
-
-const matchesStatusValue = (status: string, candidates: string[]) => {
-  const normalizedStatus = normalizeKey(status);
-  return candidates.some((candidate) => normalizedStatus.includes(normalizeKey(candidate)));
-};
-
-const isNegativeStatus = (tableName: string, status: string) => {
-  if (normalizeKey(status).includes('alocad')) return true;
-  return matchesStatusValue(status, getStatusRule(tableName).negative);
-};
-const isPositiveStatus = (tableName: string, status: string) => matchesStatusValue(status, getStatusRule(tableName).positive);
-
-const getStatusTone = (status: string, tableName?: string) => {
-  const normalized = normalizeKey(status);
-  
-  if (normalized.includes('alocad')) return 'bg-red-500/15 border-red-500/30 text-red-300';
-  
-  if (tableName && isNegativeStatus(tableName, status)) return 'bg-red-500/15 border-red-500/30 text-red-300';
-  if (tableName && isPositiveStatus(tableName, status)) return 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300';
-
-  if (normalized.includes('crit') || normalized.includes('baix') || normalized.includes('manut') || normalized.includes('defe') || normalized.includes('pend') || normalized.includes('naoapto') || normalized.includes('naoparaouso') || normalized.includes('naoconsta')) {
-    return 'bg-red-500/15 border-red-500/30 text-red-300';
+// Normaliza qualquer valor (inclusive legado) para um dos 3 status fixos.
+const normalizeStatus = (status?: string): string => {
+  const n = normalizeKey(status || '');
+  if (n.includes('manut')) return 'Em manutenção';
+  if (n.includes('aloc')) return 'Alocado';
+  if (n.includes('dispon')) return 'Disponível';
+  // Mapeia status legados conhecidos: "bons" → Disponível, "ruins" → Em manutenção.
+  if (n.includes('crit') || n.includes('baix') || n.includes('defe') || n.includes('pend')
+      || n.includes('naoapto') || n.includes('naoparaouso') || n.includes('naoconsta')
+      || n.includes('aguardando') || n.includes('danific') || n.includes('vazio') || n.includes('naoretorn')) {
+    return 'Em manutenção';
   }
-  if (normalized.includes('ok') || normalized.includes('funcion') || normalized.includes('aptoparauso') || normalized.includes('adequad') || normalized.includes('confer')) {
-    return 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300';
-  }
-  return 'bg-cyan-500/15 border-cyan-500/30 text-cyan-300';
+  return 'Disponível';
 };
 
-const getStatusOptionsForTable = (tableName?: string) => getStatusRule(tableName).options;
-const getDefaultStatusForTable = (tableName?: string) => getStatusRule(tableName).defaultStatus;
+const isNegativeStatus = (_tableName: string, status: string) => normalizeKey(status).includes('manut');
+const isPositiveStatus = (_tableName: string, status: string) => normalizeKey(status).includes('dispon');
+
+const getStatusTone = (status: string, _tableName?: string) => {
+  const n = normalizeKey(status);
+  if (n.includes('manut')) return 'bg-red-500/15 border-red-500/30 text-red-300';        // Em manutenção
+  if (n.includes('aloc')) return 'bg-amber-500/15 border-amber-500/30 text-amber-300';     // Alocado
+  return 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300';                       // Disponível (padrão)
+};
+
+const getStatusOptionsForTable = (_tableName?: string) => STATUS_OPTIONS;
+const getDefaultStatusForTable = (_tableName?: string) => STATUS_DEFAULT;
+
+// Coage o `status` de uma linha para um dos 3 valores fixos (status vazio fica vazio).
+const normalizeRowValues = (values: any) => {
+  const v = { ...(values || {}) };
+  if (typeof v.status === 'string' && v.status.trim() !== '') v.status = normalizeStatus(v.status);
+  return v;
+};
 
 const getOsLocalExecution = (os: any) => cleanValue(
   os?.negocio_detalhes?.servicos?.[0]?.local_execucao
@@ -484,7 +469,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   const [tables, setTables] = useState<StockTable[]>(() => STOCK_TABLES.map((table) => ({
     ...table,
     columns: [...table.columns],
-    rows: table.rows.map((row) => ({ ...row, values: { ...row.values } }))
+    rows: table.rows.map((row) => ({ ...row, values: normalizeRowValues(row.values) }))
   })));
   
   const [selectedCategory, setSelectedCategory] = useState<'Materiais' | 'Equipamentos' | 'Alugados'>('Materiais');
@@ -606,7 +591,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
             ...table,
             columns: Array.isArray(table.columns) ? [...table.columns] : [],
             rows: Array.isArray(table.rows)
-              ? table.rows.map((row) => ({ ...row, values: { ...(row.values || {}) } }))
+              ? table.rows.map((row) => ({ ...row, values: normalizeRowValues(row.values) }))
               : []
           }))
         );
