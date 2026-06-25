@@ -239,7 +239,7 @@ export function ComprasAprovacoesView({ searchQuery }: { searchQuery: string }) 
               <div>
                 <p className="text-[10px] uppercase tracking-[0.35em] text-white/35 font-black">Detalhamento da pendência</p>
                 <h2 className="text-2xl font-black text-white mt-2">{selectedRequest.centroCusto || 'Solicitação de compras'}</h2>
-                <p className="text-white/45 text-sm mt-1">{selectedRequest.solicitante || '-'} • {selectedRequest.departamento || '-'}</p>
+                <p className="text-white/45 text-sm mt-1">{selectedRequest.solicitante || '-'}</p>
               </div>
               <button
                 onClick={() => setSelectedRequest(null)}

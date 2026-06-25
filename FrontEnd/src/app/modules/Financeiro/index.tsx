@@ -8,7 +8,6 @@ import { NfeView } from '../../components/modules/Financeiro/views/NfeView';
 import { ContasReceberView } from '../../components/modules/Financeiro/views/ContasReceberView';
 import { PrevisaoView } from '../../components/modules/Financeiro/views/PrevisaoView';
 import { BancosView } from '../../components/modules/Financeiro/views/BancosView';
-import { DepartamentosView } from '../../components/modules/Financeiro/views/DepartamentosView';
 import { HistoricoView } from '../../components/modules/Financeiro/views/HistoricoView';
 
 interface FinanceiroModuleProps {
@@ -26,7 +25,6 @@ const VIEWS: Record<string, React.ComponentType> = {
   receber: ContasReceberView,
   previsao: PrevisaoView,
   bancos: BancosView,
-  departamentos: DepartamentosView,
   historico: HistoricoView,
 };
 

@@ -20,7 +20,7 @@ const MOCK_DIRETOR_FINANCEIRO_EMAIL = 'diretor.financeiro@linave.com.br';
 // Itens do grupo Financeiro (cada seção é uma aba própria no sidebar).
 const FINANCEIRO_ITEM_IDS = new Set([
   'finDashboard', 'finSolicitacao', 'finAprovacoes', 'finPagar', 'finNfe',
-  'finReceber', 'finLocacao', 'finPrevisao', 'finBancos', 'finDepartamentos', 'finHistorico',
+  'finReceber', 'finPrevisao', 'finBancos', 'finHistorico',
 ]);
 
 export function Sidebar({ activeSection, setActiveSection, onClose }: SidebarProps) {
@@ -100,7 +100,6 @@ export function Sidebar({ activeSection, setActiveSection, onClose }: SidebarPro
         { id: 'finPrevisao', label: 'Previsão de Receita', icon: TrendingUp },
         // Gestão
         { id: 'finBancos', label: 'Bancos', icon: Landmark },
-        { id: 'finDepartamentos', label: 'Departamentos', icon: Tags },
         { id: 'finHistorico', label: 'Histórico', icon: History },
       ]
     },
@@ -134,8 +133,7 @@ export function Sidebar({ activeSection, setActiveSection, onClose }: SidebarPro
       title: 'Configurações',
       icon: Settings,
       items: [
-        { id: 'usuarios', label: 'Usuários & Acessos', icon: Settings },
-        { id: 'departamentos', label: 'Departamentos', icon: List }
+        { id: 'usuarios', label: 'Usuários & Acessos', icon: Settings }
       ]
     }
   ];
