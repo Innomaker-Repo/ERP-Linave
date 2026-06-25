@@ -212,7 +212,8 @@ export const handleDownloadPropostaPDF = (
     writeText(propostaForm.cliente || cliente?.razaoSocial || 'CLIENTE', 11, true, 'left', 0, 10);
 
     if (propostaForm.contato) writeText(`ATT.: ${propostaForm.contato}`, 11, true, 'left', 0, 2);
-    if (propostaForm.referencia) writeText(`Ref.: ${propostaForm.referencia}`, 11, true, 'left', 0, 2);
+    const refTexto = propostaForm.referencia || propostaForm.referencias;
+    if (refTexto) writeText(`Ref.: ${refTexto}`, 11, true, 'left', 0, 2);
     if (propostaForm.assunto) writeText(`Assunto: ${propostaForm.assunto}`, 11, true, 'left', 0, 10);
     if (propostaForm.saudacao) writeText(propostaForm.saudacao, 11, false, 'left', 0, 4);
     if (propostaForm.textoAbertura) {writeText(propostaForm.textoAbertura, 11, false, 'justify', 0, 10); doc.addPage(); y = drawHeader();}
@@ -340,7 +341,7 @@ export const handleDownloadPropostaPDF = (
       }
     }
 
-    const nomeArquivo = `${propostaForm.numeroProposta || 'Proposta'}.pdf`;
+    const nomeArquivo = `Proposta_${String(propostaForm.numeroProposta || '001').replace(/[\\/]/g, '-')}.pdf`;
     const conteudoDataUrl = doc.output('datauristring');
     doc.save(nomeArquivo);
 

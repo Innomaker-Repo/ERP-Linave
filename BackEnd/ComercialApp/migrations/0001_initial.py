@@ -483,6 +483,8 @@ class Migration(migrations.Migration):
                 ('condicoes_pagamento', models.TextField(blank=True, default='')),
                 ('prazo', models.TextField(blank=True, default='')),
                 ('encerramento', models.TextField()),
+                ('escopos_estruturado', models.JSONField(blank=True, default=list)),
+                ('preco_itens', models.JSONField(blank=True, default=list)),
                 ('cliente', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='cliente_propostas', to='ComercialApp.cliente')),
                 ('negocio', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='negocio_propostas', to='ComercialApp.negocio')),
             ],
@@ -509,7 +511,6 @@ class Migration(migrations.Migration):
             fields=[
                 ('id', models.BigAutoField(primary_key=True, serialize=False)),
                 ('tipo_servico', models.CharField(max_length=100)),
-                ('categoria', models.CharField(blank=True, max_length=100, null=True)),
                 ('local_execucao', models.CharField(blank=True, max_length=150, null=True)),
                 ('descricao', models.TextField()),
                 ('embarcacao', models.CharField(blank=True, max_length=100, null=True)),

@@ -124,9 +124,8 @@ class Negocio(models.Model):
 class Servico(models.Model):
     id = models.BigAutoField(primary_key=True)
     negocio = models.ForeignKey(Negocio, on_delete=models.CASCADE, related_name='servicos')
-    tipo_servico = models.CharField(max_length=100) 
-    categoria = models.CharField(max_length=100, null=True, blank=True)    
-    local_execucao = models.CharField(max_length=150, null=True, blank=True) 
+    tipo_servico = models.CharField(max_length=100)
+    local_execucao = models.CharField(max_length=150, null=True, blank=True)
     descricao = models.TextField()                 
     embarcacao = models.CharField(max_length=100, null=True, blank=True)
     porto = models.CharField(max_length=100, null=True, blank=True)
@@ -533,7 +532,14 @@ class PropostaComercial(models.Model):
     condicoes_pagamento = models.TextField(blank=True, default='') # free text field for the payment terms and conditions of the proposal
     prazo = models.TextField(blank=True, default='') # free text field to specify the delivery time or deadline for the proposal
     encerramento = models.TextField() # free text field for the closing remarks or conclusion of the proposal
-   
+
+    # Estrutura rica da proposta guardada FIELMENTE em JSON (round-trip sem perda):
+    # - escopos_estruturado: blocos do Escopo A (titulo, descricaoServico, colunas, linhas, textosDepois)
+    # - preco_itens: tabela D de preço (nome, quantidade, precoUnitario, total)
+    # Substitui a antiga consolidação-em-texto (que jogava o escopo no texto_de_abertura).
+    escopos_estruturado = models.JSONField(default=list, blank=True)
+    preco_itens = models.JSONField(default=list, blank=True)
+
     def __str__(self):
         return f"Proposta Comercial {self.id} - {self.cliente.razao_social} - Valor: {self.preco}"
     

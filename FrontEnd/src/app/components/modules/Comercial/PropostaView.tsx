@@ -127,12 +127,19 @@ const mapNegocioToObra = (n: any): any => ({
     preco: p.preco !== null && p.preco !== undefined ? String(p.preco) : '',
     prazo: p.prazo || '',
     referencias: p.referencias || '',
+    referencia: p.referencias || '',                                  // alias (form/PDF leem singular)
     saudacao: p.saudacao || '',
     assunto: p.assunto || '',
     textoAbertura: p.textoAbertura || '',
     responsabilidadeContratada: p.responsabilidadeContratada || '',
+    responsabilidadeContratante: p.responsabilidadeContratante || '', // item C (PDF)
+    escopoC: p.responsabilidadeContratante || '',                     // alias p/ o form
+    condicoesGerais: p.condicoesGerais || '',                         // item E (PDF)
+    condicoesPagamento: p.condicoesPagamento || '',                   // item G (PDF)
+    encerramento: p.encerramento || '',
     escopoA: p.escopoA || '',
     escopoBasicoServicos: p.escopoBasicoServicos || [],
+    precoItens: p.precoItens || [],                                   // tabela D (PDF)
   })),
   orcamentoRealizado: n.orcamento_realizado,
   orcamentoValores: n.orcamentos?.[0]?.valores || null,
@@ -584,11 +591,65 @@ export function PropostaView() {
       cargoContato: obra.tipo || '',
       // Gera ID no formato: LN-0731/26 na primeira emissão e LN-0731A/26 nas seguintes.
       numeroProposta: gerarIdProposta(componentesId?.prefixo || 'LN', numeroSequencial, proximaVersaoLetra),
+      // Abertura já com o ID do negócio atual logo após "Proposta Técnica-Comercial".
+      textoAbertura: `Vimos através desta apresentar nossa Proposta Técnica-Comercial ${obra.id || ''}, para serviços, conforme escopo e delineamento realizado a bordo, conforme solicitado para vossa avaliação e aprovação.\n\n\nEstamos à disposição para quaisquer esclarecimentos que se façam necessários.\n\n\nAtenciosamente,\n\n\nDiretoria Comercial`,
       escopoBasicoServicos: criarEscopoBasicoServicos(obra)
     }));
 
+<<<<<<< HEAD
     if (draft) {
       setPropostaForm((prev) => ({ ...prev, ...draft }));
+=======
+    // Inicializa a tabela de preço (D): serviços (do orçamento) + locação (dos itens alocados).
+    try {
+      const precoItens: Array<{ id: string; nome?: string; quantidade: number; precoUnitario: number; total: number }> = [];
+      const incluiServico = temServico(obra?.modalidade);
+      const incluiLocacao = temLocacao(obra?.modalidade);
+
+      // Linha de serviços a partir do orçamento (quando houver)
+      const orc = obra.orcamentoValores || null;
+      if (incluiServico && orc) {
+        const precoFinal = Number(orc.precoFinal ?? orc.valorTotalServico ?? 0) || 0;
+        if (precoFinal > 0) {
+          const qnt = Number(orc.quantidadeItensProduzidos ?? orc.qnt ?? orc.quantidade ?? 1) || 1;
+          const unit = Number(orc.valorPorUnidade ?? (qnt > 0 ? precoFinal / qnt : precoFinal)) || 0;
+          precoItens.push({ id: `preco-orcamento-${Date.now()}`, nome: 'Orçamento (Serviços)', quantidade: qnt, precoUnitario: unit, total: precoFinal });
+        }
+      }
+
+      // Linhas de locação: uma por item alocado. O preço unitário já vem COM o imposto
+      // de locação do orçamento (calculado à parte), pra a proposta bater com o totalGeral.
+      if (incluiLocacao && Array.isArray(obra.itensAlocacao)) {
+        const impLocPct = Number(orc?.impostosLocacao ?? 0) || 0;
+        const fatorImposto = 1 + impLocPct / 100;
+        obra.itensAlocacao.filter((it: any) => it.equipamento).forEach((it: any, i: number) => {
+          const q = Number(it.quantidade) || 0;
+          const unit = (Number(it.valorLocacao) || 0) * fatorImposto; // valor de locação + imposto
+          precoItens.push({ id: `preco-loc-${it.id || i}`, nome: it.equipamento, quantidade: q, precoUnitario: unit, total: q * unit });
+        });
+      }
+
+      if (precoItens.length > 0) {
+        base.precoItens = precoItens;
+        const totalProposta = precoItens.reduce((s, p) => s + (Number(p.total) || 0), 0);
+        base.preco = `R$ ${totalProposta.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      }
+    } catch (e) {
+      // ignore
+    }
+
+    // Restaura rascunho salvo se existir
+    try {
+      const salvo = localStorage.getItem(getRascunhoKey(obra.backendId));
+      if (salvo) {
+        const rascunho = JSON.parse(salvo) as PropostaFormData;
+        setPropostaForm({ ...base, ...rascunho });
+      } else {
+        setPropostaForm(base);
+      }
+    } catch {
+      setPropostaForm(base);
+>>>>>>> fccd5af (ultimas alterações)
     }
     setNovaColunaPorEscopo({});
     setViewMode('form');
@@ -605,6 +666,7 @@ export function PropostaView() {
     const numeroSequencial = componentesId?.numero || String(selectedObra.backendId).padStart(4, '0');
     const numeroProposta = gerarIdProposta(componentesId?.prefixo || 'LN', numeroSequencial, proximaVersaoLetra);
 
+<<<<<<< HEAD
     const escopoAConsolidado = propostaForm.escopoBasicoServicos.length > 0
       ? gerarEscopoBasicoConsolidado(propostaForm.escopoBasicoServicos)
       : propostaForm.escopoA;
@@ -615,6 +677,29 @@ export function PropostaView() {
       status: 'pendente' as const,
       ...propostaForm,
       escopoA: escopoAConsolidado
+=======
+    // As chaves devem bater com os nomes dos campos do PropostaComercialSerializer (camelCase)
+    const payload = {
+      cliente: selectedObra.clienteBackendId,
+      negocio: selectedObra.backendId,
+      numeroProposta: numeroProposta,
+      status: 'pendente',
+      referencias: propostaForm.referencia,
+      saudacao: propostaForm.saudacao,
+      assunto: propostaForm.assunto,
+      // Abertura REAL (não mais o escopo achatado) — o escopo vai estruturado abaixo.
+      textoAbertura: propostaForm.textoAbertura,
+      responsabilidadeContratada: propostaForm.responsabilidadeContratada,
+      responsabilidadeContratante: propostaForm.escopoC,
+      preco: parsePrecoParaDecimal(propostaForm.preco),
+      condicoesGerais: propostaForm.condicoesGerais,
+      condicoesPagamento: propostaForm.condicoesPagamento,
+      prazo: propostaForm.prazo,
+      encerramento: propostaForm.encerramento,
+      // Estrutura rica persistida FIELMENTE: escopo A (tabelas) + tabela D de preço.
+      escopoBasicoServicos: propostaForm.escopoBasicoServicos || [],
+      precoItens: propostaForm.precoItens || [],
+>>>>>>> fccd5af (ultimas alterações)
     };
 
     const obraAtualizada = {
@@ -670,6 +755,7 @@ export function PropostaView() {
     void clearDraft(`proposta:${selectedObra.id}`);
   };
 
+<<<<<<< HEAD
   // Auto-save draft when editing
   useEffect(() => {
     if (viewMode !== 'form' || !selectedObra) return;
@@ -684,6 +770,18 @@ export function PropostaView() {
 
     return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
   }, [propostaForm, viewMode, selectedObra?.id]);
+=======
+  // Baixa o PDF usando os dados ATUAIS do formulário (sem precisar enviar/salvar).
+  const handleBaixarPropostaPreview = () => {
+    if (!selectedObra) return alert('Selecione uma obra primeiro.');
+    // O gerador do PDF lê `responsabilidadeContratante` (item C); no form esse campo é `escopoC`.
+    const propostaParaPdf = {
+      ...propostaForm,
+      responsabilidadeContratante: propostaForm.escopoC,
+    };
+    handleDownloadPropostaPDFWithLogo(propostaParaPdf, selectedObra);
+  };
+>>>>>>> fccd5af (ultimas alterações)
 
   // Gera DOCX a partir de template .docx (deve existir em /public/templates/LINAVE.docx e SERVINAVE.docx)
   const gerarDocxTemplate = async () => {
@@ -1621,7 +1719,14 @@ export function PropostaView() {
         >
           <ArrowLeft size={18} /> Voltar
         </button>
-        <button 
+        <button
+          onClick={handleBaixarPropostaPreview}
+          className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-lg font-black uppercase text-sm tracking-widest transition-all flex items-center justify-center gap-2"
+          title="Baixa o PDF com os dados atuais do formulário (sem precisar enviar)"
+        >
+          <Download size={18} /> Baixar PDF
+        </button>
+        <button
           onClick={handleSaveProposta}
           className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-black uppercase text-sm tracking-widest transition-all flex items-center justify-center gap-2"
         >

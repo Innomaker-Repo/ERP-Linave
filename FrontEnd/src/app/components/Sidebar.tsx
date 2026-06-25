@@ -5,12 +5,13 @@ import {
   ShoppingCart, DollarSign, BarChart3, Settings, Factory,
   HeartHandshake, List, Clock, ChevronDown, ChevronRight,
   Briefcase, Wrench, Activity, FileText, Zap, CheckCircle2, Trash2, LayoutGrid, Package2, History,
-  FilePlus, Banknote, ScrollText, Wallet, Building2, TrendingUp, Landmark, Tags, Ruler
+  FilePlus, Banknote, ScrollText, Wallet, TrendingUp, Landmark, Tags, Ruler, PanelLeftClose
 } from 'lucide-react';
 
 interface SidebarProps {
   activeSection: string;
   setActiveSection: (section: string) => void;
+  onClose?: () => void;
 }
 
 const MOCK_GERENTE_COMERCIAL_EMAIL = 'gerente.comercial@linave.com.br';
@@ -22,7 +23,7 @@ const FINANCEIRO_ITEM_IDS = new Set([
   'finReceber', 'finLocacao', 'finPrevisao', 'finBancos', 'finDepartamentos', 'finHistorico',
 ]);
 
-export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
+export function Sidebar({ activeSection, setActiveSection, onClose }: SidebarProps) {
   const { userSession, config } = useErp();
   
   // Controle dos grupos do menu (Acordeão)
@@ -96,7 +97,6 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
         { id: 'finPagar', label: 'Contas a Pagar', icon: Banknote },
         { id: 'finNfe', label: 'NFe', icon: ScrollText },
         { id: 'finReceber', label: 'Contas a Receber', icon: Wallet },
-        { id: 'finLocacao', label: 'Locação', icon: Building2 },
         { id: 'finPrevisao', label: 'Previsão de Receita', icon: TrendingUp },
         // Gestão
         { id: 'finBancos', label: 'Bancos', icon: Landmark },
@@ -203,18 +203,30 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
       
       {/* CABEÇALHO */}
       <div className="p-6 border-b border-white/5 mb-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-amber-500 rounded-xl flex items-center justify-center font-black text-[#0b1220] shadow-lg shadow-amber-500/20">
-            IN
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-amber-500 rounded-xl flex items-center justify-center font-black text-[#0b1220] shadow-lg shadow-amber-500/20">
+              IN
+            </div>
+            <div>
+              <h1 className="text-white font-black italic uppercase text-xl leading-none">
+                Linave
+              </h1>
+              <p className="text-[9px] text-white/30 font-bold uppercase tracking-widest mt-1">
+                SaaS Edition
+              </p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-white font-black italic uppercase text-xl leading-none">
-              Linave
-            </h1>
-            <p className="text-[9px] text-white/30 font-bold uppercase tracking-widest mt-1">
-              SaaS Edition
-            </p>
-          </div>
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition-all shrink-0"
+              title="Fechar menu"
+              aria-label="Fechar menu"
+            >
+              <PanelLeftClose size={18} />
+            </button>
+          )}
         </div>
       </div>
 

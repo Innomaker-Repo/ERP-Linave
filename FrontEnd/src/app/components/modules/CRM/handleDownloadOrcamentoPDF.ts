@@ -595,7 +595,7 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
   doc.setTextColor(0, 0, 0);
   doc.rect(x, y, baseColWidth * 5, cellHeight);
 
-  const nomeArquivo = `Orcamento_${orcamento.numeroOrcamento}_v${formatarVersaoOrcamento(orcamento.versao)}.pdf`;
+  const nomeArquivo = `Orcamento_${String(orcamento.numeroOrcamento || '001').replace(/[\\/]/g, '-')}_v${formatarVersaoOrcamento(orcamento.versao)}.pdf`;
   const conteudoDataUrl = doc.output('datauristring');
   doc.save(nomeArquivo);
 

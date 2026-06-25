@@ -108,11 +108,11 @@ export const extrairIdProjetoDoNumero = (numeroCompleto: string): string => {
 
 /**
  * Converte o nome da empresa prestadora no prefixo do ID.
- * Exemplo: 'Linave' → 'LN', 'Servinave' → 'SN'
+ * Exemplo: 'Linave' → 'LN', 'Servinave' → 'VTS'
  */
 export const getPrefixoEmpresa = (empresaPrestadora?: string): string => {
   if (!empresaPrestadora) return 'LN';
-  return empresaPrestadora.toLowerCase().includes('servinave') ? 'SN' : 'LN';
+  return empresaPrestadora.toLowerCase().includes('servinave') ? 'VTS' : 'LN';
 };
 
 /**
