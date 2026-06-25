@@ -11,7 +11,7 @@ const isTunnel = process.env.VITE_TUNNEL === '1' || process.env.VITE_TUNNEL === 
 // ser resueltas por Vite. Así el frontend usa rutas relativas (mismo origen)
 // y un único túnel de ngrok expone frontend + API juntos, sin CORS.
 const backendProxy = {
-  target: 'http://localhost:8000',
+  target: 'http://localhost:8000', // para ambiente docker ; substituir localhost por backend
   changeOrigin: true,
 }
 
