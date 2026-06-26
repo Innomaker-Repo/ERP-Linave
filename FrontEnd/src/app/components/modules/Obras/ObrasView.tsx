@@ -1,10 +1,33 @@
 import React, { useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
-import { 
-  Anchor, Plus, Calendar, DollarSign, Users, User, Save, X, Edit2, Trash2, 
+import { handleDownloadOSPDF } from '../CRM/handleDownloadOSPDF';
+import { getLogoUrlForEmpresa } from '../../../utils/company';
+import {
+  Anchor, Plus, Calendar, DollarSign, Users, User, Save, X, Edit2, Trash2,
   FileText, Briefcase, Activity, Hash, FolderOpen, Download, Link as LinkIcon, CheckCircle2, ChevronDown, ChevronRight, Eye
 } from 'lucide-react';
+
+const getBase64FromUrl = async (url: string): Promise<string> => {
+  try {
+    const data = await fetch(url);
+    const blob = await data.blob();
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return '';
+  }
+};
+
+// Formata datas ISO ('YYYY-MM-DD') para 'DD/MM/AAAA' sem problema de fuso horário.
+const formatarDataBR = (d?: string) => {
+  if (!d) return '';
+  const m = String(d).slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : String(d);
+};
 
 const A_SER_INCLUIDO_LABELS: Record<string, string> = {
   certificadoGas: 'Certificado de Gás Free',
@@ -126,6 +149,8 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
 
   const isOsDisponivelProducao = (item: any) => {
     if (!item?.obraId) return false;
+    // OS fechada (bloqueada pela diretoria) some da produção — fica só finalizada.
+    if (item.fechada) return false;
     // A OS só entra em produção depois de APROVADA (ou se já estiver concluída).
     // Criar/enviar a OS não basta — precisa da aprovação.
     return (
@@ -147,7 +172,8 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
       (o.nome || '').toLowerCase().includes(termo) ||
       clienteNome.includes(termo);
 
-    return correspondeBusca && obrasComOSEnviada.has(o.id);
+    // Exclui as OS internas (1000 Linave / 2000 Servinave) — café/papel etc. não vão pra produção.
+    return correspondeBusca && obrasComOSEnviada.has(o.id) && !o.usoInterno;
   });
 
   const formatDocSize = (bytes?: number) => {
@@ -295,7 +321,7 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
         dataCriacao: propostaBase?.dataCriacao || '',
         assunto: propostaBase?.assunto || '',
         textoAbertura: propostaBase?.textoAbertura || '',
-        escopoA: propostaBase?.escopoA || propostaBase?.escopoBasicoServicos || '',
+        escopoA: propostaBase?.escopoA || (typeof propostaBase?.escopoBasicoServicos === 'string' ? propostaBase.escopoBasicoServicos : '') || '',
         escopoBasicoServicos: normalizarEscopoBasicoServicos(propostaBase),
         responsabilidadeContratada: propostaBase?.responsabilidadeContratada || '',
         escopoC: propostaBase?.escopoC || '',
@@ -363,8 +389,11 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
 
   const handleVisualizarOSConsolidada = (item: any) => {
     const resumoConsolidado = construirResumoConsolidado(item);
+    const obraDaOs = listaObras.find((obra: any) => obra.id === item?.obraId);
+    const embarcacaoDaOs = (Array.isArray(obraDaOs?.servicos) ? obraDaOs.servicos.map((s: any) => s?.embarcacao).find(Boolean) : '') || '';
     setSelectedOSConsolidada({
       ...item,
+      embarcacao: embarcacaoDaOs,
       cliente: item?.cliente || listaClientes.find((cliente: any) => cliente.id === item?.clienteId)?.razaoSocial || '-',
       projeto: item?.projeto || listaObras.find((obra: any) => obra.id === item?.obraId)?.nome || '-',
       dataInicioPrevisto: item?.dataInicioPrevisto || item?.inicioPrevisto || listaObras.find((obra: any) => obra.id === item?.obraId)?.dataPrevistaInicio || '-',
@@ -373,6 +402,19 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
       resumoConsolidado
     });
     setShowOSConsolidadaModal(true);
+  };
+
+  // Baixa o PDF de uma OS já enviada/aprovada (sem precisar abrir o CRM).
+  const handleBaixarOSPdf = async (item: any) => {
+    const obra = listaObras.find((o: any) => o.id === item?.obraId) || {};
+    const cliente = listaClientes.find((c: any) => c.id === obra.clienteId);
+    const orcamentos = Array.isArray(obra.orcamentos) ? obra.orcamentos : [];
+    const propostas = Array.isArray(obra.propostas) ? obra.propostas : [];
+    const ultimoOrcamento = orcamentos.length ? orcamentos[orcamentos.length - 1] : null;
+    const ultimaProposta = propostas.length ? propostas[propostas.length - 1] : null;
+    let logoBase64 = '';
+    try { logoBase64 = await getBase64FromUrl(getLogoUrlForEmpresa(obra.empresaPrestadora)); } catch { /* sem logo */ }
+    handleDownloadOSPDF({ osPrincipal: item, ultimoOrcamento, ultimaProposta, cliente, obra, logoBase64 });
   };
 
   const inputClass = "w-full bg-[#0b1220] border border-white/10 p-4 rounded-xl text-white text-sm outline-none focus:border-amber-500 transition-all placeholder:text-white/20";
@@ -502,6 +544,7 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
             const osDoNegocio = listaOS.filter((item: any) => item.obraId === o.id && isOsDisponivelProducao(item));
             const totalOSEnviada = osDoNegocio.length;
             const osConsolidadaEnviada = osDoNegocio.find((item: any) => item.tipoDocumento === 'consolidada') || osDoNegocio[0];
+            const embarcacaoNegocio = (Array.isArray(o.servicos) ? o.servicos.map((s: any) => s?.embarcacao).find(Boolean) : '') || '';
             return (
               <div key={o.id} className="bg-[#101f3d] p-8 rounded-[40px] border border-white/5 hover:border-amber-500/20 transition-all">
                 <div className="flex justify-between items-start mb-6"><div className="p-4 bg-amber-500/10 rounded-2xl text-amber-500"><Anchor size={28} /></div><span className="px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest bg-white/5 text-white/40">{o.status}</span></div>
@@ -514,16 +557,16 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
                     <p className="text-white text-xs font-bold truncate">{o.solicitante || '-'}</p>
                   </div>
                   <div className="bg-[#0b1220] p-3 rounded-xl border border-white/5">
-                    <p className="text-[9px] text-white/30 font-black uppercase tracking-widest mb-1">Responsável Comercial</p>
-                    <p className="text-white text-xs font-bold truncate">{o.responsavelComercial || '-'}</p>
-                  </div>
-                  <div className="bg-[#0b1220] p-3 rounded-xl border border-white/5">
-                    <p className="text-[9px] text-white/30 font-black uppercase tracking-widest mb-1">Contato</p>
-                    <p className="text-white text-xs font-bold truncate">{o.telefone || '-'} {o.email ? `| ${o.email}` : ''}</p>
+                    <p className="text-[9px] text-white/30 font-black uppercase tracking-widest mb-1">Encarregado</p>
+                    <p className="text-white text-xs font-bold truncate">{osConsolidadaEnviada?.supervisorEncarregado || '-'}</p>
                   </div>
                   <div className="bg-[#0b1220] p-3 rounded-xl border border-white/5">
                     <p className="text-[9px] text-white/30 font-black uppercase tracking-widest mb-1">Data da Solicitação</p>
                     <p className="text-white text-xs font-bold">{o.dataSolicitacao || o.dataCadastro || '-'}</p>
+                  </div>
+                  <div className="bg-[#0b1220] p-3 rounded-xl border border-cyan-500/20">
+                    <p className="text-[9px] text-cyan-300/60 font-black uppercase tracking-widest mb-1">Embarcação</p>
+                    <p className="text-cyan-300 text-xs font-bold truncate">{embarcacaoNegocio || 'Não informada'}</p>
                   </div>
                 </div>
 
@@ -533,7 +576,7 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
                     <div className="space-y-1.5">
                       {o.servicos.slice(0, 3).map((servico: any, idx: number) => (
                         <p key={`${o.id}-srv-${idx}`} className="text-white/80 text-xs truncate">
-                          {servico.tipo || 'Serviço'} - {servico.localExecucao || 'Local não informado'}
+                          {servico.tipo || 'Serviço'}{servico.embarcacao ? ` • ${servico.embarcacao}` : ''} - {servico.localExecucao || 'Local não informado'}
                         </p>
                       ))}
                       {o.servicos.length > 3 && (
@@ -579,12 +622,21 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
                 </div>
 
                 {osConsolidadaEnviada && (
-                  <button
-                    onClick={() => handleVisualizarOSConsolidada(osConsolidadaEnviada)}
-                    className="w-full mb-4 py-2.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/35 text-cyan-300 font-black text-[11px] uppercase tracking-widest transition-all flex items-center justify-center gap-2"
-                  >
-                    <Eye size={14} /> Visualizar OS
-                  </button>
+                  <div className="grid grid-cols-2 gap-3 mb-4">
+                    <button
+                      onClick={() => handleVisualizarOSConsolidada(osConsolidadaEnviada)}
+                      className="py-2.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/35 text-cyan-300 font-black text-[11px] uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                    >
+                      <Eye size={14} /> Visualizar
+                    </button>
+                    <button
+                      onClick={() => handleBaixarOSPdf(osConsolidadaEnviada)}
+                      className="py-2.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 text-emerald-300 font-black text-[11px] uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                      title="Baixar o PDF da OS"
+                    >
+                      <Download size={14} /> Baixar PDF
+                    </button>
+                  </div>
                 )}
 
                 <div className="w-full bg-[#0b1220] p-4 rounded-2xl border border-white/5 flex justify-between items-center mb-4">
@@ -592,7 +644,7 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
                   <span className={docsEntregues > 0 ? "text-amber-500 text-xs font-bold" : "text-red-500 text-xs font-bold"}>{docsEntregues} Arquivos</span>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-[#0b1220] p-4 rounded-2xl border border-white/5"><div className="flex items-center gap-2 text-amber-500 mb-1"><Calendar size={14} /> <span className="text-[9px] font-black uppercase">Prazos</span></div><p className="text-white text-xs font-bold">{o.inicioPrevisto || '-'} <span className="text-white/20">até</span> {o.fimPrevisto || '-'}</p></div>
+                  <div className="bg-[#0b1220] p-4 rounded-2xl border border-white/5"><div className="flex items-center gap-2 text-amber-500 mb-1"><Calendar size={14} /> <span className="text-[9px] font-black uppercase">Prazos</span></div><p className="text-white text-xs font-bold">{formatarDataBR(osConsolidadaEnviada?.dataInicioPrevisto) || '-'} <span className="text-white/20">até</span> {formatarDataBR(osConsolidadaEnviada?.dataTerminoPrevisto) || '-'}</p></div>
                 </div>
               </div>
             );
@@ -630,12 +682,16 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
                   <p className="text-white font-bold text-lg">{selectedOSConsolidada.cliente || '-'}</p>
                 </div>
                 <div>
+                  <p className="text-white/50 text-sm mb-1">Embarcação</p>
+                  <p className="text-cyan-300 font-bold text-lg">{selectedOSConsolidada.embarcacao || 'Não informada'}</p>
+                </div>
+                <div>
                   <p className="text-white/50 text-sm mb-1">Projeto</p>
                   <p className="text-white font-bold text-lg">{selectedOSConsolidada.projeto || '-'}</p>
                 </div>
                 <div>
                   <p className="text-white/50 text-sm mb-1">Período Previsto</p>
-                  <p className="text-white font-bold text-base">{selectedOSConsolidada.dataInicioPrevisto || '-'} até {selectedOSConsolidada.dataTerminoPrevisto || '-'}</p>
+                  <p className="text-white font-bold text-base">{formatarDataBR(selectedOSConsolidada.dataInicioPrevisto) || '-'} até {formatarDataBR(selectedOSConsolidada.dataTerminoPrevisto) || '-'}</p>
                 </div>
                 <div>
                   <p className="text-white/50 text-sm mb-1">Status de Aprovação</p>
@@ -722,13 +778,68 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
 
               <div className="bg-[#0b1220] rounded-2xl border border-white/10 p-6 space-y-4">
                 <h3 className="text-white font-black text-lg uppercase tracking-wider">Proposta (Escopos)</h3>
-                <div className="bg-[#101f3d] rounded-lg border border-white/10 p-4 text-sm text-white/80">
-                  <p className="text-white font-bold text-base mb-1">Item A - Escopo Básico</p>
-                  <p className="whitespace-pre-wrap">{selectedOSConsolidada.resumoConsolidado?.proposta?.escopoA || '-'}</p>
-                </div>
+                {(() => {
+                  const blocos = Array.isArray(selectedOSConsolidada.resumoConsolidado?.proposta?.escopoBasicoServicos)
+                    ? selectedOSConsolidada.resumoConsolidado.proposta.escopoBasicoServicos
+                    : [];
+                  if (blocos.length === 0) {
+                    return (
+                      <div className="bg-[#101f3d] rounded-lg border border-white/10 p-4 text-sm text-white/80">
+                        <p className="text-white font-bold text-base mb-1">Item A - Escopo Básico</p>
+                        <p className="whitespace-pre-wrap">{selectedOSConsolidada.resumoConsolidado?.proposta?.escopoA || '-'}</p>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className="space-y-4">
+                      {blocos.map((bloco: any, bidx: number) => {
+                        const colunas = Array.isArray(bloco?.colunas) && bloco.colunas.length > 0 ? bloco.colunas : ['Descrição'];
+                        const linhas = Array.isArray(bloco?.linhas) ? bloco.linhas : [];
+                        const textosDepois = Array.isArray(bloco?.textosDepois) ? bloco.textosDepois : [];
+                        return (
+                          <div key={bloco?.id || `bloco-${bidx}`} className="bg-[#101f3d] rounded-lg border border-white/10 p-4 text-sm text-white/80 space-y-3">
+                            {bloco?.titulo && <p className="text-white font-bold text-base">{bloco.titulo}</p>}
+                            {bloco?.descricaoServico && <p className="text-white/70 whitespace-pre-wrap">{bloco.descricaoServico}</p>}
+                            {linhas.length > 0 && (
+                              <div className="overflow-x-auto">
+                                <table className="w-full border-collapse text-xs">
+                                  <thead>
+                                    <tr>
+                                      {colunas.map((col: string, cidx: number) => (
+                                        <th key={`th-${bidx}-${cidx}`} className="border border-white/15 bg-white/5 px-3 py-2 text-left text-white/70 font-black uppercase tracking-wider">{col}</th>
+                                      ))}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {linhas.map((linha: any, lidx: number) => (
+                                      <tr key={linha?.id || `tr-${bidx}-${lidx}`}>
+                                        {colunas.map((col: string, cidx: number) => (
+                                          <td key={`td-${bidx}-${lidx}-${cidx}`} className="border border-white/15 px-3 py-2 align-top text-white/85 whitespace-pre-wrap">{linha?.valores?.[col] ?? ''}</td>
+                                        ))}
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                            {textosDepois.filter(Boolean).map((txt: string, tidx: number) => (
+                              <p key={`txt-${bidx}-${tidx}`} className="text-white/70 whitespace-pre-wrap">{txt}</p>
+                            ))}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
               </div>
 
-              <div className="flex justify-end pt-2">
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  onClick={() => handleBaixarOSPdf(selectedOSConsolidada)}
+                  className="px-8 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 text-emerald-300 py-3 rounded-lg font-black uppercase text-sm tracking-widest transition flex items-center gap-2"
+                >
+                  <Download size={16} /> Baixar PDF
+                </button>
                 <button
                   onClick={() => {
                     setShowOSConsolidadaModal(false);

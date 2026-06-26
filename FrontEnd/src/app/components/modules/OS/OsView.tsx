@@ -6,6 +6,7 @@ import autoTable from 'jspdf-autotable';
 import { toast } from 'sonner';
 import { criarOrdemServico, atualizarOrdemServico, deleteOrdemServico } from '../../../../services/comercialService';
 import { getLogoUrlForEmpresa } from '../../../utils/company';
+import { ObservacoesNegocio } from '../../ObservacoesNegocio';
 
 // ==========================================
 // FUNÇÕES AUXILIARES GERAIS
@@ -1040,15 +1041,53 @@ export function OsView({ searchQuery }: OSViewProps) {
       
       const bodyY = y;
       
-      doc.setFont('Helvetica', 'normal');
-      const descTexto = ultimaProposta ? formatarEscopoBasicoParaTexto(ultimaProposta.escopoBasicoServicos || ultimaProposta.escopoA) : (osPrincipal.descricao || osPrincipal.descricaoGeralServico || '');
-      const descLines = doc.splitTextToSize(descTexto, leftW - 4);
-      
-      let cursorEsq = bodyY + 5;
-      descLines.forEach((l: string) => {
-        doc.text(l, margin + 2, cursorEsq);
-        cursorEsq += 4;
-      });
+      // ESCOPO (coluna esquerda) em formato de TABELA com grade, igual à proposta.
+      const escopoBlocos = Array.isArray(ultimaProposta?.escopoBasicoServicos) ? ultimaProposta.escopoBasicoServicos : [];
+      const leftPad = margin + 2;
+      const leftTableMarginRight = pageWidth - margin - leftW + 2;
+      let cursorEsq = bodyY + 4;
+
+      if (escopoBlocos.length > 0) {
+        escopoBlocos.forEach((bloco: any, idx: number) => {
+          doc.setFont('Helvetica', 'bold');
+          doc.setFontSize(8);
+          doc.setTextColor(0, 0, 0);
+          doc.splitTextToSize(`${idx + 1}. ${bloco?.titulo || 'Serviço'}`, leftW - 4)
+            .forEach((l: string) => { doc.text(l, leftPad, cursorEsq); cursorEsq += 4; });
+          if (bloco?.descricaoServico && String(bloco.descricaoServico).trim()) {
+            doc.setFont('Helvetica', 'normal');
+            doc.setFontSize(7);
+            doc.splitTextToSize(String(bloco.descricaoServico).trim(), leftW - 4)
+              .forEach((l: string) => { doc.text(l, leftPad, cursorEsq); cursorEsq += 3.5; });
+          }
+          const colunas = Array.isArray(bloco?.colunas) && bloco.colunas.length ? bloco.colunas : ['Descrição'];
+          const body = (Array.isArray(bloco?.linhas) ? bloco.linhas : [])
+            .map((linha: any) => colunas.map((col: string) => String(linha?.valores?.[col] ?? '').trim()))
+            .filter((row: string[]) => row.some((c) => c));
+          if (body.length > 0) {
+            autoTable(doc, {
+              startY: cursorEsq + 1,
+              head: [colunas],
+              body,
+              theme: 'grid',
+              margin: { left: leftPad - 1, right: leftTableMarginRight },
+              headStyles: { fillColor: [230, 230, 230], textColor: [0, 0, 0], fontStyle: 'bold', fontSize: 6.5 },
+              styles: { fontSize: 6.5, cellPadding: 1, textColor: [0, 0, 0], overflow: 'linebreak' },
+            });
+            cursorEsq = (doc as any).lastAutoTable.finalY + 3;
+          }
+        });
+      } else {
+        doc.setFont('Helvetica', 'normal');
+        doc.setFontSize(8);
+        const descTexto = ultimaProposta ? formatarEscopoBasicoParaTexto(ultimaProposta.escopoBasicoServicos || ultimaProposta.escopoA) : (osPrincipal.descricao || osPrincipal.descricaoGeralServico || '');
+        cursorEsq = bodyY + 5;
+        doc.splitTextToSize(descTexto, leftW - 4).forEach((l: string) => {
+          doc.text(l, margin + 2, cursorEsq);
+          cursorEsq += 4;
+        });
+      }
+      doc.setTextColor(0, 0, 0);
       
       let baseChecks = osPrincipal?.aSerIncluido || selectedObraDetalhes?.aSerIncluido || {};
       if (typeof baseChecks === 'string') {
@@ -1372,6 +1411,7 @@ export function OsView({ searchQuery }: OSViewProps) {
             </div>
 
             <div className="p-8 space-y-6 max-h-[calc(90vh-180px)] overflow-y-auto">
+              <ObservacoesNegocio servicos={formData.servicos} />
               <div className="bg-gradient-to-r from-blue-500/10 to-cyan-500/10 rounded-2xl border border-blue-500/20 p-6 space-y-4">
                 <div className="flex items-center justify-between">
                   <h3 className="text-lg font-black text-white uppercase">Dados Principais</h3>

@@ -277,18 +277,20 @@ export const handleDownloadPropostaPDF = (
     if (propostaForm.preco || itensPreco.length > 0) {
       writeText('D - Preco:', 11, true, 'left', 0, 4);
       if (itensPreco.length > 0) {
-        // Tabela D itemizada (serviços + itens de locação, conforme a modalidade).
+        // Tabela D — descrição macro das atividades orçadas (Item, Descrição, Quant., Unit., Vl. Unit., Dias, Valor total).
         ensureSpace(24);
-        const head = [['Item', 'Descrição', 'Quant.', 'Vl. Unit. R$', 'Vl. Total R$']];
+        const head = [['Item', 'Descrição', 'Quant.', 'Unit.', 'Vl. Unit. R$', 'Dias', 'Valor total R$']];
         const body = itensPreco.map((it: any, idx: number) => [
           String(idx + 1),
-          it.nome || '',
+          it.descricao || it.nome || '',
           String(it.quantidade ?? ''),
-          (Number(it.precoUnitario) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+          it.unidade || '',
+          (Number(it.valorUnitario ?? it.precoUnitario) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+          String(it.dias ?? ''),
           (Number(it.total) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
         ]);
         const totalGeral = itensPreco.reduce((s: number, it: any) => s + (Number(it.total) || 0), 0);
-        body.push(['', 'Valor total previsto', '', '', totalGeral.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })]);
+        body.push(['', 'Valor total do serviço', '', '', '', '', totalGeral.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })]);
         autoTable(doc, {
           startY: y,
           head,
@@ -297,7 +299,7 @@ export const handleDownloadPropostaPDF = (
           margin: { left: margin + 5, right: margin },
           headStyles: { fillColor: [230, 230, 230], textColor: [0, 0, 0], fontStyle: 'bold', fontSize: 9 },
           styles: { fontSize: 9, cellPadding: 2, textColor: [0, 0, 0] },
-          columnStyles: { 0: { cellWidth: 12 }, 2: { cellWidth: 18 }, 3: { cellWidth: 28 }, 4: { cellWidth: 28 } },
+          columnStyles: { 0: { cellWidth: 11 }, 2: { cellWidth: 16 }, 3: { cellWidth: 16 }, 4: { cellWidth: 26 }, 5: { cellWidth: 13 }, 6: { cellWidth: 28 } },
         });
         y = (doc as any).lastAutoTable.finalY + 4;
       } else if (propostaForm.preco) {

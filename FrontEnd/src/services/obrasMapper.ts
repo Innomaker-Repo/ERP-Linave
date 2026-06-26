@@ -111,6 +111,8 @@ export const mapOrdemToOs = (o: any) => {
     statusOs: o?.status_os ?? 'emproducao',
     statusEnvio: o?.status_envio ?? 'pendente',
     statusAprovacao: o?.status_aprovacao ?? 'pendente',
+    fechada: Boolean(o?.fechada),
+    dataFechamento: o?.data_fechamento ?? undefined,
     dataAprovacao: o?.data_aprovacao ?? undefined,
     documentoAssinaturaAprovacao: assinatura,
     tipoDocumento: 'consolidada' as const,

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useErp } from '../context/ErpContext';
 import { 
-  LayoutDashboard, Users, HardHat, Anchor, ClipboardList,
+  House, Users, HardHat, Anchor, ClipboardList,
   ShoppingCart, DollarSign, BarChart3, Settings, Factory,
   HeartHandshake, List, Clock, ChevronDown, ChevronRight,
   Briefcase, Wrench, Activity, FileText, Zap, CheckCircle2, Trash2, LayoutGrid, Package2, History,
@@ -46,7 +46,7 @@ export function Sidebar({ activeSection, setActiveSection, onClose }: SidebarPro
       title: 'Gestão & Estratégia',
       icon: Briefcase,
       items: [
-        { id: 'dashboard', label: 'Dashboard Geral', icon: LayoutDashboard },
+        { id: 'dashboard', label: 'Dashboard Geral', icon: House },
         { id: 'relatorios', label: 'Relatórios BI', icon: BarChart3 },
       ]
     },
@@ -91,7 +91,7 @@ export function Sidebar({ activeSection, setActiveSection, onClose }: SidebarPro
       icon: DollarSign,
       items: [
         // Operação
-        { id: 'finDashboard', label: 'Dashboard Financeiro', icon: LayoutDashboard },
+        { id: 'finDashboard', label: 'Dashboard Financeiro', icon: House },
         { id: 'finSolicitacao', label: 'Solicitação de Pagamento', icon: FilePlus },
         { id: 'finAprovacoes', label: 'Aprovações', icon: CheckCircle2 },
         { id: 'finPagar', label: 'Contas a Pagar', icon: Banknote },
@@ -204,14 +204,14 @@ export function Sidebar({ activeSection, setActiveSection, onClose }: SidebarPro
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-amber-500 rounded-xl flex items-center justify-center font-black text-[#0b1220] shadow-lg shadow-amber-500/20">
-              IN
+              <House size={25} />
             </div>
             <div>
               <h1 className="text-white font-black italic uppercase text-xl leading-none">
-                Linave
+                Sistema ERP 
               </h1>
               <p className="text-[9px] text-white/30 font-bold uppercase tracking-widest mt-1">
-                SaaS Edition
+                Linave & Servinave
               </p>
             </div>
           </div>

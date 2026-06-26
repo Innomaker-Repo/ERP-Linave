@@ -1,9 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
-import { Ruler, Plus, X, Save, Download, Check, Ban, Filter, Clock, CheckCircle2, Copy, FilePlus, Send, FileText } from 'lucide-react';
+import { Ruler, Plus, X, Save, Download, Check, Ban, Filter, Clock, CheckCircle2, Copy, FilePlus, Send, FileText, Lock, Unlock, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { isOsAprovada } from '../../../../services/ordensServico';
 import { criarMedicao, atualizarStatusMedicao } from '../../../../services/medicoesService';
+import { atualizarOrdemServico } from '../../../../services/comercialService';
 import { handleDownloadMedicaoPDF } from '../CRM/handleDownloadMedicaoPDF';
 import { genFinId, todayStr, FORMAS_PAGAMENTO } from '../Financeiro/finData';
 import { temServico, temLocacao } from '../../../utils/modalidade';
@@ -69,6 +70,52 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
     () => osAprovadas.find((o: any) => String(o.id) === String(osSelecionadaId)) || null,
     [osAprovadas, osSelecionadaId],
   );
+
+  // OS já fechadas (bloqueadas) — listadas na seção de fechamento; some das demais telas.
+  const osFechadas = useMemo(
+    () => (Array.isArray(os) ? os : []).filter((o: any) => o?.fechada && !o?.usoInterno),
+    [os],
+  );
+
+  // Medições de uma OS (por backendId) e se há ao menos uma APROVADA (libera o fechamento).
+  const medicoesDaOs = (osBackendId: any) =>
+    (Array.isArray(medicoes) ? medicoes : []).filter((m: any) => String(m.ordemServicoBackendId) === String(osBackendId));
+  const temMedicaoAprovada = (osBackendId: any) =>
+    medicoesDaOs(osBackendId).some((m: any) => String(m.status).toLowerCase() === 'aprovada');
+
+  // Modal de bloqueio/reabertura. mode 'fechar' = fechar OS; 'reabrir' = ação restrita à diretoria.
+  const [bloqueioModal, setBloqueioModal] = useState<{ open: boolean; os: any; mode: 'fechar' | 'reabrir' }>({ open: false, os: null, mode: 'fechar' });
+  const [bloqueando, setBloqueando] = useState(false);
+
+  const abrirBloqueio = (alvo: any, mode: 'fechar' | 'reabrir') => setBloqueioModal({ open: true, os: alvo, mode });
+  const fecharBloqueioModal = () => { if (!bloqueando) setBloqueioModal({ open: false, os: null, mode: 'fechar' }); };
+
+  const confirmarBloqueio = async () => {
+    const alvo = bloqueioModal.os;
+    if (!alvo?.backendId) return;
+    const fechar = bloqueioModal.mode === 'fechar';
+    const hoje = new Date().toISOString().split('T')[0];
+    setBloqueando(true);
+    try {
+      await atualizarOrdemServico(alvo.backendId, fechar
+        ? { fechada: true, data_fechamento: hoje }
+        : { fechada: false, data_fechamento: null });
+      // Atualiza o contexto local de OS (sem refetch): liga/desliga a flag fechada.
+      const novaLista = (Array.isArray(os) ? os : []).map((o: any) =>
+        String(o.backendId) === String(alvo.backendId)
+          ? { ...o, fechada: fechar, dataFechamento: fechar ? hoje : undefined }
+          : o);
+      saveEntity('os', novaLista);
+      if (fechar && String(osSelecionadaId) === String(alvo.id)) setOsSelecionadaId('');
+      toast.success(fechar ? 'OS fechada. Bloqueada para uso em estoque/compras/alocação.' : 'OS reaberta para uso.');
+      setBloqueioModal({ open: false, os: null, mode: 'fechar' });
+    } catch (e) {
+      console.error('Erro ao alterar bloqueio da OS:', e);
+      toast.error('Erro ao processar o bloqueio da OS.');
+    } finally {
+      setBloqueando(false);
+    }
+  };
 
   // Contexto (empresa/cliente/cnpj) derivado da OS/obra selecionada para os campos readonly + PDF.
   const contexto = useMemo(() => {
@@ -410,6 +457,27 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
             </div>
           </div>
         )}
+
+        {osSelecionada && (
+          <div className="bg-[#0b1220] rounded-2xl border border-red-500/20 p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-red-300 font-black uppercase tracking-widest text-xs flex items-center gap-2"><Lock size={14} /> Fechamento da OS</p>
+              <p className="text-white/50 text-xs mt-1">
+                Depois de todas as medições, feche a OS. Ela <strong className="text-white/70">some das telas de uso</strong> (estoque, compras, adicionar/alocar por OS) e fica só finalizada.
+              </p>
+              {!temMedicaoAprovada(osSelecionada.backendId) && (
+                <p className="text-amber-300/80 text-[11px] mt-1.5">É necessária ao menos uma medição <strong>aprovada</strong> para fechar a OS.</p>
+              )}
+            </div>
+            <button
+              onClick={() => abrirBloqueio(osSelecionada, 'fechar')}
+              disabled={!temMedicaoAprovada(osSelecionada.backendId)}
+              className="shrink-0 px-5 py-3 rounded-lg bg-red-600 hover:bg-red-700 text-white font-black uppercase text-xs tracking-widest transition flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Lock size={16} /> Fechar / Bloquear OS
+            </button>
+          </div>
+        )}
       </section>
 
       {/* ===== HISTÓRICO ===== */}
@@ -463,6 +531,75 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
           </div>
         )}
       </section>
+
+      {/* ===== OS FECHADAS (BLOQUEADAS) ===== */}
+      {osFechadas.length > 0 && (
+        <section className="space-y-4">
+          <h2 className="text-white font-black uppercase tracking-widest text-sm flex items-center gap-2"><Lock size={16} className="text-red-300" /> OS Fechadas <span className="text-white/30 normal-case font-semibold">— bloqueadas para uso no sistema</span></h2>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {osFechadas.map((o: any) => (
+              <div key={o.id} className="bg-[#101f3d] rounded-2xl border border-red-500/20 p-5 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-white font-black truncate">{o.ordemServicoNumero || o.id}</p>
+                  <p className="text-white/40 text-xs truncate">{o.cliente || '—'}{o.projeto ? ` · ${o.projeto}` : ''}</p>
+                  <p className="text-red-300/70 text-[11px] mt-0.5">Fechada{o.dataFechamento ? ` em ${new Date(o.dataFechamento).toLocaleDateString('pt-BR')}` : ''}</p>
+                </div>
+                <button
+                  onClick={() => abrirBloqueio(o, 'reabrir')}
+                  className="shrink-0 px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/15 text-white/80 text-xs font-black uppercase tracking-widest flex items-center gap-1.5"
+                  title="Ação restrita à diretoria"
+                >
+                  <Unlock size={13} /> Reabrir
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* MODAL: fechar / reabrir OS */}
+      {bloqueioModal.open && (
+        <div className="fixed inset-0 z-[95] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-lg bg-[#0b1220] border border-white/10 rounded-3xl shadow-2xl overflow-hidden">
+            <div className={`p-6 border-b border-white/10 flex items-start gap-4 ${bloqueioModal.mode === 'fechar' ? 'bg-gradient-to-r from-red-600/30 to-orange-500/20' : 'bg-gradient-to-r from-amber-600/30 to-yellow-500/20'}`}>
+              <div className={`p-3 rounded-2xl shrink-0 ${bloqueioModal.mode === 'fechar' ? 'bg-red-500/20 text-red-300' : 'bg-amber-500/20 text-amber-300'}`}>
+                {bloqueioModal.mode === 'fechar' ? <Lock size={24} /> : <ShieldAlert size={24} />}
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-white font-black text-xl uppercase tracking-wide">{bloqueioModal.mode === 'fechar' ? 'Fechar OS' : 'Reabrir OS'}</h3>
+                <p className="text-white/60 text-sm mt-1 truncate">{bloqueioModal.os?.ordemServicoNumero || bloqueioModal.os?.id}</p>
+              </div>
+              <button onClick={fecharBloqueioModal} disabled={bloqueando} className="ml-auto p-2 rounded-full hover:bg-white/10 text-white/60 disabled:opacity-40"><X size={20} /></button>
+            </div>
+            <div className="p-6 space-y-5">
+              {bloqueioModal.mode === 'fechar' ? (
+                <p className="text-white/70 text-sm leading-relaxed">
+                  A OS será <strong className="text-white">fechada e bloqueada</strong>: vai sumir das telas de estoque, compras, adicionar/alocar por OS e produção. Ela passa a constar apenas como <strong className="text-white">finalizada</strong>. Confirmar?
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex items-start gap-2 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
+                    <ShieldAlert size={16} className="text-amber-300 mt-0.5 shrink-0" />
+                    <p className="text-amber-200/90 text-xs leading-relaxed">Ação restrita à <strong>diretoria</strong>. Reabrir volta a OS para uso no sistema (estoque/compras/alocação).</p>
+                  </div>
+                  <p className="text-white/70 text-sm">Confirmar reabertura desta OS?</p>
+                </div>
+              )}
+              <div className="flex justify-end gap-3">
+                <button onClick={fecharBloqueioModal} disabled={bloqueando} className="px-5 py-2.5 rounded-lg bg-white/10 hover:bg-white/15 text-white font-black uppercase text-xs tracking-widest disabled:opacity-40">Cancelar</button>
+                <button
+                  onClick={confirmarBloqueio}
+                  disabled={bloqueando}
+                  className={`px-5 py-2.5 rounded-lg text-white font-black uppercase text-xs tracking-widest disabled:opacity-40 flex items-center gap-2 ${bloqueioModal.mode === 'fechar' ? 'bg-red-600 hover:bg-red-700' : 'bg-amber-600 hover:bg-amber-700'}`}
+                >
+                  {bloqueioModal.mode === 'fechar' ? <Lock size={14} /> : <Unlock size={14} />}
+                  {bloqueando ? 'Processando…' : (bloqueioModal.mode === 'fechar' ? 'Fechar OS' : 'Reabrir OS')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* POPUP: Medição aprovada → Solicitação de NFe */}
       {nfePopup && nfeForm && (
