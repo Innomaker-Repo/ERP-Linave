@@ -673,134 +673,9 @@ export function OsView({ searchQuery }: OSViewProps) {
       ? itensASerIncluido.map((opcao) => `- ${opcao}`).join('\n')
       : '- Nenhum item selecionado';
 
-<<<<<<< HEAD:FrontEnd/src/app/components/modules/OS/OsView.tsx
     const dadosServicosOrcamentoTexto = (resumo?.orcamento?.dadosServicos || []).map((servico: any) => (
       `- ${servico.ordem || '-'} | ${servico.tipo || '-'} | Categoria: ${servico.categoria || '-'} | Embarcação: ${servico.embarcacao || '-'} | Local: ${servico.localExecucao || '-'} | Porto: ${servico.porto || '-'} | Prazo: ${servico.prazoDes || '-'} | Descrição: ${servico.descricao || '-'} | Obs.: ${servico.observacoes || '-'}`
     )).join('\n');
-=======
-    const formatDateISO = (dateStr: string) => {
-      if (!dateStr) return '';
-      try {
-        const d = new Date(dateStr);
-        return d.toISOString().split('T')[0];
-      } catch {
-        return dateStr;
-      }
-    };
-    
-    try {
-      const doc = new jsPDF('p', 'mm', 'a4');
-      const pageWidth = doc.internal.pageSize.getWidth();
-      const pageHeight = doc.internal.pageSize.getHeight();
-      const margin = 10;
-      let y = margin;
-      
-      doc.setDrawColor(0);
-      doc.setLineWidth(0.3);
-      doc.rect(margin, y, pageWidth - 2 * margin, 35);        
-      doc.line(margin + 50, y, margin + 50, y + 15); 
-      doc.line(margin + 130, y, margin + 130, y + 15); 
-      doc.line(margin, y + 15, pageWidth - margin, y + 15); 
-      
-      if (logoBase64) {
-        const logoFormat = logoBase64.match(/^data:image\/(png|jpe?g)/i)?.[1]?.toLowerCase().includes('png') ? 'PNG' : 'JPEG';
-        doc.addImage(logoBase64, logoFormat, margin + 2, y + 2, 46, 11);
-      } else {
-        doc.setFont('Helvetica', 'bold');
-        doc.setFontSize(12);
-        doc.text('LINAVE', margin + 5, y + 10);
-      }
-      
-      doc.setFontSize(12);
-      doc.setFont('Helvetica', 'bold');
-      doc.text('ORDEM DE SERVIÇO\nDE PRODUÇÃO', margin + 90, y + 6.5, { align: 'center' });
-      
-      doc.setFontSize(7);
-      doc.text('Data Emissão:', margin + 132, y + 5);
-      doc.setFont('Helvetica', 'normal');
-      doc.text(formatDateISO(osPrincipal.dataEmissao) || formatDateISO(new Date().toISOString()), margin + 155, y + 5);
-      
-      doc.setFont('Helvetica', 'bold');
-      doc.text('CC.:', margin + 132, y + 10);
-      doc.setFont('Helvetica', 'normal');
-      doc.text(osPrincipal.cc || 'Não inf.', margin + 142, y + 10);
-      y += 15;
-      
-      const rowH = 5;
-      doc.line(margin, y + rowH, pageWidth - margin, y + rowH);
-      doc.line(margin, y + rowH * 2, pageWidth - margin, y + rowH * 2);
-      doc.line(margin, y + rowH * 3, pageWidth - margin, y + rowH * 3);
-      doc.line(margin + 100, y, margin + 100, y + 20); 
-      
-      doc.setFontSize(8);
-      const printDado = (lbl: string, val: string, vx: number, vy: number) => {
-        doc.setFont('Helvetica', 'bold');
-        doc.text(lbl, vx, vy);
-        doc.setFont('Helvetica', 'normal');
-        doc.text(val || ' ', vx + 25, vy);
-      };
-      
-      const dataInicio = osPrincipal.dataInicioPrevisto || selectedObraDetalhes?.dataPrevistaInicio;
-      const dataTermino = osPrincipal.dataTerminoPrevisto || selectedObraDetalhes?.dataPrevistaFinal;
-      
-      let idProjetoForPrint = '';
-      if (ultimaProposta?.numeroProposta || ultimaProposta?.numero) {
-        idProjetoForPrint = extrairIdProjetoDoNumero(ultimaProposta.numeroProposta || ultimaProposta.numero);
-      } else if (selectedObraDetalhes?.id) {
-        idProjetoForPrint = selectedObraDetalhes.id;
-      }
-      
-      const localOS = osPrincipal.local || osPrincipal.localExecucao || '';
-      // A OS é identificada pela EMBARCAÇÃO (do negócio); sem embarcação, usa o Local.
-      const embarcacaoOS = (Array.isArray(selectedObraDetalhes?.servicos) ? (selectedObraDetalhes.servicos.find((s: any) => s?.embarcacao)?.embarcacao) : '') || osPrincipal.embarcacao || '';
-      const projetoTexto = `${selectedObraDetalhes?.nome || osPrincipal.projeto || ''}${idProjetoForPrint ? ' • ' + idProjetoForPrint : ''}`;
-
-      printDado('CLIENTE:', cliente?.razaoSocial || cliente?.razao_social || osPrincipal.cliente || '', margin + 2, y + 3.5);
-      printDado('Início Previsto:', dataInicio ? formatDateISO(dataInicio) : '', margin + 102, y + 3.5);
-      y += rowH;
-
-      printDado('EMBARCAÇÃO:', embarcacaoOS || localOS, margin + 2, y + 3.5);
-      printDado('Térm. Previsto:', dataTermino ? formatDateISO(dataTermino) : '', margin + 102, y + 3.5);
-      y += rowH;
-
-      printDado('PROJETO:', projetoTexto, margin + 2, y + 3.5);
-      printDado('OS Nº:', osPrincipal.ordemServicoNumero || '', margin + 102, y + 3.5);
-      y += rowH;
-
-      printDado('LOCAL:', localOS, margin + 2, y + 3.5);
-      printDado('Encarregado:', osPrincipal.supervisorEncarregado || '', margin + 102, y + 3.5);
-      y += rowH;
-      y += 5; 
-      
-      const leftW = 120;
-      const rightW = (pageWidth - 2 * margin) - leftW;
-      
-      doc.setFont('Helvetica', 'bold');
-      doc.setFillColor(230, 230, 230);
-      doc.rect(margin, y, leftW, 6, 'FD');
-      doc.rect(margin + leftW, y, rightW, 6, 'FD');
-      
-      doc.text('DESCRIÇÃO DO SERVIÇO', margin + leftW/2, y + 4, { align: 'center' });
-      doc.text('A SER INCLUIDO', margin + leftW + rightW/2, y + 4, { align: 'center' });
-      y += 6;
-      
-      const bodyY = y;
-      
-      doc.setFont('Helvetica', 'normal');
-      const descTexto = ultimaProposta ? formatarEscopoBasicoParaTexto(ultimaProposta.escopoBasicoServicos || ultimaProposta.escopoA) : (osPrincipal.descricao || osPrincipal.descricaoGeralServico || '');
-      const descLines = doc.splitTextToSize(descTexto, leftW - 4);
-      
-      let cursorEsq = bodyY + 5;
-      descLines.forEach((l: string) => {
-        doc.text(l, margin + 2, cursorEsq);
-        cursorEsq += 4;
-      });
-      
-      let baseChecks = osPrincipal?.aSerIncluido || selectedObraDetalhes?.aSerIncluido || {};
-      if (typeof baseChecks === 'string') {
-        try { baseChecks = JSON.parse(baseChecks); } catch(e) { baseChecks = {}; }
-      }
->>>>>>> fccd5af (ultimas alterações):FrontEnd/src/app/components/modules/OS/OSView.tsx
 
     const escopoServicosTexto = (resumo?.proposta?.escopoBasicoServicos || []).map((escopo: any, idx: number) => {
       const cabecalho = `Escopo ${idx + 1}: ${escopo.titulo || 'Sem título'}`;
@@ -856,7 +731,6 @@ Escopo: ${resumo?.orcamento?.escopoOrcamento || '-'}
 Dados dos Serviços:
 ${dadosServicosOrcamentoTexto || '-'}
 
-<<<<<<< HEAD:FrontEnd/src/app/components/modules/OS/OsView.tsx
 Mão de Obra:
 ${(resumo?.orcamento?.maoDeObra || []).map((itemMao: any) => `- ${itemMao.funcao || '-'} | Qtde: ${itemMao.quantidade || '-'} | Dias: ${itemMao.dias || '-'}`).join('\n') || '-'}
 
@@ -904,45 +778,6 @@ Geração: ${new Date().toLocaleString('pt-BR')}
     document.body.appendChild(elemento);
     elemento.click();
     document.body.removeChild(elemento);
-=======
-      // --- TABELA DE TERCEIRIZADOS ATUALIZADA (SEM VALORES) ---
-      const terceirizadosOS = isConsolidada && osPrincipal.resumoConsolidado?.orcamento?.terceirizados?.length > 0
-        ? osPrincipal.resumoConsolidado.orcamento.terceirizados
-        : (ultimoOrcamento?.data?.terceirizados || ultimoOrcamento?.data?.terceiros || []);
-        
-      if (terceirizadosOS.length > 0) {
-        autoTable(doc, {
-          startY: y,
-          head: [['ITEM', 'TERCEIRIZAÇÃO OU SUB-CONTRATAÇÃO']],
-          body: terceirizadosOS.map((t: any, idx: number) => [
-            idx + 1,
-            t.descricao || ''
-          ]),
-          theme: 'grid',
-          headStyles: { fillColor: [230, 230, 230], textColor: [0,0,0], fontStyle: 'bold', fontSize: 8 },
-          styles: { fontSize: 7, cellPadding: 2, textColor: [0,0,0] },
-          margin: { left: margin, right: margin }
-        });
-      }
-      
-      const pageCount = (doc as any).internal.getNumberOfPages();
-      for (let i = 1; i <= pageCount; i++) {
-        doc.setPage(i);
-        doc.setFontSize(6);
-        doc.setTextColor(150);
-        doc.text(`Documento gerado pelo Linave ERP em ${new Date().toLocaleString('pt-BR')}`, margin, pageHeight - 5);
-        doc.text(`Pag. ${i} / ${pageCount}`, pageWidth - margin - 15, pageHeight - 5);
-      }
-      
-      const prefixo = getPrefixoEmpresa(selectedObraDetalhes?.empresaPrestadora);
-      doc.save(`OS_${String(osPrincipal.ordemServicoNumero || '001').replace(/[\\/]/g, '-')}.pdf`);
-      
-      toast.success('OS baixada em PDF com sucesso!');
-    } catch (error) {
-      console.error('Erro ao gerar PDF:', error);
-      toast.error('Erro ao gerar OS em PDF');
-    }
->>>>>>> fccd5af (ultimas alterações):FrontEnd/src/app/components/modules/OS/OSView.tsx
   };
 
   const obrasOrdenadas = obrasEmAndamento.filter((obra: any) => {
@@ -1067,6 +902,7 @@ Geração: ${new Date().toLocaleString('pt-BR')}
             </div>
 
             <div className="p-8 space-y-6 max-h-[calc(90vh-180px)] overflow-y-auto">
+              <ObservacoesNegocio servicos={formData.servicos} />
               <div className="bg-gradient-to-r from-blue-500/10 to-cyan-500/10 rounded-2xl border border-blue-500/20 p-6 space-y-4">
                 <div className="flex items-center justify-between">
                   <h3 className="text-lg font-black text-white uppercase">Dados Principais</h3>

@@ -414,7 +414,8 @@ class OrcamentoSerializer(serializers.ModelSerializer):
             'oh': float(obj.resumo.OH) if obj.resumo else 0,
             'impostos': float(obj.resumo.impostos) if obj.resumo else 0,
             'impostosLocacao': float(obj.resumo.impostos_locacao) if obj.resumo else 0,
-            'quantidadeItensProduzidos': float(obj.resumo.qnt) if obj.resumo else 0
+            'quantidadeItensProduzidos': float(obj.resumo.qnt) if obj.resumo else 0,
+            'atividadesMacro': (obj.resumo.atividades_macro if obj.resumo and isinstance(obj.resumo.atividades_macro, list) else [])
         }
 
     def get_valores(self, obj):
@@ -531,6 +532,7 @@ class OrdemServicoSerializer(serializers.ModelSerializer):
             'supervisor_encarregado', 'descricao_geral_servico',
             'a_ser_incluido', 'mao_obra', 'horas_trabalhadas_servico',
             'status_os', 'status_envio', 'status_aprovacao',
+            'fechada', 'data_fechamento',
             'data_aprovacao', 'documento_assinatura_aprovacao',
             'documentos', 'created_at', 'updated_at'
         ]

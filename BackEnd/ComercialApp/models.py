@@ -330,6 +330,9 @@ class Resumo_orcamento(models.Model):
     impostos = models.DecimalField(max_digits=5, decimal_places = 2)  # imposto sobre os SERVIÇOS
     impostos_locacao = models.DecimalField(max_digits=5, decimal_places=2, default=0)  # imposto sobre a LOCAÇÃO (calculado à parte)
     qnt = models.DecimalField(max_digits=12, decimal_places=2) #how many units of the final product or service are expected to be delivered, to be filled in the "Quantidade" field of the orçamento form, used to calculate the cost per unit in the Resumo_orcamento model and displayed in the "Custo por Unidade" field of the orçamento form.
+    # Tabela macro das atividades orçadas (descrição macro do preço): vira o item D da Proposta.
+    # Cada item: { descricao, quantidade, unidade, valorUnitario, dias } (valorTotal = qtd*valorUnitario*dias)
+    atividades_macro = models.JSONField(default=list, blank=True)
     #---------------------------------------------------------------------------------
     # Calculation properties reach back through the Orcamento link
     @property
@@ -461,6 +464,12 @@ class OrdemServico(models.Model):
     status_os = models.CharField(max_length=20, choices=STATUS_OS_CHOICES, default='rascunho')
     status_envio = models.CharField(max_length=20, choices=STATUS_ENVIO_CHOICES, default='pendente')
     status_aprovacao = models.CharField(max_length=20, choices=STATUS_APROVACAO_CHOICES, default='pendente')
+
+    # Fechamento (bloqueio definitivo) da OS — feito na tela de Medições depois das medições.
+    # OS fechada SOME das listas de USO (estoque/compras/alocação/produção): fica só finalizada.
+    # Reabrir é ação restrita (diretoria). Substitui a verificação "enviada+aprovada" como gate de uso.
+    fechada = models.BooleanField(default=False)
+    data_fechamento = models.DateField(null=True, blank=True)
     
     # Aprovação
     data_aprovacao = models.DateField(null=True, blank=True)

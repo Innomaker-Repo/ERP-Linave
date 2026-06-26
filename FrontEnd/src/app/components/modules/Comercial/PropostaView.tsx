@@ -9,6 +9,7 @@ import { saveAs } from 'file-saver';
 import { getNegocios } from '../../../../services/comercial';
 import { getClientes, criarProposta, atualizarProposta, atualizarNegocio } from '../../../../services/comercialService';
 import { temServico, temLocacao } from '../../../utils/modalidade';
+import { ObservacoesNegocio } from '../../ObservacoesNegocio';
 
 interface EscopoLinha {
   id: string;
@@ -40,7 +41,7 @@ interface PropostaFormData {
   responsabilidadeContratada: string;
   escopoC: string;
   preco: string;
-  precoItens?: Array<{ id: string; nome?: string; quantidade: number; precoUnitario: number; total: number }>;
+  precoItens?: Array<{ id: string; descricao: string; quantidade: number; unidade: string; valorUnitario: number; dias: number; total: number }>;
   precoTextoLivre: string;
   condicoesGerais: string;
   condicoesPagamento: string;
@@ -96,12 +97,15 @@ const mapNegocioToObra = (n: any): any => ({
   status: n.status,
   empresaPrestadora: n.empresa_prestadora,
   responsavelComercial: n.solicitante,
+  cargo: n.cargo || '',
   tipo: n.tipo_servico,
   servicos: (n.servicos || []).map((s: any) => ({
     id: s.id,
     tipo: s.tipo_servico,
     localExecucao: s.local_execucao,
     descricao: s.descricao,
+    embarcacao: s.embarcacao,
+    observacoes: s.observacoes,
   })),
   modalidade: n.modalidade || 'servico',
   itensAlocacao: Array.isArray(n.itens_alocacao)
@@ -162,6 +166,8 @@ export function PropostaView() {
   const [viewMode, setViewMode] = useState<'list' | 'form' | 'historico'>('list');
   const [selectedObra, setSelectedObra] = useState<any>(null);
   const [selectedPropostaVersion, setSelectedPropostaVersion] = useState<number | null>(null);
+  // Modal estilizado de recusa de proposta (refazer orçamento × refazer proposta).
+  const [recusaModal, setRecusaModal] = useState<{ open: boolean; obra: any | null; motivo: string; submitting: boolean }>({ open: false, obra: null, motivo: '', submitting: false });
 
   const proximaVersao = (v: string): string => {
     const char = (v || '').toUpperCase().slice(-1);
@@ -233,14 +239,22 @@ export function PropostaView() {
     return versao || 'Original';
   };
 
-  // Preço - itens editáveis (nome, quantidade, preço unitário, total)
-  const criarPrecoItem = (override?: Partial<{ id: string; nome?: string; quantidade: number; precoUnitario: number; total: number }>) => ({
-    id: `preco-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
-    nome: override?.nome || '',
-    quantidade: override?.quantidade ?? 1,
-    precoUnitario: override?.precoUnitario ?? 0,
-    total: override?.total ?? 0
-  });
+  // Preço (item D) - tabela macro editável: descrição, quantidade, unidade, valor unit., dias, total.
+  // Total da linha = quantidade × valor unitário × dias.
+  const criarPrecoItem = (override?: Partial<{ id: string; descricao: string; quantidade: number; unidade: string; valorUnitario: number; dias: number; total: number }>) => {
+    const quantidade = override?.quantidade ?? 1;
+    const valorUnitario = override?.valorUnitario ?? 0;
+    const dias = override?.dias ?? 1;
+    return {
+      id: `preco-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
+      descricao: override?.descricao || '',
+      quantidade,
+      unidade: override?.unidade || 'serv.',
+      valorUnitario,
+      dias,
+      total: override?.total ?? (quantidade * valorUnitario * dias)
+    };
+  };
 
   const adicionarPrecoItem = (item?: any) => {
     const novo = criarPrecoItem(item);
@@ -251,18 +265,26 @@ export function PropostaView() {
     setPropostaForm(prev => ({ ...prev, precoItens: (prev.precoItens || []).filter((it) => it.id !== id) }));
   };
 
-  const atualizarPrecoItem = (id: string, campo: 'nome' | 'quantidade' | 'precoUnitario', valor: any) => {
+  const atualizarPrecoItem = (id: string, campo: 'descricao' | 'quantidade' | 'unidade' | 'valorUnitario' | 'dias', valor: any) => {
     setPropostaForm(prev => {
       const itens = (prev.precoItens || []).map((it) => {
         if (it.id !== id) return it;
         const updated = { ...it } as any;
-        if (campo === 'nome') updated.nome = String(valor || '');
-        if (campo === 'quantidade') updated.quantidade = parseInt(String(valor)) || 0;
-        if (campo === 'precoUnitario') {
+        if (campo === 'descricao') updated.descricao = String(valor || '');
+        if (campo === 'unidade') updated.unidade = String(valor || '');
+        if (campo === 'quantidade') {
           const cleaned = String(valor).replace(/[^0-9.,]/g, '').replace(',', '.');
-          updated.precoUnitario = parseFloat(cleaned) || 0;
+          updated.quantidade = parseFloat(cleaned) || 0;
         }
-        updated.total = (Number(updated.quantidade) || 0) * (Number(updated.precoUnitario) || 0);
+        if (campo === 'dias') {
+          const cleaned = String(valor).replace(/[^0-9.,]/g, '').replace(',', '.');
+          updated.dias = parseFloat(cleaned) || 0;
+        }
+        if (campo === 'valorUnitario') {
+          const cleaned = String(valor).replace(/[^0-9.,]/g, '').replace(',', '.');
+          updated.valorUnitario = parseFloat(cleaned) || 0;
+        }
+        updated.total = (Number(updated.quantidade) || 0) * (Number(updated.valorUnitario) || 0) * (Number(updated.dias) || 0);
         return updated;
       });
       return { ...prev, precoItens: itens };
@@ -631,7 +653,7 @@ export function PropostaView() {
 
       if (precoItens.length > 0) {
         base.precoItens = precoItens;
-        const totalProposta = precoItens.reduce((s, p) => s + (Number(p.total) || 0), 0);
+        const totalProposta = precoItens.reduce((s: number, p: any) => s + (Number(p.total) || 0), 0);
         base.preco = `R$ ${totalProposta.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
       }
     } catch (e) {
@@ -867,24 +889,80 @@ export function PropostaView() {
     }
   };
 
-  const handleRecusaCliente = async (obra: any) => {
+  // Abre o pop-up estilizado de recusa.
+  const abrirRecusaModal = (obra: any) => {
+    setRecusaModal({ open: true, obra, motivo: '', submitting: false });
+  };
+
+  const fecharRecusaModal = () => {
+    if (recusaModal.submitting) return;
+    setRecusaModal({ open: false, obra: null, motivo: '', submitting: false });
+  };
+
+  // Monta o formulário de proposta REAPROVEITANDO os dados de uma proposta antiga
+  // (usado no caminho "refazer proposta") — já com o número/versão novos.
+  const montarFormDeProposta = (obra: any, propostaAntiga: any): PropostaFormData => {
+    const cliente = findClienteById(listaClientesLocal, obra.clienteId);
+    const proximaVersaoLetra = getVersaoInicialProposta(obra.propostas);
+    const componentesId = extrairComponentesDoId(obra.id);
+    const numeroSequencial = componentesId?.numero || '0001';
+
+    const precoItens = (Array.isArray(propostaAntiga?.precoItens) ? propostaAntiga.precoItens : []).map((it: any, i: number) => {
+      const quantidade = Number(it.quantidade) || 0;
+      const valorUnitario = Number(it.valorUnitario ?? it.precoUnitario) || 0;
+      const dias = Number(it.dias) || 1;
+      return {
+        id: it.id || `preco-refazer-${i}-${Date.now()}`,
+        descricao: String(it.descricao || it.nome || ''),
+        quantidade,
+        unidade: String(it.unidade || 'serv.'),
+        valorUnitario,
+        dias,
+        total: Number(it.total) || (quantidade * valorUnitario * dias),
+      };
+    });
+
+    return {
+      ...getInitialPropostaForm(),
+      dataProposta: new Date().toISOString().split('T')[0],
+      numeroProposta: gerarIdProposta(componentesId?.prefixo || 'LN', numeroSequencial, proximaVersaoLetra),
+      cliente: cliente?.razaoSocial || cliente?.razao_social || cliente?.nomeFantasia || cliente?.nome_fantasia || propostaAntiga?.cliente || '',
+      atribuidoA: obra.responsavelComercial || '',
+      cargoContato: obra.cargo || '',
+      referencia: propostaAntiga?.referencia || propostaAntiga?.referencias || '',
+      saudacao: propostaAntiga?.saudacao || '',
+      assunto: propostaAntiga?.assunto || '',
+      textoAbertura: propostaAntiga?.textoAbertura || getInitialPropostaForm().textoAbertura,
+      escopoA: propostaAntiga?.escopoA || '',
+      escopoBasicoServicos: Array.isArray(propostaAntiga?.escopoBasicoServicos) ? propostaAntiga.escopoBasicoServicos : [],
+      responsabilidadeContratada: propostaAntiga?.responsabilidadeContratada || '',
+      escopoC: propostaAntiga?.escopoC || propostaAntiga?.responsabilidadeContratante || '',
+      precoItens,
+      condicoesGerais: propostaAntiga?.condicoesGerais || '',
+      condicoesPagamento: propostaAntiga?.condicoesPagamento || '',
+      prazo: propostaAntiga?.prazo || '',
+      encerramento: propostaAntiga?.encerramento || '',
+    };
+  };
+
+  // Marca a proposta como recusada no backend (passo comum aos dois caminhos).
+  const marcarPropostaRecusada = async (obra: any, motivoRecusa: string) => {
     const ultimaProposta = obra.propostas?.[obra.propostas.length - 1];
-    if (!ultimaProposta?.id) return;
+    if (!ultimaProposta?.id) throw new Error('Proposta inexistente.');
+    await atualizarProposta(ultimaProposta.id, { status: 'recusada', motivoRecusaProposta: motivoRecusa });
+    return ultimaProposta;
+  };
 
-    const motivoRecusaInput = window.prompt('Informe o motivo da recusa da proposta:');
-    if (motivoRecusaInput === null) return;
-    const motivoRecusa = motivoRecusaInput.trim();
-    if (!motivoRecusa) {
-      alert('O motivo da recusa é obrigatório.');
-      return;
-    }
+  // CAMINHO 1: refazer o ORÇAMENTO — o negócio volta para a etapa de orçamento.
+  const confirmarRefazerOrcamento = async () => {
+    const obra = recusaModal.obra;
+    const motivoRecusa = recusaModal.motivo.trim();
+    if (!obra) return;
+    if (!motivoRecusa) { alert('Informe o motivo da recusa.'); return; }
 
-    window.confirm('Algum documento foi alterado ou adicionado pelo cliente?\n\nOK = Sim\nCancelar = Não');
-    const retornarParaOrcamento = window.confirm('Deseja retornar este negócio para ORÇAMENTO agora?\n\nOK = Voltar para orçamento\nCancelar = Cancelar recusa');
-    if (!retornarParaOrcamento) return;
-
+    setRecusaModal(prev => ({ ...prev, submitting: true }));
     try {
-      await atualizarProposta(ultimaProposta.id, { status: 'recusada', motivoRecusaProposta: motivoRecusa });
+      await marcarPropostaRecusada(obra, motivoRecusa);
       await atualizarNegocio(obra.backendId, {
         categoria: 'Planejamento',
         status: 'Aguardando orçamento',
@@ -920,10 +998,43 @@ export function PropostaView() {
         setSelectedObra(null);
         setViewMode('list');
       }
+      setRecusaModal({ open: false, obra: null, motivo: '', submitting: false });
       alert('Proposta recusada. Negócio retornou para Aguardando orçamento.');
     } catch (err) {
       console.error('Erro ao recusar proposta:', err);
       alert('Erro ao processar recusa.');
+      setRecusaModal(prev => ({ ...prev, submitting: false }));
+    }
+  };
+
+  // CAMINHO 2: refazer a PROPOSTA — abre o formulário já preenchido com os dados da antiga.
+  const confirmarRefazerProposta = async () => {
+    const obra = recusaModal.obra;
+    const motivoRecusa = recusaModal.motivo.trim();
+    if (!obra) return;
+    if (!motivoRecusa) { alert('Informe o motivo da recusa.'); return; }
+
+    setRecusaModal(prev => ({ ...prev, submitting: true }));
+    try {
+      await marcarPropostaRecusada(obra, motivoRecusa);
+      // Recarrega os negócios para pegar a proposta já marcada como recusada
+      // (necessário para o cálculo da próxima versão e p/ reaproveitar o conteúdo).
+      const raw = await getNegocios();
+      const mapped = Array.isArray(raw) ? raw.map(mapNegocioToObra) : [];
+      setListaNegocios(mapped);
+      const obraAtualizada = mapped.find((o: any) => o.backendId === obra.backendId) || obra;
+      const propostaAntiga = obraAtualizada.propostas?.[obraAtualizada.propostas.length - 1] || obra.propostas?.[obra.propostas.length - 1];
+
+      const formPreenchido = montarFormDeProposta(obraAtualizada, propostaAntiga);
+      setSelectedObra(obraAtualizada);
+      setPropostaForm(formPreenchido);
+      setNovaColunaPorEscopo({});
+      setRecusaModal({ open: false, obra: null, motivo: '', submitting: false });
+      setViewMode('form');
+    } catch (err) {
+      console.error('Erro ao refazer proposta:', err);
+      alert('Erro ao processar recusa.');
+      setRecusaModal(prev => ({ ...prev, submitting: false }));
     }
   };
 
@@ -1078,12 +1189,12 @@ export function PropostaView() {
                         <>
                           <button
                             onClick={() => handleAprovacaoCliente(obra)}
-                            className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 rounded-lg font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                            className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 rounded-lg font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center"
                           >
-                            <CheckCircle size={16} /> Aprovação
+                            <CheckCircle size={30} /> Aprovação do Cliente
                           </button>
                           <button
-                            onClick={() => handleRecusaCliente(obra)}
+                            onClick={() => abrirRecusaModal(obra)}
                             className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded-lg font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
                           >
                             <XCircle size={16} /> Recusa
@@ -1102,6 +1213,68 @@ export function PropostaView() {
           <div className="flex flex-col items-center justify-center h-40 text-center">
             <div className="text-white/20 text-2xl mb-2">−</div>
             <p className="text-white/40 text-xs">Nenhum negócio para proposta</p>
+          </div>
+        )}
+
+        {recusaModal.open && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+            <div className="w-full max-w-xl bg-[#0b1220] border border-white/10 rounded-3xl shadow-2xl overflow-hidden">
+              <div className="bg-gradient-to-r from-red-600/30 to-orange-500/20 border-b border-white/10 p-6 flex items-start gap-4">
+                <div className="p-3 bg-red-500/20 rounded-2xl text-red-300 shrink-0"><AlertTriangle size={26} /></div>
+                <div className="min-w-0">
+                  <h3 className="text-white font-black text-xl uppercase tracking-wide">Recusar Proposta</h3>
+                  <p className="text-white/60 text-sm mt-1 truncate">
+                    {recusaModal.obra?.id} — {recusaModal.obra?.nome || recusaModal.obra?.cliente || 'Negócio'}
+                  </p>
+                </div>
+                <button
+                  onClick={fecharRecusaModal}
+                  disabled={recusaModal.submitting}
+                  className="ml-auto p-2 rounded-full hover:bg-white/10 text-white/60 disabled:opacity-40"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-6">
+                <div className="space-y-1.5">
+                  <label className="text-[9px] font-black text-white/40 uppercase tracking-widest ml-1 block">Motivo da recusa <span className="text-red-400">*</span></label>
+                  <textarea
+                    autoFocus
+                    className="w-full bg-[#101f3d] border border-white/10 p-3 rounded-lg text-white text-sm outline-none focus:border-red-500/60 transition-all h-24 resize-none placeholder:text-white/20"
+                    value={recusaModal.motivo}
+                    onChange={(e) => setRecusaModal(prev => ({ ...prev, motivo: e.target.value }))}
+                    placeholder="Descreva o motivo informado pelo cliente..."
+                  />
+                </div>
+
+                <div>
+                  <p className="text-white/70 text-sm font-bold mb-3">Como deseja prosseguir?</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <button
+                      onClick={confirmarRefazerOrcamento}
+                      disabled={recusaModal.submitting || !recusaModal.motivo.trim()}
+                      className="group text-left bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 rounded-2xl p-4 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <div className="flex items-center gap-2 text-amber-300 mb-2"><DollarSign size={18} /><span className="font-black text-sm uppercase tracking-wide">Refazer Orçamento</span></div>
+                      <p className="text-white/50 text-xs leading-relaxed">O negócio volta para a etapa de <strong className="text-white/70">Orçamento</strong> (aguardando reorçamento).</p>
+                    </button>
+                    <button
+                      onClick={confirmarRefazerProposta}
+                      disabled={recusaModal.submitting || !recusaModal.motivo.trim()}
+                      className="group text-left bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 rounded-2xl p-4 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <div className="flex items-center gap-2 text-cyan-300 mb-2"><RefreshCw size={18} /><span className="font-black text-sm uppercase tracking-wide">Refazer Proposta</span></div>
+                      <p className="text-white/50 text-xs leading-relaxed">Abre uma <strong className="text-white/70">nova versão</strong> já preenchida com os dados da proposta atual.</p>
+                    </button>
+                  </div>
+                </div>
+
+                {recusaModal.submitting && (
+                  <p className="text-white/50 text-xs text-center animate-pulse">Processando...</p>
+                )}
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -1224,6 +1397,8 @@ export function PropostaView() {
           </div>
         </div>
       </div>
+
+      <ObservacoesNegocio servicos={selectedObra?.servicos} />
 
       {/* SEÇÃO 1: DATA E NÚMERO (AUTOPREENCHIDOS) */}
       <div className={sectionClass}>
@@ -1554,22 +1729,30 @@ export function PropostaView() {
               <table className="w-full text-xs border border-white/10 rounded-lg overflow-hidden">
                 <thead>
                   <tr className="bg-white/5 border-b border-white/10">
-                    <th className="px-3 py-2 text-left text-white font-black">Nome</th>
-                    <th className="px-3 py-2 text-left text-white font-black w-28">Quantidade</th>
-                    <th className="px-3 py-2 text-left text-white font-black w-40">Preço Unit.</th>
-                    <th className="px-3 py-2 text-left text-white font-black w-40">Total</th>
-                    <th className="px-3 py-2 text-center text-white font-black w-16"> </th>
+                    <th className="px-3 py-2 text-left text-white font-black w-12">Item</th>
+                    <th className="px-3 py-2 text-left text-white font-black">Descrição</th>
+                    <th className="px-3 py-2 text-left text-white font-black w-20">Quant.</th>
+                    <th className="px-3 py-2 text-left text-white font-black w-20">Unit.</th>
+                    <th className="px-3 py-2 text-left text-white font-black w-32">Vl. Unit. R$</th>
+                    <th className="px-3 py-2 text-left text-white font-black w-16">Dias</th>
+                    <th className="px-3 py-2 text-left text-white font-black w-36">Valor total R$</th>
+                    <th className="px-3 py-2 text-center text-white font-black w-12"> </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {(propostaForm.precoItens || []).map((it) => (
+                  {(propostaForm.precoItens || []).length === 0 && (
+                    <tr><td colSpan={8} className="px-3 py-3 text-white/40">Nenhuma atividade. Clique em "Adicionar Item".</td></tr>
+                  )}
+                  {(propostaForm.precoItens || []).map((it, idx) => (
                     <tr key={it.id} className="border-b border-white/5">
-                      <td className="px-3 py-2">
+                      <td className="px-3 py-2 text-white/60 font-bold text-center">{idx + 1}</td>
+                      <td className="px-3 py-2 min-w-[200px]">
                         <input
                           type="text"
                           className="w-full bg-[#101f3d] border border-white/10 p-2 rounded text-white text-xs outline-none"
-                          value={it.nome || ''}
-                          onChange={(e) => atualizarPrecoItem(it.id, 'nome', e.target.value)}
+                          value={it.descricao || ''}
+                          onChange={(e) => atualizarPrecoItem(it.id, 'descricao', e.target.value)}
+                          placeholder="Descrição da atividade"
                         />
                       </td>
                       <td className="px-3 py-2">
@@ -1577,7 +1760,7 @@ export function PropostaView() {
                           type="number"
                           min="0"
                           className="w-full bg-[#101f3d] border border-white/10 p-2 rounded text-white text-xs outline-none"
-                          value={String(it.quantidade || 0)}
+                          value={String(it.quantidade ?? '')}
                           onChange={(e) => atualizarPrecoItem(it.id, 'quantidade', e.target.value)}
                         />
                       </td>
@@ -1585,11 +1768,30 @@ export function PropostaView() {
                         <input
                           type="text"
                           className="w-full bg-[#101f3d] border border-white/10 p-2 rounded text-white text-xs outline-none"
-                          value={String(it.precoUnitario || '')}
-                          onChange={(e) => atualizarPrecoItem(it.id, 'precoUnitario', e.target.value)}
+                          value={it.unidade || ''}
+                          onChange={(e) => atualizarPrecoItem(it.id, 'unidade', e.target.value)}
+                          placeholder="serv."
                         />
                       </td>
-                      <td className="px-3 py-2 text-white font-black">R$ {(Number(it.total) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="text"
+                          className="w-full bg-[#101f3d] border border-white/10 p-2 rounded text-white text-xs outline-none"
+                          value={String(it.valorUnitario ?? '')}
+                          onChange={(e) => atualizarPrecoItem(it.id, 'valorUnitario', e.target.value)}
+                          placeholder="0,00"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="number"
+                          min="0"
+                          className="w-full bg-[#101f3d] border border-white/10 p-2 rounded text-white text-xs outline-none"
+                          value={String(it.dias ?? '')}
+                          onChange={(e) => atualizarPrecoItem(it.id, 'dias', e.target.value)}
+                        />
+                      </td>
+                      <td className="px-3 py-2 text-white font-black whitespace-nowrap">R$ {(Number(it.total) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                       <td className="px-3 py-2 text-center">
                         <button type="button" onClick={() => removerPrecoItem(it.id)} className="text-red-300 p-1"><X size={14} /></button>
                       </td>

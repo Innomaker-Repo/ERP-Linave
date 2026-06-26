@@ -160,6 +160,7 @@ def criar_orcamento(request):
             'impostos': resumo_data.get('impostos', 0),
             'impostos_locacao': resumo_data.get('impostos_locacao', resumo_data.get('impostosLocacao', 0)),
             'qnt': resumo_data.get('qnt', resumo_data.get('quantidadeItensProduzidos', 1)),
+            'atividades_macro': resumo_data.get('atividades_macro', resumo_data.get('atividadesMacro', [])) or [],
         }
         resumo_instance = getattr(orcamento_instance, 'resumo', None)
         if resumo_instance:
