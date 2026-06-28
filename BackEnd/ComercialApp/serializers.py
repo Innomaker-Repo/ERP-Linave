@@ -1,13 +1,15 @@
 import re
 from decimal import Decimal
 from rest_framework import serializers
+from django.contrib.auth.password_validation import validate_password as django_validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from .models import (
     Cliente, Negocio, Servico, User, ItemAlocacao,
     Levantamento, MDO, Ativ_prevista, Material,
     Servico_terceirizado, Orcamento, Resumo_orcamento,
     OrdemServico,
     Escopo, PropostaComercial, Fornecedor,
-    Medicao, MedicaoItem, Documento
+    Medicao, MedicaoItem, Documento, LogAtividade
 )
 
 # ----------------- Documentos ------------------
@@ -48,8 +50,17 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['cpf', 'nome', 'email', 'cargo', 'departamento',
-                  'is_staff', 'is_superuser', 'is_active', 'password']
-        read_only_fields = ['is_superuser']
+                  'is_staff', 'is_superuser', 'is_active', 'password',
+                  'role', 'permissoes']
+        read_only_fields = ['is_superuser', 'is_staff']
+
+    def validate_password(self, value):
+        if value:
+            try:
+                django_validate_password(value)
+            except DjangoValidationError as e:
+                raise serializers.ValidationError(list(e.messages))
+        return value
 
     def create(self, validated_data):
         password = validated_data.pop('password', None)
@@ -661,3 +672,18 @@ class MedicaoSerializer(serializers.ModelSerializer):
             for item in itens:
                 MedicaoItem.objects.create(medicao=instance, **item)
         return instance
+
+
+# --------------------- Log de Atividades ---------------------
+
+class LogAtividadeSerializer(serializers.ModelSerializer):
+    acao_display = serializers.CharField(source='get_acao_display', read_only=True)
+    timestamp_fmt = serializers.SerializerMethodField()
+
+    class Meta:
+        model = LogAtividade
+        fields = ['id', 'usuario_cpf', 'usuario_nome', 'acao', 'acao_display',
+                  'modulo', 'descricao', 'timestamp', 'timestamp_fmt']
+
+    def get_timestamp_fmt(self, obj):
+        return obj.timestamp.strftime('%d/%m/%Y %H:%M:%S')
