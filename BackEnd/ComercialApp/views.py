@@ -1,19 +1,42 @@
 from rest_framework import viewsets, status
 from rest_framework.response import Response
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.db import transaction
 from .models import (
     Cliente, Negocio, Servico, ItemAlocacao,
     Levantamento, MDO, Material, Servico_terceirizado, Orcamento, Ativ_prevista, Resumo_orcamento,
-    OrdemServico, Escopo, PropostaComercial, Fornecedor, Medicao, Documento
+    OrdemServico, Escopo, PropostaComercial, Fornecedor, Medicao, Documento, User
 )
 from .serializers import (
     ClienteSerializer, NegocioSerializer, ServicoSerializer,
     OrcamentoSerializer, OrdemServicoSerializer, EscopoSerializer,
     PropostaComercialSerializer, FornecedorSerializer, MedicaoSerializer,
-    DocumentoSerializer
+    DocumentoSerializer, UserSerializer
 )
+
+
+# --- Usuários ---
+class UserViewSet(viewsets.ModelViewSet):
+    queryset = User.objects.all().order_by('nome')
+    serializer_class = UserSerializer
+    permission_classes = [AllowAny]
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if instance.is_superuser:
+            return Response({'detail': 'Não é possível excluir o administrador principal.'},
+                            status=status.HTTP_403_FORBIDDEN)
+        self.perform_destroy(instance)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def usuario_me(request):
+    serializer = UserSerializer(request.user)
+    return Response(serializer.data)
 
 # --- ViewSets Básicos ---
 class ClienteViewSet(viewsets.ModelViewSet):

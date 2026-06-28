@@ -7,6 +7,7 @@ import { getCompras, syncCompras, syncComprasHistorico } from '../../services/co
 import { getAlmoxarifado, syncAlmoxarifado } from '../../services/almoxarifadoService';
 import { getConfiguracoes, syncConfig, syncListas } from '../../services/configuracoesService';
 import { getMedicoes } from '../../services/medicoesService';
+import { getStoredSession as getAuthSession, getStoredTokens, storeSession, clearTokens, refreshAccessToken } from '../../services/authService';
 
 
 const cloneDeep = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -975,24 +976,38 @@ interface ErpContextData {
 
 const ErpContext = createContext<ErpContextData>({} as ErpContextData);
 
-const SESSION_STORAGE_KEY = 'erp.userSession';
-
+// Usa chave fora do padrão /workspace|linave|comercial|crm|erp/i para não ser
+// apagada por clearLegacyCommercialLocalStorage() em cada carregamento da página.
 const getStoredSession = () => {
   if (typeof window === 'undefined') return null;
-
-  try {
-    const raw = window.localStorage.getItem(SESSION_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch (_error) {
-    return null;
-  }
+  return getAuthSession();
 };
 
 export function ErpProvider({ children }: { children: React.ReactNode }) {
   const [userSession, setUserSession] = useState<any>(() => getStoredSession());
   const [loading, setLoading] = useState(true);
-  
+
   const [data, setData] = useState<any>(() => createInitialData(null));
+
+  // Se há uma sessão salva mas o access token sumiu, tenta renová-lo via
+  // refresh token (válido por 30 dias). Só força logout se AMBOS falharem.
+  useEffect(() => {
+    const checkTokens = async () => {
+      const stored = getStoredSession();
+      if (!stored) return;
+
+      const { access } = getStoredTokens();
+      if (access) return; // Access token presente: tudo OK.
+
+      // Sem access token, tenta renovar.
+      const newAccess = await refreshAccessToken();
+      if (!newAccess) {
+        clearTokens();
+        setUserSession(null);
+      }
+    };
+    void checkTokens();
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -1143,16 +1158,15 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Removed: loginComGoogle - agora apenas simula
-  const loginComGoogle = async (token: string, email: string) => {
+  const loginComGoogle = async (_token: string, _email: string) => {
     showTestAlert('Google Login');
   };
 
-  // Login direto simples - apenas local
+  // Persiste sessão após login (chamado pelo LoginPage via onLoginSuccess).
   const loginDireto = (user: any) => {
-    const session = { ...user, token: null };
+    const session = { ...user };
     setUserSession(session);
-    window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+    storeSession(session);
   };
 
   // Atualiza o estado e persiste no SQL conforme a coleção. Não há mais blob de
@@ -1269,7 +1283,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
   const saveConfig = async (c: any): Promise<void> => saveEntity('config', { ...(data.config || {}), ...c });
 
   const logout = () => {
-    window.localStorage.removeItem(SESSION_STORAGE_KEY);
+    clearTokens();
     setUserSession(null);
     window.location.href = '/';
   };

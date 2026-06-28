@@ -1,7 +1,7 @@
 from django.db import models
 from django.utils import timezone
 from decimal import Decimal
-from django.contrib.auth.models import AbstractUser
+from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.conf import settings
 
 
@@ -166,40 +166,50 @@ class ItemAlocacao(models.Model):
 
 
 #--------------------- User ------------------
-class User(AbstractUser):
-    workspace = models.ForeignKey(
-    'Workspace',
-    on_delete=models.CASCADE,
-    related_name='users'
-)
+class UserManager(BaseUserManager):
+    def create_user(self, cpf, password=None, **extra_fields):
+        if not cpf:
+            raise ValueError('CPF é obrigatório')
+        user = self.model(cpf=cpf, **extra_fields)
+        user.set_password(password)
+        user.save(using=self._db)
+        return user
 
-    # remove o username padrão
+    def create_superuser(self, cpf, password=None, **extra_fields):
+        extra_fields.setdefault('is_staff', True)
+        extra_fields.setdefault('is_superuser', True)
+        extra_fields.setdefault('is_active', True)
+        return self.create_user(cpf, password, **extra_fields)
+
+
+class User(AbstractUser):
+    objects = UserManager()
+
+    # CPF como chave primária e campo de login
+    cpf = models.CharField(max_length=14, primary_key=True)
+
+    # Remove username padrão
     username = None
 
-    # email será o login
-    email = models.EmailField(
-        unique=True
+    # Dados do usuário
+    nome = models.CharField(max_length=150)
+    email = models.EmailField(unique=True, blank=True, default='')
+    cargo = models.CharField(max_length=100, blank=True, default='')
+    departamento = models.CharField(max_length=100, blank=True, default='')
+
+    workspace = models.ForeignKey(
+        'Workspace',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='users'
     )
 
-    # campos customizados
-    user_funcao = models.CharField(
-        max_length=100
-    )
-
-    user_setor = models.CharField(
-        max_length=100
-    )
-
-    user_data_nascimento = models.DateField()
-
-    # define email como login principal
-    USERNAME_FIELD = 'email'
-
-    # campos obrigatórios no createsuperuser
+    USERNAME_FIELD = 'cpf'
     REQUIRED_FIELDS = []
 
     def __str__(self):
-        return self.email
+        return f"{self.nome} ({self.cpf})"
 
 #--------------------- Orçamento ------------------
 

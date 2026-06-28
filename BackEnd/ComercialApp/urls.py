@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     NegocioViewSet, ClienteViewSet, OrdemServicoViewSet,
     PropostaComercialViewSet, FornecedorViewSet, MedicaoViewSet,
-    DocumentoViewSet,
+    DocumentoViewSet, UserViewSet, usuario_me,
     criar_orcamento,
     ordens_servico_por_cliente, ordens_servico_por_negocio, atualizar_status_os,
     atualizar_status_medicao,
@@ -19,6 +19,7 @@ router.register(r'ordens-servico', OrdemServicoViewSet, basename='ordem-servico'
 router.register(r'propostas-comerciais', PropostaComercialViewSet, basename='proposta-comercial')
 router.register(r'medicoes', MedicaoViewSet, basename='medicao')
 router.register(r'documentos', DocumentoViewSet, basename='documento')
+router.register(r'usuarios', UserViewSet, basename='usuario')
 
 urlpatterns = [
     # Estado financeiro (lista unificada de FinRecord; GET lê, POST substitui tudo)
@@ -41,6 +42,9 @@ urlpatterns = [
     path('os-por-negocio/<int:negocio_id>/', ordens_servico_por_negocio, name='os-por-negocio'),
     path('ordens-servico/<int:pk>/atualizar-status/', atualizar_status_os, name='atualizar-status-os'),
     path('medicoes/<int:pk>/atualizar-status/', atualizar_status_medicao, name='atualizar-status-medicao'),
+
+    # Usuário autenticado atual
+    path('usuarios/me/', usuario_me, name='usuario-me'),
 
     # Rotas automáticas do Router (sempre no final)
     path('', include(router.urls)),

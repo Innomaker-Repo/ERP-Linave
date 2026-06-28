@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir /s /b)",
+      "Bash(xargs grep -l \"authenticate\\\\|login\\\\|password\\\\|token\\\\|JWT\\\\|auth\")",
+      "Bash(Remove-Item \"c:\\\\Users\\\\Andre\\\\Desktop\\\\Projetos\\\\ERP-Linave\\\\BackEnd\\\\ComercialApp\\\\migrations\\\\0001_initial.py\" -Force)",
+      "Read(//c/Users/Andre/.claude/projects/c--Users-Andre-Desktop-Projetos-ERP-Linave/memory/**)",
+      "PowerShell($body = '{\"cpf\":\"admin\",\"password\":\"admin\"}'; $resp = Invoke-RestMethod -Uri \"http://localhost:8000/token/\" -Method POST -Body $body -ContentType \"application/json\" -ErrorAction SilentlyContinue; if \\($resp\\) { Write-Host \"LOGIN OK - access token recebido \\(primeiros 30 chars\\):\" \\($resp.access.Substring\\(0,30\\) + \"...\"\\) } else { Write-Host \"Backend offline ou erro\" })"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\Andre\\.claude\\projects\\c--Users-Andre-Desktop-Projetos-ERP-Linave\\memory"
+    ]
+  }
+}
