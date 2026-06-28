@@ -17,7 +17,7 @@ export interface UserSession {
   email: string;
   cargo: string;
   departamento: string;
-  role: 'ADMIN' | 'USER';
+  role: 'ADMIN' | 'GERENTE' | 'USUARIO';
   is_superuser: boolean;
   permissoes: Record<string, boolean>;
 }
@@ -54,21 +54,30 @@ export function storeSession(session: UserSession) {
 }
 
 function buildSession(user: any): UserSession {
+  const backendRole: string = user.role || '';
+  let role: UserSession['role'];
+  if (backendRole === 'admin' || user.is_superuser) {
+    role = 'ADMIN';
+  } else if (backendRole === 'gerente') {
+    role = 'GERENTE';
+  } else {
+    role = 'USUARIO';
+  }
   return {
     cpf: user.cpf ?? '',
     nome: user.nome || user.first_name || 'Usuário',
     email: user.email || '',
     cargo: user.cargo || '',
     departamento: user.departamento || '',
-    role: user.is_superuser ? 'ADMIN' : 'USER',
-    is_superuser: !!user.is_superuser,
-    permissoes: {},
+    role,
+    is_superuser: role === 'ADMIN',
+    permissoes: user.permissoes || {},
   };
 }
 
-export async function login(cpf: string, password: string): Promise<UserSession> {
-  // /token/ fica na raiz do Django, não sob /comercial/.
-  const { data } = await authAxios.post('/token/', { cpf, password });
+export async function login(identifier: string, password: string): Promise<UserSession> {
+  // /token/ aceita CPF ou e-mail no campo 'identifier'.
+  const { data } = await authAxios.post('/token/', { identifier, password });
 
   storeTokens(data.access, data.refresh);
 

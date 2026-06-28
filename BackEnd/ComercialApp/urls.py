@@ -7,7 +7,8 @@ from .views import (
     criar_orcamento,
     ordens_servico_por_cliente, ordens_servico_por_negocio, atualizar_status_os,
     atualizar_status_medicao,
-    financeiro_data, compras_data, almoxarifado_data, configuracoes_data
+    financeiro_data, compras_data, almoxarifado_data, configuracoes_data,
+    logs_atividade,
 )
 
 # Configuração do Router para ViewSets (Rotas automáticas)
@@ -45,6 +46,9 @@ urlpatterns = [
 
     # Usuário autenticado atual
     path('usuarios/me/', usuario_me, name='usuario-me'),
+
+    # Log de atividades (admin only)
+    path('logs/', logs_atividade, name='logs-atividade'),
 
     # Rotas automáticas do Router (sempre no final)
     path('', include(router.urls)),

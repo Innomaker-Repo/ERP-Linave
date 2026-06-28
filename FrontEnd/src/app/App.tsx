@@ -62,6 +62,8 @@ function getAbaForSection(section: string): { aba: string; item: string } {
     
     // Configurações
     'usuarios': { aba: 'config', item: 'usuarios' },
+    'logAtividades': { aba: 'config', item: 'logAtividades' },
+    'meuPerfil': { aba: 'config', item: 'meuPerfil' },
   };
   
   return mapping[section] || { aba: 'gestao', item: 'dashboard' };

@@ -9,24 +9,26 @@ const btnPrimaryClasses =
 
 export function LoginPage({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) {
   const [step, setStep] = useState<'inicial' | 'entrar'>('inicial');
-  const [cpf, setCpf] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [senha, setSenha] = useState('');
   const [loading, setLoading] = useState(false);
   const [erro, setErro] = useState('');
+  const [tentativas, setTentativas] = useState(0);
 
   const handleLogin = async () => {
-    if (!cpf || !senha) {
+    if (!identifier || !senha) {
       setErro('Preencha todos os campos.');
       return;
     }
     setErro('');
     setLoading(true);
     try {
-      const session = await login(cpf.trim(), senha);
+      const session = await login(identifier.trim(), senha);
+      setTentativas(0);
       onLoginSuccess(session);
     } catch (e: any) {
-      const detail = e?.response?.data?.detail;
-      setErro(detail || 'CPF ou senha inválidos.');
+      setTentativas((t) => t + 1);
+      setErro('credenciais_invalidas');
     } finally {
       setLoading(false);
     }
@@ -35,6 +37,8 @@ export function LoginPage({ onLoginSuccess }: { onLoginSuccess: (user: any) => v
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') handleLogin();
   };
+
+  const isEmail = identifier.includes('@');
 
   return (
     <div className="min-h-screen bg-[#050a14] flex items-center justify-center p-4 font-sans relative overflow-hidden">
@@ -85,7 +89,7 @@ export function LoginPage({ onLoginSuccess }: { onLoginSuccess: (user: any) => v
 
           {step !== 'inicial' && (
             <button
-              onClick={() => { setStep('inicial'); setErro(''); }}
+              onClick={() => { setStep('inicial'); setErro(''); setTentativas(0); }}
               className="absolute top-8 left-8 text-white/30 hover:text-white flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest transition-all hover:-translate-x-1"
             >
               <ArrowLeft size={14} /> Voltar
@@ -114,7 +118,7 @@ export function LoginPage({ onLoginSuccess }: { onLoginSuccess: (user: any) => v
                     <div className="text-left flex-1">
                       <p className="text-white font-bold text-sm">Entrar</p>
                       <p className="text-amber-500/60 text-[10px] font-bold uppercase tracking-wide">
-                        Acesso com CPF
+                        Acesso com CPF ou E-mail
                       </p>
                     </div>
                     <ChevronRight className="text-white/10 group-hover:text-amber-500 transition-colors" size={16} />
@@ -130,12 +134,21 @@ export function LoginPage({ onLoginSuccess }: { onLoginSuccess: (user: any) => v
                     <LogIn size={24} />
                   </div>
                   <h3 className="text-2xl font-bold text-white">Login</h3>
-                  <p className="text-white/40 text-xs mt-2">Informe seu CPF e senha</p>
+                  <p className="text-white/40 text-xs mt-2">Informe seu CPF ou e-mail e senha</p>
                 </div>
 
                 {erro && (
-                  <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-center">
-                    <p className="text-red-400 text-xs font-bold">{erro}</p>
+                  <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-center space-y-1">
+                    <p className="text-red-400 text-xs font-bold">
+                      {erro === 'credenciais_invalidas'
+                        ? 'CPF/e-mail ou senha inválidos.'
+                        : erro}
+                    </p>
+                    {erro === 'credenciais_invalidas' && tentativas >= 2 && (
+                      <p className="text-red-300/70 text-[11px]">
+                        Se o problema persistir, entre em contato com o administrador do sistema.
+                      </p>
+                    )}
                   </div>
                 )}
 
@@ -146,11 +159,12 @@ export function LoginPage({ onLoginSuccess }: { onLoginSuccess: (user: any) => v
                       size={18}
                     />
                     <input
-                      placeholder="CPF"
+                      placeholder="CPF ou E-mail"
                       className={inputBaseClasses}
-                      value={cpf}
-                      onChange={(e) => setCpf(e.target.value)}
+                      value={identifier}
+                      onChange={(e) => setIdentifier(e.target.value)}
                       onKeyDown={handleKeyDown}
+                      autoComplete={isEmail ? 'email' : 'username'}
                       autoFocus
                     />
                   </div>

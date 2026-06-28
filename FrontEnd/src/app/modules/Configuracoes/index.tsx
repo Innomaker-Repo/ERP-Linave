@@ -1,5 +1,7 @@
 import React from 'react';
 import { UsuariosView } from '../../components/modules/Usuarios/UsuariosView';
+import { PerfilView } from '../../components/modules/Usuarios/PerfilView';
+import { LogAtividadesView } from '../../components/modules/Configuracoes/LogAtividadesView';
 
 interface ConfiguracoesModuleProps {
   activeItem: string;
@@ -10,6 +12,10 @@ export function ConfiguracoesModule({ activeItem, searchQuery }: ConfiguracoesMo
   switch (activeItem) {
     case 'usuarios':
       return <UsuariosView />;
+    case 'logAtividades':
+      return <LogAtividadesView />;
+    case 'meuPerfil':
+      return <PerfilView />;
     default:
       return <UsuariosView />;
   }

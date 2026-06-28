@@ -1,13 +1,15 @@
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, serializers as drf_serializers
 from rest_framework.response import Response
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.db import transaction
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework_simplejwt.views import TokenObtainPairView
 from .models import (
     Cliente, Negocio, Servico, ItemAlocacao,
     Levantamento, MDO, Material, Servico_terceirizado, Orcamento, Ativ_prevista, Resumo_orcamento,
-    OrdemServico, Escopo, PropostaComercial, Fornecedor, Medicao, Documento, User
+    OrdemServico, Escopo, PropostaComercial, Fornecedor, Medicao, Documento, User, LogAtividade
 )
 from .serializers import (
     ClienteSerializer, NegocioSerializer, ServicoSerializer,
@@ -17,11 +19,96 @@ from .serializers import (
 )
 
 
+# --- Log de atividades ---
+def _registrar_log(request, acao, modulo, descricao=''):
+    """Registra uma ação no log. Nunca lança exceção para não quebrar a operação principal."""
+    try:
+        u = getattr(request, 'user', None)
+        if not u or not u.is_authenticated:
+            return
+        LogAtividade.objects.create(
+            usuario_cpf=u.cpf,
+            usuario_nome=getattr(u, 'nome', str(u)),
+            acao=acao,
+            modulo=modulo,
+            descricao=str(descricao)[:300],
+        )
+    except Exception:
+        pass
+
+
+class LogMixin:
+    """Mixin para ViewSets: loga criação, atualização e exclusão automaticamente."""
+    LOG_MODULO = ''
+
+    def _modulo(self):
+        return self.LOG_MODULO or self.__class__.__name__.replace('ViewSet', '')
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        _registrar_log(self.request, 'criacao', self._modulo(), str(instance))
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        _registrar_log(self.request, 'atualizacao', self._modulo(), str(instance))
+
+    def perform_destroy(self, instance):
+        _registrar_log(self.request, 'exclusao', self._modulo(), str(instance))
+        instance.delete()
+
+
+# --- Login flexível (CPF ou e-mail) ---
+class FlexTokenSerializer(TokenObtainPairSerializer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['identifier'] = drf_serializers.CharField()
+        self.fields.pop('cpf', None)
+
+    def validate(self, attrs):
+        identifier = attrs.pop('identifier', '').strip()
+
+        if '@' in identifier:
+            try:
+                user_obj = User.objects.get(email__iexact=identifier)
+                attrs['cpf'] = user_obj.cpf
+            except User.DoesNotExist:
+                raise drf_serializers.ValidationError({'detail': 'Credenciais inválidas.'})
+        else:
+            attrs['cpf'] = identifier
+
+        return super().validate(attrs)
+
+
+class FlexTokenView(TokenObtainPairView):
+    serializer_class = FlexTokenSerializer
+
+    def post(self, request, *args, **kwargs):
+        response = super().post(request, *args, **kwargs)
+        if response.status_code == 200:
+            try:
+                identifier = request.data.get('identifier', '').strip()
+                if '@' in identifier:
+                    user_obj = User.objects.get(email__iexact=identifier)
+                else:
+                    user_obj = User.objects.get(cpf=identifier)
+                LogAtividade.objects.create(
+                    usuario_cpf=user_obj.cpf,
+                    usuario_nome=getattr(user_obj, 'nome', str(user_obj)),
+                    acao='login',
+                    modulo='Sistema',
+                    descricao='Login realizado com sucesso.',
+                )
+            except Exception:
+                pass
+        return response
+
+
 # --- Usuários ---
-class UserViewSet(viewsets.ModelViewSet):
+class UserViewSet(LogMixin, viewsets.ModelViewSet):
     queryset = User.objects.all().order_by('nome')
     serializer_class = UserSerializer
     permission_classes = [AllowAny]
+    LOG_MODULO = 'Usuários'
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -39,15 +126,17 @@ def usuario_me(request):
     return Response(serializer.data)
 
 # --- ViewSets Básicos ---
-class ClienteViewSet(viewsets.ModelViewSet):
+class ClienteViewSet(LogMixin, viewsets.ModelViewSet):
     queryset = Cliente.objects.all()
     serializer_class = ClienteSerializer
+    LOG_MODULO = 'Clientes'
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
 
         if serializer.is_valid():
-            serializer.save()
+            instance = serializer.save()
+            _registrar_log(request, 'criacao', self.LOG_MODULO, str(instance))
             return Response(serializer.data, status=status.HTTP_201_CREATED)
 
         print(serializer.errors)
@@ -58,16 +147,18 @@ class ClienteViewSet(viewsets.ModelViewSet):
         )
 
 
-class FornecedorViewSet(viewsets.ModelViewSet):
+class FornecedorViewSet(LogMixin, viewsets.ModelViewSet):
     queryset = Fornecedor.objects.all()
     serializer_class = FornecedorSerializer
+    LOG_MODULO = 'Fornecedores'
 
 #NEGÓCIOS
 # --- ViewSet de Negócio com Lógica Customizada ---  
-class NegocioViewSet(viewsets.ModelViewSet):
-    
+class NegocioViewSet(LogMixin, viewsets.ModelViewSet):
+
     queryset = Negocio.objects.select_related('cliente').prefetch_related('servicos').all()
     serializer_class = NegocioSerializer
+    LOG_MODULO = 'Negócios'
 
     @transaction.atomic
     def create(self, request, *args, **kwargs):
@@ -83,6 +174,7 @@ class NegocioViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=data)
         serializer.is_valid(raise_exception=True)
         negocio = serializer.save()
+        _registrar_log(request, 'criacao', self.LOG_MODULO, str(negocio))
 
         servicos_objs = []
         for servico in servicos_data:
@@ -97,15 +189,16 @@ class NegocioViewSet(viewsets.ModelViewSet):
     @transaction.atomic
     def update(self, request, *args, **kwargs):
         # partial=True permite que apenas alguns campos sejam atualizados (ex: status)
-        partial = kwargs.pop('partial', True) 
+        partial = kwargs.pop('partial', True)
         instance = self.get_object()
-        
+
         # Só lida com serviços se a lista vier explicitamente e não for vazia
         servicos_data = request.data.pop('servicos', None)
 
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
         self.perform_update(serializer)
+        _registrar_log(request, 'atualizacao', self.LOG_MODULO, str(instance))
 
         # Se houver uma nova lista de serviços, substitua os antigos
         if servicos_data is not None:
@@ -115,7 +208,7 @@ class NegocioViewSet(viewsets.ModelViewSet):
                 s_serializer = ServicoSerializer(data=servico)
                 s_serializer.is_valid(raise_exception=True)
                 s_serializer.save()
-                
+
         return Response(serializer.data)
     
 #ORÇAMENTOS
@@ -271,13 +364,14 @@ def criar_orcamento(request):
 
 # --------------------- Ordem de Servico (OS) ---------------------
 
-class OrdemServicoViewSet(viewsets.ModelViewSet):
+class OrdemServicoViewSet(LogMixin, viewsets.ModelViewSet):
     """
     ViewSet para gerenciar Ordens de Servico (OS)
     Operações: CREATE, READ, UPDATE, DELETE
     """
     queryset = OrdemServico.objects.select_related('cliente', 'negocio').all()
     serializer_class = OrdemServicoSerializer
+    LOG_MODULO = 'Ordens de Serviço'
     
     def list(self, request, *args, **kwargs):
         """
@@ -391,6 +485,7 @@ def configuracoes_data(request):
     if 'listas' in payload and isinstance(payload['listas'], dict):
         inst.listas = payload['listas']
     inst.save()
+    _registrar_log(request, 'atualizacao', 'Configurações', 'Configurações da empresa atualizadas.')
 
     return Response({'config': inst.config, 'listas': inst.listas}, status=status.HTTP_200_OK)
 
@@ -410,7 +505,9 @@ def almoxarifado_data(request):
     payload = request.data
     if isinstance(payload, dict) and set(payload.keys()) == {'data'}:
         payload = payload.get('data')
-    return Response(almox_replace(payload if isinstance(payload, dict) else {}), status=status.HTTP_200_OK)
+    result = almox_replace(payload if isinstance(payload, dict) else {})
+    _registrar_log(request, 'atualizacao', 'Almoxarifado', 'Estoque/almoxarifado atualizado.')
+    return Response(result, status=status.HTTP_200_OK)
 
 
 @api_view(['GET', 'POST', 'PUT'])
@@ -434,6 +531,7 @@ def financeiro_data(request):
         return Response({'error': 'Esperado um array de registros financeiros.'}, status=status.HTTP_400_BAD_REQUEST)
 
     total = replace_all(payload)
+    _registrar_log(request, 'atualizacao', 'Financeiro', f'Registros financeiros sincronizados ({total} itens).')
     return Response({'message': 'Financeiro sincronizado.', 'total': total, 'financeiro': read_all()}, status=status.HTTP_200_OK)
 
 
@@ -458,6 +556,12 @@ def compras_data(request):
         replace_requisicoes(payload.get('compras') or [])
     if 'comprasHistorico' in payload:
         replace_historico(payload.get('comprasHistorico') or [])
+    partes = [k for k in ('compras', 'comprasHistorico') if k in payload]
+    _registrar_log(request, 'atualizacao', 'Compras', f'Compras atualizadas: {", ".join(partes)}.')
+    return Response(
+        {'compras': read_requisicoes(), 'comprasHistorico': read_historico()},
+        status=status.HTTP_200_OK,
+    )
 
     return Response(
         {'compras': read_requisicoes(), 'comprasHistorico': read_historico()},
@@ -543,7 +647,8 @@ def atualizar_status_os(request, pk):
                 ordem_servico.data_aprovacao = timezone.now().date()
         
         ordem_servico.save()
-        
+        _registrar_log(request, 'atualizacao', 'Ordens de Serviço', f'Status OS #{pk} atualizado.')
+
         serializer = OrdemServicoSerializer(ordem_servico)
         return Response(
             {
@@ -559,12 +664,13 @@ def atualizar_status_os(request, pk):
         )
 
 
-class PropostaComercialViewSet(viewsets.ModelViewSet):
+class PropostaComercialViewSet(LogMixin, viewsets.ModelViewSet):
     """
     ViewSet para gerenciar Propostas Comerciais
     """
     queryset = PropostaComercial.objects.select_related('cliente', 'negocio').prefetch_related('proposta_escopo').all()
     serializer_class = PropostaComercialSerializer
+    LOG_MODULO = 'Propostas Comerciais'
     
     def list(self, request, *args, **kwargs):
         """
@@ -599,7 +705,8 @@ class PropostaComercialViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=data)
         serializer.is_valid(raise_exception=True)
         proposta = serializer.save()
-        
+        _registrar_log(request, 'criacao', self.LOG_MODULO, str(proposta))
+
         escopos_objs = []
         for escopo in escopos_data:
             escopo['proposta_link'] = proposta.id
@@ -607,7 +714,7 @@ class PropostaComercialViewSet(viewsets.ModelViewSet):
             e_serializer.is_valid(raise_exception=True)
             e_serializer.save()
             escopos_objs.append(e_serializer.data)
-        
+
         return Response({
             "message": "Proposta Comercial criada com sucesso!",
             "proposta": serializer.data,
@@ -617,10 +724,11 @@ class PropostaComercialViewSet(viewsets.ModelViewSet):
 
 # --------------------- Medição ---------------------
 
-class MedicaoViewSet(viewsets.ModelViewSet):
+class MedicaoViewSet(LogMixin, viewsets.ModelViewSet):
     """Medições (por OS). Suporta filtros ?ordem_servico= / ?negocio= / ?status=."""
     queryset = Medicao.objects.select_related('negocio', 'ordem_servico').prefetch_related('itens').all()
     serializer_class = MedicaoSerializer
+    LOG_MODULO = 'Medições'
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
@@ -639,7 +747,7 @@ class MedicaoViewSet(viewsets.ModelViewSet):
 
 # --------------------- Documentos (upload genérico) ---------------------
 
-class DocumentoViewSet(viewsets.ModelViewSet):
+class DocumentoViewSet(LogMixin, viewsets.ModelViewSet):
     """Upload e recuperação de documentos (genérico, reutilizável).
 
     - POST  multipart/form-data: campo `arquivo` (binário) + `vinculo_tipo`,
@@ -671,9 +779,11 @@ class DocumentoViewSet(viewsets.ModelViewSet):
         nome = getattr(arquivo, 'name', '') or self.request.data.get('nome_original', '')
         tamanho = getattr(arquivo, 'size', 0) or 0
         content_type = getattr(arquivo, 'content_type', '') or self.request.data.get('tipo', '')
-        serializer.save(nome_original=nome, tamanho=tamanho, tipo=content_type)
+        instance = serializer.save(nome_original=nome, tamanho=tamanho, tipo=content_type)
+        _registrar_log(self.request, 'criacao', 'Documentos', str(instance))
 
     def perform_destroy(self, instance):
+        _registrar_log(self.request, 'exclusao', 'Documentos', str(instance))
         # Remove também o binário do disco (sem apagar o registro deixaria órfãos).
         instance.arquivo.delete(save=False)
         instance.delete()
@@ -698,5 +808,27 @@ def atualizar_status_medicao(request, pk):
     if 'motivo_recusa' in request.data:
         medicao.motivo_recusa = request.data['motivo_recusa'] or ''
     medicao.save()
+    _registrar_log(request, 'atualizacao', 'Medições', f'Status medição #{pk}: {novo_status}.')
 
     return Response(MedicaoSerializer(medicao).data, status=status.HTTP_200_OK)
+
+
+# --- Log de atividades (listagem para admin) ---
+from .serializers import LogAtividadeSerializer
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def logs_atividade(request):
+    if not request.user.is_superuser:
+        return Response({'detail': 'Acesso restrito ao administrador.'}, status=status.HTTP_403_FORBIDDEN)
+
+    qs = LogAtividade.objects.all()
+    data_inicio = request.query_params.get('data_inicio')
+    data_fim = request.query_params.get('data_fim')
+    if data_inicio:
+        qs = qs.filter(timestamp__date__gte=data_inicio)
+    if data_fim:
+        qs = qs.filter(timestamp__date__lte=data_fim)
+
+    serializer = LogAtividadeSerializer(qs[:500], many=True)
+    return Response(serializer.data)
