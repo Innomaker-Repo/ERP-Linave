@@ -169,6 +169,7 @@ const sharedColumns: StockColumn[] = [
   { key: 'categoria', label: 'Categoria' },
   { key: 'quantidade', label: 'Quantidade', align: 'center' },
   { key: 'unidade', label: 'Unidade', align: 'center' },
+  { key: 'peso', label: 'Peso', align: 'center' },
   { key: 'fornecedor', label: 'Fornecedor' },
   { key: 'localizacao', label: 'Localização' },
   { key: 'status', label: 'Status', align: 'center' },
@@ -209,60 +210,45 @@ const getTableIconConfig = (tableName: string): { Icon: LucideIcon; badgeClass: 
   }
 };
 
-type StatusRule = {
-  defaultStatus: string;
-  positive: string[];
-  negative: string[];
-  options: string[];
-};
+// Status do estoque/Suprimentos: FIXO em 3 opções, sem possibilidade de outras.
+// Os mesmos 3 valores valem para TODAS as tabelas/telas de Suprimentos.
+const STATUS_OPTIONS = ['Disponível', 'Alocado', 'Em manutenção'];
+const STATUS_DEFAULT = 'Disponível';
 
-const STATUS_RULES: Record<string, StatusRule> = {
-  equipamentoseletricos: { defaultStatus: 'Funcionando', positive: ['Funcionando'], negative: ['Manutenção', 'Alocado'], options: ['Funcionando', 'Manutenção', 'Alocado'] },
-  extensaocabos: { defaultStatus: 'Funcionando', positive: ['Funcionando'], negative: ['Manutenção', 'Alocado'], options: ['Funcionando', 'Manutenção', 'Alocado'] },
-  bombahidrojato: { defaultStatus: 'Apto para uso', positive: ['Apto para uso'], negative: ['Não apto', 'Alocado'], options: ['Apto para uso', 'Não apto', 'Alocado'] },
-  instrumentos: { defaultStatus: 'Ok', positive: ['Ok'], negative: ['Aguardando calibração', 'Com defeito', 'Alocado'], options: ['Ok', 'Aguardando calibração', 'Com defeito', 'Alocado'] },
-  ferramentas: { defaultStatus: 'Adequada', positive: ['Adequada'], negative: ['Não para o uso', 'Alocado'], options: ['Adequada', 'Não para o uso', 'Alocado'] },
-  talhas: { defaultStatus: 'Ok', positive: ['Ok'], negative: ['Não consta', 'Alocado'], options: ['Ok', 'Não consta', 'Alocado'] },
-  controledeferramentas: { defaultStatus: 'Conferido', positive: ['Conferido'], negative: ['Pendente', 'Alocado'], options: ['Conferido', 'Pendente', 'Alocado'] },
-  materiais: { defaultStatus: 'Normal', positive: ['Normal'], negative: ['Crítico', 'Baixo'], options: ['Normal', 'Baixo', 'Crítico'] },
-  alugadosgases: { defaultStatus: 'Normal', positive: ['Normal'], negative: ['Crítico', 'Vazio'], options: ['Normal', 'Vazio', 'Crítico'] },
-  alugadosequipamentos: { defaultStatus: 'Normal', positive: ['Normal'], negative: ['Danificado', 'Não retornado', 'Alocado'], options: ['Normal', 'Danificado', 'Não retornado', 'Alocado'] }
-};
-
-const getStatusRule = (tableName?: string) => STATUS_RULES[normalizeKey(tableName || '')] || {
-  defaultStatus: 'Normal', positive: ['Normal'], negative: ['Crítico', 'Baixo', 'Manutenção', 'Pendente', 'Alocado'], options: ['Normal', 'Baixo', 'Crítico', 'Alocado']
-};
-
-const matchesStatusValue = (status: string, candidates: string[]) => {
-  const normalizedStatus = normalizeKey(status);
-  return candidates.some((candidate) => normalizedStatus.includes(normalizeKey(candidate)));
-};
-
-const isNegativeStatus = (tableName: string, status: string) => {
-  if (normalizeKey(status).includes('alocad')) return true;
-  return matchesStatusValue(status, getStatusRule(tableName).negative);
-};
-const isPositiveStatus = (tableName: string, status: string) => matchesStatusValue(status, getStatusRule(tableName).positive);
-
-const getStatusTone = (status: string, tableName?: string) => {
-  const normalized = normalizeKey(status);
-  
-  if (normalized.includes('alocad')) return 'bg-red-500/15 border-red-500/30 text-red-300';
-  
-  if (tableName && isNegativeStatus(tableName, status)) return 'bg-red-500/15 border-red-500/30 text-red-300';
-  if (tableName && isPositiveStatus(tableName, status)) return 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300';
-
-  if (normalized.includes('crit') || normalized.includes('baix') || normalized.includes('manut') || normalized.includes('defe') || normalized.includes('pend') || normalized.includes('naoapto') || normalized.includes('naoparaouso') || normalized.includes('naoconsta')) {
-    return 'bg-red-500/15 border-red-500/30 text-red-300';
+// Normaliza qualquer valor (inclusive legado) para um dos 3 status fixos.
+const normalizeStatus = (status?: string): string => {
+  const n = normalizeKey(status || '');
+  if (n.includes('manut')) return 'Em manutenção';
+  if (n.includes('aloc')) return 'Alocado';
+  if (n.includes('dispon')) return 'Disponível';
+  // Mapeia status legados conhecidos: "bons" → Disponível, "ruins" → Em manutenção.
+  if (n.includes('crit') || n.includes('baix') || n.includes('defe') || n.includes('pend')
+      || n.includes('naoapto') || n.includes('naoparaouso') || n.includes('naoconsta')
+      || n.includes('aguardando') || n.includes('danific') || n.includes('vazio') || n.includes('naoretorn')) {
+    return 'Em manutenção';
   }
-  if (normalized.includes('ok') || normalized.includes('funcion') || normalized.includes('aptoparauso') || normalized.includes('adequad') || normalized.includes('confer')) {
-    return 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300';
-  }
-  return 'bg-cyan-500/15 border-cyan-500/30 text-cyan-300';
+  return 'Disponível';
 };
 
-const getStatusOptionsForTable = (tableName?: string) => getStatusRule(tableName).options;
-const getDefaultStatusForTable = (tableName?: string) => getStatusRule(tableName).defaultStatus;
+const isNegativeStatus = (_tableName: string, status: string) => normalizeKey(status).includes('manut');
+const isPositiveStatus = (_tableName: string, status: string) => normalizeKey(status).includes('dispon');
+
+const getStatusTone = (status: string, _tableName?: string) => {
+  const n = normalizeKey(status);
+  if (n.includes('manut')) return 'bg-red-500/15 border-red-500/30 text-red-300';        // Em manutenção
+  if (n.includes('aloc')) return 'bg-amber-500/15 border-amber-500/30 text-amber-300';     // Alocado
+  return 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300';                       // Disponível (padrão)
+};
+
+const getStatusOptionsForTable = (_tableName?: string) => STATUS_OPTIONS;
+const getDefaultStatusForTable = (_tableName?: string) => STATUS_DEFAULT;
+
+// Coage o `status` de uma linha para um dos 3 valores fixos (status vazio fica vazio).
+const normalizeRowValues = (values: any) => {
+  const v = { ...(values || {}) };
+  if (typeof v.status === 'string' && v.status.trim() !== '') v.status = normalizeStatus(v.status);
+  return v;
+};
 
 const getOsLocalExecution = (os: any) => cleanValue(
   os?.negocio_detalhes?.servicos?.[0]?.local_execucao
@@ -406,6 +392,7 @@ const STOCK_TABLES: StockTable[] = [
     'Materiais',
     [
       { key: 'item', label: 'Item' }, { key: 'material', label: 'Descrição' }, { key: 'quantidade', label: 'Quantidade', align: 'center' },
+      { key: 'peso', label: 'Peso', align: 'center' },
       { key: 'localizacao', label: 'Local' }, { key: 'serviceOS', label: 'Serviço (OS)' }
     ], [], false
   ),
@@ -423,7 +410,7 @@ const STOCK_TABLES: StockTable[] = [
     'Alugados - Equipamentos',
     [
       { key: 'item', label: 'Item' }, { key: 'equipamento', label: 'Nome do Equipamento' }, { key: 'dataAluguel', label: 'Data de Aluguel', align: 'center' },
-      { key: 'descricao', label: 'Descrição' }, { key: 'localizacao', label: 'Local' }, { key: 'serviceOS', label: 'Serviço (OS)' }
+      { key: 'descricao', label: 'Descrição' }, { key: 'peso', label: 'Peso', align: 'center' }, { key: 'localizacao', label: 'Local' }, { key: 'serviceOS', label: 'Serviço (OS)' }
     ], [], false
   )
 ];
@@ -484,7 +471,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   const [tables, setTables] = useState<StockTable[]>(() => STOCK_TABLES.map((table) => ({
     ...table,
     columns: [...table.columns],
-    rows: table.rows.map((row) => ({ ...row, values: { ...row.values } }))
+    rows: table.rows.map((row) => ({ ...row, values: normalizeRowValues(row.values) }))
   })));
   
   const [selectedCategory, setSelectedCategory] = useState<'Materiais' | 'Equipamentos' | 'Alugados'>('Materiais');
@@ -606,7 +593,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
             ...table,
             columns: Array.isArray(table.columns) ? [...table.columns] : [],
             rows: Array.isArray(table.rows)
-              ? table.rows.map((row) => ({ ...row, values: { ...(row.values || {}) } }))
+              ? table.rows.map((row) => ({ ...row, values: normalizeRowValues(row.values) }))
               : []
           }))
         );
@@ -932,6 +919,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                       <th className="px-5 py-4 text-left text-[11px] font-bold uppercase tracking-wider text-white/50">Material</th>
                       <th className="px-5 py-4 text-center text-[11px] font-bold uppercase tracking-wider text-white/50">Quantidade</th>
                       <th className="px-5 py-4 text-center text-[11px] font-bold uppercase tracking-wider text-white/50">Unidade</th>
+                      <th className="px-5 py-4 text-center text-[11px] font-bold uppercase tracking-wider text-white/50">Peso</th>
                       <th className="px-5 py-4 text-left text-[11px] font-bold uppercase tracking-wider text-white/50">Fornecedor</th>
                       <th className="px-5 py-4 text-left text-[11px] font-bold uppercase tracking-wider text-white/50">Local</th>
                       <th className="px-5 py-4 text-center text-[11px] font-bold uppercase tracking-wider text-white/50">Status</th>
@@ -949,6 +937,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                           <td className="px-5 py-4 align-middle text-[13px] text-white/80">{materialLabel}</td>
                           <td className="px-5 py-4 align-middle text-center text-[13px] text-white/80">{row.values.quantidade || row.values.qtd || '—'}</td>
                           <td className="px-5 py-4 align-middle text-center text-[13px] text-white/80">{row.values.unidade || row.values.unid || '—'}</td>
+                          <td className="px-5 py-4 align-middle text-center text-[13px] text-white/80">{row.values.peso || '—'}</td>
                           <td className="px-5 py-4 align-middle text-[13px] text-white/80">{row.values.fornecedor || '—'}</td>
                           <td className="px-5 py-4 align-middle text-[13px] text-white/80">{row.values.localizacao || '—'}</td>
                           <td className="px-5 py-4 align-middle text-center">
@@ -1151,7 +1140,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     const wasEditing = Boolean(editingRowTarget && editingRowTarget.tableName === table.name);
 
     const missingRequiredFields = table.columns
-      .filter((column) => column.key !== 'actions' && column.key !== 'item')
+      .filter((column) => column.key !== 'actions' && column.key !== 'item' && column.key !== 'peso')
       .filter((column) => !cleanValue(registerValues[column.key]));
 
     if (missingRequiredFields.length > 0) {
@@ -1389,6 +1378,30 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
 
   const keyForRow = (tableName: string, rowId: string) => `${tableName}::${rowId}`;
 
+  // Estoque disponível de uma linha (quando há coluna de quantidade).
+  const estoqueDaLinha = (row: StockRow) => parseEstoqueQty(row.values.quantidade ?? row.values.qtd);
+
+  // Quantidade efetiva que sai no romaneio para uma linha:
+  // - gás  -> soma do estoque atual por tipo de gás;
+  // - item com quantidade -> a quantidade escolhida (0 enquanto não informada);
+  // - item sem quantidade (equipamento único) -> 1 unidade.
+  const romaneioQtyForRow = (tableName: string, row: StockRow): number => {
+    if (getRomaneioItemKind(tableName) === 'gas') {
+      return getGasKeys(row.values).reduce((soma, gk) => soma + parseEstoqueQty(row.values[gk]), 0);
+    }
+    const estoque = estoqueDaLinha(row);
+    if (estoque <= 0) return 1;
+    const escolhida = parseEstoqueQty(romaneioQuantities[keyForRow(tableName, row.id)] ?? '');
+    return escolhida > 0 ? Math.min(escolhida, estoque) : 0;
+  };
+
+  // Peso (kg) que sai no romaneio para a linha = peso unitário × quantidade que sai.
+  const romaneioPesoForRow = (tableName: string, row: StockRow): number => {
+    const pesoUnit = parseEstoqueQty(row.values.peso);
+    if (pesoUnit <= 0) return 0;
+    return pesoUnit * romaneioQtyForRow(tableName, row);
+  };
+
   const getSelectedRows = () => {
     const items: { tableName: string; row: StockRow }[] = [];
     for (const key of Array.from(selectedForRomaneio)) {
@@ -1428,19 +1441,21 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     const effectiveOsLabel = osLabel || romaneioOsId;
     const effectiveOsLocal = osLocal || '';
 
-    // Valida as quantidades de baixa dos materiais antes de aplicar qualquer mudança.
+    // Valida as quantidades de TODOS os itens quantificáveis (com coluna de quantidade)
+    // antes de aplicar qualquer mudança: obrigatória e nunca acima do estoque.
     for (const { tableName, row } of selectedRows) {
-      if (getRomaneioItemKind(tableName) !== 'material') continue;
-      const estoque = parseEstoqueQty(row.values.quantidade);
+      if (getRomaneioItemKind(tableName) === 'gas') continue;
+      const estoque = estoqueDaLinha(row);
+      if (estoque <= 0) continue; // item sem quantidade (equipamento único) → 1 unidade
       const key = keyForRow(tableName, row.id);
-      const baixa = parseEstoqueQty(romaneioQuantities[key] ?? '');
-      const nome = row.values.material || row.values.item || row.id;
-      if (baixa <= 0) {
-        alert(`Informe a quantidade de baixa para o material "${nome}".`);
+      const qty = parseEstoqueQty(romaneioQuantities[key] ?? '');
+      const nome = row.values.material || row.values.equipamento || row.values.item || row.id;
+      if (qty <= 0) {
+        alert(`Informe a quantidade para "${nome}".`);
         return;
       }
-      if (baixa > estoque) {
-        alert(`A quantidade de baixa (${baixa}) do material "${nome}" excede o estoque disponível (${estoque}).`);
+      if (qty > estoque) {
+        alert(`A quantidade (${qty}) de "${nome}" excede o estoque disponível (${estoque}).`);
         return;
       }
     }
@@ -1503,6 +1518,36 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
         };
       }
 
+      // Equipamento/alugado: se houver coluna de quantidade, deduz a quantidade ESCOLHIDA
+      // (alocação parcial, limitada ao estoque); senão, aloca o item inteiro (1 unidade).
+      const estoqueEquip = estoqueDaLinha(row);
+      const itemLabelEquip = row.values.material || row.values.equipamento || row.values.fornecedor || row.values.item || row.id;
+
+      if (estoqueEquip > 0) {
+        const saida = Math.min(estoqueEquip, Math.max(0, parseEstoqueQty(romaneioQuantities[key] ?? '')));
+        const restante = Math.max(0, estoqueEquip - saida);
+        const fieldKey = (row.values.quantidade ?? '') !== '' ? 'quantidade' : 'qtd';
+        const nextValues = {
+          ...row.values,
+          [fieldKey]: String(restante),
+          // Só marca a linha inteira como alocada à OS quando esgota o estoque disponível.
+          serviceOS: restante <= 0 ? effectiveOsLabel : row.values.serviceOS,
+          localizacao: restante <= 0 ? (effectiveOsLocal || row.values.localizacao) : row.values.localizacao,
+          status: restante <= 0 ? 'Alocado' : row.values.status,
+        };
+        return {
+          tableName,
+          rowId: row.id,
+          mode: 'alocacao' as const,
+          kind,
+          itemLabel: itemLabelEquip,
+          quantidade: String(saida),
+          removed: false,
+          snapshotBefore: { ...row.values },
+          snapshotAfter: nextValues,
+        };
+      }
+
       const nextValues = {
         ...row.values,
         serviceOS: effectiveOsLabel,
@@ -1514,8 +1559,8 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
         rowId: row.id,
         mode: 'alocacao' as const,
         kind,
-        itemLabel: row.values.material || row.values.equipamento || row.values.fornecedor || row.values.item || row.id,
-        quantidade: row.values.quantidade || row.values.qtd || '1',
+        itemLabel: itemLabelEquip,
+        quantidade: '1',
         removed: false,
         snapshotBefore: { ...row.values },
         snapshotAfter: nextValues,
@@ -1605,6 +1650,16 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       ...prev
     ]);
 
+    // Peso (kg) por item do romaneio = peso unitário (da linha) × quantidade que saiu.
+    const rowByKeyPeso = new Map(selectedRows.map(({ tableName, row }) => [keyForRow(tableName, row.id), row]));
+    const itemsPdf = romaneioItems.map((item) => {
+      const rowOrigem = rowByKeyPeso.get(keyForRow(item.tableName, item.rowId));
+      const pesoUnit = parseEstoqueQty(rowOrigem?.values.peso);
+      const pesoLinha = pesoUnit > 0 ? pesoUnit * (Number(item.quantidade) || 0) : 0;
+      return { descricao: item.itemLabel, quantidade: item.quantidade || '1', peso: pesoLinha };
+    });
+    const pesoTotalRomaneio = itemsPdf.reduce((soma, it) => soma + (Number(it.peso) || 0), 0);
+
     try {
       const logoBase64 = await loadRomaneioLogoBase64();
       const doc = gerarRomaneioPdf({
@@ -1612,10 +1667,8 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
         osLabel: effectiveOsLabel,
         enderecoEntrega: effectiveOsLocal,
         dataEmissao: timestamp,
-        items: romaneioItems.map((item) => ({
-          descricao: item.itemLabel,
-          quantidade: item.quantidade || '1',
-        })),
+        items: itemsPdf,
+        pesoTotal: pesoTotalRomaneio,
         logoBase64,
       });
       doc.save(`romaneio-${effectiveOsLabel || romaneioOsId}.pdf`);
@@ -2655,10 +2708,13 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                                 ) : (
                                   <span className="shrink-0 rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-300">Alocação</span>
                                 )}
+                                {parseEstoqueQty(row.values.peso) > 0 && (
+                                  <span className="shrink-0 rounded-md bg-white/5 px-1.5 py-0.5 text-[10px] text-white/50">{romaneioPesoForRow(tableName, row).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} kg</span>
+                                )}
                               </div>
                             </div>
 
-                            {kind === 'material' ? (
+                            {estoque > 0 ? (
                               <div className="flex flex-col items-end shrink-0">
                                 <input
                                   type="number"
@@ -2669,7 +2725,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                                   onChange={(e) => setRomaneioQuantities((prev) => ({ ...prev, [key]: e.target.value }))}
                                   className="h-9 w-20 rounded-lg border border-white/10 bg-[#0b1220]/80 px-2 text-center text-sm text-white placeholder:text-white/30 focus:border-amber-500/40 focus:outline-none"
                                 />
-                                <span className="mt-0.5 text-[10px] text-white/40">baixar de {estoque || '—'}</span>
+                                <span className="mt-0.5 text-[10px] text-white/40">{kind === 'material' ? 'baixar' : 'levar'} de {estoque || '—'}</span>
                               </div>
                             ) : kind === 'gas' ? (
                               <span className="shrink-0 text-[10px] text-white/50 whitespace-nowrap text-right">envia o estoque<br/>atual ({getGasKeys(row.values).reduce((soma, gk) => soma + parseEstoqueQty(row.values[gk]), 0)} un.)</span>
@@ -2693,6 +2749,15 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                     </ul>
                   )}
                 </div>
+
+                {getSelectedRows().length > 0 && (
+                  <div className="mt-4 flex items-center justify-end gap-2 border-t border-white/5 pt-3">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-white/50">Peso total</span>
+                    <span className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-1 text-sm font-black text-amber-300">
+                      {getSelectedRows().reduce((soma, { tableName, row }) => soma + romaneioPesoForRow(tableName, row), 0).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} kg
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
 

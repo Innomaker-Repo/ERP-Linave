@@ -243,7 +243,6 @@ export function FuncionariosView({ searchQuery }: { searchQuery: string }) {
                  <div><label className="label-form">E-mail Corporativo</label><input name="emailLinave" className="input-form" value={formData.emailLinave} onChange={handleChange} /></div>
                  <div><label className="label-form">Salário Bruto</label><input name="salarioBrutoLinave" className="input-form font-mono text-amber-400" value={formData.salarioBrutoLinave} onChange={handleChange} /></div>
                  <div><label className="label-form">Função</label><input name="funcao" className="input-form" value={formData.funcao} onChange={handleChange} /></div>
-                 <div><label className="label-form">Departamento</label><input name="departamento" className="input-form" value={formData.departamento} onChange={handleChange} /></div>
                  <div><label className="label-form">Setor</label><input name="setor" className="input-form" value={formData.setor} onChange={handleChange} /></div>
                  <div><label className="label-form">Horário de Trabalho</label><input name="horarioTrabalho" className="input-form" value={formData.horarioTrabalho} onChange={handleChange} placeholder="08:00 às 17:00" /></div>
                  <div className="md:col-span-2"><label className="label-form">Observações Gerais</label><textarea name="obsFuncionario" className="input-form h-32 resize-none" value={formData.obsFuncionario} onChange={handleChange} /></div>
@@ -302,10 +301,6 @@ export function FuncionariosView({ searchQuery }: { searchQuery: string }) {
                <div className="p-4 bg-[#0b1220] rounded-2xl border border-white/5">
                  <p className="text-[9px] text-white/30 uppercase font-black tracking-widest mb-1">Cargo</p>
                  <p className="text-white text-xs font-bold truncate" title={f.funcao}>{f.funcao || 'N/D'}</p>
-               </div>
-               <div className="p-4 bg-[#0b1220] rounded-2xl border border-white/5">
-                 <p className="text-[9px] text-white/30 uppercase font-black tracking-widest mb-1">Departamento</p>
-                 <p className="text-white text-xs font-bold truncate" title={f.departamento}>{f.departamento || 'N/D'}</p>
                </div>
             </div>
 

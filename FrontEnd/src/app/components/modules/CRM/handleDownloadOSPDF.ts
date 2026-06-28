@@ -3,7 +3,7 @@ import autoTable from 'jspdf-autotable';
 
 const getPrefixoEmpresa = (empresaPrestadora?: string) => {
   if (!empresaPrestadora) return 'LN';
-  return empresaPrestadora.toLowerCase().includes('servinave') ? 'SN' : 'LN';
+  return empresaPrestadora.toLowerCase().includes('servinave') ? 'VTS' : 'LN';
 };
 
 const formatarEscopoBasicoParaTexto = (escopo: any): string => {
@@ -121,20 +121,24 @@ export const handleDownloadOSPDF = ({
   const dataInicio = osPrincipal.dataInicioPrevisto || obra?.dataPrevistaInicio;
   const dataTermino = osPrincipal.dataTerminoPrevisto || obra?.dataPrevistaFinal;
   const idProjetoForPrint = obra?.id || '';
+  const localOS = osPrincipal.local || osPrincipal.localExecucao || '';
+  // A OS é identificada pela EMBARCAÇÃO (do negócio); sem embarcação, usa o Local.
+  const embarcacaoOS = (Array.isArray(obra?.servicos) ? (obra.servicos.find((s: any) => s?.embarcacao)?.embarcacao) : '') || osPrincipal.embarcacao || '';
+  const projetoTexto = `${obra?.nome || ''}${idProjetoForPrint ? ' • ' + idProjetoForPrint : ''}`;
 
   printDado('CLIENTE:', cliente?.razaoSocial || '', margin + 2, y + 3.5);
   printDado('Início Previsto:', dataInicio ? new Date(dataInicio).toLocaleDateString('pt-BR') : '', margin + 102, y + 3.5);
   y += rowH;
 
-  printDado('PROJETO:', `${obra?.nome || ''}${idProjetoForPrint ? ' • ' + idProjetoForPrint : ''}`, margin + 2, y + 3.5);
+  printDado('EMBARCAÇÃO:', embarcacaoOS || localOS, margin + 2, y + 3.5);
   printDado('Térm. Previsto:', dataTermino ? new Date(dataTermino).toLocaleDateString('pt-BR') : '', margin + 102, y + 3.5);
   y += rowH;
 
-  printDado('EQUIPAMENTO:', osPrincipal.equipamento || osPrincipal.tipo || '', margin + 2, y + 3.5);
+  printDado('PROJETO:', projetoTexto, margin + 2, y + 3.5);
   printDado('OS Nº:', osPrincipal.ordemServicoNumero || '', margin + 102, y + 3.5);
   y += rowH;
 
-  printDado('LOCAL:', osPrincipal.local || osPrincipal.localExecucao || '', margin + 2, y + 3.5);
+  printDado('LOCAL:', localOS, margin + 2, y + 3.5);
   printDado('Encarregado:', osPrincipal.supervisorEncarregado || '', margin + 102, y + 3.5);
   y += rowH;
   y += 5;
@@ -153,17 +157,59 @@ export const handleDownloadOSPDF = ({
 
   const bodyY = y;
 
-  doc.setFont('Helvetica', 'normal');
-  const descTexto = ultimaProposta
-    ? formatarEscopoBasicoParaTexto(ultimaProposta.escopoBasicoServicos || ultimaProposta.escopoA)
-    : (osPrincipal.descricao || osPrincipal.descricaoGeralServico || '');
-  const descLines = doc.splitTextToSize(descTexto, leftW - 4);
+  // ESCOPO (coluna esquerda) em formato de TABELA com grade, igual à proposta.
+  const escopoBlocos = Array.isArray(ultimaProposta?.escopoBasicoServicos) ? ultimaProposta.escopoBasicoServicos : [];
+  const leftPad = margin + 2;
+  const leftTableMarginRight = pageWidth - margin - leftW + 2; // constrange a tabela à coluna esquerda
+  let cursorEsq = bodyY + 4;
 
-  let cursorEsq = bodyY + 5;
-  descLines.forEach((l: string) => {
-    doc.text(l, margin + 2, cursorEsq);
-    cursorEsq += 4;
-  });
+  if (escopoBlocos.length > 0) {
+    escopoBlocos.forEach((bloco: any, idx: number) => {
+      // Título do bloco
+      doc.setFont('Helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.setTextColor(0, 0, 0);
+      doc.splitTextToSize(`${idx + 1}. ${bloco?.titulo || 'Serviço'}`, leftW - 4)
+        .forEach((l: string) => { doc.text(l, leftPad, cursorEsq); cursorEsq += 4; });
+      // Descrição do serviço (texto antes da tabela)
+      if (bloco?.descricaoServico && String(bloco.descricaoServico).trim()) {
+        doc.setFont('Helvetica', 'normal');
+        doc.setFontSize(7);
+        doc.splitTextToSize(String(bloco.descricaoServico).trim(), leftW - 4)
+          .forEach((l: string) => { doc.text(l, leftPad, cursorEsq); cursorEsq += 3.5; });
+      }
+      // Tabela (colunas = cabeçalho, linhas.valores = corpo)
+      const colunas = Array.isArray(bloco?.colunas) && bloco.colunas.length ? bloco.colunas : ['Descrição'];
+      const body = (Array.isArray(bloco?.linhas) ? bloco.linhas : [])
+        .map((linha: any) => colunas.map((col: string) => String(linha?.valores?.[col] ?? '').trim()))
+        .filter((row: string[]) => row.some((c) => c));
+      if (body.length > 0) {
+        autoTable(doc, {
+          startY: cursorEsq + 1,
+          head: [colunas],
+          body,
+          theme: 'grid',
+          margin: { left: leftPad - 1, right: leftTableMarginRight },
+          headStyles: { fillColor: [230, 230, 230], textColor: [0, 0, 0], fontStyle: 'bold', fontSize: 6.5 },
+          styles: { fontSize: 6.5, cellPadding: 1, textColor: [0, 0, 0], overflow: 'linebreak' },
+        });
+        cursorEsq = (doc as any).lastAutoTable.finalY + 3;
+      }
+    });
+  } else {
+    // Fallback (sem escopo estruturado): texto, como antes.
+    doc.setFont('Helvetica', 'normal');
+    doc.setFontSize(8);
+    const descTexto = ultimaProposta
+      ? formatarEscopoBasicoParaTexto(ultimaProposta.escopoBasicoServicos || ultimaProposta.escopoA)
+      : (osPrincipal.descricao || osPrincipal.descricaoGeralServico || '');
+    cursorEsq = bodyY + 5;
+    doc.splitTextToSize(descTexto, leftW - 4).forEach((l: string) => {
+      doc.text(l, margin + 2, cursorEsq);
+      cursorEsq += 4;
+    });
+  }
+  doc.setTextColor(0, 0, 0);
 
   // "A SER INCLUÍDO": lê diretamente do aSerIncluido salvo na OS (ou no negócio).
   let baseChecks: any = osPrincipal?.aSerIncluido || obra?.aSerIncluido || {};
@@ -323,7 +369,7 @@ export const handleDownloadOSPDF = ({
   }
 
   const prefixo = getPrefixoEmpresa(obra?.empresaPrestadora);
-  const nomeArquivo = `${prefixo || 'ERP'}_OS_${osPrincipal.ordemServicoNumero || '001'}_${new Date().getTime()}.pdf`;
+  const nomeArquivo = `OS_${String(osPrincipal.ordemServicoNumero || '001').replace(/[\\/]/g, '-')}.pdf`;
   const conteudoDataUrl = doc.output('datauristring');
   doc.save(nomeArquivo);
 

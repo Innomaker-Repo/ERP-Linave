@@ -1,6 +1,5 @@
 import React from 'react';
 import { UsuariosView } from '../../components/modules/Usuarios/UsuariosView';
-import { DepartamentosView } from '../../components/modules/Configuracoes/DepartamentosView';
 
 interface ConfiguracoesModuleProps {
   activeItem: string;
@@ -11,8 +10,6 @@ export function ConfiguracoesModule({ activeItem, searchQuery }: ConfiguracoesMo
   switch (activeItem) {
     case 'usuarios':
       return <UsuariosView />;
-    case 'departamentos':
-      return <DepartamentosView />;
     default:
       return <UsuariosView />;
   }

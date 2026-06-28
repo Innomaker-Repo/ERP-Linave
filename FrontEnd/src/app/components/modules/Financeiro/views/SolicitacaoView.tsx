@@ -10,8 +10,8 @@ const fornecedorNome = (f: any) =>
   f?.razaoSocial || f?.razao_social || f?.nomeFantasia || f?.nome_fantasia || f?.nome || '';
 
 export function SolicitacaoView() {
-  const { empresas, oss, departamentos, fornecedores, addRecord } = useFin();
-  const [vinculo, setVinculo] = useState<'OS' | 'Departamento'>('OS');
+  const { empresas, oss, fornecedores, addRecord } = useFin();
+  const vinculo = 'OS' as const;
   const [anexos, setAnexos] = useState<File[]>([]);
   const [salvando, setSalvando] = useState(false);
   const [ok, setOk] = useState(false);
@@ -57,7 +57,7 @@ export function SolicitacaoView() {
         solicitante: form.solicitante,
         tipoPagamento: form.tipo,
         vinculoTipo: vinculo,
-        vinculoValor: form.vinculoValor || (vinculo === 'OS' ? oss[0]?.numero : departamentos[0]) || '',
+        vinculoValor: form.vinculoValor || oss[0]?.numero || '',
         fornecedor: form.fornecedor,
         documento: form.documento,
         valor: num(form.valor),
@@ -93,28 +93,12 @@ export function SolicitacaoView() {
         <Field label="Tipo (reembolso/adiantamento)" span={3}>
           <Select value={form.tipo} onChange={(e) => set('tipo', e.target.value)}>{TIPOS_REEMBOLSO.map((t) => <option key={t}>{t}</option>)}</Select>
         </Field>
-        <Field label="Vincular a" span={3}>
-          <Select value={vinculo} onChange={(e) => { setVinculo(e.target.value as any); set('vinculoValor', ''); }}>
-            <option value="OS">OS emitida</option>
-            <option value="Departamento">Departamento</option>
+        <Field label="OS emitida" span={3}>
+          <Select value={form.vinculoValor} onChange={(e) => set('vinculoValor', e.target.value)}>
+            <option value="">{oss.length ? 'Selecione...' : 'Nenhuma OS no ERP'}</option>
+            {oss.map((o, i) => <option key={`${o.numero}-${i}`} value={o.numero}>{o.numero} - {o.cliente}</option>)}
           </Select>
         </Field>
-
-        {vinculo === 'OS' ? (
-          <Field label="OS emitida" span={3}>
-            <Select value={form.vinculoValor} onChange={(e) => set('vinculoValor', e.target.value)}>
-              <option value="">{oss.length ? 'Selecione...' : 'Nenhuma OS no ERP'}</option>
-              {oss.map((o, i) => <option key={`${o.numero}-${i}`} value={o.numero}>{o.numero} - {o.cliente}</option>)}
-            </Select>
-          </Field>
-        ) : (
-          <Field label="Departamento" span={3}>
-            <Select value={form.vinculoValor} onChange={(e) => set('vinculoValor', e.target.value)}>
-              <option value="">{departamentos.length ? 'Selecione...' : 'Nenhum departamento'}</option>
-              {departamentos.map((d) => <option key={d} value={d}>{d}</option>)}
-            </Select>
-          </Field>
-        )}
         <Field label="Fornecedor / beneficiário" span={6}>
           <Input
             list="fin-fornecedores"

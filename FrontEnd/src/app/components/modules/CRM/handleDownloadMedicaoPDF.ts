@@ -270,7 +270,7 @@ export const handleDownloadMedicaoPDF = async (
     doc.text(tituloFixoPrestadora, x + sigWidth + spacing + sigWidth / 2, lineY + 4, { align: 'center' });
 
     // ===== 5. SALVAR =====
-    const prefixo = isLinave ? 'LN' : 'SN';
+    const prefixo = isLinave ? 'LN' : 'VTS';
     const numeroBMSanitizado = (documentoMediacaoForm.numeroBM || '001').replace(/[/\\]/g, '-');
     const negocioSanitizado = (numeroNegocio || 'negocio').replace(/[/\\]/g, '-');
     const nomeArquivo = `${prefixo}_Medicao_${negocioSanitizado}_${numeroBMSanitizado}_${Date.now()}.pdf`;

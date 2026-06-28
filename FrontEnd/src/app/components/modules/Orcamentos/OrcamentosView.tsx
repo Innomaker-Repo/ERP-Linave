@@ -11,7 +11,7 @@ import {
 import { getNegocios, getClientes, getOrdensPorNegocio, atualizarNegocio } from '../../../../services/comercialService';
 import { getBackendUrl } from '../../../../services/network';
 import { temServico, temLocacao } from '../../../utils/modalidade';
-import { getEstoqueItens } from '../../../utils/estoqueItens';
+import { ObservacoesNegocio } from '../../ObservacoesNegocio';
 
 interface MaoDeObra {
   id: string;
@@ -65,11 +65,19 @@ interface ItemLocacao {
   observacao: string;
 }
 
+interface AtividadeMacro {
+  id: string;
+  descricao: string;
+  quantidade: string;
+  unidade: string;
+  valorUnitario: string;
+  dias: string;
+}
+
 interface ServicoOrcamento {
   id: string;
   ordem: number;
   tipo: string;
-  categoria: string;
   embarcacao: string;
   localExecucao: string;
   porto: string;
@@ -106,10 +114,8 @@ const findClienteById = (clientes: any[], clienteId: any) =>
 
 
 export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
-  const { obras, os, saveEntity, almoxerifado } = useErp() as any;
+  const { obras, os, saveEntity } = useErp() as any;
 
-  // Itens do Estoque para o dropdown de Equipamento da seção Locação.
-  const estoqueItensOrc = React.useMemo(() => getEstoqueItens(almoxerifado), [almoxerifado]);
   const [listaClientesOrc, setListaClientesOrc] = useState<any[]>([]);
   const [filtroOs, setFiltroOs] = useState<string>('');
   const [showForm, setShowForm] = useState(false);
@@ -262,7 +268,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   const getEmpresaPrefixo = (obra: any) => {
     const rawEmpresa = obra?.empresaPrestadora || '';
     const cleaned = (typeof rawEmpresa === 'string' ? rawEmpresa : (rawEmpresa.nome || '')).toLowerCase();
-    return cleaned.includes('servi') ? 'SN' : 'LN';
+    return cleaned.includes('servi') ? 'VTS' : 'LN';
   };
 
   const getInitialOrcamentoData = () => ({
@@ -279,6 +285,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     materiais: [{ id: '1', descricao: '', unidade: 'un', quantidade: '', pesoFator: '', custoUnit: '', valorTotal: '0.00', observacao: '', origemTerceiros: 'Nao' as const }] as Material[],
     terceirizados: [{ id: '1', descricao: '', unidade: 'serv', quantidade: '', pesoFator: '1', custoUnit: '', valorTotal: '0.00', observacao: '' }],
     itensAlocacao: [] as ItemLocacao[],
+    atividadesMacro: [] as AtividadeMacro[],
     observacoes: '',
     margem: '15',
     oh: '5',
@@ -427,8 +434,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     const dadosServicos: ServicoOrcamento[] = (obra.servicos || []).map((s: any, idx: number) => ({
       id: s.id || `${obra.id}-servico-${idx + 1}`,
       ordem: idx + 1,
-      tipo: s.tipo || '',
-      categoria: s.categoria || '',
+      tipo: s.tipo || s.tipo_servico || '',
       embarcacao: s.embarcacao || '',
       localExecucao: s.localExecucao || s.local_execucao || s.local || '',
       porto: s.porto || '',
@@ -439,7 +445,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     
     // Preencher escopo automaticamente com informações dos serviços
     const servicosInfo = dadosServicos
-      .map((s) => `• Serviço ${s.ordem}: ${s.tipo || 'Sem tipo'}${s.categoria ? ` (${s.categoria})` : ''}${s.localExecucao ? ` em ${s.localExecucao}` : ''}`)
+      .map((s) => `• Serviço ${s.ordem}: ${s.tipo || 'Sem tipo'}${s.embarcacao ? ` - Embarcação: ${s.embarcacao}` : ''}${s.localExecucao ? ` em ${s.localExecucao}` : ''}`)
       .join('\n');
     
     // Normaliza itens vindos do backend (campo snake_case) para o formato esperado pelo formulário
@@ -565,6 +571,16 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
             observacao: it.observacao || '',
           }))
         : ((baseData as any).itensAlocacao || []),
+      // Tabela macro das atividades orçadas (item D da proposta) — vem do resumo do orçamento.
+      atividadesMacro: (Array.isArray((baseData as any).atividadesMacro) ? (baseData as any).atividadesMacro : [])
+        .map((it: any) => ({
+          id: String(it.id || Date.now() + Math.random()),
+          descricao: String(it.descricao || ''),
+          quantidade: it.quantidade != null && it.quantidade !== '' ? String(it.quantidade) : '',
+          unidade: String(it.unidade || ''),
+          valorUnitario: it.valorUnitario != null && it.valorUnitario !== '' ? String(it.valorUnitario) : '',
+          dias: it.dias != null && it.dias !== '' ? String(it.dias) : '',
+        })),
     };
 
     try {
@@ -1542,7 +1558,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
 
       // Download
       const versaoArquivo = formatarVersaoOrcamento(orcamento.versao);
-      doc.save(`Orcamento_${orcamento.numeroOrcamento}${versaoArquivo ? `_v${versaoArquivo}` : ''}.pdf`);
+      doc.save(`Orcamento_${String(orcamento.numeroOrcamento || '001').replace(/[\\/]/g, '-')}${versaoArquivo ? `_v${versaoArquivo}` : ''}.pdf`);
     } catch (error) {
       console.error('Erro ao gerar PDF:', error);
       alert('Erro ao gerar PDF do orçamento');
@@ -1707,14 +1723,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       ...prev,
       itensAlocacao: (prev.itensAlocacao || []).map(item => {
         if (item.id !== id) return item;
-        const merged = { ...item, ...changes };
-        // Ao trocar o equipamento pelo dropdown, herda a unidade cadastrada no Estoque.
-        if (changes.equipamento !== undefined) {
-          merged.estoqueRef = changes.equipamento || '';
-          const it = estoqueItensOrc.find(e => e.nome === changes.equipamento);
-          if (it && (!merged.unidade || merged.unidade === 'un')) merged.unidade = it.unidade;
-        }
-        return recalcularItemLocacao(merged);
+        return recalcularItemLocacao({ ...item, ...changes });
       })
     }));
   };
@@ -1730,6 +1739,32 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     setOrcamentoData(prev => ({
       ...prev,
       itensAlocacao: (prev.itensAlocacao || []).filter(i => i.id !== id)
+    }));
+  };
+
+  // --- ATIVIDADES MACRO (descrição macro das atividades orçadas / item D da proposta) ---
+  // Valor total da linha = quantidade × valor unitário × dias.
+  const macroRowTotal = (item: AtividadeMacro): number =>
+    (parseDecimal(item.quantidade) || 0) * (parseDecimal(item.valorUnitario) || 0) * (parseDecimal(item.dias) || 0);
+
+  const updateAtividadeMacro = (id: string, changes: Partial<AtividadeMacro>) => {
+    setOrcamentoData(prev => ({
+      ...prev,
+      atividadesMacro: (prev.atividadesMacro || []).map(item => item.id === id ? { ...item, ...changes } : item)
+    }));
+  };
+
+  const addAtividadeMacro = () => {
+    setOrcamentoData(prev => ({
+      ...prev,
+      atividadesMacro: [...(prev.atividadesMacro || []), { id: Date.now().toString(), descricao: '', quantidade: '', unidade: 'serv.', valorUnitario: '', dias: '1' }]
+    }));
+  };
+
+  const removeAtividadeMacro = (id: string) => {
+    setOrcamentoData(prev => ({
+      ...prev,
+      atividadesMacro: (prev.atividadesMacro || []).filter(i => i.id !== id)
     }));
   };
 
@@ -1753,6 +1788,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   const valorImpostosLocacao = (subtotalLocacaoBruto * impostosLocacaoPercentual) / 100;
   const subtotalLocacao = subtotalLocacaoBruto + valorImpostosLocacao;  // subtotal de locação COM imposto
   const totalGeral = precoFinal + subtotalLocacao;
+  const totalAtividadesMacro = (orcamentoData.atividadesMacro || []).reduce((sum, item) => sum + macroRowTotal(item), 0);
 
   const inputClass = "w-full bg-[#0b1220] border border-white/10 p-3 rounded-lg text-white text-sm outline-none focus:border-amber-500 transition-all placeholder:text-white/20";
   const labelClass = "text-[9px] font-black text-white/40 uppercase tracking-widest ml-1 mb-1.5 block";
@@ -2146,6 +2182,8 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
             </button>
           </div>
 
+          <ObservacoesNegocio servicos={selectedObra?.servicos} />
+
           {/* SECTION 1: LEVANTAMENTO DE ORÇAMENTO */}
           <div className="bg-gradient-to-r from-blue-500/10 to-purple-500/10 rounded-2xl border border-blue-500/20 p-8">
             <div className="mb-6">
@@ -2270,7 +2308,6 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                         <span className="text-amber-400 font-bold">{servico.tipo || 'Sem tipo'}</span>
                       </div>
                       <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-white/70">
-                        <p>Categoria: <span className="text-white">{servico.categoria || '−'}</span></p>
                         <p>Local: <span className="text-white">{servico.localExecucao || '−'}</span></p>
                         <p>Porto: <span className="text-white">{servico.porto || '−'}</span></p>
                         <p>Embarcação: <span className="text-white">{servico.embarcacao || '−'}</span></p>
@@ -2589,123 +2626,18 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
           </div>
           </>)}
 
-          {/* SECÇÃO: LOCAÇÃO — só quando a modalidade contempla locação */}
-          {orcTemLocacao && (
-          <div className="bg-[#101f3d] rounded-2xl border border-cyan-500/20 p-6">
-            <div className="flex justify-between items-center mb-6">
-              <div>
-                <h3 className="text-xl font-black text-white uppercase">Locação</h3>
-                <p className="text-white/50 text-xs mt-1">Selecione equipamentos do Estoque e informe quantidades e valores de locação</p>
-              </div>
-              <button
-                onClick={addItemLocacao}
-                className="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-white rounded-lg font-black text-xs uppercase transition flex items-center gap-2"
-              >
-                <Plus size={16} /> Adicionar Item
-              </button>
-            </div>
-
-            {estoqueItensOrc.length === 0 && (
-              <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-xs text-amber-200 font-semibold mb-4">
-                Nenhum equipamento de estoque salvo foi encontrado. Cadastre itens no Almoxarifado para aparecerem neste menu.
-              </div>
-            )}
-
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="text-left text-[10px] font-black text-white/40 uppercase tracking-widest">
-                    <th className="px-3 py-2">Equipamento</th>
-                    <th className="px-3 py-2">Unidade</th>
-                    <th className="px-3 py-2">Quantidade</th>
-                    <th className="px-3 py-2">Valor Unit. Indenização</th>
-                    <th className="px-3 py-2">Valor Unit. Locação</th>
-                    <th className="px-3 py-2">Valor Total</th>
-                    <th className="px-3 py-2 text-center">Ação</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(orcamentoData.itensAlocacao || []).length === 0 && (
-                    <tr><td colSpan={7} className="px-3 py-4 text-white/40 text-sm">Nenhum item. Clique em "Adicionar Item".</td></tr>
-                  )}
-                  {(orcamentoData.itensAlocacao || []).map((item) => (
-                    <tr key={item.id} className="border-t border-white/5">
-                      <td className="px-3 py-2 min-w-[180px]">
-                        <select className={tableInputClass} value={item.equipamento} onChange={e => updateItemLocacao(item.id, { equipamento: e.target.value })}>
-                          <option value="">Selecione no Estoque...</option>
-                          {estoqueItensOrc.map(it => (<option key={it.nome} value={it.nome}>{it.nome}</option>))}
-                        </select>
-                      </td>
-                      <td className="px-3 py-2"><input type="text" className={tableInputClass} value={item.unidade} onChange={e => updateItemLocacao(item.id, { unidade: e.target.value })} /></td>
-                      <td className="px-3 py-2"><input type="number" min="0" className={tableInputClass} value={item.quantidade} onChange={e => updateItemLocacao(item.id, { quantidade: e.target.value })} /></td>
-                      <td className="px-3 py-2"><input type="number" min="0" className={tableInputClass} value={item.valorIndenizacao} onChange={e => updateItemLocacao(item.id, { valorIndenizacao: e.target.value })} placeholder="0,00" /></td>
-                      <td className="px-3 py-2"><input type="number" min="0" className={tableInputClass} value={item.valorLocacao} onChange={e => updateItemLocacao(item.id, { valorLocacao: e.target.value })} placeholder="0,00" /></td>
-                      <td className="px-3 py-2 text-white font-bold text-sm whitespace-nowrap">R$ {item.valorTotal}</td>
-                      <td className="px-3 py-2 text-center">
-                        <button onClick={() => removeItemLocacao(item.id)} className="p-1.5 hover:bg-red-500/20 rounded text-red-400" title="Remover"><Trash2 size={14} /></button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="mt-4 pt-4 border-t border-white/10 flex flex-wrap items-end justify-between gap-4">
-              <div className="space-y-1.5 w-52">
-                <label className={labelClass}>Impostos Locação (%) <span className="text-red-400">*</span></label>
-                <input
-                  type="number"
-                  min="0"
-                  className={inputClass}
-                  value={orcamentoData.impostosLocacao}
-                  onChange={e => setOrcamentoData({ ...orcamentoData, impostosLocacao: e.target.value })}
-                  placeholder="0"
-                />
-                <p className="text-white/40 text-[10px]">Calculado à parte do imposto de serviço.</p>
-              </div>
-              <div className="flex flex-wrap gap-3">
-                <div className="bg-[#0b1220] border border-white/10 rounded-lg px-4 py-2.5">
-                  <p className="text-white/60 text-[10px] font-black uppercase tracking-widest">Subtotal (s/ imposto)</p>
-                  <p className="text-white font-black text-base text-right">R$ {subtotalLocacaoBruto.toFixed(2)}</p>
-                </div>
-                <div className="bg-[#0b1220] border border-white/10 rounded-lg px-4 py-2.5">
-                  <p className="text-white/60 text-[10px] font-black uppercase tracking-widest">Impostos Locação ({impostosLocacaoPercentual}%)</p>
-                  <p className="text-white font-black text-base text-right">R$ {valorImpostosLocacao.toFixed(2)}</p>
-                </div>
-                <div className="bg-[#0b1220] border border-cyan-500/30 rounded-lg px-4 py-2.5">
-                  <p className="text-cyan-300/80 text-[10px] font-black uppercase tracking-widest">Subtotal Locação (c/ imposto)</p>
-                  <p className="text-cyan-300 font-black text-lg text-right">R$ {subtotalLocacao.toFixed(2)}</p>
-                </div>
-              </div>
-            </div>
-          </div>
-          )}
-
-          {/* SECTION 6: OBSERVAÇÕES */}
-          <div className="bg-gradient-to-r from-amber-500/10 to-orange-500/10 rounded-2xl border border-amber-500/20 p-8">
-            <h3 className="text-xl font-black text-white uppercase mb-4 flex items-center gap-2">
-              <FileText size={20} /> Observações para o Setor de Orçamento
-            </h3>
-            <textarea 
-              className={`${inputClass} h-32 resize-none`}
-              value={orcamentoData.observacoes}
-              onChange={e => setOrcamentoData({...orcamentoData, observacoes: e.target.value})}
-              placeholder="Campo livre para informar premissas, riscos, necessidades específicas e pontos de atenção."
-            />
-          </div>
-
-          {/* SECTION 7: RESUMO FINANCEIRO */}
+          {/* RESUMO FINANCEIRO DO SERVIÇO — apenas os dados de orçamento do serviço */}
+          {orcTemServico && (
           <div className="bg-gradient-to-r from-emerald-500/10 to-cyan-500/10 rounded-2xl border border-emerald-500/20 p-8">
             <h3 className="text-xl font-black text-white uppercase mb-6 flex items-center gap-2">
-              <DollarSign size={20} /> Resumo Financeiro do Orçamento
+              <DollarSign size={20} /> Resumo Financeiro do Serviço
             </h3>
 
-            {orcTemServico && (<>
             <div className="grid grid-cols-3 gap-4 mb-6">
               <div className="space-y-1.5">
                 <label className={labelClass}>Margem (%) <span className="text-red-400">*</span></label>
-                <input 
-                  type="number" 
+                <input
+                  type="number"
                   className={inputClass}
                   value={orcamentoData.margem}
                   onChange={e => setOrcamentoData({...orcamentoData, margem: e.target.value})}
@@ -2713,8 +2645,8 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
               </div>
               <div className="space-y-1.5">
                 <label className={labelClass}>O.H (%) <span className="text-red-400">*</span></label>
-                <input 
-                  type="number" 
+                <input
+                  type="number"
                   className={inputClass}
                   value={orcamentoData.oh}
                   onChange={e => setOrcamentoData({...orcamentoData, oh: e.target.value})}
@@ -2722,8 +2654,8 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
               </div>
               <div className="space-y-1.5">
                 <label className={labelClass}>Impostos (%) <span className="text-red-400">*</span></label>
-                <input 
-                  type="number" 
+                <input
+                  type="number"
                   className={inputClass}
                   value={orcamentoData.impostos}
                   onChange={e => setOrcamentoData({...orcamentoData, impostos: e.target.value})}
@@ -2793,27 +2725,187 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                 </div>
               </div>
             </div>
-            </>)}
+          </div>
+          )}
 
-            {/* Resumo: 2 subtotais separados (serviço c/ imposto + locação c/ imposto) → total geral */}
-            {orcTemLocacao && (
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-6">
+          {/* SECÇÃO: LOCAÇÃO — só quando a modalidade contempla locação */}
+          {orcTemLocacao && (
+          <div className="bg-[#101f3d] rounded-2xl border border-cyan-500/20 p-6">
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h3 className="text-xl font-black text-white uppercase">Locação</h3>
+                <p className="text-white/50 text-xs mt-1">Selecione equipamentos do Estoque e informe quantidades e valores de locação</p>
+              </div>
+              <button
+                onClick={addItemLocacao}
+                className="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-white rounded-lg font-black text-xs uppercase transition flex items-center gap-2"
+              >
+                <Plus size={16} /> Adicionar Item
+              </button>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="text-left text-[10px] font-black text-white/40 uppercase tracking-widest">
+                    <th className="px-3 py-2">Descrição</th>
+                    <th className="px-3 py-2">Unidade</th>
+                    <th className="px-3 py-2">Quantidade</th>
+                    <th className="px-3 py-2">Valor Unit. Indenização</th>
+                    <th className="px-3 py-2">Valor Unit. Locação</th>
+                    <th className="px-3 py-2">Valor Total</th>
+                    <th className="px-3 py-2 text-center">Ação</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(orcamentoData.itensAlocacao || []).length === 0 && (
+                    <tr><td colSpan={7} className="px-3 py-4 text-white/40 text-sm">Nenhum item. Clique em "Adicionar Item".</td></tr>
+                  )}
+                  {(orcamentoData.itensAlocacao || []).map((item) => (
+                    <tr key={item.id} className="border-t border-white/5">
+                      <td className="px-3 py-2 min-w-[180px]">
+                        <input type="text" className={tableInputClass} value={item.equipamento} onChange={e => updateItemLocacao(item.id, { equipamento: e.target.value })} placeholder="Descrição do item" />
+                      </td>
+                      <td className="px-3 py-2"><input type="text" className={tableInputClass} value={item.unidade} onChange={e => updateItemLocacao(item.id, { unidade: e.target.value })} /></td>
+                      <td className="px-3 py-2"><input type="number" min="0" className={tableInputClass} value={item.quantidade} onChange={e => updateItemLocacao(item.id, { quantidade: e.target.value })} /></td>
+                      <td className="px-3 py-2"><input type="number" min="0" className={tableInputClass} value={item.valorIndenizacao} onChange={e => updateItemLocacao(item.id, { valorIndenizacao: e.target.value })} placeholder="0,00" /></td>
+                      <td className="px-3 py-2"><input type="number" min="0" className={tableInputClass} value={item.valorLocacao} onChange={e => updateItemLocacao(item.id, { valorLocacao: e.target.value })} placeholder="0,00" /></td>
+                      <td className="px-3 py-2 text-white font-bold text-sm whitespace-nowrap">R$ {item.valorTotal}</td>
+                      <td className="px-3 py-2 text-center">
+                        <button onClick={() => removeItemLocacao(item.id)} className="p-1.5 hover:bg-red-500/20 rounded text-red-400" title="Remover"><Trash2 size={14} /></button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-4 pt-4 border-t border-white/10 flex flex-wrap items-end justify-between gap-4">
+              <div className="space-y-1.5 w-52">
+                <label className={labelClass}>Impostos Locação (%) <span className="text-red-400">*</span></label>
+                <input
+                  type="number"
+                  min="0"
+                  className={inputClass}
+                  value={orcamentoData.impostosLocacao}
+                  onChange={e => setOrcamentoData({ ...orcamentoData, impostosLocacao: e.target.value })}
+                  placeholder="0"
+                />
+                <p className="text-white/40 text-[10px]">Calculado à parte do imposto de serviço.</p>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <div className="bg-[#0b1220] border border-white/10 rounded-lg px-4 py-2.5">
+                  <p className="text-white/60 text-[10px] font-black uppercase tracking-widest">Subtotal (s/ imposto)</p>
+                  <p className="text-white font-black text-base text-right">R$ {subtotalLocacaoBruto.toFixed(2)}</p>
+                </div>
+                <div className="bg-[#0b1220] border border-white/10 rounded-lg px-4 py-2.5">
+                  <p className="text-white/60 text-[10px] font-black uppercase tracking-widest">Impostos Locação ({impostosLocacaoPercentual}%)</p>
+                  <p className="text-white font-black text-base text-right">R$ {valorImpostosLocacao.toFixed(2)}</p>
+                </div>
+                <div className="bg-[#0b1220] border border-cyan-500/30 rounded-lg px-4 py-2.5">
+                  <p className="text-cyan-300/80 text-[10px] font-black uppercase tracking-widest">Subtotal Locação (c/ imposto)</p>
+                  <p className="text-cyan-300 font-black text-lg text-right">R$ {subtotalLocacao.toFixed(2)}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          )}
+
+          {/* RESUMO FINANCEIRO GERAL — com tudo (serviço + locação) */}
+          <div className="bg-gradient-to-r from-emerald-500/10 to-cyan-500/10 rounded-2xl border border-emerald-500/20 p-8">
+            <h3 className="text-xl font-black text-white uppercase mb-6 flex items-center gap-2">
+              <DollarSign size={20} /> Resumo Financeiro Geral
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
               {orcTemServico && (
                 <div className="bg-[#101f3d] rounded-lg p-4 border border-amber-500/30">
                   <p className="text-white/50 text-xs font-bold mb-2">SUBTOTAL SERVIÇO (c/ imposto)</p>
                   <p className="text-amber-400 font-black text-lg">R$ {precoFinal.toFixed(2)}</p>
                 </div>
               )}
-              <div className="bg-[#101f3d] rounded-lg p-4 border border-cyan-500/30">
-                <p className="text-white/50 text-xs font-bold mb-2">SUBTOTAL LOCAÇÃO (c/ imposto)</p>
-                <p className="text-cyan-300 font-black text-lg">R$ {subtotalLocacao.toFixed(2)}</p>
-              </div>
+              {orcTemLocacao && (
+                <div className="bg-[#101f3d] rounded-lg p-4 border border-cyan-500/30">
+                  <p className="text-white/50 text-xs font-bold mb-2">SUBTOTAL LOCAÇÃO (c/ imposto)</p>
+                  <p className="text-cyan-300 font-black text-lg">R$ {subtotalLocacao.toFixed(2)}</p>
+                </div>
+              )}
               <div className="bg-[#101f3d] rounded-lg p-4 border border-emerald-500/30 shadow-lg shadow-emerald-500/10">
-                <p className="text-emerald-400 text-xs font-black mb-2 uppercase">Total Geral{orcTemServico ? ' (Serviço + Locação)' : ''}</p>
+                <p className="text-emerald-400 text-xs font-black mb-2 uppercase">Total Geral{(orcTemServico && orcTemLocacao) ? ' (Serviço + Locação)' : ''}</p>
                 <p className="text-emerald-400 font-black text-2xl">R$ {totalGeral.toFixed(2)}</p>
               </div>
             </div>
-            )}
+          </div>
+
+          {/* DESCRIÇÃO MACRO DAS ATIVIDADES ORÇADAS — vira o item D (Preço) da Proposta */}
+          <div className="bg-[#101f3d] rounded-2xl border border-white/5 p-6">
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h3 className="text-xl font-black text-white uppercase">Descrição Macro das Atividades Orçadas</h3>
+                <p className="text-white/50 text-xs mt-1">Resumo macro do preço — vira o item D (Preço) da Proposta. Valor total = Quant. × Vl. Unit. × Dias.</p>
+              </div>
+              <button
+                onClick={addAtividadeMacro}
+                className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-[#0b1220] rounded-lg font-black text-xs uppercase transition"
+              >
+                <Plus size={16} className="inline mr-2" /> Adicionar Atividade
+              </button>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="bg-white/5 border-b border-white/10 text-left text-white font-black">
+                    <th className="px-3 py-3 w-12">Item</th>
+                    <th className="px-3 py-3">Descrição</th>
+                    <th className="px-3 py-3 w-20">Quant.</th>
+                    <th className="px-3 py-3 w-24">Unit.</th>
+                    <th className="px-3 py-3 w-32">Vl. Unit. R$</th>
+                    <th className="px-3 py-3 w-20">Dias</th>
+                    <th className="px-3 py-3 w-36">Valor total R$</th>
+                    <th className="px-3 py-3 w-10 text-center"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(orcamentoData.atividadesMacro || []).length === 0 && (
+                    <tr><td colSpan={8} className="px-3 py-4 text-white/40 text-sm">Nenhuma atividade. Clique em "Adicionar Atividade".</td></tr>
+                  )}
+                  {(orcamentoData.atividadesMacro || []).map((item, idx) => (
+                    <tr key={item.id} className="border-b border-white/5 hover:bg-white/5 transition">
+                      <td className="px-3 py-2 text-white/60 font-bold text-center">{idx + 1}</td>
+                      <td className="px-3 py-2 min-w-[220px]"><input type="text" className={tableInputClass} value={item.descricao} onChange={e => updateAtividadeMacro(item.id, { descricao: e.target.value })} placeholder="Descrição da atividade" /></td>
+                      <td className="px-3 py-2"><input type="number" min="0" className={tableInputClass} value={item.quantidade} onChange={e => updateAtividadeMacro(item.id, { quantidade: e.target.value })} /></td>
+                      <td className="px-3 py-2"><input type="text" className={tableInputClass} value={item.unidade} onChange={e => updateAtividadeMacro(item.id, { unidade: e.target.value })} placeholder="serv." /></td>
+                      <td className="px-3 py-2"><input type="number" min="0" className={tableInputClass} value={item.valorUnitario} onChange={e => updateAtividadeMacro(item.id, { valorUnitario: e.target.value })} placeholder="0,00" /></td>
+                      <td className="px-3 py-2"><input type="number" min="0" className={tableInputClass} value={item.dias} onChange={e => updateAtividadeMacro(item.id, { dias: e.target.value })} /></td>
+                      <td className="px-3 py-2 text-white font-bold whitespace-nowrap">R$ {macroRowTotal(item).toFixed(2)}</td>
+                      <td className="px-3 py-2 text-center">
+                        <button onClick={() => removeAtividadeMacro(item.id)} className="p-1 hover:bg-red-500/20 rounded transition text-red-400 hover:text-red-300"><Trash2 size={14} /></button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-4 pt-4 border-t border-white/10 flex justify-end">
+              <div className="bg-[#0b1220] border border-emerald-500/30 rounded-lg px-4 py-2.5">
+                <p className="text-white/60 text-[10px] font-black uppercase tracking-widest">Valor total do serviço</p>
+                <p className="text-emerald-400 font-black text-lg text-right">R$ {totalAtividadesMacro.toFixed(2)}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* OBSERVAÇÕES — campo livre para o setor de orçamento */}
+          <div className="bg-gradient-to-r from-amber-500/10 to-orange-500/10 rounded-2xl border border-amber-500/20 p-8">
+            <h3 className="text-xl font-black text-white uppercase mb-4 flex items-center gap-2">
+              <FileText size={20} /> Observações para o Setor de Orçamento
+            </h3>
+            <textarea
+              className={`${inputClass} h-32 resize-none`}
+              value={orcamentoData.observacoes}
+              onChange={e => setOrcamentoData({...orcamentoData, observacoes: e.target.value})}
+              placeholder="Campo livre para informar premissas, riscos, necessidades específicas e pontos de atenção."
+            />
           </div>
 
           {/* SEÇÃO 8: BOTÕES DE AÇÃO */}

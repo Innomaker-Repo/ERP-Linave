@@ -206,7 +206,19 @@ const mapTerceirizadoItem = (item: any) => ({
       OH: parseDecimal(orcamentoData.oh || 0),
       impostos: parseDecimal(orcamentoData.impostos || 0),
       impostos_locacao: parseDecimal(orcamentoData.impostosLocacao || 0),
-      qnt: parseDecimal(orcamentoData.quantidadeItensProduzidos || 0) // permite decimais
+      qnt: parseDecimal(orcamentoData.quantidadeItensProduzidos || 0), // permite decimais
+      // Tabela macro das atividades orçadas (item D da proposta) — guardada como JSON limpo.
+      atividades_macro: Array.isArray(orcamentoData.atividadesMacro)
+        ? orcamentoData.atividadesMacro
+            .filter((it: any) => String(it.descricao || '').trim() !== '')
+            .map((it: any) => ({
+              descricao: String(it.descricao || '').trim(),
+              quantidade: parseDecimal(it.quantidade || 0),
+              unidade: String(it.unidade || '').trim(),
+              valorUnitario: parseDecimal(it.valorUnitario || 0),
+              dias: parseDecimal(it.dias || 0),
+            }))
+        : [],
     },
     mao_de_obra: Array.isArray(orcamentoData.maoDeObra)
       ? orcamentoData.maoDeObra.filter((mo: any) => mo.funcao && mo.funcao.trim() !== '').map(mapMDOItem)

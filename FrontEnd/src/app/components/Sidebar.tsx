@@ -1,16 +1,17 @@
 import React, { useState } from 'react';
 import { useErp } from '../context/ErpContext';
 import { 
-  LayoutDashboard, Users, HardHat, Anchor, ClipboardList,
+  House, Users, HardHat, Anchor, ClipboardList,
   ShoppingCart, DollarSign, BarChart3, Settings, Factory,
   HeartHandshake, List, Clock, ChevronDown, ChevronRight,
   Briefcase, Wrench, Activity, FileText, Zap, CheckCircle2, Trash2, LayoutGrid, Package2, History,
-  FilePlus, Banknote, ScrollText, Wallet, Building2, TrendingUp, Landmark, Tags, Ruler
+  FilePlus, Banknote, ScrollText, Wallet, TrendingUp, Landmark, Tags, Ruler, PanelLeftClose
 } from 'lucide-react';
 
 interface SidebarProps {
   activeSection: string;
   setActiveSection: (section: string) => void;
+  onClose?: () => void;
 }
 
 const MOCK_GERENTE_COMERCIAL_EMAIL = 'gerente.comercial@linave.com.br';
@@ -19,10 +20,10 @@ const MOCK_DIRETOR_FINANCEIRO_EMAIL = 'diretor.financeiro@linave.com.br';
 // Itens do grupo Financeiro (cada seção é uma aba própria no sidebar).
 const FINANCEIRO_ITEM_IDS = new Set([
   'finDashboard', 'finSolicitacao', 'finAprovacoes', 'finPagar', 'finNfe',
-  'finReceber', 'finLocacao', 'finPrevisao', 'finBancos', 'finDepartamentos', 'finHistorico',
+  'finReceber', 'finPrevisao', 'finBancos', 'finHistorico',
 ]);
 
-export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
+export function Sidebar({ activeSection, setActiveSection, onClose }: SidebarProps) {
   const { userSession, config } = useErp();
   
   // Controle dos grupos do menu (Acordeão)
@@ -45,7 +46,7 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
       title: 'Gestão & Estratégia',
       icon: Briefcase,
       items: [
-        { id: 'dashboard', label: 'Dashboard Geral', icon: LayoutDashboard },
+        { id: 'dashboard', label: 'Dashboard Geral', icon: House },
         { id: 'relatorios', label: 'Relatórios BI', icon: BarChart3 },
       ]
     },
@@ -90,17 +91,15 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
       icon: DollarSign,
       items: [
         // Operação
-        { id: 'finDashboard', label: 'Dashboard Financeiro', icon: LayoutDashboard },
+        { id: 'finDashboard', label: 'Dashboard Financeiro', icon: House },
         { id: 'finSolicitacao', label: 'Solicitação de Pagamento', icon: FilePlus },
         { id: 'finAprovacoes', label: 'Aprovações', icon: CheckCircle2 },
         { id: 'finPagar', label: 'Contas a Pagar', icon: Banknote },
         { id: 'finNfe', label: 'NFe', icon: ScrollText },
         { id: 'finReceber', label: 'Contas a Receber', icon: Wallet },
-        { id: 'finLocacao', label: 'Locação', icon: Building2 },
         { id: 'finPrevisao', label: 'Previsão de Receita', icon: TrendingUp },
         // Gestão
         { id: 'finBancos', label: 'Bancos', icon: Landmark },
-        { id: 'finDepartamentos', label: 'Departamentos', icon: Tags },
         { id: 'finHistorico', label: 'Histórico', icon: History },
       ]
     },
@@ -134,8 +133,7 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
       title: 'Configurações',
       icon: Settings,
       items: [
-        { id: 'usuarios', label: 'Usuários & Acessos', icon: Settings },
-        { id: 'departamentos', label: 'Departamentos', icon: List }
+        { id: 'usuarios', label: 'Usuários & Acessos', icon: Settings }
       ]
     }
   ];
@@ -203,18 +201,30 @@ export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
       
       {/* CABEÇALHO */}
       <div className="p-6 border-b border-white/5 mb-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-amber-500 rounded-xl flex items-center justify-center font-black text-[#0b1220] shadow-lg shadow-amber-500/20">
-            IN
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-amber-500 rounded-xl flex items-center justify-center font-black text-[#0b1220] shadow-lg shadow-amber-500/20">
+              <House size={25} />
+            </div>
+            <div>
+              <h1 className="text-white font-black italic uppercase text-xl leading-none">
+                Sistema ERP 
+              </h1>
+              <p className="text-[9px] text-white/30 font-bold uppercase tracking-widest mt-1">
+                Linave & Servinave
+              </p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-white font-black italic uppercase text-xl leading-none">
-              Linave
-            </h1>
-            <p className="text-[9px] text-white/30 font-bold uppercase tracking-widest mt-1">
-              SaaS Edition
-            </p>
-          </div>
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition-all shrink-0"
+              title="Fechar menu"
+              aria-label="Fechar menu"
+            >
+              <PanelLeftClose size={18} />
+            </button>
+          )}
         </div>
       </div>
 

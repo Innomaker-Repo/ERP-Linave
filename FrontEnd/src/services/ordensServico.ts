@@ -10,9 +10,15 @@ export type OrdemServicoResumo = {
   statusOs: string;
   statusEnvio: string;
   statusAprovacao: string;
+  fechada: boolean;
 };
 
+// OS fechada (bloqueada pela diretoria após as medições): some de TODAS as listas de uso
+// (estoque/compras/alocação/produção). Aceita variações de origem (backend snake / contexto camel).
+export const isOsFechada = (os: any) => Boolean(os?.fechada ?? os?.fechado ?? os?.os_fechada);
+
 export const isOsAlvo = (os: any) => {
+  if (isOsFechada(os)) return false;
   // Accept multiple naming variants from different sources (backend vs local context)
   const statusEnvio = String(os?.status_envio ?? os?.statusEnvio ?? '').toLowerCase();
   const statusOs = String(os?.status_os ?? os?.statusOs ?? os?.statusOs ?? '').toLowerCase();
@@ -25,7 +31,9 @@ export const isOsAlvo = (os: any) => {
 // Mesma regra usada na aba de Produção (ObrasView): a OS só "vale" depois de
 // APROVADA (ou se já estiver concluída). Usada para liberar a OS na alocação/baixa
 // do estoque/almoxarifado e no centro de custo das requisições de compra.
+// OS fechada NUNCA vale (mesmo concluída) — o bloqueio é definitivo.
 export const isOsAprovada = (os: any) => {
+  if (isOsFechada(os)) return false;
   const statusAprovacao = String(os?.status_aprovacao ?? os?.statusAprovacao ?? '').toLowerCase();
   const statusOs = String(os?.status_os ?? os?.statusOs ?? '').toLowerCase();
   const isFinalized = statusOs === 'concluida' || statusOs === 'concluído' || statusOs === 'concluido';
@@ -50,7 +58,8 @@ const normalizeOs = (item: any): OrdemServicoResumo => ({
   cc: String(item?.cc ?? ''),
   statusOs: String(item?.status_os ?? item?.statusOs ?? 'rascunho'),
   statusEnvio: String(item?.status_envio ?? item?.statusEnvio ?? 'pendente'),
-  statusAprovacao: String(item?.status_aprovacao ?? item?.statusAprovacao ?? 'pendente')
+  statusAprovacao: String(item?.status_aprovacao ?? item?.statusAprovacao ?? 'pendente'),
+  fechada: Boolean(item?.fechada ?? item?.fechado)
 });
 
 export const getOsOptionLabel = (os: OrdemServicoResumo) => {

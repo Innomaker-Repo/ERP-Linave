@@ -124,9 +124,8 @@ class Negocio(models.Model):
 class Servico(models.Model):
     id = models.BigAutoField(primary_key=True)
     negocio = models.ForeignKey(Negocio, on_delete=models.CASCADE, related_name='servicos')
-    tipo_servico = models.CharField(max_length=100) 
-    categoria = models.CharField(max_length=100, null=True, blank=True)    
-    local_execucao = models.CharField(max_length=150, null=True, blank=True) 
+    tipo_servico = models.CharField(max_length=100)
+    local_execucao = models.CharField(max_length=150, null=True, blank=True)
     descricao = models.TextField()                 
     embarcacao = models.CharField(max_length=100, null=True, blank=True)
     porto = models.CharField(max_length=100, null=True, blank=True)
@@ -341,6 +340,9 @@ class Resumo_orcamento(models.Model):
     impostos = models.DecimalField(max_digits=5, decimal_places = 2)  # imposto sobre os SERVIÇOS
     impostos_locacao = models.DecimalField(max_digits=5, decimal_places=2, default=0)  # imposto sobre a LOCAÇÃO (calculado à parte)
     qnt = models.DecimalField(max_digits=12, decimal_places=2) #how many units of the final product or service are expected to be delivered, to be filled in the "Quantidade" field of the orçamento form, used to calculate the cost per unit in the Resumo_orcamento model and displayed in the "Custo por Unidade" field of the orçamento form.
+    # Tabela macro das atividades orçadas (descrição macro do preço): vira o item D da Proposta.
+    # Cada item: { descricao, quantidade, unidade, valorUnitario, dias } (valorTotal = qtd*valorUnitario*dias)
+    atividades_macro = models.JSONField(default=list, blank=True)
     #---------------------------------------------------------------------------------
     # Calculation properties reach back through the Orcamento link
     @property
@@ -472,6 +474,12 @@ class OrdemServico(models.Model):
     status_os = models.CharField(max_length=20, choices=STATUS_OS_CHOICES, default='rascunho')
     status_envio = models.CharField(max_length=20, choices=STATUS_ENVIO_CHOICES, default='pendente')
     status_aprovacao = models.CharField(max_length=20, choices=STATUS_APROVACAO_CHOICES, default='pendente')
+
+    # Fechamento (bloqueio definitivo) da OS — feito na tela de Medições depois das medições.
+    # OS fechada SOME das listas de USO (estoque/compras/alocação/produção): fica só finalizada.
+    # Reabrir é ação restrita (diretoria). Substitui a verificação "enviada+aprovada" como gate de uso.
+    fechada = models.BooleanField(default=False)
+    data_fechamento = models.DateField(null=True, blank=True)
     
     # Aprovação
     data_aprovacao = models.DateField(null=True, blank=True)
@@ -543,7 +551,14 @@ class PropostaComercial(models.Model):
     condicoes_pagamento = models.TextField(blank=True, default='') # free text field for the payment terms and conditions of the proposal
     prazo = models.TextField(blank=True, default='') # free text field to specify the delivery time or deadline for the proposal
     encerramento = models.TextField() # free text field for the closing remarks or conclusion of the proposal
-   
+
+    # Estrutura rica da proposta guardada FIELMENTE em JSON (round-trip sem perda):
+    # - escopos_estruturado: blocos do Escopo A (titulo, descricaoServico, colunas, linhas, textosDepois)
+    # - preco_itens: tabela D de preço (nome, quantidade, precoUnitario, total)
+    # Substitui a antiga consolidação-em-texto (que jogava o escopo no texto_de_abertura).
+    escopos_estruturado = models.JSONField(default=list, blank=True)
+    preco_itens = models.JSONField(default=list, blank=True)
+
     def __str__(self):
         return f"Proposta Comercial {self.id} - {self.cliente.razao_social} - Valor: {self.preco}"
     

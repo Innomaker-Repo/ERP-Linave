@@ -214,6 +214,7 @@ class PropostaComercialResumoSerializer(serializers.ModelSerializer):
     textoAbertura = serializers.CharField(source='texto_de_abertura', read_only=True)
     escopoA = serializers.SerializerMethodField()
     escopoBasicoServicos = serializers.SerializerMethodField()
+    precoItens = serializers.SerializerMethodField()
     referencias = serializers.CharField(source='referencia', read_only=True)
     responsabilidadeContratada = serializers.CharField(source='responsabilidade_contratada', read_only=True)
     responsabilidadeContratante = serializers.CharField(source='responsabilidade_contratante', read_only=True)
@@ -228,7 +229,7 @@ class PropostaComercialResumoSerializer(serializers.ModelSerializer):
             'cliente', 'negocio', 'referencias', 'saudacao', 'assunto', 'textoAbertura',
             'responsabilidadeContratada', 'responsabilidadeContratante', 'preco',
             'condicoesGerais', 'condicoesPagamento', 'prazo', 'encerramento',
-            'escopoA', 'escopoBasicoServicos', 'versao'
+            'escopoA', 'escopoBasicoServicos', 'precoItens', 'versao'
         ]
 
     def get_versao(self, obj):
@@ -243,6 +244,10 @@ class PropostaComercialResumoSerializer(serializers.ModelSerializer):
         return first.descricao if first else ''
 
     def get_escopoBasicoServicos(self, obj):
+        # Fonte FIEL: o JSON estruturado salvo na proposta (preserva colunas/linhas/tabelas).
+        if isinstance(obj.escopos_estruturado, list) and obj.escopos_estruturado:
+            return obj.escopos_estruturado
+        # Fallback (propostas antigas sem o JSON): reconstrução flat dos Escopos relacionais.
         escopos = []
         for escopo in obj.proposta_escopo.all():
             escopos.append({
@@ -255,6 +260,9 @@ class PropostaComercialResumoSerializer(serializers.ModelSerializer):
                 'linhas': [{'id': f'linha-{escopo.id}-1', 'valores': {'Descrição': escopo.descricao or ''}}]
             })
         return escopos
+
+    def get_precoItens(self, obj):
+        return obj.preco_itens if isinstance(obj.preco_itens, list) else []
 
 class PropostaComercialSerializer(serializers.ModelSerializer):
     cliente_detalhes = ClienteSerializer(source='cliente', read_only=True)
@@ -275,6 +283,9 @@ class PropostaComercialSerializer(serializers.ModelSerializer):
     encerramento = serializers.CharField(required=False, allow_blank=True, default='')
     proposta_escopo = EscopoSerializer(many=True, read_only=True)
     proposta_escopo_input = EscopoSerializer(source='proposta_escopo', many=True, write_only=True, required=False)
+    # Estrutura rica (round-trip fiel via JSON)
+    escopoBasicoServicos = serializers.JSONField(source='escopos_estruturado', required=False)
+    precoItens = serializers.JSONField(source='preco_itens', required=False)
 
     class Meta:
         model = PropostaComercial
@@ -284,6 +295,7 @@ class PropostaComercialSerializer(serializers.ModelSerializer):
             'referencias', 'saudacao', 'assunto', 'textoAbertura',
             'responsabilidadeContratada', 'responsabilidadeContratante', 'preco',
             'condicoesGerais', 'condicoesPagamento', 'prazo', 'encerramento',
+            'escopoBasicoServicos', 'precoItens',
             'proposta_escopo', 'proposta_escopo_input'
         ]
 
@@ -422,7 +434,8 @@ class OrcamentoSerializer(serializers.ModelSerializer):
             'oh': float(obj.resumo.OH) if obj.resumo else 0,
             'impostos': float(obj.resumo.impostos) if obj.resumo else 0,
             'impostosLocacao': float(obj.resumo.impostos_locacao) if obj.resumo else 0,
-            'quantidadeItensProduzidos': float(obj.resumo.qnt) if obj.resumo else 0
+            'quantidadeItensProduzidos': float(obj.resumo.qnt) if obj.resumo else 0,
+            'atividadesMacro': (obj.resumo.atividades_macro if obj.resumo and isinstance(obj.resumo.atividades_macro, list) else [])
         }
 
     def get_valores(self, obj):
@@ -539,6 +552,7 @@ class OrdemServicoSerializer(serializers.ModelSerializer):
             'supervisor_encarregado', 'descricao_geral_servico',
             'a_ser_incluido', 'mao_obra', 'horas_trabalhadas_servico',
             'status_os', 'status_envio', 'status_aprovacao',
+            'fechada', 'data_fechamento',
             'data_aprovacao', 'documento_assinatura_aprovacao',
             'documentos', 'created_at', 'updated_at'
         ]
@@ -573,7 +587,7 @@ class OrdemServicoSerializer(serializers.ModelSerializer):
         if not numero_os:
             negocio = validated_data.get('negocio')
             if negocio:
-                prefixo = 'SN' if 'servinave' in str(getattr(negocio, 'empresa_prestadora', '')).lower() else 'LN'
+                prefixo = 'VTS' if 'servinave' in str(getattr(negocio, 'empresa_prestadora', '')).lower() else 'LN'
                 numero_os = f"{prefixo}-{str(negocio.id).zfill(4)}/{datetime.now().strftime('%y')}"
 
         if numero_os:
@@ -622,13 +636,13 @@ class MedicaoSerializer(serializers.ModelSerializer):
         from django.utils import timezone
         itens = validated_data.pop('itens', [])
         medicao = Medicao(**validated_data)
-        # Versionamento por OS: LN/SN-<negocio>/<ano>-<NNN>. Cada nova medição da mesma OS
+        # Versionamento por OS: LN/VTS-<negocio>/<ano>-<NNN>. Cada nova medição da mesma OS
         # incrementa a versão (001, 002, 003...). Difere do A/B/C de orçamento/proposta/OS.
         negocio = medicao.negocio
         ordem = medicao.ordem_servico
         base_qs = Medicao.objects.filter(ordem_servico=ordem) if ordem else Medicao.objects.filter(negocio=negocio)
         versao = base_qs.count() + 1
-        prefixo = 'SN' if 'servinave' in str(getattr(negocio, 'empresa_prestadora', '')).lower() else 'LN'
+        prefixo = 'VTS' if 'servinave' in str(getattr(negocio, 'empresa_prestadora', '')).lower() else 'LN'
         ano = timezone.now().strftime('%y')
         medicao.versao = versao
         medicao.numero_medicao = f"{prefixo}-{str(negocio.id).zfill(4)}/{ano}-{str(versao).zfill(3)}"

@@ -10,7 +10,7 @@
 import { mapDocsApiToFront } from './documentosService';
 
 const prefixoEmpresa = (empresa?: string) =>
-  String(empresa || '').toLowerCase().includes('servinave') ? 'SN' : 'LN';
+  String(empresa || '').toLowerCase().includes('servinave') ? 'VTS' : 'LN';
 
 export const formatNegocioId = (negocio: any): string => {
   const prefixo = prefixoEmpresa(negocio?.empresa_prestadora ?? negocio?.empresaPrestadora);
@@ -111,6 +111,8 @@ export const mapOrdemToOs = (o: any) => {
     statusOs: o?.status_os ?? 'emproducao',
     statusEnvio: o?.status_envio ?? 'pendente',
     statusAprovacao: o?.status_aprovacao ?? 'pendente',
+    fechada: Boolean(o?.fechada),
+    dataFechamento: o?.data_fechamento ?? undefined,
     dataAprovacao: o?.data_aprovacao ?? undefined,
     documentoAssinaturaAprovacao: assinatura,
     tipoDocumento: 'consolidada' as const,

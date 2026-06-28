@@ -193,7 +193,7 @@ export function ComprasView({ searchQuery }: { searchQuery: string }) {
   };
 
   const handleCreateRequest = () => {
-    if (!formData.solicitante || !formData.departamento || !formData.centroCusto) {
+    if (!formData.solicitante || !formData.centroCusto) {
       return window.alert('Por favor, preencha todos os campos obrigatórios (*).');
     }
 
@@ -331,22 +331,6 @@ export function ComprasView({ searchQuery }: { searchQuery: string }) {
             />
           </div>
 
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-white/70 ml-1">Departamento <span className="text-red-400">*</span></label>
-            <div className="relative">
-              <select
-                className="w-full bg-[#0b1220] border border-white/10 p-4 rounded-xl text-white text-sm outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/50 transition-all appearance-none cursor-pointer"
-                value={formData.departamento}
-                onChange={(event) => setFormData({ ...formData, departamento: event.target.value })}
-              >
-                <option value="">Selecione o departamento...</option>
-                {listas?.departamentos?.map((dep: string) => (
-                  <option key={dep} value={dep}>{dep}</option>
-                ))}
-              </select>
-              <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-white/30">▼</div>
-            </div>
-          </div>
 
           <div className="space-y-2 md:col-span-2">
             <label className="text-sm font-medium text-white/70 ml-1">Centro de Custo (Obra) <span className="text-red-400">*</span></label>
@@ -514,7 +498,7 @@ export function ComprasView({ searchQuery }: { searchQuery: string }) {
                         <div className="flex items-start justify-between gap-3">
                           <div>
                             <h5 className="text-white font-bold text-sm leading-tight">{request.centroCusto}</h5>
-                            <p className="text-white/45 text-[11px] mt-1">{request.solicitante} • {request.departamento}</p>
+                            <p className="text-white/45 text-[11px] mt-1">{request.solicitante}</p>
                           </div>
                           <button
                             className="text-white/20 hover:text-white/60 transition-colors"

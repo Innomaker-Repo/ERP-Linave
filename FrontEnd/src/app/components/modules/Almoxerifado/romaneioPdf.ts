@@ -7,6 +7,7 @@ const LINAVE_LOGO_URL = '/image2.jpg';
 export interface RomaneioPdfItem {
   descricao: string;
   quantidade: string | number;
+  peso?: string | number; // peso (kg) que sai nessa linha (peso unit × qtd)
 }
 
 export interface RomaneioPdfParams {
@@ -16,10 +17,18 @@ export interface RomaneioPdfParams {
   placaMotorista?: string;
   dataEntrega?: string;
   peso?: string;
+  pesoTotal?: string | number; // peso total (kg) do romaneio
   dataEmissao?: string; // ISO ou texto livre; formatado para dd/mm/aaaa
   items: RomaneioPdfItem[];
   logoBase64?: string;
 }
+
+// Formata peso (kg) em pt-BR, sem casas desnecessárias. Vazio quando 0/indefinido.
+const formatPeso = (value?: string | number): string => {
+  const n = typeof value === 'number' ? value : parseFloat(String(value ?? '').replace(',', '.').replace(/[^0-9.]/g, ''));
+  if (!Number.isFinite(n) || n <= 0) return '';
+  return n.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+};
 
 // Carrega o logo (de /public) como dataURL para embutir no PDF.
 export const loadRomaneioLogoBase64 = async (url = LINAVE_LOGO_URL): Promise<string | undefined> => {
@@ -107,28 +116,43 @@ export const gerarRomaneioPdf = (params: RomaneioPdfParams): jsPDF => {
       ['Endereço de entrega do material:', params.enderecoEntrega || ''],
       ['PLACA/MOTORISTA:', params.placaMotorista || ''],
       ['Data para Entrega do material:', params.dataEntrega || ''],
-      ['PESO:', params.peso || ''],
+      ['PESO TOTAL (kg):', formatPeso(params.pesoTotal ?? params.peso) || '—'],
     ],
   });
   y = (doc as any).lastAutoTable.finalY;
 
-  // Tabela de itens: ITEM | MATERIAL DESCRIPTION | QTD
+  // Total de peso (soma das linhas) para a linha-resumo da tabela.
+  const pesoTotalCalc = params.items.reduce((soma, item) => {
+    const n = typeof item.peso === 'number' ? item.peso : parseFloat(String(item.peso ?? '').replace(',', '.').replace(/[^0-9.]/g, ''));
+    return soma + (Number.isFinite(n) ? n : 0);
+  }, 0);
+  const pesoTotalStr = formatPeso(params.pesoTotal ?? pesoTotalCalc);
+
+  // Tabela de itens: ITEM | MATERIAL DESCRIPTION | QTD | PESO (kg)
   autoTable(doc, {
     startY: y,
     margin: { left: margin, right: margin },
     theme: 'grid',
-    head: [['ITEM', 'MATERIAL DESCRIPTION', 'QTD']],
-    body: params.items.map((item, index) => [
-      String(index + 1),
-      item.descricao || '',
-      String(item.quantidade ?? ''),
-    ]),
+    head: [['ITEM', 'MATERIAL DESCRIPTION', 'QTD', 'PESO (kg)']],
+    body: [
+      ...params.items.map((item, index) => [
+        String(index + 1),
+        item.descricao || '',
+        String(item.quantidade ?? ''),
+        formatPeso(item.peso),
+      ]),
+      [
+        { content: 'PESO TOTAL (kg)', colSpan: 3, styles: { halign: 'right', fontStyle: 'bold' } },
+        { content: pesoTotalStr || '0', styles: { halign: 'center', fontStyle: 'bold' } },
+      ],
+    ],
     styles: { fontSize: 9, cellPadding: 5, lineColor: [0, 0, 0], lineWidth: 0.6, textColor: [0, 0, 0] },
     headStyles: { fillColor: [217, 217, 217], textColor: [0, 0, 0], fontStyle: 'bold', halign: 'center' },
     columnStyles: {
-      0: { cellWidth: 60, halign: 'center' },
-      1: { cellWidth: contentWidth - 120 },
-      2: { cellWidth: 60, halign: 'center' },
+      0: { cellWidth: 50, halign: 'center' },
+      1: { cellWidth: contentWidth - 50 - 55 - 70 },
+      2: { cellWidth: 55, halign: 'center' },
+      3: { cellWidth: 70, halign: 'center' },
     },
   });
 
