@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { useErp } from '../context/ErpContext';
-import { 
+import {
   House, Users, HardHat, Anchor, ClipboardList,
   ShoppingCart, DollarSign, BarChart3, Settings, Factory,
   HeartHandshake, List, Clock, ChevronDown, ChevronRight,
   Briefcase, Wrench, Activity, FileText, Zap, CheckCircle2, Trash2, LayoutGrid, Package2, History,
-  FilePlus, Banknote, ScrollText, Wallet, TrendingUp, Landmark, Tags, Ruler, PanelLeftClose
+  FilePlus, Banknote, ScrollText, Wallet, TrendingUp, Landmark, Tags, Ruler, PanelLeftClose, UserCog
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -13,15 +13,6 @@ interface SidebarProps {
   setActiveSection: (section: string) => void;
   onClose?: () => void;
 }
-
-const MOCK_GERENTE_COMERCIAL_EMAIL = 'gerente.comercial@linave.com.br';
-const MOCK_DIRETOR_FINANCEIRO_EMAIL = 'diretor.financeiro@linave.com.br';
-
-// Itens do grupo Financeiro (cada seção é uma aba própria no sidebar).
-const FINANCEIRO_ITEM_IDS = new Set([
-  'finDashboard', 'finSolicitacao', 'finAprovacoes', 'finPagar', 'finNfe',
-  'finReceber', 'finPrevisao', 'finBancos', 'finHistorico',
-]);
 
 export function Sidebar({ activeSection, setActiveSection, onClose }: SidebarProps) {
   const { userSession, config } = useErp();
@@ -133,66 +124,30 @@ export function Sidebar({ activeSection, setActiveSection, onClose }: SidebarPro
       title: 'Configurações',
       icon: Settings,
       items: [
-        { id: 'usuarios', label: 'Usuários & Acessos', icon: Settings }
+        { id: 'usuarios', label: 'Usuários & Acessos', icon: Users },
+        { id: 'logAtividades', label: 'Log de Atividades', icon: History },
+        { id: 'meuPerfil', label: 'Meu Perfil', icon: UserCog },
       ]
     }
   ];
 
-  // Filtra itens com base nas permissões do utilizador logado
   const hasAccess = (itemId: string) => {
     if (!userSession) return false;
     const role = userSession.role?.toUpperCase() || '';
-    const email = String(userSession.email || '').toLowerCase();
-    const isGerenteComercial = email === MOCK_GERENTE_COMERCIAL_EMAIL || (email.includes('gerente') && email.includes('comercial'));
-    const isDiretorFinanceiro = email === MOCK_DIRETOR_FINANCEIRO_EMAIL || (email.includes('diretor') && email.includes('financeiro'));
-    
-    // Admin tem acesso irrestrito
-    if (role === 'ADMIN') return true;
 
-    // Financeiro: todas as seções seguem a permissão "financeiro".
-    if (FINANCEIRO_ITEM_IDS.has(itemId)) {
-      return userSession.permissoes?.financeiro === true || userSession.permissoes?.[itemId] === true;
+    // Admin: acesso total, exceto "Meu Perfil" (usa Usuários & Acessos)
+    if (role === 'ADMIN') {
+      return itemId !== 'meuPerfil';
     }
 
-    if (itemId === 'compras') return true;
-    if (itemId === 'kanbanCompras') {
-      // Equipe de compras (permissão explícita) + gerente comercial / diretor financeiro,
-      // que precisam do kanban para selecionar o fornecedor na etapa "Seleção do Gerente".
-      return (
-        userSession.permissoes?.kanbanCompras === true ||
-        userSession.permissoes?.aprovacoesComprasGerente === true ||
-        userSession.permissoes?.aprovacoesComprasFinanceiro === true ||
-        isGerenteComercial ||
-        isDiretorFinanceiro
-      );
-    }
-    if (itemId === 'aprovacoesCompras') {
-      return (
-        userSession.permissoes?.aprovacoesComprasGerente === true ||
-        userSession.permissoes?.aprovacoesComprasFinanceiro === true ||
-        isGerenteComercial ||
-        isDiretorFinanceiro
-      );
-    }
-    if (itemId === 'historicoCompras') {
-      // Histórico (somente leitura) das compras concluídas: visível a quem participa do
-      // fluxo de compras.
-      return (
-        userSession.permissoes?.compras === true ||
-        userSession.permissoes?.kanbanCompras === true ||
-        userSession.permissoes?.historicoCompras === true ||
-        userSession.permissoes?.aprovacoesComprasGerente === true ||
-        userSession.permissoes?.aprovacoesComprasFinanceiro === true ||
-        isGerenteComercial ||
-        isDiretorFinanceiro
-      );
-    }
-    if (itemId === 'estoquePublico') return true;
-    if (itemId === 'estoque') return userSession.permissoes?.almoxerifado === true || userSession.permissoes?.[itemId] === true;
-    if (itemId === 'itensAdicionar') return userSession.permissoes?.almoxerifado === true || userSession.permissoes?.[itemId] === true;
-    if (itemId === 'historicoRomaneio') return userSession.permissoes?.almoxerifado === true || userSession.permissoes?.[itemId] === true;
-    
-    // Utilizador comum verifica a lista de permissões recebida do Drive
+    // Gerente/Usuário: sem acesso a gerenciamento de usuários nem log de atividades
+    if (itemId === 'usuarios' || itemId === 'logAtividades') return false;
+
+    // Gerente: acesso a tudo mais; usa "Meu Perfil"
+    if (role === 'GERENTE') return true;
+
+    // Usuário: apenas itens explicitamente liberados pelo admin + Meu Perfil
+    if (itemId === 'meuPerfil') return true;
     return userSession.permissoes?.[itemId] === true;
   };
 

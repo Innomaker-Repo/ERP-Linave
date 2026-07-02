@@ -3,11 +3,12 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     NegocioViewSet, ClienteViewSet, OrdemServicoViewSet,
     PropostaComercialViewSet, FornecedorViewSet, MedicaoViewSet,
-    DocumentoViewSet,
+    DocumentoViewSet, UserViewSet, usuario_me,
     criar_orcamento,
     ordens_servico_por_cliente, ordens_servico_por_negocio, atualizar_status_os,
     atualizar_status_medicao,
-    financeiro_data, compras_data, almoxarifado_data, configuracoes_data
+    financeiro_data, compras_data, almoxarifado_data, configuracoes_data,
+    logs_atividade,
 )
 
 # Configuração do Router para ViewSets (Rotas automáticas)
@@ -19,6 +20,7 @@ router.register(r'ordens-servico', OrdemServicoViewSet, basename='ordem-servico'
 router.register(r'propostas-comerciais', PropostaComercialViewSet, basename='proposta-comercial')
 router.register(r'medicoes', MedicaoViewSet, basename='medicao')
 router.register(r'documentos', DocumentoViewSet, basename='documento')
+router.register(r'usuarios', UserViewSet, basename='usuario')
 
 urlpatterns = [
     # Estado financeiro (lista unificada de FinRecord; GET lê, POST substitui tudo)
@@ -41,6 +43,12 @@ urlpatterns = [
     path('os-por-negocio/<int:negocio_id>/', ordens_servico_por_negocio, name='os-por-negocio'),
     path('ordens-servico/<int:pk>/atualizar-status/', atualizar_status_os, name='atualizar-status-os'),
     path('medicoes/<int:pk>/atualizar-status/', atualizar_status_medicao, name='atualizar-status-medicao'),
+
+    # Usuário autenticado atual
+    path('usuarios/me/', usuario_me, name='usuario-me'),
+
+    # Log de atividades (admin only)
+    path('logs/', logs_atividade, name='logs-atividade'),
 
     # Rotas automáticas do Router (sempre no final)
     path('', include(router.urls)),

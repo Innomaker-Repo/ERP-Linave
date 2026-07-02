@@ -1,7 +1,7 @@
 from django.db import models
 from django.utils import timezone
 from decimal import Decimal
-from django.contrib.auth.models import AbstractUser
+from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.conf import settings
 
 
@@ -165,40 +165,71 @@ class ItemAlocacao(models.Model):
 
 
 #--------------------- User ------------------
-class User(AbstractUser):
-    workspace = models.ForeignKey(
-    'Workspace',
-    on_delete=models.CASCADE,
-    related_name='users'
-)
+class UserManager(BaseUserManager):
+    def create_user(self, cpf, password=None, **extra_fields):
+        if not cpf:
+            raise ValueError('CPF é obrigatório')
+        user = self.model(cpf=cpf, **extra_fields)
+        user.set_password(password)
+        user.save(using=self._db)
+        return user
 
-    # remove o username padrão
+    def create_superuser(self, cpf, password=None, **extra_fields):
+        extra_fields.setdefault('is_staff', True)
+        extra_fields.setdefault('is_superuser', True)
+        extra_fields.setdefault('is_active', True)
+        return self.create_user(cpf, password, **extra_fields)
+
+
+class User(AbstractUser):
+    objects = UserManager()
+
+    ROLE_CHOICES = [
+        ('admin', 'Admin'),
+        ('gerente', 'Gerente'),
+        ('usuario', 'Usuário'),
+    ]
+
+    # CPF como chave primária e campo de login
+    cpf = models.CharField(max_length=14, primary_key=True)
+
+    # Remove username padrão
     username = None
 
-    # email será o login
-    email = models.EmailField(
-        unique=True
+    # Dados do usuário
+    nome = models.CharField(max_length=150)
+    email = models.EmailField(unique=True, blank=True, default='')
+    cargo = models.CharField(max_length=100, blank=True, default='')
+    departamento = models.CharField(max_length=100, blank=True, default='')
+
+    # Nível de acesso
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='usuario')
+    # Permissões granulares por item do menu (usado apenas para role='usuario')
+    permissoes = models.JSONField(default=dict, blank=True)
+
+    workspace = models.ForeignKey(
+        'Workspace',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='users'
     )
 
-    # campos customizados
-    user_funcao = models.CharField(
-        max_length=100
-    )
-
-    user_setor = models.CharField(
-        max_length=100
-    )
-
-    user_data_nascimento = models.DateField()
-
-    # define email como login principal
-    USERNAME_FIELD = 'email'
-
-    # campos obrigatórios no createsuperuser
+    USERNAME_FIELD = 'cpf'
     REQUIRED_FIELDS = []
 
+    def save(self, *args, **kwargs):
+        # Mantém is_superuser/is_staff sincronizados com role
+        if self.role == 'admin':
+            self.is_superuser = True
+            self.is_staff = True
+        else:
+            self.is_superuser = False
+            self.is_staff = False
+        super().save(*args, **kwargs)
+
     def __str__(self):
-        return self.email
+        return f"{self.nome} ({self.cpf})"
 
 #--------------------- Orçamento ------------------
 
@@ -839,3 +870,28 @@ class Documento(models.Model):
         return f'{self.nome_original or self.arquivo.name} ({self.vinculo_tipo}:{self.vinculo_id})'
 #--------------------- Fim Documentos ------------------
 #--------------------- Fim Configurações ------------------
+
+#--------------------- Log de Atividades ------------------
+class LogAtividade(models.Model):
+    ACAO_CHOICES = [
+        ('login', 'Login'),
+        ('criacao', 'Criação'),
+        ('atualizacao', 'Atualização'),
+        ('exclusao', 'Exclusão'),
+    ]
+
+    usuario_cpf = models.CharField(max_length=14, blank=True, default='')
+    usuario_nome = models.CharField(max_length=150, blank=True, default='')
+    acao = models.CharField(max_length=20, choices=ACAO_CHOICES)
+    modulo = models.CharField(max_length=100, blank=True, default='')
+    descricao = models.TextField(blank=True, default='')
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-timestamp']
+        verbose_name = 'Log de Atividade'
+        verbose_name_plural = 'Logs de Atividade'
+
+    def __str__(self):
+        return f'[{self.timestamp:%d/%m/%Y %H:%M}] {self.usuario_nome} — {self.get_acao_display()} em {self.modulo}'
+#--------------------- Fim Log de Atividades ------------------

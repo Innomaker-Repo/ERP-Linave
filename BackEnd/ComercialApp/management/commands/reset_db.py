@@ -53,4 +53,7 @@ class Command(BaseCommand):
         from ComercialApp.management.commands.seed_os_interna import seed_os_interna
         seed_os_interna(self.stdout)
 
+        # Cria workspace e usuário admin padrão.
+        call_command('setup_admin')
+
         self.stdout.write(self.style.SUCCESS("Banco pronto! Schema completo aplicado — nada mais a migrar."))
