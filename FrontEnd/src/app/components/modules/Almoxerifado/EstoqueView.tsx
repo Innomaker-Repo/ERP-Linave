@@ -416,6 +416,25 @@ const STOCK_TABLES: StockTable[] = [
 ];
 
 
+// Colunas canônicas (estrutura definida em código) por nome de tabela.
+const CANONICAL_COLUMNS_BY_TABLE = new Map<string, StockColumn[]>(
+  STOCK_TABLES.map((table) => [table.name, table.columns])
+);
+
+// Reconcilia as colunas de uma tabela persistida (que pode estar com a estrutura ANTIGA,
+// ex.: sem a coluna "peso") com as colunas canônicas do código, preservando as linhas e
+// quaisquer colunas extras que o usuário tenha criado. A tabela de gases tem colunas
+// dinâmicas (tipos de gás) → mantém as persistidas como estão.
+const reconcileTableColumns = (table: StockTable): StockColumn[] => {
+  const persisted = Array.isArray(table.columns) ? table.columns : [];
+  if (normalizeKey(table.name) === 'alugadosgases') return [...persisted];
+  const canonical = CANONICAL_COLUMNS_BY_TABLE.get(table.name);
+  if (!canonical) return [...persisted]; // tabela custom/desconhecida: mantém como está
+  const canonicalKeys = new Set(canonical.map((column) => column.key));
+  const extras = persisted.filter((column) => !canonicalKeys.has(column.key));
+  return [...canonical, ...extras];
+};
+
 const getCommonColumns = (tables: StockTable[]) => {
   if (tables.length === 0) return sharedColumns;
 
@@ -591,7 +610,9 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
         setTables(
           almoxerifado.tables.map((table: StockTable) => ({
             ...table,
-            columns: Array.isArray(table.columns) ? [...table.columns] : [],
+            // Reconcilia com as colunas canônicas para incorporar colunas novas (ex.: "peso")
+            // em dados persistidos antes da mudança, sem perder linhas/colunas customizadas.
+            columns: reconcileTableColumns(table),
             rows: Array.isArray(table.rows)
               ? table.rows.map((row) => ({ ...row, values: normalizeRowValues(row.values) }))
               : []
