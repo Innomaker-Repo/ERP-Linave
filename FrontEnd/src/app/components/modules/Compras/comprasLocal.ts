@@ -14,12 +14,21 @@ export const APPROVAL_LIMIT = 500;
 export const MOCK_GERENTE_COMERCIAL_EMAIL = 'gerente.comercial@linave.com.br';
 export const MOCK_DIRETOR_FINANCEIRO_EMAIL = 'diretor.financeiro@linave.com.br';
 
-// Só o gerente comercial ou o diretor financeiro (mockados) podem operar a etapa de
-// seleção do gerente. Assim que selecionam e enviam, o pedido avança para uma etapa
-// visível a todos.
-export const podeSelecionarFornecedorGerente = (email?: string | null): boolean => {
+// Quem opera a etapa de seleção do gerente: perfis Admin/Gerente (login real) OU os e-mails
+// de gerente comercial / diretor financeiro (mockados e padrões comercial@/financeiro@).
+// Sem isso, com o login real ninguém (nem o admin) avançava os pedidos para a Aprovação.
+export const podeSelecionarFornecedorGerente = (email?: string | null, role?: string | null): boolean => {
+  const r = String(role || '').trim().toUpperCase();
+  if (r === 'ADMIN' || r === 'GERENTE') return true;
   const normalized = String(email || '').trim().toLowerCase();
-  return normalized === MOCK_GERENTE_COMERCIAL_EMAIL || normalized === MOCK_DIRETOR_FINANCEIRO_EMAIL;
+  return (
+    normalized === MOCK_GERENTE_COMERCIAL_EMAIL ||
+    normalized === MOCK_DIRETOR_FINANCEIRO_EMAIL ||
+    normalized.startsWith('comercial@') ||
+    normalized.startsWith('financeiro@') ||
+    (normalized.includes('gerente') && normalized.includes('comercial')) ||
+    (normalized.includes('diretor') && normalized.includes('financeiro'))
+  );
 };
 
 export const approvalRouteLabel: Record<Exclude<ApprovalRoute, null>, string> = {

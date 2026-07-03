@@ -376,7 +376,7 @@ export interface NfeSolicitacao {
 }
 
 // Discriminador dos registros financeiros guardados na coleção `financeiro` do workspace.
-export type FinTipo = 'solicitacao' | 'contaPagar' | 'contaReceber' | 'nfeReq' | 'nfe' | 'banco' | 'locEstudo';
+export type FinTipo = 'solicitacao' | 'contaPagar' | 'contaReceber' | 'nfeReq' | 'nfe' | 'banco' | 'locEstudo' | 'custoOsHH' | 'reciboLocacao';
 
 export const genFinId = (prefix: string) => `${prefix}-${Date.now().toString(36).toUpperCase()}`;
 

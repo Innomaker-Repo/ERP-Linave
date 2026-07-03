@@ -6,6 +6,7 @@ import autoTable from 'jspdf-autotable';
 import { toast } from 'sonner';
 import { criarOrdemServico, atualizarOrdemServico, deleteOrdemServico } from '../../../../services/comercialService';
 import { getLogoUrlForEmpresa } from '../../../utils/company';
+import { formatDateBR } from '../../../utils/formatDate';
 import { ObservacoesNegocio } from '../../ObservacoesNegocio';
 
 // ==========================================
@@ -54,14 +55,18 @@ const calcularDataTerminoPrevisto = (dataInicio: string, totalDias: number, tipo
   const base = new Date(`${dataInicio}T00:00:00`);
   if (Number.isNaN(base.getTime())) return '';
   if (tipo === 'corridos') {
-    base.setDate(base.getDate() + Math.floor(totalDias));
+    // O próprio dia de início conta como dia 1 → término = início + (dias − 1).
+    base.setDate(base.getDate() + Math.floor(totalDias) - 1);
   } else {
-    // Dias úteis: pula sábados (6) e domingos (0)
+    // Dias úteis: o dia de início conta como o 1º dia útil (pula sábados/domingos).
     let diasRestantes = Math.floor(totalDias);
     while (diasRestantes > 0) {
-      base.setDate(base.getDate() + 1);
       const diaSemana = base.getDay();
-      if (diaSemana !== 0 && diaSemana !== 6) diasRestantes--;
+      if (diaSemana !== 0 && diaSemana !== 6) {
+        diasRestantes--;
+        if (diasRestantes === 0) break;
+      }
+      base.setDate(base.getDate() + 1);
     }
   }
   return base.toISOString().split('T')[0];
@@ -250,6 +255,7 @@ interface OsFormData {
   supervisorEncarregado: string;
   descricaoGeralServico: string;
   aSerIncluido: {
+    extras?: Array<{ id: string; label: string }>; // itens "a incluir" customizáveis
     certificadoGas: boolean;
     ventilacao: boolean;
     limpezaAntes: boolean;
@@ -277,6 +283,7 @@ interface OsFormData {
     eletrica: number;
     cq: number;
     sms: number;
+    extras?: Array<{ id: string; nome: string; hora: number }>; // H/H customizáveis
   };
   horasTrabalhadasPorServico: HoraServicoLinha[];
   statusOs: 'rascunho' | 'emproducao' | 'concluida';
@@ -293,6 +300,7 @@ interface OSViewProps {
 }
 
 const A_SER_INCLUIDO_DEFAULT: OsFormData['aSerIncluido'] = {
+  extras: [],
   certificadoGas: false,
   ventilacao: false,
   limpezaAntes: false,
@@ -332,10 +340,11 @@ const A_SER_INCLUIDO_OPTIONS = [
   { key: 'vigiaFogo', label: 'Vigia de fogo' }
 ] as const;
 
-const listarItensASerIncluido = (aSerIncluido: OsFormData['aSerIncluido']) =>
+const listarItensASerIncluido = (aSerIncluido: OsFormData['aSerIncluido']): string[] =>
   A_SER_INCLUIDO_OPTIONS
     .filter((item) => aSerIncluido[item.key])
-    .map((item) => item.label);
+    .map((item) => item.label as string)
+    .concat((aSerIncluido.extras || []).map((e) => String(e.label || '').trim()).filter(Boolean));
 
 const criarInitialOsData = (): OsFormData => ({
   id: '',
@@ -363,7 +372,8 @@ const criarInitialOsData = (): OsFormData => ({
     pintura: 0,
     eletrica: 0,
     cq: 0,
-    sms: 0
+    sms: 0,
+    extras: []
   },
   horasTrabalhadasPorServico: [],
   statusOs: 'rascunho',
@@ -796,7 +806,8 @@ export function OsView({ searchQuery }: OSViewProps) {
       Number(mao.pintura || 0) +
       Number(mao.eletrica || 0) +
       Number(mao.cq || 0) +
-      Number(mao.sms || 0)
+      Number(mao.sms || 0) +
+      (Array.isArray(mao.extras) ? mao.extras.reduce((a, x) => a + Number(x.hora || 0), 0) : 0)
     );
 
     if (hhTotal === 0) {
@@ -933,15 +944,8 @@ export function OsView({ searchQuery }: OSViewProps) {
     
     let logoBase64 = await getBase64FromUrl(getLogoUrlForEmpresa(selectedObraDetalhes?.empresaPrestadora));
 
-    const formatDateISO = (dateStr: string) => {
-      if (!dateStr) return '';
-      try {
-        const d = new Date(dateStr);
-        return d.toISOString().split('T')[0];
-      } catch {
-        return dateStr;
-      }
-    };
+    // Formata no padrão brasileiro (DD/MM/AAAA) sem o bug de fuso das datas só-data.
+    const formatDateISO = (dateStr: string) => formatDateBR(dateStr);
     
     try {
       const doc = new jsPDF('p', 'mm', 'a4');
@@ -1133,6 +1137,11 @@ export function OsView({ searchQuery }: OSViewProps) {
         { lbl: 'CERTIFICAÇÃO DO MATERIAL', v: getCheck('Certificação do material', 'certificacaoMaterial') },
         { lbl: 'VIGIA DE FOGO', v: getCheck('Vigia de fogo', 'vigiaFogo') }
       ];
+      // Itens "a incluir" customizados (sempre marcados, pois foram adicionados de propósito).
+      const extrasInc = (Array.isArray((baseChecks as any).extras) ? (baseChecks as any).extras : [])
+        .map((e: any) => ({ lbl: String(e?.label || '').trim().toUpperCase(), v: true }))
+        .filter((e: any) => e.lbl);
+      listChecks.push(...extrasInc);
       
       let cursorDir = bodyY + 5;
       doc.setFontSize(7);
@@ -1150,57 +1159,9 @@ export function OsView({ searchQuery }: OSViewProps) {
       
       y = bodyY + maxH + 5;
 
-      // --- NOVA TABELA DE MÃO DE OBRA ---
-      const maoDeObraOS = ultimoOrcamento?.data?.maoDeObra || [];
-      if (maoDeObraOS.length > 0) {
-        autoTable(doc, {
-          startY: y,
-          head: [['MÃO DE OBRA', 'QTDE', 'DIAS', 'ATIVIDADE', 'OBS.']],
-          body: maoDeObraOS.map((mo: any) => [
-            mo.cargo || mo.funcao || mo.maoDeObra || '',
-            mo.quantidade || mo.qtde || '',
-            mo.dias || '',
-            mo.atividade || '',
-            mo.obs || mo.observacao || '-'
-          ]),
-          theme: 'grid',
-          headStyles: { fillColor: [230, 230, 230], textColor: [0,0,0], fontStyle: 'bold', fontSize: 8 },
-          styles: { fontSize: 7, cellPadding: 2, textColor: [0,0,0] },
-          margin: { left: margin, right: margin }
-        });
-        y = (doc as any).lastAutoTable.finalY + 5;
-      }
+      // Tabelas de "Mão de Obra" e "Mão Obra (H/H)" foram removidas do rodapé do PDF por
+      // serem dados duplicados. Ficam apenas Materiais e Terceirizados (especificações).
 
-      const mao = osPrincipal?.maoObra || selectedObraDetalhes?.maoObra || {};
-      const maoRows = [
-        ['Estrutura', String(mao.estrutura || 0)],
-        ['Tubulação', String(mao.tubulacao || 0)],
-        ['Andaimes', String(mao.andaimes || 0)],
-        ['Mecânica', String(mao.mecanica || 0)],
-        ['Pintura', String(mao.pintura || 0)],
-        ['Elétrica', String(mao.eletrica || 0)],
-        ['C.Q', String(mao.cq || 0)],
-        ['SMS', String(mao.sms || 0)]
-      ];
-
-      const totalMao = maoRows.reduce((acc, r) => acc + (Number(r[1]) || 0), 0);
-
-      // Render MÃO OBRA table with header and total
-      autoTable(doc, {
-        startY: y,
-        head: [['MÃO OBRA ( H/H )', '']],
-        body: [
-          ...maoRows,
-          ['HH TOTAL', String(totalMao)]
-        ],
-        theme: 'grid',
-        headStyles: { fillColor: [230, 230, 230], textColor: [0, 0, 0], fontStyle: 'bold', fontSize: 9 },
-        styles: { fontSize: 8, cellPadding: 2, textColor: [0, 0, 0] },
-        columnStyles: { 0: { cellWidth: 120 }, 1: { halign: 'right', cellWidth: 30 } },
-        margin: { left: margin, right: margin }
-      });
-      y = (doc as any).lastAutoTable.finalY + 5;
-      
       // --- TABELA DE MATERIAIS ATUALIZADA (SEM VALORES) ---
       const isConsolidada = osPrincipal.tipoDocumento === 'consolidada';
       const materiaisOS = isConsolidada && osPrincipal.resumoConsolidado?.orcamento?.materiais?.length > 0
@@ -1224,29 +1185,7 @@ export function OsView({ searchQuery }: OSViewProps) {
         y = (doc as any).lastAutoTable.finalY + 5;
       }
 
-      // --- TABELA DE LOCAÇÃO (itens alocados; resumão da OS) ---
-      const itensAlocacaoOS = (Array.isArray(selectedObraDetalhes?.itensAlocacao) && selectedObraDetalhes.itensAlocacao.length > 0)
-        ? selectedObraDetalhes.itensAlocacao
-        : (ultimoOrcamento?.data?.itensAlocacao || []);
-      const locacaoOS = (itensAlocacaoOS || []).filter((it: any) => it.equipamento);
-      if (locacaoOS.length > 0) {
-        autoTable(doc, {
-          startY: y,
-          head: [['EQUIPAMENTO (LOCAÇÃO)', 'UN', 'QTDE', 'VL. INDENIZ.', 'VL. LOCAÇÃO']],
-          body: locacaoOS.map((it: any) => [
-            it.equipamento || '',
-            it.unidade || '',
-            String(it.quantidade ?? ''),
-            (Number(it.valorIndenizacao) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-            (Number(it.valorLocacao) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-          ]),
-          theme: 'grid',
-          headStyles: { fillColor: [230, 230, 230], textColor: [0,0,0], fontStyle: 'bold', fontSize: 8 },
-          styles: { fontSize: 7, cellPadding: 2, textColor: [0,0,0] },
-          margin: { left: margin, right: margin }
-        });
-        y = (doc as any).lastAutoTable.finalY + 5;
-      }
+      // Tabela de "Equipamentos (Locação)" removida do rodapé do PDF (dado duplicado).
 
       // --- TABELA DE TERCEIRIZADOS ATUALIZADA (SEM VALORES) ---
       const terceirizadosOS = isConsolidada && osPrincipal.resumoConsolidado?.orcamento?.terceirizados?.length > 0
@@ -1642,6 +1581,22 @@ export function OsView({ searchQuery }: OSViewProps) {
                     </div>
                   </div>
 
+                  {/* H/H customizáveis — permite incluir outras funções/categorias */}
+                  <div className="space-y-2 pt-2">
+                    {(formData.maoObra.extras || []).map((ex) => (
+                      <div key={ex.id} className="flex gap-2 items-center">
+                        <input type="text" className={inputClass} placeholder="Função / categoria (H/H)" value={ex.nome}
+                          onChange={(e) => setFormData({ ...formData, maoObra: { ...formData.maoObra, extras: (formData.maoObra.extras || []).map((x) => x.id === ex.id ? { ...x, nome: e.target.value } : x) } })} />
+                        <input type="number" min="0" step="0.5" className={`${inputClass} max-w-[120px]`} placeholder="H/H" value={ex.hora}
+                          onChange={(e) => setFormData({ ...formData, maoObra: { ...formData.maoObra, extras: (formData.maoObra.extras || []).map((x) => x.id === ex.id ? { ...x, hora: Number(e.target.value || 0) } : x) } })} />
+                        <button type="button" onClick={() => setFormData({ ...formData, maoObra: { ...formData.maoObra, extras: (formData.maoObra.extras || []).filter((x) => x.id !== ex.id) } })} className="text-red-300 p-2 hover:bg-red-500/10 rounded"><X size={14} /></button>
+                      </div>
+                    ))}
+                    <button type="button" onClick={() => setFormData({ ...formData, maoObra: { ...formData.maoObra, extras: [...(formData.maoObra.extras || []), { id: `hh-${Date.now()}`, nome: '', hora: 0 }] } })} className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg font-black text-[11px] uppercase">
+                      <Plus size={12} className="inline mr-1" /> Adicionar H/H
+                    </button>
+                  </div>
+
                   <div className="pt-4">
                     <div className="bg-white/5 p-3 rounded-lg inline-block">
                       <div className="text-white/60 text-xs">HH TOTAL</div>
@@ -1653,7 +1608,8 @@ export function OsView({ searchQuery }: OSViewProps) {
                         Number(formData.maoObra.pintura || 0) +
                         Number(formData.maoObra.eletrica || 0) +
                         Number(formData.maoObra.cq || 0) +
-                        Number(formData.maoObra.sms || 0)
+                        Number(formData.maoObra.sms || 0) +
+                        (formData.maoObra.extras || []).reduce((a, x) => a + Number(x.hora || 0), 0)
                       ).toString()}</div>
                     </div>
                   </div>
@@ -1680,6 +1636,20 @@ export function OsView({ searchQuery }: OSViewProps) {
                       <span className="text-white/80 text-xs font-bold">{item.label}</span>
                     </label>
                   ))}
+                </div>
+
+                {/* Itens "a incluir" customizáveis — permite adicionar outros */}
+                <div className="space-y-2">
+                  {(formData.aSerIncluido.extras || []).map((ex) => (
+                    <div key={ex.id} className="flex gap-2 items-center">
+                      <input type="text" className="flex-1 bg-[#0b1220] border border-cyan-400/30 rounded-lg px-3 py-2 text-white text-xs outline-none" placeholder="Novo item a incluir" value={ex.label}
+                        onChange={(e) => setFormData({ ...formData, aSerIncluido: { ...formData.aSerIncluido, extras: (formData.aSerIncluido.extras || []).map((x) => x.id === ex.id ? { ...x, label: e.target.value } : x) } })} />
+                      <button type="button" onClick={() => setFormData({ ...formData, aSerIncluido: { ...formData.aSerIncluido, extras: (formData.aSerIncluido.extras || []).filter((x) => x.id !== ex.id) } })} className="text-red-300 p-2 hover:bg-red-500/10 rounded"><X size={14} /></button>
+                    </div>
+                  ))}
+                  <button type="button" onClick={() => setFormData({ ...formData, aSerIncluido: { ...formData.aSerIncluido, extras: [...(formData.aSerIncluido.extras || []), { id: `inc-${Date.now()}`, label: '' }] } })} className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg font-black text-[11px] uppercase">
+                    <Plus size={12} className="inline mr-1" /> Adicionar item
+                  </button>
                 </div>
               </div>
 

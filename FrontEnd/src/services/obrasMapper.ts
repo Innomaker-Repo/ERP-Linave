@@ -56,6 +56,8 @@ export const mapNegocioToObra = (n: any, clientesMapa: Record<string, string> = 
           observacao: it?.observacao || '',
           valorIndenizacao: Number(it?.valor_indenizacao) || 0,
           valorLocacao: Number(it?.valor_locacao) || 0,
+          margem: Number(it?.margem) || 0,
+          oh: Number(it?.oh) || 0,
           valorTotal: Number(it?.valor_total) || 0,
         }))
       : [],

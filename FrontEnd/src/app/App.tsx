@@ -44,6 +44,8 @@ function getAbaForSection(section: string): { aba: string; item: string } {
     'finPrevisao': { aba: 'financeiro', item: 'previsao' },
     'finBancos': { aba: 'financeiro', item: 'bancos' },
     'finHistorico': { aba: 'financeiro', item: 'historico' },
+    'finCustoOs': { aba: 'financeiro', item: 'custoOs' },
+    'finReciboLocacao': { aba: 'financeiro', item: 'reciboLocacao' },
     
     // Compras
     'compras': { aba: 'compras', item: 'compras' },

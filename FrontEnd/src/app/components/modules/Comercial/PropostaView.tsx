@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { extrairComponentesDoId, gerarIdProjeto, gerarIdProposta, gerarIdProjetoDeNegocio, useErp } from '../../../context/ErpContext';
+import { formatDateBR } from '../../../utils/formatDate';
 import { Plus, X, FileText, CheckCircle, XCircle, ArrowLeft, Save, Download, RefreshCw, DollarSign, AlertTriangle } from 'lucide-react';
 import { handleDownloadPropostaPDF } from '../CRM/handleDownloadPropostaPDF';
+import { handleDownloadOrcamentoPDF } from '../CRM/handleDownloadOrcamentoPDF';
 import { isEmpresaLinave, getLogoUrlForEmpresa } from '../../../utils/company';
 import PizZip from 'pizzip';
 import Docxtemplater from 'docxtemplater';
@@ -41,7 +43,7 @@ interface PropostaFormData {
   responsabilidadeContratada: string;
   escopoC: string;
   preco: string;
-  precoItens?: Array<{ id: string; descricao: string; quantidade: number; unidade: string; valorUnitario: number; dias: number; total: number }>;
+  precoItens?: Array<{ id: string; descricao: string; quantidade: number; unidade: string; valorUnitario: number; dias: number; total: number; categoria?: 'servico' | 'locacao' }>;
   precoTextoLivre: string;
   condicoesGerais: string;
   condicoesPagamento: string;
@@ -242,7 +244,7 @@ export function PropostaView() {
 
   // Preço (item D) - tabela macro editável: descrição, quantidade, unidade, valor unit., dias, total.
   // Total da linha = quantidade × valor unitário × dias.
-  const criarPrecoItem = (override?: Partial<{ id: string; descricao: string; quantidade: number; unidade: string; valorUnitario: number; dias: number; total: number }>) => {
+  const criarPrecoItem = (override?: Partial<{ id: string; descricao: string; quantidade: number; unidade: string; valorUnitario: number; dias: number; total: number; categoria: 'servico' | 'locacao' }>) => {
     const quantidade = override?.quantidade ?? 1;
     const valorUnitario = override?.valorUnitario ?? 0;
     const dias = override?.dias ?? 1;
@@ -253,12 +255,13 @@ export function PropostaView() {
       unidade: override?.unidade || 'serv.',
       valorUnitario,
       dias,
-      total: override?.total ?? (quantidade * valorUnitario * dias)
+      total: override?.total ?? (quantidade * valorUnitario * dias),
+      categoria: override?.categoria || 'servico',
     };
   };
 
-  const adicionarPrecoItem = (item?: any) => {
-    const novo = criarPrecoItem(item);
+  const adicionarPrecoItem = (item?: any, categoria: 'servico' | 'locacao' = 'servico') => {
+    const novo = criarPrecoItem({ ...(item || {}), categoria });
     setPropostaForm(prev => ({ ...prev, precoItens: [...(prev.precoItens || []), novo] }));
   };
 
@@ -290,6 +293,62 @@ export function PropostaView() {
       });
       return { ...prev, precoItens: itens };
     });
+  };
+
+  // Tabela de Preço (item D) por categoria — Serviço x Locação. Vem do orçamento (macro) e é
+  // editável (add/remove linhas). Locação só aparece se houver itens; serviço some se o negócio
+  // for só de locação (mostra apenas a tabela que faz sentido).
+  const renderTabelaPrecoCategoria = (categoria: 'servico' | 'locacao', titulo: string, addBtnClass: string) => {
+    const itens = (propostaForm.precoItens || []).filter(it => (it.categoria || 'servico') === categoria);
+    const temLocacaoItens = (propostaForm.precoItens || []).some(it => (it.categoria || 'servico') === 'locacao');
+    if (categoria === 'locacao' && itens.length === 0) return null;
+    if (categoria === 'servico' && itens.length === 0 && temLocacaoItens) return null;
+    const subtotal = itens.reduce((s, it) => s + (Number(it.total) || 0), 0);
+    const cellInput = "w-full bg-[#101f3d] border border-white/10 p-2 rounded text-white text-xs outline-none";
+    return (
+      <div className="mb-6">
+        <div className="flex items-center justify-between mb-2">
+          <h4 className="text-white/80 text-xs font-black uppercase tracking-widest">{titulo}</h4>
+          <button type="button" onClick={() => adicionarPrecoItem(undefined, categoria)} className={`px-3 py-1.5 rounded-lg font-black text-[11px] uppercase ${addBtnClass}`}>
+            <Plus size={12} className="inline mr-1" /> Adicionar Item
+          </button>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs border border-white/10 rounded-lg overflow-hidden">
+            <thead>
+              <tr className="bg-white/5 border-b border-white/10">
+                <th className="px-3 py-2 text-left text-white font-black w-12">Item</th>
+                <th className="px-3 py-2 text-left text-white font-black">Descrição</th>
+                <th className="px-3 py-2 text-left text-white font-black w-20">Quant.</th>
+                <th className="px-3 py-2 text-left text-white font-black w-20">Unit.</th>
+                <th className="px-3 py-2 text-left text-white font-black w-32">Vl. Unit. R$</th>
+                <th className="px-3 py-2 text-left text-white font-black w-16">Dias</th>
+                <th className="px-3 py-2 text-left text-white font-black w-36">Valor total R$</th>
+                <th className="px-3 py-2 text-center text-white font-black w-12"> </th>
+              </tr>
+            </thead>
+            <tbody>
+              {itens.length === 0 && (
+                <tr><td colSpan={8} className="px-3 py-3 text-white/40">Nenhum item. Clique em "Adicionar Item".</td></tr>
+              )}
+              {itens.map((it, idx) => (
+                <tr key={it.id} className="border-b border-white/5">
+                  <td className="px-3 py-2 text-white/60 font-bold text-center">{idx + 1}</td>
+                  <td className="px-3 py-2 min-w-[200px]"><input type="text" className={cellInput} value={it.descricao || ''} onChange={(e) => atualizarPrecoItem(it.id, 'descricao', e.target.value)} placeholder="Descrição" /></td>
+                  <td className="px-3 py-2"><input type="number" min="0" className={cellInput} value={String(it.quantidade ?? '')} onChange={(e) => atualizarPrecoItem(it.id, 'quantidade', e.target.value)} /></td>
+                  <td className="px-3 py-2"><input type="text" className={cellInput} value={it.unidade || ''} onChange={(e) => atualizarPrecoItem(it.id, 'unidade', e.target.value)} placeholder="serv." /></td>
+                  <td className="px-3 py-2"><input type="text" className={cellInput} value={String(it.valorUnitario ?? '')} onChange={(e) => atualizarPrecoItem(it.id, 'valorUnitario', e.target.value)} placeholder="0,00" /></td>
+                  <td className="px-3 py-2"><input type="number" min="0" className={cellInput} value={String(it.dias ?? '')} onChange={(e) => atualizarPrecoItem(it.id, 'dias', e.target.value)} /></td>
+                  <td className="px-3 py-2 text-white font-black whitespace-nowrap">R$ {(Number(it.total) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  <td className="px-3 py-2 text-center"><button type="button" onClick={() => removerPrecoItem(it.id)} className="text-red-300 p-1"><X size={14} /></button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="text-right mt-2 text-xs text-white/70">Subtotal {titulo}: <span className="text-white font-black">R$ {subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+      </div>
+    );
   };
 
   const calcularSomaPreco = (itens: NonNullable<PropostaFormData['precoItens']>) => {
@@ -350,22 +409,62 @@ export function PropostaView() {
     };
   };
 
+  // Atividades macro do último orçamento do negócio (mesma fonte usada no item D de Preço).
+  const getAtividadesMacro = (obra: any): any[] => {
+    const ultimoOrc = Array.isArray(obra?.orcamentos) && obra.orcamentos.length ? obra.orcamentos[0] : null;
+    return Array.isArray(ultimoOrc?.data?.atividadesMacro) ? ultimoOrc.data.atividadesMacro : [];
+  };
+
+  // Bloco de escopo de Serviços: tabela das atividades macro (categoria='servico') do orçamento.
+  // Espelha o criarEscopoLocacao — a locação já puxava direto do macro; agora o serviço também.
+  const criarEscopoServicosMacro = (obra: any): EscopoServico | null => {
+    const macro = getAtividadesMacro(obra)
+      .filter((it: any) => (it?.categoria || 'servico') !== 'locacao' && String(it?.descricao || '').trim());
+    if (macro.length === 0) return null;
+    const colunas = ['Descrição', 'Unidade', 'Quantidade'];
+    return {
+      id: `escopo-servicos-${obra?.id || 'geral'}`,
+      servicoId: '',
+      titulo: 'Serviços',
+      descricaoServico: '',
+      textosDepois: [],
+      colunas,
+      linhas: macro.map((it: any) => ({
+        id: `linha-serv-${it.id || Math.random().toString(36).slice(2, 7)}`,
+        valores: {
+          'Descrição': it.descricao || '',
+          'Unidade': it.unidade || '',
+          'Quantidade': String(it.quantidade ?? ''),
+        }
+      }))
+    };
+  };
+
   const criarEscopoBasicoServicos = (obra: any): EscopoServico[] => {
-    const servicos = (temServico(obra?.modalidade) && Array.isArray(obra?.servicos)) ? obra.servicos : [];
     const blocos: EscopoServico[] = [];
 
-    servicos.forEach((servico: any, idx: number) => {
-      const colunasPadrao = ['Descrição'];
-      blocos.push({
-        id: `escopo-${obra.id}-${servico.id || idx + 1}`,
-        servicoId: String(servico.id || idx + 1),
-        titulo: `${idx + 1}. ${servico.tipo || 'Serviço'}${servico.localExecucao ? ` - ${servico.localExecucao}` : ''}`,
-        descricaoServico: servico.descricao || '',
-        textosDepois: [],
-        colunas: colunasPadrao,
-        linhas: [criarLinhaEscopo(colunasPadrao)]
-      });
-    });
+    // Serviços: puxa as atividades macro de serviço do orçamento (mesma fonte do preço/macro),
+    // como um bloco único — igual à locação. Se o orçamento ainda não tem macro de serviço,
+    // cai para os serviços cadastrados no negócio (comportamento anterior).
+    if (temServico(obra?.modalidade)) {
+      const servBloco = criarEscopoServicosMacro(obra);
+      if (servBloco) {
+        blocos.push(servBloco);
+      } else {
+        (Array.isArray(obra?.servicos) ? obra.servicos : []).forEach((servico: any, idx: number) => {
+          const colunasPadrao = ['Descrição'];
+          blocos.push({
+            id: `escopo-${obra.id}-${servico.id || idx + 1}`,
+            servicoId: String(servico.id || idx + 1),
+            titulo: `${idx + 1}. ${servico.tipo || 'Serviço'}${servico.localExecucao ? ` - ${servico.localExecucao}` : ''}`,
+            descricaoServico: servico.descricao || '',
+            textosDepois: [],
+            colunas: colunasPadrao,
+            linhas: [criarLinhaEscopo(colunasPadrao)]
+          });
+        });
+      }
+    }
 
     // Bloco de escopo de Locação (quando a modalidade contempla locação)
     if (temLocacao(obra?.modalidade)) {
@@ -614,8 +713,7 @@ export function PropostaView() {
     // Item D (Preço): tabela macro das atividades orçadas, vinda do ORÇAMENTO. Editável aqui
     // (a proposta pode exigir mais atividades). Total da linha = quantidade × valor unit. × dias.
     try {
-      const ultimoOrc = Array.isArray(obra.orcamentos) && obra.orcamentos.length ? obra.orcamentos[0] : null;
-      const macro = Array.isArray(ultimoOrc?.data?.atividadesMacro) ? ultimoOrc.data.atividadesMacro : [];
+      const macro = getAtividadesMacro(obra);
       if (macro.length > 0) {
         const precoItens = macro.map((it: any, i: number) => {
           const quantidade = Number(it.quantidade) || 0;
@@ -629,6 +727,7 @@ export function PropostaView() {
             valorUnitario,
             dias,
             total: quantidade * valorUnitario * dias,
+            categoria: (it.categoria === 'locacao' ? 'locacao' : 'servico') as 'servico' | 'locacao',
           };
         });
         base.precoItens = precoItens;
@@ -717,6 +816,19 @@ export function PropostaView() {
   };
 
   // Baixa o PDF usando os dados ATUAIS do formulário (sem precisar enviar/salvar).
+  // Abre o PDF do orçamento do negócio (última versão) para consulta durante a proposta.
+  const visualizarOrcamento = () => {
+    if (!selectedObra) return alert('Selecione uma obra primeiro.');
+    const orc = Array.isArray(selectedObra.orcamentos) && selectedObra.orcamentos.length ? selectedObra.orcamentos[0] : null;
+    if (!orc) return alert('Nenhum orçamento encontrado para este negócio.');
+    try {
+      handleDownloadOrcamentoPDF(orc, { razaoSocial: selectedObra.nomeCliente || '' }, selectedObra);
+    } catch (e) {
+      console.error('Falha ao gerar PDF do orçamento:', e);
+      alert('Não foi possível gerar o PDF do orçamento.');
+    }
+  };
+
   const handleBaixarPropostaPreview = () => {
     if (!selectedObra) return alert('Selecione uma obra primeiro.');
     // O gerador do PDF lê `responsabilidadeContratante` (item C); no form esse campo é `escopoC`.
@@ -1082,7 +1194,7 @@ export function PropostaView() {
                       </div>
                       <div className="flex justify-between">
                         <span className="text-white/70">Criada em:</span>
-                        <span className="text-white font-black">{new Date(ultimaProposta.dataCriacao).toLocaleDateString('pt-BR')}</span>
+                        <span className="text-white font-black">{formatDateBR(ultimaProposta.dataCriacao)}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-white/70">Número:</span>
@@ -1234,7 +1346,7 @@ export function PropostaView() {
                 <div>
                           <h3 className="text-lg font-black text-white">Versão {formatarVersaoProposta(proposta)}</h3>
                   <p className="text-white/70 text-sm mt-1">
-                    {new Date(proposta.dataCriacao).toLocaleDateString('pt-BR')}
+                    {formatDateBR(proposta.dataCriacao)}
                   </p>
                 </div>
                 <div className="flex gap-2">
@@ -1647,91 +1759,13 @@ export function PropostaView() {
         <div className="space-y-1.5">
           <label className={labelClass}>Preço</label>
           <div className="bg-[#071122] p-3 rounded-lg">
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs border border-white/10 rounded-lg overflow-hidden">
-                <thead>
-                  <tr className="bg-white/5 border-b border-white/10">
-                    <th className="px-3 py-2 text-left text-white font-black w-12">Item</th>
-                    <th className="px-3 py-2 text-left text-white font-black">Descrição</th>
-                    <th className="px-3 py-2 text-left text-white font-black w-20">Quant.</th>
-                    <th className="px-3 py-2 text-left text-white font-black w-20">Unit.</th>
-                    <th className="px-3 py-2 text-left text-white font-black w-32">Vl. Unit. R$</th>
-                    <th className="px-3 py-2 text-left text-white font-black w-16">Dias</th>
-                    <th className="px-3 py-2 text-left text-white font-black w-36">Valor total R$</th>
-                    <th className="px-3 py-2 text-center text-white font-black w-12"> </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(propostaForm.precoItens || []).length === 0 && (
-                    <tr><td colSpan={8} className="px-3 py-3 text-white/40">Nenhuma atividade. Clique em "Adicionar Item".</td></tr>
-                  )}
-                  {(propostaForm.precoItens || []).map((it, idx) => (
-                    <tr key={it.id} className="border-b border-white/5">
-                      <td className="px-3 py-2 text-white/60 font-bold text-center">{idx + 1}</td>
-                      <td className="px-3 py-2 min-w-[200px]">
-                        <input
-                          type="text"
-                          className="w-full bg-[#101f3d] border border-white/10 p-2 rounded text-white text-xs outline-none"
-                          value={it.descricao || ''}
-                          onChange={(e) => atualizarPrecoItem(it.id, 'descricao', e.target.value)}
-                          placeholder="Descrição da atividade"
-                        />
-                      </td>
-                      <td className="px-3 py-2">
-                        <input
-                          type="number"
-                          min="0"
-                          className="w-full bg-[#101f3d] border border-white/10 p-2 rounded text-white text-xs outline-none"
-                          value={String(it.quantidade ?? '')}
-                          onChange={(e) => atualizarPrecoItem(it.id, 'quantidade', e.target.value)}
-                        />
-                      </td>
-                      <td className="px-3 py-2">
-                        <input
-                          type="text"
-                          className="w-full bg-[#101f3d] border border-white/10 p-2 rounded text-white text-xs outline-none"
-                          value={it.unidade || ''}
-                          onChange={(e) => atualizarPrecoItem(it.id, 'unidade', e.target.value)}
-                          placeholder="serv."
-                        />
-                      </td>
-                      <td className="px-3 py-2">
-                        <input
-                          type="text"
-                          className="w-full bg-[#101f3d] border border-white/10 p-2 rounded text-white text-xs outline-none"
-                          value={String(it.valorUnitario ?? '')}
-                          onChange={(e) => atualizarPrecoItem(it.id, 'valorUnitario', e.target.value)}
-                          placeholder="0,00"
-                        />
-                      </td>
-                      <td className="px-3 py-2">
-                        <input
-                          type="number"
-                          min="0"
-                          className="w-full bg-[#101f3d] border border-white/10 p-2 rounded text-white text-xs outline-none"
-                          value={String(it.dias ?? '')}
-                          onChange={(e) => atualizarPrecoItem(it.id, 'dias', e.target.value)}
-                        />
-                      </td>
-                      <td className="px-3 py-2 text-white font-black whitespace-nowrap">R$ {(Number(it.total) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                      <td className="px-3 py-2 text-center">
-                        <button type="button" onClick={() => removerPrecoItem(it.id)} className="text-red-300 p-1"><X size={14} /></button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            {renderTabelaPrecoCategoria('servico', 'Serviços', 'bg-emerald-600 hover:bg-emerald-500 text-white')}
+            {renderTabelaPrecoCategoria('locacao', 'Locação', 'bg-cyan-600 hover:bg-cyan-500 text-white')}
 
-            <div className="flex items-center justify-between mt-3">
-              <div className="flex gap-2">
-                <button type="button" onClick={() => adicionarPrecoItem()} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-black text-xs uppercase">
-                  <Plus size={12} className="inline mr-1" /> Adicionar Item
-                </button>
-              </div>
+            <div className="flex items-center justify-end mt-3 pt-3 border-t border-white/10">
               <div className="text-right">
-                <div className="text-white/70 text-xs">Total</div>
-                <div className="text-white font-black">{propostaForm.preco || 'R$ 0,00'}</div>
+                <div className="text-white/70 text-[10px] uppercase tracking-widest font-black">Total da Proposta</div>
+                <div className="text-emerald-400 font-black text-lg">{propostaForm.preco || 'R$ 0,00'}</div>
               </div>
             </div>
 
@@ -1842,6 +1876,13 @@ export function PropostaView() {
           className="flex-1 bg-white/10 text-white py-3 rounded-lg font-black uppercase text-sm hover:bg-white/15 transition flex items-center justify-center gap-2"
         >
           <ArrowLeft size={18} /> Voltar
+        </button>
+        <button
+          onClick={visualizarOrcamento}
+          className="flex-1 bg-amber-600/80 hover:bg-amber-600 text-white py-3 rounded-lg font-black uppercase text-sm tracking-widest transition-all flex items-center justify-center gap-2"
+          title="Abre o PDF do orçamento deste negócio para consulta"
+        >
+          <FileText size={18} /> Visualizar Orçamento
         </button>
         <button
           onClick={handleBaixarPropostaPreview}

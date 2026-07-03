@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
+import { formatDateBR } from '../../../utils/formatDate';
 import { gerarIdOrcamento, gerarIdProjeto, extrairIdProjetoDoNumero, extrairComponentesDoId, gerarIdProjetoDeNegocio } from '../../../context/ErpContext';
-import { Plus, X, DollarSign, FileText, Trash2, Lock, Eye, Download } from 'lucide-react';
+import { Plus, X, DollarSign, FileText, Trash2, Lock, Eye, Download, RefreshCw } from 'lucide-react';
 import jsPDF from 'jspdf';
 import {
   buildOrcamentoPayload,
@@ -10,6 +11,7 @@ import {
 
 import { getNegocios, getClientes, getOrdensPorNegocio, atualizarNegocio } from '../../../../services/comercialService';
 import { getBackendUrl } from '../../../../services/network';
+import { mapDocsApiToFront } from '../../../../services/documentosService';
 import { temServico, temLocacao } from '../../../utils/modalidade';
 import { ObservacoesNegocio } from '../../ObservacoesNegocio';
 
@@ -61,7 +63,9 @@ interface ItemLocacao {
   quantidade: string;
   valorIndenizacao: string;
   valorLocacao: string;
-  valorTotal: string;
+  margem: string; // % de margem individual do item de locação
+  oh: string;     // % de O.H individual do item de locação
+  valorTotal: string; // = quantidade × valorLocacao × (1 + (margem + oh)/100)
   observacao: string;
 }
 
@@ -72,6 +76,7 @@ interface AtividadeMacro {
   unidade: string;
   valorUnitario: string;
   dias: string;
+  categoria?: 'servico' | 'locacao'; // qual tabela macro (serviço x locação)
 }
 
 interface ServicoOrcamento {
@@ -177,13 +182,15 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                     observacao: it?.observacao || '',
                     valorIndenizacao: Number(it?.valor_indenizacao) || 0,
                     valorLocacao: Number(it?.valor_locacao) || 0,
+                    margem: Number(it?.margem) || 0,
+                    oh: Number(it?.oh) || 0,
                     valorTotal: Number(it?.valor_total) || 0,
                   }))
                 : [],
               negocioBackendId: n.id,
               orcamentos: n.orcamentos || [],
               propostas: n.propostas || [],
-              documentosNegocio: n.documentos || n.arquivos || [],
+              documentosNegocio: mapDocsApiToFront(n.documentos || n.arquivos || []),
               dataPrevistaInicio: n.data_prevista_inicio || null,
               dataPrevistaFinal: n.data_prevista_final || null,
             };
@@ -445,7 +452,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     
     // Preencher escopo automaticamente com informações dos serviços
     const servicosInfo = dadosServicos
-      .map((s) => `• Serviço ${s.ordem}: ${s.tipo || 'Sem tipo'}${s.embarcacao ? ` - Embarcação: ${s.embarcacao}` : ''}${s.localExecucao ? ` em ${s.localExecucao}` : ''}`)
+      .map((s) => `• Serviço ${s.ordem}: ${s.tipo || 'Sem tipo'}${(s.embarcacao || s.localExecucao) ? ` - Embarcação/Local: ${[s.embarcacao, s.localExecucao].filter(Boolean).join(' / ')}` : ''}`)
       .join('\n');
     
     // Normaliza itens vindos do backend (campo snake_case) para o formato esperado pelo formulário
@@ -510,7 +517,9 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
             oh: String(ultimoOrcamento.resumo?.OH ?? initialDefaults.oh),
             impostos: String(ultimoOrcamento.resumo?.impostos ?? initialDefaults.impostos),
             impostosLocacao: String(ultimoOrcamento.resumo?.impostos_locacao ?? ultimoOrcamento.data?.impostosLocacao ?? initialDefaults.impostosLocacao),
-            quantidadeItensProduzidos: String(ultimoOrcamento.resumo?.qnt || ''),
+            // Não herda a quantidade de itens produzidos de outro orçamento — cada orçamento
+            // informa a sua (campo obrigatório). Evita o bug de "sair sempre com 6".
+            quantidadeItensProduzidos: '',
           }
         : initialDefaults;
 
@@ -559,17 +568,25 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       // Itens de locação vêm do Negócio (já com qualquer precificação anterior). O Orçamento
       // permite editar/precificar (valor de indenização e de locação) e adicionar/remover.
       itensAlocacao: (Array.isArray(obra.itensAlocacao) && obra.itensAlocacao.length)
-        ? obra.itensAlocacao.map((it: any) => ({
-            id: String(it.id || Date.now() + Math.random()),
-            equipamento: it.equipamento || '',
-            estoqueRef: it.estoqueRef || it.equipamento || '',
-            unidade: it.unidade || 'un',
-            quantidade: String(it.quantidade ?? ''),
-            valorIndenizacao: it.valorIndenizacao ? String(it.valorIndenizacao) : '',
-            valorLocacao: it.valorLocacao ? String(it.valorLocacao) : '',
-            valorTotal: toMoneyString((Number(it.quantidade) || 0) * (Number(it.valorLocacao) || 0)),
-            observacao: it.observacao || '',
-          }))
+        ? obra.itensAlocacao.map((it: any) => {
+            const margem = it.margem != null && it.margem !== '' ? String(it.margem) : '0';
+            const oh = it.oh != null && it.oh !== '' ? String(it.oh) : '0';
+            const base = (Number(it.quantidade) || 0) * (Number(it.valorLocacao) || 0);
+            const fator = 1 + ((Number(margem) || 0) + (Number(oh) || 0)) / 100;
+            return {
+              id: String(it.id || Date.now() + Math.random()),
+              equipamento: it.equipamento || '',
+              estoqueRef: it.estoqueRef || it.equipamento || '',
+              unidade: it.unidade || 'un',
+              quantidade: String(it.quantidade ?? ''),
+              valorIndenizacao: it.valorIndenizacao ? String(it.valorIndenizacao) : '',
+              valorLocacao: it.valorLocacao ? String(it.valorLocacao) : '',
+              margem,
+              oh,
+              valorTotal: toMoneyString(base * fator),
+              observacao: it.observacao || '',
+            };
+          })
         : ((baseData as any).itensAlocacao || []),
       // Tabela macro das atividades orçadas (item D da proposta) — vem do resumo do orçamento.
       atividadesMacro: (Array.isArray((baseData as any).atividadesMacro) ? (baseData as any).atividadesMacro : [])
@@ -580,6 +597,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
           unidade: String(it.unidade || ''),
           valorUnitario: it.valorUnitario != null && it.valorUnitario !== '' ? String(it.valorUnitario) : '',
           dias: it.dias != null && it.dias !== '' ? String(it.dias) : '',
+          categoria: (it.categoria === 'locacao' ? 'locacao' : 'servico') as 'servico' | 'locacao',
         })),
     };
 
@@ -610,7 +628,9 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
         oh: String(ultimoOrcamento.valores.oh ?? prev.oh),
         impostos: String(ultimoOrcamento.valores.impostos ?? prev.impostos),
         impostosLocacao: String(ultimoOrcamento.valores.impostosLocacao ?? prev.impostosLocacao),
-        quantidadeItensProduzidos: String(ultimoOrcamento.valores.quantidadeItensProduzidos ?? prev.quantidadeItensProduzidos)
+        // Mantém o que já está no formulário (em branco para orçamento novo / valor do
+        // rascunho do próprio usuário) — não puxa a qnt de itens de outro orçamento.
+        quantidadeItensProduzidos: prev.quantidadeItensProduzidos
       }));
     }
     
@@ -1714,8 +1734,11 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
 
   // --- LOCAÇÃO (itens alocados precificados) ---
   const recalcularItemLocacao = (item: ItemLocacao): ItemLocacao => {
-    const total = parseDecimal(item.quantidade) * parseDecimal(item.valorLocacao);
-    return { ...item, valorTotal: toMoneyString(total) };
+    const base = parseDecimal(item.quantidade) * parseDecimal(item.valorLocacao);
+    // Margem e O.H individuais do item incidem sobre o valor de locação (imposto de
+    // locação é global e é aplicado depois, sobre o subtotal).
+    const fator = 1 + ((parseDecimal(item.margem) || 0) + (parseDecimal(item.oh) || 0)) / 100;
+    return { ...item, valorTotal: toMoneyString(base * fator) };
   };
 
   const updateItemLocacao = (id: string, changes: Partial<ItemLocacao>) => {
@@ -1731,7 +1754,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   const addItemLocacao = () => {
     setOrcamentoData(prev => ({
       ...prev,
-      itensAlocacao: [...(prev.itensAlocacao || []), { id: Date.now().toString(), equipamento: '', estoqueRef: '', unidade: 'un', quantidade: '', valorIndenizacao: '', valorLocacao: '', valorTotal: '0.00', observacao: '' }]
+      itensAlocacao: [...(prev.itensAlocacao || []), { id: Date.now().toString(), equipamento: '', estoqueRef: '', unidade: 'un', quantidade: '', valorIndenizacao: '', valorLocacao: '', margem: '0', oh: '0', valorTotal: '0.00', observacao: '' }]
     }));
   };
 
@@ -1754,11 +1777,42 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     }));
   };
 
-  const addAtividadeMacro = () => {
+  const addAtividadeMacro = (categoria: 'servico' | 'locacao' = 'servico') => {
     setOrcamentoData(prev => ({
       ...prev,
-      atividadesMacro: [...(prev.atividadesMacro || []), { id: Date.now().toString(), descricao: '', quantidade: '', unidade: 'serv.', valorUnitario: '', dias: '1' }]
+      atividadesMacro: [...(prev.atividadesMacro || []), { id: Date.now().toString(), descricao: '', quantidade: '1', unidade: categoria === 'locacao' ? 'un' : 'serv.', valorUnitario: '', dias: '1', categoria }]
     }));
+  };
+
+  // Gera as linhas macro (item D) a partir dos campos do orçamento, com margem, O.H e imposto
+  // aplicados POR ITEM. Substitui apenas as linhas da categoria pedida (preserva a outra).
+  //  - serviço  : 1 linha por MDO/material/terceirizado → base × (1+margem%+oh%) × (1+imposto%)
+  //  - locação  : 1 linha por item → valorTotal (já com margem/OH do item) × (1+impostoLocacao%)
+  const gerarMacroDoOrcamento = (categoria: 'servico' | 'locacao') => {
+    const pd = (v: any) => parseDecimal(v) || 0;
+    const novoId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    setOrcamentoData(prev => {
+      const outras = (prev.atividadesMacro || []).filter(m => (m.categoria || 'servico') !== categoria);
+      const novas: AtividadeMacro[] = [];
+      if (categoria === 'servico') {
+        const fator = (1 + (pd(prev.margem) + pd(prev.oh)) / 100) * (1 + pd(prev.impostos) / 100);
+        const push = (desc: string, unidade: string, base: number) => {
+          if (!String(desc).trim() || base <= 0) return;
+          novas.push({ id: novoId(), descricao: String(desc).trim(), quantidade: '1', unidade, valorUnitario: (base * fator).toFixed(2), dias: '1', categoria: 'servico' });
+        };
+        (prev.maoDeObra || []).forEach((i: any) => push(i.funcao || '', 'MDO', pd(i.valorTotal)));
+        (prev.materiais || []).forEach((i: any) => push(i.descricao || '', i.unidade || 'un', pd(i.valorTotal)));
+        (prev.terceirizados || []).forEach((i: any) => push(i.descricao || '', i.unidade || 'serv', pd(i.valorTotal)));
+      } else {
+        const fatorLoc = 1 + pd(prev.impostosLocacao) / 100;
+        (prev.itensAlocacao || []).forEach((i: any) => {
+          const base = pd(i.valorTotal); // já embute margem/O.H do item
+          if (!String(i.equipamento || '').trim() || base <= 0) return;
+          novas.push({ id: novoId(), descricao: String(i.equipamento).trim(), quantidade: '1', unidade: i.unidade || 'un', valorUnitario: (base * fatorLoc).toFixed(2), dias: '1', categoria: 'locacao' });
+        });
+      }
+      return { ...prev, atividadesMacro: [...outras, ...novas] };
+    });
   };
 
   const removeAtividadeMacro = (id: string) => {
@@ -1789,10 +1843,99 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   const subtotalLocacao = subtotalLocacaoBruto + valorImpostosLocacao;  // subtotal de locação COM imposto
   const totalGeral = precoFinal + subtotalLocacao;
   const totalAtividadesMacro = (orcamentoData.atividadesMacro || []).reduce((sum, item) => sum + macroRowTotal(item), 0);
+  // Item 6: 2 tabelas macro (serviço x locação) derivadas de atividadesMacro por categoria.
+  const macroServicoRows = (orcamentoData.atividadesMacro || []).filter(m => (m.categoria || 'servico') !== 'locacao');
+  const macroLocacaoRows = (orcamentoData.atividadesMacro || []).filter(m => (m.categoria || 'servico') === 'locacao');
+  const totalMacroServico = macroServicoRows.reduce((s, m) => s + macroRowTotal(m), 0);
+  const totalMacroLocacao = macroLocacaoRows.reduce((s, m) => s + macroRowTotal(m), 0);
+
+  // Auto-preenche as tabelas macro uma vez ao abrir o formulário, quando ainda vazias e já há
+  // itens no orçamento. Depois disso o usuário edita/adiciona livremente (ou usa "Puxar do orçamento").
+  const macroSeedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!showForm) { macroSeedRef.current = null; return; }
+    const chave = String(selectedObra?.id || '');
+    if (macroSeedRef.current === chave) return;
+    if ((orcamentoData.atividadesMacro || []).length > 0) { macroSeedRef.current = chave; return; }
+    const temServ = [...(orcamentoData.maoDeObra || []), ...(orcamentoData.materiais || []), ...(orcamentoData.terceirizados || [])].some((i: any) => (parseDecimal(i.valorTotal) || 0) > 0);
+    const temLoc = (orcamentoData.itensAlocacao || []).some((i: any) => (parseDecimal(i.valorTotal) || 0) > 0);
+    if (!temServ && !temLoc) return; // sem itens ainda — tenta de novo quando chegarem
+    if (temServ) gerarMacroDoOrcamento('servico');
+    if (temLoc) gerarMacroDoOrcamento('locacao');
+    macroSeedRef.current = chave;
+  }, [showForm, selectedObra, orcamentoData.atividadesMacro, orcamentoData.maoDeObra, orcamentoData.materiais, orcamentoData.terceirizados, orcamentoData.itensAlocacao]);
 
   const inputClass = "w-full bg-[#0b1220] border border-white/10 p-3 rounded-lg text-white text-sm outline-none focus:border-amber-500 transition-all placeholder:text-white/20";
   const labelClass = "text-[9px] font-black text-white/40 uppercase tracking-widest ml-1 mb-1.5 block";
   const tableInputClass = "w-full bg-[#0b1220] border border-white/10 p-2 rounded text-white text-xs outline-none focus:border-amber-500";
+
+  // Item 6: renderiza uma tabela macro (Serviço ou Locação). Auto-preenchida a partir do
+  // orçamento (margem/O.H/imposto por item), mas totalmente editável.
+  const renderTabelaMacro = (
+    categoria: 'servico' | 'locacao',
+    rows: AtividadeMacro[],
+    titulo: string,
+    subtotal: number,
+    addBtnClass: string,
+  ) => (
+    <div className="bg-[#101f3d] rounded-2xl border border-white/5 p-6">
+      <div className="flex justify-between items-center mb-4 gap-3 flex-wrap">
+        <div>
+          <h3 className="text-lg font-black text-white uppercase">{titulo}</h3>
+          <p className="text-white/50 text-xs mt-1">Puxado do orçamento com margem, O.H e imposto por item — editável. Vai para o item D (Preço) da Proposta.</p>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={() => gerarMacroDoOrcamento(categoria)} title="Recarrega as linhas a partir dos campos do orçamento (substitui as desta tabela)" className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg font-black text-[11px] uppercase transition">
+            <RefreshCw size={14} className="inline mr-1.5" /> Puxar do orçamento
+          </button>
+          <button onClick={() => addAtividadeMacro(categoria)} className={`px-3 py-2 rounded-lg font-black text-[11px] uppercase transition ${addBtnClass}`}>
+            <Plus size={14} className="inline mr-1.5" /> Adicionar
+          </button>
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="bg-white/5 border-b border-white/10 text-left text-white font-black">
+              <th className="px-3 py-3 w-12">Item</th>
+              <th className="px-3 py-3">Descrição</th>
+              <th className="px-3 py-3 w-20">Quant.</th>
+              <th className="px-3 py-3 w-24">Unid.</th>
+              <th className="px-3 py-3 w-32">Vl. Unit. R$</th>
+              <th className="px-3 py-3 w-20">Dias</th>
+              <th className="px-3 py-3 w-36">Valor total R$</th>
+              <th className="px-3 py-3 w-10 text-center"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 && (
+              <tr><td colSpan={8} className="px-3 py-4 text-white/40 text-sm">Nenhuma linha. Clique em "Puxar do orçamento" ou "Adicionar".</td></tr>
+            )}
+            {rows.map((item, idx) => (
+              <tr key={item.id} className="border-b border-white/5 hover:bg-white/5 transition">
+                <td className="px-3 py-2 text-white/60 font-bold text-center">{idx + 1}</td>
+                <td className="px-3 py-2 min-w-[220px]"><input type="text" className={tableInputClass} value={item.descricao} onChange={e => updateAtividadeMacro(item.id, { descricao: e.target.value })} placeholder="Descrição" /></td>
+                <td className="px-3 py-2"><input type="number" min="0" className={tableInputClass} value={item.quantidade} onChange={e => updateAtividadeMacro(item.id, { quantidade: e.target.value })} /></td>
+                <td className="px-3 py-2"><input type="text" className={tableInputClass} value={item.unidade} onChange={e => updateAtividadeMacro(item.id, { unidade: e.target.value })} placeholder="un" /></td>
+                <td className="px-3 py-2"><input type="number" min="0" className={tableInputClass} value={item.valorUnitario} onChange={e => updateAtividadeMacro(item.id, { valorUnitario: e.target.value })} placeholder="0,00" /></td>
+                <td className="px-3 py-2"><input type="number" min="0" className={tableInputClass} value={item.dias} onChange={e => updateAtividadeMacro(item.id, { dias: e.target.value })} /></td>
+                <td className="px-3 py-2 text-white font-bold whitespace-nowrap">R$ {macroRowTotal(item).toFixed(2)}</td>
+                <td className="px-3 py-2 text-center">
+                  <button onClick={() => removeAtividadeMacro(item.id)} className="p-1 hover:bg-red-500/20 rounded transition text-red-400 hover:text-red-300"><Trash2 size={14} /></button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="mt-4 pt-4 border-t border-white/10 flex justify-end">
+        <div className="bg-[#0b1220] border border-emerald-500/30 rounded-lg px-4 py-2.5">
+          <p className="text-white/60 text-[10px] font-black uppercase tracking-widest">Subtotal {titulo}</p>
+          <p className="text-emerald-400 font-black text-lg text-right">R$ {subtotal.toFixed(2)}</p>
+        </div>
+      </div>
+    </div>
+  );
 
   // Função para abrir o documento gerado
   const visualizarDocumento = (filename: string) => {
@@ -1993,7 +2136,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                           <div className="flex justify-between">
                             <span className="text-white/50">Enviado em:</span>
                             <span className="text-white font-bold text-xs">
-                              {ultimoOrcamento?.dataCriacao ? new Date(ultimoOrcamento.dataCriacao).toLocaleDateString('pt-BR') : '—'}
+                              {ultimoOrcamento?.dataCriacao ? formatDateBR(ultimoOrcamento.dataCriacao) : '—'}
                             </span>
                           </div>
                           <div className="flex justify-between items-center pt-1">
@@ -2083,7 +2226,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                           <div className="flex justify-between">
                             <span className="text-white/50">Criado em:</span>
                             <span className="text-white font-bold text-xs">
-                              {ultimoOrcamento.dataCriacao ? new Date(ultimoOrcamento.dataCriacao).toLocaleDateString('pt-BR') : '—'}
+                              {ultimoOrcamento.dataCriacao ? formatDateBR(ultimoOrcamento.dataCriacao) : '—'}
                             </span>
                           </div>
                         </div>
@@ -2693,7 +2836,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                 <p className="text-white font-black text-lg">R$ {impostoValor.toFixed(2)}</p>
               </div>
               <div className="bg-[#101f3d] rounded-lg p-4 border border-amber-500/30 shadow-lg shadow-amber-500/10">
-                <p className="text-amber-400 text-xs font-black mb-2 uppercase">TOTAL C/ IMPOSTO</p>
+                <p className="text-amber-400 text-xs font-black mb-2 uppercase">Preço de Venda (Total PV)</p>
                 <p className="text-amber-400 font-black text-2xl">R$ {precoFinal.toFixed(2)}</p>
               </div>
             </div>
@@ -2753,13 +2896,15 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                     <th className="px-3 py-2">Quantidade</th>
                     <th className="px-3 py-2">Valor Unit. Indenização</th>
                     <th className="px-3 py-2">Valor Unit. Locação</th>
+                    <th className="px-3 py-2">Margem (%)</th>
+                    <th className="px-3 py-2">O.H (%)</th>
                     <th className="px-3 py-2">Valor Total</th>
                     <th className="px-3 py-2 text-center">Ação</th>
                   </tr>
                 </thead>
                 <tbody>
                   {(orcamentoData.itensAlocacao || []).length === 0 && (
-                    <tr><td colSpan={7} className="px-3 py-4 text-white/40 text-sm">Nenhum item. Clique em "Adicionar Item".</td></tr>
+                    <tr><td colSpan={9} className="px-3 py-4 text-white/40 text-sm">Nenhum item. Clique em "Adicionar Item".</td></tr>
                   )}
                   {(orcamentoData.itensAlocacao || []).map((item) => (
                     <tr key={item.id} className="border-t border-white/5">
@@ -2770,6 +2915,8 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                       <td className="px-3 py-2"><input type="number" min="0" className={tableInputClass} value={item.quantidade} onChange={e => updateItemLocacao(item.id, { quantidade: e.target.value })} /></td>
                       <td className="px-3 py-2"><input type="number" min="0" className={tableInputClass} value={item.valorIndenizacao} onChange={e => updateItemLocacao(item.id, { valorIndenizacao: e.target.value })} placeholder="0,00" /></td>
                       <td className="px-3 py-2"><input type="number" min="0" className={tableInputClass} value={item.valorLocacao} onChange={e => updateItemLocacao(item.id, { valorLocacao: e.target.value })} placeholder="0,00" /></td>
+                      <td className="px-3 py-2"><input type="number" min="0" className={tableInputClass} value={item.margem} onChange={e => updateItemLocacao(item.id, { margem: e.target.value })} placeholder="0" /></td>
+                      <td className="px-3 py-2"><input type="number" min="0" className={tableInputClass} value={item.oh} onChange={e => updateItemLocacao(item.id, { oh: e.target.value })} placeholder="0" /></td>
                       <td className="px-3 py-2 text-white font-bold text-sm whitespace-nowrap">R$ {item.valorTotal}</td>
                       <td className="px-3 py-2 text-center">
                         <button onClick={() => removeItemLocacao(item.id)} className="p-1.5 hover:bg-red-500/20 rounded text-red-400" title="Remover"><Trash2 size={14} /></button>
@@ -2830,69 +2977,16 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                 </div>
               )}
               <div className="bg-[#101f3d] rounded-lg p-4 border border-emerald-500/30 shadow-lg shadow-emerald-500/10">
-                <p className="text-emerald-400 text-xs font-black mb-2 uppercase">Total Geral{(orcTemServico && orcTemLocacao) ? ' (Serviço + Locação)' : ''}</p>
+                <p className="text-emerald-400 text-xs font-black mb-2 uppercase">Preço de Venda (PV){(orcTemServico && orcTemLocacao) ? ' — Serviço + Locação' : ''}</p>
                 <p className="text-emerald-400 font-black text-2xl">R$ {totalGeral.toFixed(2)}</p>
               </div>
             </div>
           </div>
 
-          {/* DESCRIÇÃO MACRO DAS ATIVIDADES ORÇADAS — vira o item D (Preço) da Proposta */}
-          <div className="bg-[#101f3d] rounded-2xl border border-white/5 p-6">
-            <div className="flex justify-between items-center mb-6">
-              <div>
-                <h3 className="text-xl font-black text-white uppercase">Descrição Macro das Atividades Orçadas</h3>
-                <p className="text-white/50 text-xs mt-1">Resumo macro do preço — vira o item D (Preço) da Proposta. Valor total = Quant. × Vl. Unit. × Dias.</p>
-              </div>
-              <button
-                onClick={addAtividadeMacro}
-                className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-[#0b1220] rounded-lg font-black text-xs uppercase transition"
-              >
-                <Plus size={16} className="inline mr-2" /> Adicionar Atividade
-              </button>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="bg-white/5 border-b border-white/10 text-left text-white font-black">
-                    <th className="px-3 py-3 w-12">Item</th>
-                    <th className="px-3 py-3">Descrição</th>
-                    <th className="px-3 py-3 w-20">Quant.</th>
-                    <th className="px-3 py-3 w-24">Unit.</th>
-                    <th className="px-3 py-3 w-32">Vl. Unit. R$</th>
-                    <th className="px-3 py-3 w-20">Dias</th>
-                    <th className="px-3 py-3 w-36">Valor total R$</th>
-                    <th className="px-3 py-3 w-10 text-center"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(orcamentoData.atividadesMacro || []).length === 0 && (
-                    <tr><td colSpan={8} className="px-3 py-4 text-white/40 text-sm">Nenhuma atividade. Clique em "Adicionar Atividade".</td></tr>
-                  )}
-                  {(orcamentoData.atividadesMacro || []).map((item, idx) => (
-                    <tr key={item.id} className="border-b border-white/5 hover:bg-white/5 transition">
-                      <td className="px-3 py-2 text-white/60 font-bold text-center">{idx + 1}</td>
-                      <td className="px-3 py-2 min-w-[220px]"><input type="text" className={tableInputClass} value={item.descricao} onChange={e => updateAtividadeMacro(item.id, { descricao: e.target.value })} placeholder="Descrição da atividade" /></td>
-                      <td className="px-3 py-2"><input type="number" min="0" className={tableInputClass} value={item.quantidade} onChange={e => updateAtividadeMacro(item.id, { quantidade: e.target.value })} /></td>
-                      <td className="px-3 py-2"><input type="text" className={tableInputClass} value={item.unidade} onChange={e => updateAtividadeMacro(item.id, { unidade: e.target.value })} placeholder="serv." /></td>
-                      <td className="px-3 py-2"><input type="number" min="0" className={tableInputClass} value={item.valorUnitario} onChange={e => updateAtividadeMacro(item.id, { valorUnitario: e.target.value })} placeholder="0,00" /></td>
-                      <td className="px-3 py-2"><input type="number" min="0" className={tableInputClass} value={item.dias} onChange={e => updateAtividadeMacro(item.id, { dias: e.target.value })} /></td>
-                      <td className="px-3 py-2 text-white font-bold whitespace-nowrap">R$ {macroRowTotal(item).toFixed(2)}</td>
-                      <td className="px-3 py-2 text-center">
-                        <button onClick={() => removeAtividadeMacro(item.id)} className="p-1 hover:bg-red-500/20 rounded transition text-red-400 hover:text-red-300"><Trash2 size={14} /></button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="mt-4 pt-4 border-t border-white/10 flex justify-end">
-              <div className="bg-[#0b1220] border border-emerald-500/30 rounded-lg px-4 py-2.5">
-                <p className="text-white/60 text-[10px] font-black uppercase tracking-widest">Valor total do serviço</p>
-                <p className="text-emerald-400 font-black text-lg text-right">R$ {totalAtividadesMacro.toFixed(2)}</p>
-              </div>
-            </div>
+          {/* DESCRIÇÃO MACRO DAS ATIVIDADES ORÇADAS — 2 tabelas (Serviço e Locação), item D da Proposta */}
+          <div className="space-y-6">
+            {orcTemServico && renderTabelaMacro('servico', macroServicoRows, 'Macro Atividades — Serviço', totalMacroServico, 'bg-emerald-500 hover:bg-emerald-400 text-[#0b1220]')}
+            {orcTemLocacao && renderTabelaMacro('locacao', macroLocacaoRows, 'Macro Atividades — Locação', totalMacroLocacao, 'bg-cyan-500 hover:bg-cyan-400 text-white')}
           </div>
 
           {/* OBSERVAÇÕES — campo livre para o setor de orçamento */}
@@ -2960,7 +3054,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                   <div className="flex items-center gap-3 mt-2">
                     <span className="px-2.5 py-1 bg-emerald-500/20 text-emerald-400 rounded-full text-xs font-black">{labelVersaoOrcamento(orc.versao)}</span>
                     <span className="text-white/50 text-xs">{orc.numeroOrcamento || '—'}</span>
-                    <span className="text-white/50 text-xs">{orc.dataCriacao ? new Date(orc.dataCriacao).toLocaleDateString('pt-BR') : '—'}</span>
+                    <span className="text-white/50 text-xs">{orc.dataCriacao ? formatDateBR(orc.dataCriacao) : '—'}</span>
                   </div>
                 </div>
                 <button onClick={() => setDetalhesModal(null)} className="p-2 bg-white/5 hover:bg-white/10 rounded-full transition">

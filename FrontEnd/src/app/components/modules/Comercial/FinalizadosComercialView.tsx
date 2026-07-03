@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
+import { formatDateBR } from '../../../utils/formatDate';
 import {
   CheckCircle2, Download, FileCheck2, FileText, ClipboardList,
   Wrench, Trash2, X, Eye, ChevronDown, ChevronUp, Archive
@@ -36,11 +37,7 @@ export function FinalizadosComercialView({ searchQuery }: FinalizadosComercialVi
 
   const formatDate = (value: any) => {
     if (!value) return '-';
-    try {
-      return new Date(value).toLocaleDateString('pt-BR');
-    } catch {
-      return String(value);
-    }
+    return formatDateBR(value) || '-';
   };
 
   const isDocumentoValido = (doc: any) => Boolean(getDocumentHref(doc));

@@ -11,6 +11,7 @@ import { handleDownloadOrcamentoPDF as gerarOrcamentoPDF } from './handleDownloa
 import { handleDownloadOSPDF as gerarOSPDF } from './handleDownloadOSPDF';
 import { getCachedWorkspace } from '../../../services/workspaceStorage';
 import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
+import { formatDateBR } from '../../../utils/formatDate';
 import { isEmpresaLinave, getLogoUrlForEmpresa } from '../../../utils/company';
 import { uploadDocumento, excluirDocumento } from '../../../../services/documentosService';
 import { MODALIDADES, temServico, temLocacao, modalidadeLabel } from '../../../utils/modalidade';
@@ -2842,7 +2843,7 @@ const obrasOrdenadas = useMemo(() => {
                     <p className="text-white/50 text-xs mb-1">Data da Solicitação</p>
                     <p className="text-white font-bold">
                       {selectedObraDetalhes.dataSolicitacao
-                        ? new Date(selectedObraDetalhes.dataSolicitacao).toLocaleDateString('pt-BR')
+                        ? formatDateBR(selectedObraDetalhes.dataSolicitacao)
                         : '—'}
                     </p>
                   </div>
@@ -3125,7 +3126,7 @@ const obrasOrdenadas = useMemo(() => {
 
                       <div>
                         <p className="text-white/50 text-xs mb-1">Data de Criação</p>
-                        <p className="text-white font-bold">{new Date(ultimaProposta.dataCriacao).toLocaleDateString('pt-BR')}</p>
+                        <p className="text-white font-bold">{formatDateBR(ultimaProposta.dataCriacao)}</p>
                       </div>
 
                       {ultimaProposta.preco && (
@@ -3862,7 +3863,7 @@ const obrasOrdenadas = useMemo(() => {
                     </div>
                     <div>
                       <p className="text-white/50 text-xs mb-1">Data de Criação</p>
-                      <p className="text-white font-bold">{new Date(ultimaProposta.dataCriacao).toLocaleDateString('pt-BR')}</p>
+                      <p className="text-white font-bold">{formatDateBR(ultimaProposta.dataCriacao)}</p>
                     </div>
                   </div>
                 </div>

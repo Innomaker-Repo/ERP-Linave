@@ -123,7 +123,7 @@ class ItemAlocacaoSerializer(serializers.ModelSerializer):
         model = ItemAlocacao
         fields = [
             'id', 'equipamento', 'estoque_ref', 'unidade', 'quantidade',
-            'observacao', 'valor_indenizacao', 'valor_locacao', 'valor_total',
+            'observacao', 'valor_indenizacao', 'valor_locacao', 'margem', 'oh', 'valor_total',
         ]
 
 

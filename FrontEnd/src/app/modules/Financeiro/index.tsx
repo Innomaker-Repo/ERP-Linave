@@ -9,6 +9,8 @@ import { ContasReceberView } from '../../components/modules/Financeiro/views/Con
 import { PrevisaoView } from '../../components/modules/Financeiro/views/PrevisaoView';
 import { BancosView } from '../../components/modules/Financeiro/views/BancosView';
 import { HistoricoView } from '../../components/modules/Financeiro/views/HistoricoView';
+import { CustoPorOsView } from '../../components/modules/Financeiro/views/CustoPorOsView';
+import { ReciboLocacaoView } from '../../components/modules/Financeiro/views/ReciboLocacaoView';
 
 interface FinanceiroModuleProps {
   activeItem: string;
@@ -26,6 +28,8 @@ const VIEWS: Record<string, React.ComponentType> = {
   previsao: PrevisaoView,
   bancos: BancosView,
   historico: HistoricoView,
+  custoOs: CustoPorOsView,
+  reciboLocacao: ReciboLocacaoView,
 };
 
 export function FinanceiroModule({ activeItem }: FinanceiroModuleProps) {

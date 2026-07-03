@@ -155,10 +155,16 @@ class ItemAlocacao(models.Model):
     # Precificação (etapa de Orçamento)
     valor_indenizacao = models.DecimalField(max_digits=15, decimal_places=2, default=0)  # informativo (reposição)
     valor_locacao = models.DecimalField(max_digits=15, decimal_places=2, default=0)      # preço final por unidade
+    margem = models.DecimalField(max_digits=5, decimal_places=2, default=0)  # % de margem individual do item
+    oh = models.DecimalField(max_digits=5, decimal_places=2, default=0)      # % de O.H individual do item
 
     @property
     def valor_total(self):
-        return (self.quantidade or Decimal('0')) * (self.valor_locacao or Decimal('0'))
+        # Margem e O.H individuais incidem sobre o valor de locação (o imposto de locação
+        # é global e é aplicado depois, sobre o subtotal). Espelha o cálculo do frontend.
+        base = (self.quantidade or Decimal('0')) * (self.valor_locacao or Decimal('0'))
+        fator = Decimal('1') + ((self.margem or Decimal('0')) + (self.oh or Decimal('0'))) / Decimal('100')
+        return base * fator
 
     def __str__(self):
         return f"Locação {self.equipamento} x{self.quantidade} (Negócio {self.negocio_id})"
@@ -633,6 +639,11 @@ class MedicaoItem(models.Model):
     valor_unitario = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     total = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     observacoes = models.TextField(blank=True, default='')
+    # 'dias' multiplica a quantidade de horas no cálculo (só para categoria 'servico').
+    dias = models.DecimalField(max_digits=10, decimal_places=2, default=1)
+    categoria = models.CharField(max_length=10, default='servico')  # 'servico' | 'locacao'
+    # Colunas customizadas (informativas, não entram no cálculo): { nomeColuna: valor }.
+    extras = models.JSONField(default=dict, blank=True)
 
     def __str__(self):
         return f'Item {self.item} - {self.descricao[:30]}'
