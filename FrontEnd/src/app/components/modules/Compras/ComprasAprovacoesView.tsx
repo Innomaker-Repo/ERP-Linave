@@ -50,7 +50,8 @@ export function ComprasAprovacoesView({ searchQuery }: { searchQuery: string }) 
     }
   }, [compras]);
 
-  const isAdmin = userSession?.role === 'ADMIN' || userSession?.role === 'GERENTE';
+  const roleNorm = String(userSession?.role || '').toUpperCase();
+  const isAdmin = roleNorm === 'ADMIN' || roleNorm === 'GERENTE';
   const email = String(userSession?.email || '').toLowerCase();
   const isMockGerenteComercial = email === MOCK_GERENTE_COMERCIAL_EMAIL;
   const isMockDiretorFinanceiro = email === MOCK_DIRETOR_FINANCEIRO_EMAIL;

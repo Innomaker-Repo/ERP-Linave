@@ -1,13 +1,15 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { Ruler, Plus, X, Save, Download, Check, Ban, Filter, Clock, CheckCircle2, Copy, FilePlus, Send, FileText, Lock, Unlock, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { isOsAprovada } from '../../../../services/ordensServico';
 import { criarMedicao, atualizarStatusMedicao } from '../../../../services/medicoesService';
+import { uploadDocumento } from '../../../../services/documentosService';
 import { atualizarOrdemServico } from '../../../../services/comercialService';
 import { handleDownloadMedicaoPDF } from '../CRM/handleDownloadMedicaoPDF';
 import { genFinId, todayStr, FORMAS_PAGAMENTO } from '../Financeiro/finData';
 import { temServico, temLocacao } from '../../../utils/modalidade';
+import { formatDateBR } from '../../../utils/formatDate';
 
 const TIPOS_NFE = ['NFe Serviço', 'NFe Alocado', 'Nota de débito', 'Outro'];
 
@@ -20,11 +22,22 @@ const parseDecimal = (v: any): number => {
   return Number.isFinite(n) ? n : 0;
 };
 const money = (v: any) => parseDecimal(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// Arredonda para 2 casas evitando lixo de ponto flutuante (ex.: 0.1*0.2 = 0.020000000000000004).
+const round2 = (n: number) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 
-const novaLinha = () => ({
+const novaLinha = (categoria: 'servico' | 'locacao' = 'servico') => ({
   id: `item-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-  item: '', descricao: '', unidade: '', quantidadeProduzida: '', valorUnitario: '', total: '', observacoes: '',
+  item: '', descricao: '', unidade: '', quantidadeProduzida: '', valorUnitario: '',
+  dias: '1', categoria, extras: {} as Record<string, string>, total: '', observacoes: '',
 });
+
+// Total da linha: serviço = Qtd × Dias × Valor/unid.; locação = Qtd × Valor/unid. (sem dias).
+const calcularTotalLinha = (l: any): number => {
+  const q = parseDecimal(l.quantidadeProduzida);
+  const u = parseDecimal(l.valorUnitario);
+  const d = l.categoria === 'locacao' ? 1 : (parseDecimal(l.dias) || 1);
+  return round2(q * d * u);
+};
 
 const formInicial = () => ({
   dataEmissao: new Date().toISOString().split('T')[0],
@@ -133,7 +146,7 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
   }, [osSelecionada, obrasById, clientes]);
 
   const totalMedicao = useMemo(
-    () => (form.itens || []).reduce((s: number, l: any) => s + parseDecimal(l.total), 0),
+    () => round2((form.itens || []).reduce((s: number, l: any) => s + parseDecimal(l.total), 0)),
     [form.itens],
   );
 
@@ -143,15 +156,107 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
       itens: f.itens.map((l: any) => {
         if (l.id !== id) return l;
         const next = { ...l, [campo]: valor };
-        if (campo === 'quantidadeProduzida' || campo === 'valorUnitario') {
-          next.total = String(parseDecimal(next.quantidadeProduzida) * parseDecimal(next.valorUnitario));
+        if (campo === 'quantidadeProduzida' || campo === 'valorUnitario' || campo === 'dias') {
+          next.total = String(calcularTotalLinha(next));
         }
         return next;
       }),
     }));
   };
-  const addLinha = () => setForm((f: any) => ({ ...f, itens: [...f.itens, novaLinha()] }));
+  // Valor de uma coluna customizada (só informativa, não entra no cálculo).
+  const atualizarExtra = (id: string, coluna: string, valor: string) => {
+    setForm((f: any) => ({ ...f, itens: f.itens.map((l: any) => l.id === id ? { ...l, extras: { ...(l.extras || {}), [coluna]: valor } } : l) }));
+  };
+  const addLinha = (categoria: 'servico' | 'locacao' = 'servico') => setForm((f: any) => ({ ...f, itens: [...f.itens, novaLinha(categoria)] }));
   const removerLinha = (id: string) => setForm((f: any) => ({ ...f, itens: f.itens.filter((l: any) => l.id !== id) }));
+
+  // Colunas customizadas de uma categoria = união das chaves de `extras` das suas linhas.
+  const colunasExtras = (categoria: 'servico' | 'locacao'): string[] => {
+    const set = new Set<string>();
+    (form.itens || []).filter((l: any) => (l.categoria || 'servico') === categoria)
+      .forEach((l: any) => Object.keys(l.extras || {}).forEach((k) => set.add(k)));
+    return Array.from(set);
+  };
+  const addColuna = (categoria: 'servico' | 'locacao') => {
+    const nome = (typeof window !== 'undefined' ? window.prompt('Nome da nova coluna (informativa):') : '') || '';
+    const limpo = nome.trim();
+    if (!limpo) return;
+    setForm((f: any) => ({ ...f, itens: f.itens.map((l: any) => (l.categoria || 'servico') === categoria ? { ...l, extras: { ...(l.extras || {}), [limpo]: l.extras?.[limpo] ?? '' } } : l) }));
+  };
+  const removerColuna = (categoria: 'servico' | 'locacao', nome: string) => {
+    setForm((f: any) => ({ ...f, itens: f.itens.map((l: any) => {
+      if ((l.categoria || 'servico') !== categoria) return l;
+      const e = { ...(l.extras || {}) }; delete e[nome]; return { ...l, extras: e };
+    }) }));
+  };
+
+  // Subtotais por categoria (o de serviço é o que vai para a NF).
+  const subtotalServico = round2((form.itens || []).filter((l: any) => (l.categoria || 'servico') !== 'locacao').reduce((s: number, l: any) => s + parseDecimal(l.total), 0));
+  const subtotalLocacao = round2((form.itens || []).filter((l: any) => (l.categoria || 'servico') === 'locacao').reduce((s: number, l: any) => s + parseDecimal(l.total), 0));
+
+  const renderTabelaMedicao = (categoria: 'servico' | 'locacao', titulo: string, comDias: boolean) => {
+    const linhas = (form.itens || []).filter((l: any) => (l.categoria || 'servico') === categoria);
+    const cols = colunasExtras(categoria);
+    const subtotal = categoria === 'locacao' ? subtotalLocacao : subtotalServico;
+    const inputCls = 'bg-[#101f3d] border border-white/10 rounded px-2 py-1';
+    return (
+      <div className="bg-[#0b1220] rounded-xl border border-white/10 p-4 space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <h4 className="text-emerald-300 text-xs font-black uppercase">{titulo}</h4>
+          <div className="flex gap-2">
+            <button onClick={() => addColuna(categoria)} className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[11px] font-black uppercase">+ Coluna</button>
+            <button onClick={() => addLinha(categoria)} className="px-2.5 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-[11px] font-black uppercase">+ Linha</button>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs border-collapse">
+            <thead>
+              <tr className="bg-white/5 text-white/70 uppercase tracking-wider">
+                <th className="border border-white/10 px-2 py-2 text-left">Item</th>
+                <th className="border border-white/10 px-2 py-2 text-left">Descrição</th>
+                <th className="border border-white/10 px-2 py-2 text-left">Unid.</th>
+                <th className="border border-white/10 px-2 py-2 text-left">{comDias ? 'Qtd. horas' : 'Qtd.'}</th>
+                {comDias && <th className="border border-white/10 px-2 py-2 text-left">Dias</th>}
+                <th className="border border-white/10 px-2 py-2 text-left">Valor/unid.</th>
+                {cols.map((c) => (
+                  <th key={c} className="border border-white/10 px-2 py-2 text-left whitespace-nowrap">
+                    <span className="inline-flex items-center gap-1">{c}
+                      <button onClick={() => removerColuna(categoria, c)} className="text-red-300 hover:text-red-200 font-black" title="Remover coluna">×</button>
+                    </span>
+                  </th>
+                ))}
+                <th className="border border-white/10 px-2 py-2 text-left">Total</th>
+                <th className="border border-white/10 px-2 py-2 text-left">Obs.</th>
+                <th className="border border-white/10 px-2 py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {linhas.length === 0 && (
+                <tr><td colSpan={7 + (comDias ? 1 : 0) + cols.length} className="border border-white/10 px-2 py-3 text-white/40 text-center">Sem itens. Use "Puxar itens da OS" ou "+ Linha".</td></tr>
+              )}
+              {linhas.map((l: any) => (
+                <tr key={l.id} className="text-white">
+                  <td className="border border-white/10 p-1"><input value={l.item} onChange={(e) => atualizarLinha(l.id, 'item', e.target.value)} className={`w-12 ${inputCls}`} /></td>
+                  <td className="border border-white/10 p-1"><input value={l.descricao} onChange={(e) => atualizarLinha(l.id, 'descricao', e.target.value)} className={`w-full min-w-[180px] ${inputCls}`} /></td>
+                  <td className="border border-white/10 p-1"><input value={l.unidade} onChange={(e) => atualizarLinha(l.id, 'unidade', e.target.value)} className={`w-16 ${inputCls}`} /></td>
+                  <td className="border border-white/10 p-1"><input value={l.quantidadeProduzida} onChange={(e) => atualizarLinha(l.id, 'quantidadeProduzida', e.target.value)} className={`w-20 ${inputCls}`} /></td>
+                  {comDias && <td className="border border-white/10 p-1"><input value={l.dias} onChange={(e) => atualizarLinha(l.id, 'dias', e.target.value)} className={`w-16 ${inputCls}`} /></td>}
+                  <td className="border border-white/10 p-1"><input value={l.valorUnitario} onChange={(e) => atualizarLinha(l.id, 'valorUnitario', e.target.value)} className={`w-24 ${inputCls}`} /></td>
+                  {cols.map((c) => (
+                    <td key={c} className="border border-white/10 p-1"><input value={l.extras?.[c] ?? ''} onChange={(e) => atualizarExtra(l.id, c, e.target.value)} className={`w-24 ${inputCls}`} /></td>
+                  ))}
+                  <td className="border border-white/10 p-1"><input value={l.total ? money(l.total) : ''} readOnly className={`w-24 ${inputCls} text-emerald-300 font-black`} /></td>
+                  <td className="border border-white/10 p-1"><input value={l.observacoes} onChange={(e) => atualizarLinha(l.id, 'observacoes', e.target.value)} className={`w-full min-w-[110px] ${inputCls}`} /></td>
+                  <td className="border border-white/10 p-1 text-center"><button onClick={() => removerLinha(l.id)} className="px-2 py-1 rounded bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300"><X size={12} /></button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-white/50 text-[11px] uppercase font-black tracking-widest text-right">Subtotal {titulo}: <span className="text-emerald-300">R$ {money(subtotal)}</span></p>
+      </div>
+    );
+  };
 
   // Puxa os itens medíveis da OS selecionada conforme a modalidade: uma linha por
   // serviço (preço do orçamento) e/ou por item de locação (valor de locação).
@@ -166,7 +271,7 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
       const valores = ultimo?.valores || obra.orcamentoValores || null;
       const precoServico = Number(valores?.precoFinal ?? 0) || 0;
       if (precoServico > 0) {
-        linhas.push({ ...novaLinha(), item: String(linhas.length + 1), descricao: 'Serviços (conforme orçamento)', unidade: 'vb', quantidadeProduzida: '1', valorUnitario: String(precoServico), total: String(precoServico) });
+        linhas.push({ ...novaLinha(), item: String(linhas.length + 1), descricao: 'Serviços (conforme orçamento)', unidade: 'vb', quantidadeProduzida: '1', valorUnitario: String(round2(precoServico)), total: String(round2(precoServico)) });
       }
     }
 
@@ -176,7 +281,7 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
         .forEach((it: any) => {
           const q = Number(it.quantidade) || 0;
           const unit = Number(it.valorLocacao) || 0;
-          linhas.push({ ...novaLinha(), item: String(linhas.length + 1), descricao: it.equipamento, unidade: it.unidade || '', quantidadeProduzida: String(q), valorUnitario: String(unit), total: String(q * unit) });
+          linhas.push({ ...novaLinha('locacao'), item: String(linhas.length + 1), descricao: it.equipamento, unidade: it.unidade || '', quantidadeProduzida: String(q), valorUnitario: String(round2(unit)), total: String(round2(q * unit)) });
         });
     }
 
@@ -184,6 +289,14 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
     setForm((f: any) => ({ ...f, itens: linhas }));
     toast.success(`${linhas.length} item(ns) puxado(s) da OS.`);
   };
+
+  // Auto-preenche a medição com os dados da OS assim que uma OS é selecionada (form vazio).
+  useEffect(() => {
+    if (!osSelecionadaId || !contexto?.obra) return;
+    const vazio = (form.itens || []).every((l: any) => !String(l.descricao || '').trim());
+    if (vazio) preencherItensDaOS();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [osSelecionadaId, contexto]);
 
   const handleSalvar = async () => {
     if (!osSelecionada || !contexto) return toast.error('Selecione uma OS aprovada.');
@@ -233,16 +346,58 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
   // Abre o popup "Medição aprovada → Solicitar NFe", pré-preenchido com os dados da medição.
   const abrirSolicitacaoNfe = (med: any) => {
     setNfePopup(med);
+    // Item 8: a NF puxa APENAS o valor de SERVIÇO (locação fica de fora).
+    const itensMed = Array.isArray(med.itens) ? med.itens : [];
+    const valorServico = itensMed.length
+      ? round2(itensMed.filter((l: any) => (l.categoria || 'servico') !== 'locacao').reduce((s: number, l: any) => s + parseDecimal(l.total), 0))
+      : Number(med.valorTotal || 0);
     setNfeForm({
       empresa: med.empresa || empresasDisponiveis[0] || 'Linave',
-      os: med.ordemServicoNumero || '',
-      valor: String(med.valorTotal || ''),
+      os: med.ordemServicoNumero || '',   // Item 6: OS puxada automaticamente da medição.
+      valor: String(valorServico),
       dataEmitir: todayStr,
       forma: '',
       tipoNfe: 'NFe Serviço',
       descricao: descricaoOsDe(med),
       observacao: '',
+      docsCliente: [] as any[],           // Item 5: documento(s) do cliente.
+      docsNf: [] as any[],                // Item 7: NF já emitida.
     });
+  };
+
+  // Ao aprovar uma medição com itens de LOCAÇÃO, cria automaticamente uma solicitação de
+  // recibo de locação (aparece na aba "Fazer Recibo de Locação" do Financeiro, pré-preenchida).
+  const criarSolicitacaoRecibo = async (med: any) => {
+    const itensLoc = (Array.isArray(med.itens) ? med.itens : []).filter((l: any) => (l.categoria || 'servico') === 'locacao');
+    if (itensLoc.length === 0) return;
+    const fin = Array.isArray(financeiro) ? financeiro : [];
+    const ano = String(new Date().getFullYear()).slice(-2);
+    const maior = fin.filter((r: any) => r?.tipo === 'reciboLocacao' && String(r.numero || '').endsWith(`/${ano}`))
+      .reduce((m: number, r: any) => Math.max(m, parseInt(String(r.numero || '').split('/')[0], 10) || 0), 0);
+    const rec = {
+      id: `REC-${Date.now()}`,
+      tipo: 'reciboLocacao',
+      status: 'pendente',
+      numero: `${String(maior + 1).padStart(3, '0')}/${ano}`,
+      empresa: med.empresa || '',
+      dataEmissao: new Date().toISOString().slice(0, 10),
+      dataVencimento: new Date().toISOString().slice(0, 10),
+      clienteNome: med.cliente || '',
+      clienteCnpj: med.cnpj || '',
+      itens: itensLoc.map((l: any, i: number) => ({
+        id: `it-${Date.now()}-${i}`,
+        item: String(i + 1).padStart(2, '0'),
+        qtd: String(l.quantidadeProduzida ?? ''),
+        descricao: [l.descricao, med.embarcacao, med.periodo ? `Período: ${med.periodo}` : ''].filter(Boolean).join(' — '),
+        valorUnitario: String(l.valorUnitario ?? ''),
+        total: String(l.total ?? ''),
+      })),
+      obs: '',
+      medicaoId: med.id,
+      medicaoNumero: med.numeroMedicao,
+      createdAt: new Date().toISOString(),
+    };
+    await saveEntity('financeiro', [rec, ...fin]);
   };
 
   const handleStatus = async (medicao: any, status: 'aprovada' | 'recusada') => {
@@ -251,7 +406,11 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
       const atualizada = await atualizarStatusMedicao(medicao.id, status);
       await refreshMedicoes();
       toast.success(status === 'aprovada' ? 'Medição aprovada.' : 'Medição recusada.');
-      if (status === 'aprovada') abrirSolicitacaoNfe({ ...medicao, ...(atualizada || {}) });
+      if (status === 'aprovada') {
+        const med = { ...medicao, ...(atualizada || {}) };
+        abrirSolicitacaoNfe(med);
+        await criarSolicitacaoRecibo(med); // além da NFe, solicita o recibo de locação
+      }
     } catch (error) {
       console.error('Erro ao atualizar status da medição:', error);
       toast.error('Erro ao atualizar o status.');
@@ -284,6 +443,24 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
     toast.success('Dados da medição anterior colados. Ajuste o que precisar.');
   };
 
+  // Anexa arquivos (documento do cliente ou NF já emitida) à solicitação de NFe.
+  const handleUploadNfe = async (files: FileList | null, tipo: 'cliente' | 'nf') => {
+    if (!files || !files.length || !nfePopup) return;
+    const campo = tipo === 'cliente' ? 'docsCliente' : 'docsNf';
+    try {
+      const enviados: any[] = [];
+      for (const file of Array.from(files)) {
+        const doc = await uploadDocumento(file, { vinculoTipo: 'medicao', vinculoId: nfePopup.id, categoria: 'fin_anexo' });
+        enviados.push(doc);
+      }
+      setNfeForm((f: any) => ({ ...f, [campo]: [...(f?.[campo] || []), ...enviados] }));
+      toast.success('Documento anexado.');
+    } catch (error) {
+      console.error('Erro ao anexar documento:', error);
+      toast.error('Falha ao anexar o documento.');
+    }
+  };
+
   // Solicitar NFe: cria a solicitação (nfeReq) que aparece na aba NFe do Financeiro.
   const handleSolicitarNfe = async () => {
     if (!nfePopup || !nfeForm) return;
@@ -296,11 +473,13 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
         empresa: nfeForm.empresa,
         os: nfeForm.os,
         cliente: nfePopup.cliente,
-        valor: Number(nfePopup.valorTotal || 0),
+        valor: parseDecimal(nfeForm.valor || 0),
         forma: nfeForm.forma,
         dataEmitir: nfeForm.dataEmitir,
         tipoNfe: nfeForm.tipoNfe,
-        anexos: [],
+        anexos: [...(nfeForm.docsCliente || []), ...(nfeForm.docsNf || [])].map((d: any) => d?.nome).filter(Boolean),
+        documentosCliente: nfeForm.docsCliente || [],   // Item 5
+        notasFiscaisEmitidas: nfeForm.docsNf || [],      // Item 7
         contrato: nfeForm.os,
         descricao: nfeForm.descricao,
         observacao: nfeForm.observacao,
@@ -421,34 +600,10 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
               <h3 className="text-emerald-300 text-sm font-black uppercase">Tabela de medição (serviços e locação)</h3>
               <div className="flex gap-2">
                 <button onClick={preencherItensDaOS} className="px-3 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-200 text-xs font-black uppercase">Puxar itens da OS</button>
-                <button onClick={addLinha} className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-xs font-black uppercase">+ Linha</button>
               </div>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[920px] text-xs border-collapse">
-                <thead>
-                  <tr className="bg-white/5 text-white/70 uppercase tracking-wider">
-                    {['Item', 'Descrição', 'Unid.', 'Qtd. produzida', 'Valor/unid.', 'Total', 'Obs.', ''].map((h) => (
-                      <th key={h} className="border border-white/10 px-2 py-2 text-left">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {form.itens.map((l: any) => (
-                    <tr key={l.id} className="text-white">
-                      <td className="border border-white/10 p-1"><input value={l.item} onChange={(e) => atualizarLinha(l.id, 'item', e.target.value)} className="w-12 bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
-                      <td className="border border-white/10 p-1"><input value={l.descricao} onChange={(e) => atualizarLinha(l.id, 'descricao', e.target.value)} className="w-full min-w-[200px] bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
-                      <td className="border border-white/10 p-1"><input value={l.unidade} onChange={(e) => atualizarLinha(l.id, 'unidade', e.target.value)} className="w-16 bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
-                      <td className="border border-white/10 p-1"><input value={l.quantidadeProduzida} onChange={(e) => atualizarLinha(l.id, 'quantidadeProduzida', e.target.value)} className="w-24 bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
-                      <td className="border border-white/10 p-1"><input value={l.valorUnitario} onChange={(e) => atualizarLinha(l.id, 'valorUnitario', e.target.value)} className="w-24 bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
-                      <td className="border border-white/10 p-1"><input value={l.total ? money(l.total) : ''} readOnly className="w-24 bg-[#101f3d] border border-white/10 rounded px-2 py-1 text-emerald-300 font-black" /></td>
-                      <td className="border border-white/10 p-1"><input value={l.observacoes} onChange={(e) => atualizarLinha(l.id, 'observacoes', e.target.value)} className="w-full min-w-[120px] bg-[#101f3d] border border-white/10 rounded px-2 py-1" /></td>
-                      <td className="border border-white/10 p-1 text-center"><button onClick={() => removerLinha(l.id)} className="px-2 py-1 rounded bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300"><X size={12} /></button></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            {renderTabelaMedicao('servico', 'Serviços', true)}
+            {renderTabelaMedicao('locacao', 'Locação', false)}
             <div className="flex items-center justify-between pt-2">
               <p className="text-white/50 text-xs uppercase font-black tracking-widest">Total da medição: <span className="text-emerald-300 text-lg">R$ {money(totalMedicao)}</span></p>
               <button onClick={handleSalvar} disabled={salvando} className="px-6 py-3 rounded-lg bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-white font-black uppercase text-xs tracking-widest disabled:opacity-50 flex items-center gap-2">
@@ -542,7 +697,7 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
                 <div className="min-w-0">
                   <p className="text-white font-black truncate">{o.ordemServicoNumero || o.id}</p>
                   <p className="text-white/40 text-xs truncate">{o.cliente || '—'}{o.projeto ? ` · ${o.projeto}` : ''}</p>
-                  <p className="text-red-300/70 text-[11px] mt-0.5">Fechada{o.dataFechamento ? ` em ${new Date(o.dataFechamento).toLocaleDateString('pt-BR')}` : ''}</p>
+                  <p className="text-red-300/70 text-[11px] mt-0.5">Fechada{o.dataFechamento ? ` em ${formatDateBR(o.dataFechamento)}` : ''}</p>
                 </div>
                 <button
                   onClick={() => abrirBloqueio(o, 'reabrir')}
@@ -624,8 +779,8 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
                     {empresasDisponiveis.map((e: string) => <option key={e} value={e}>{e}</option>)}
                   </select>
                 </NfeField>
-                <NfeField label="OS emitida">
-                  <input value={nfeForm.os} onChange={(e) => setNfeForm({ ...nfeForm, os: e.target.value })} className={nfeInputCls} />
+                <NfeField label="OS emitida (puxada da medição)">
+                  <input value={nfeForm.os} readOnly className={`${nfeInputCls} opacity-70 cursor-not-allowed`} title="Puxada automaticamente da medição" />
                 </NfeField>
                 <NfeField label="Valor NFe">
                   <input type="number" step="0.01" value={nfeForm.valor} onChange={(e) => setNfeForm({ ...nfeForm, valor: e.target.value })} className={nfeInputCls} />
@@ -650,14 +805,31 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
                 <Resumo label="OS" value={nfePopup.ordemServicoNumero} />
                 <Resumo label="Empresa" value={nfeForm.empresa} />
                 <Resumo label="Cliente" value={nfePopup.cliente} />
-                <Resumo label="Valor" value={`R$ ${money(nfePopup.valorTotal)}`} accent />
+                <Resumo label="Valor (só serviço)" value={`R$ ${money(nfeForm.valor)}`} accent />
               </div>
               {nfeForm.descricao && (
                 <p className="text-white/60 text-sm"><span className="text-white/30 uppercase text-[10px] font-black tracking-widest">Descrição: </span>{nfeForm.descricao}</p>
               )}
 
-              <div className="border border-dashed border-white/15 rounded-lg p-4 text-center text-white/30 text-xs flex items-center justify-center gap-2">
-                <FileText size={14} /> Anexar medição, relatório ou imagem (modo teste — sem upload real)
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <NfeField label="Documento do cliente (fiscal)">
+                  <label className="flex items-center gap-2 border border-dashed border-white/15 rounded-lg p-3 text-white/50 text-xs cursor-pointer hover:border-emerald-400/40">
+                    <FileText size={14} /> Anexar documento(s)
+                    <input type="file" multiple className="hidden" onChange={(e) => handleUploadNfe(e.target.files, 'cliente')} />
+                  </label>
+                  {(nfeForm.docsCliente || []).map((d: any, i: number) => (
+                    <p key={d.id || i} className="text-emerald-300/80 text-[11px] truncate mt-1">✓ {d.nome}</p>
+                  ))}
+                </NfeField>
+                <NfeField label="NF já emitida (opcional)">
+                  <label className="flex items-center gap-2 border border-dashed border-white/15 rounded-lg p-3 text-white/50 text-xs cursor-pointer hover:border-amber-400/40">
+                    <FileText size={14} /> Anexar NF emitida
+                    <input type="file" multiple className="hidden" onChange={(e) => handleUploadNfe(e.target.files, 'nf')} />
+                  </label>
+                  {(nfeForm.docsNf || []).map((d: any, i: number) => (
+                    <p key={d.id || i} className="text-amber-300/80 text-[11px] truncate mt-1">✓ {d.nome}</p>
+                  ))}
+                </NfeField>
               </div>
 
               <NfeField label="Observação">

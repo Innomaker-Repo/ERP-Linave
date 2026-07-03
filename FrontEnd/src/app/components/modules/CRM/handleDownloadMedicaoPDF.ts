@@ -250,10 +250,9 @@ export const handleDownloadMedicaoPDF = async (
 
     // --- NOMES DO INPUT (ACIMA DA LINHA) ---
     doc.setFontSize(9);
-    const nomeRepCliente = documentoMediacaoForm.representanteCliente || '';
     const nomeRepPrestadora = documentoMediacaoForm.representanteLinave || documentoMediacaoForm.representantePrestadora || '';
 
-    doc.text(nomeRepCliente, x + sigWidth / 2, lineY - 2, { align: 'center' });
+    // Assinatura do CLIENTE vem em branco de propósito (é assinada fisicamente).
     doc.text(nomeRepPrestadora, x + sigWidth + spacing + sigWidth / 2, lineY - 2, { align: 'center' });
 
     // --- DESENHO DAS LINHAS ---

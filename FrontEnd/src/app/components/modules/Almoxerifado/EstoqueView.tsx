@@ -289,7 +289,7 @@ const STOCK_TABLES: StockTable[] = [
     'EQUIPAMENTOS ELETRICOS',
     [
       { key: 'item', label: 'Item' }, { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
-      { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'patrimonio', label: 'Patrimônio' }, { key: 'dataEntradaPlanilha', label: 'Data(ENTRADA NA PLANILHA)', align: 'center' },
+      { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'peso', label: 'Peso', align: 'center' }, { key: 'patrimonio', label: 'Patrimônio' }, { key: 'dataEntradaPlanilha', label: 'Data(ENTRADA NA PLANILHA)', align: 'center' },
       { key: 'modelo', label: 'Modelo' }, { key: 'numeroSerial', label: 'N° Serial' }, { key: 'tag', label: 'TAG' },
       { key: 'marca', label: 'Marca' }, { key: 'dataCalibracaoAfericao', label: 'Data da Calibração/Aferição', align: 'center' }, { key: 'validadeCalibracaoAfericao', label: 'Validade da Calibração/Aferição', align: 'center' },
       { key: 'status', label: 'STATUS', align: 'center' }, { key: 'observacao', label: 'Observação' }, { key: 'localizacao', label: 'Local' },
@@ -305,7 +305,7 @@ const STOCK_TABLES: StockTable[] = [
     'EXTENSÃO-CABOS',
     [
       { key: 'item', label: 'Item' }, { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
-      { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'patrimonio', label: 'Patrimônio' }, { key: 'dataEntradaPlanilha', label: 'Data(ENTRADA NA PLANILHA)', align: 'center' },
+      { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'peso', label: 'Peso', align: 'center' }, { key: 'patrimonio', label: 'Patrimônio' }, { key: 'dataEntradaPlanilha', label: 'Data(ENTRADA NA PLANILHA)', align: 'center' },
       { key: 'metros', label: 'METROS', align: 'center' }, { key: 'bitola', label: '(BITOLA)', align: 'center' }, { key: 'tag', label: 'TAG' },
       { key: 'marca', label: 'Marca' }, { key: 'dataCalibracaoAfericao', label: 'Data da Calibração/Aferição', align: 'center' }, { key: 'validadeCalibracaoAfericao', label: 'Validade da Calibração/Aferição', align: 'center' },
       { key: 'status', label: 'STATUS', align: 'center' }, { key: 'observacao', label: 'Observação' }, { key: 'localizacao', label: 'Local' },
@@ -321,7 +321,7 @@ const STOCK_TABLES: StockTable[] = [
     'BOMBA HIDROJATO',
     [
       { key: 'item', label: 'Item' }, { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
-      { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'patrimonioIdentificacao', label: 'Patrimônio/Identificação' }, { key: 'dataEntradaPlanilha', label: 'Data(ENTRADA NA PLANILHA)', align: 'center' },
+      { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'peso', label: 'Peso', align: 'center' }, { key: 'patrimonioIdentificacao', label: 'Patrimônio/Identificação' }, { key: 'dataEntradaPlanilha', label: 'Data(ENTRADA NA PLANILHA)', align: 'center' },
       { key: 'identificacao', label: 'IDENTIFICAÇÃO' }, { key: 'certificacao', label: 'CERTIFICAÇÃO' }, { key: 'marca', label: 'Marca' },
       { key: 'dataCalibracaoAfericao', label: 'Data da Calibração/Aferição', align: 'center' }, { key: 'validadeCalibracaoAfericao', label: 'Validade da Calibração/Aferição', align: 'center' }, { key: 'status', label: 'STATUS', align: 'center' },
       { key: 'observacao', label: 'Observação' }, { key: 'localizacao', label: 'Local' }, { key: 'serviceOS', label: 'Serviço (OS)' }, { key: 'unidade', label: 'Unidade', align: 'center' }
@@ -335,7 +335,7 @@ const STOCK_TABLES: StockTable[] = [
     'INSTRUMENTOS',
     [
       { key: 'item', label: 'Item' }, { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
-      { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'patrimonio', label: 'Patrimônio' }, { key: 'dataEntradaPlanilha', label: 'Data(ENTRADA NA PLANILHA)', align: 'center' },
+      { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'peso', label: 'Peso', align: 'center' }, { key: 'patrimonio', label: 'Patrimônio' }, { key: 'dataEntradaPlanilha', label: 'Data(ENTRADA NA PLANILHA)', align: 'center' },
       { key: 'identificacao', label: 'INDENTIFICAÇÃO' }, { key: 'certificacao', label: 'CERTIFICAÇÃO' }, { key: 'marca', label: 'Marca' },
       { key: 'dataCalibracaoAfericao', label: 'Data da Calibração/Aferição', align: 'center' }, { key: 'validadeCalibracaoAfericao', label: 'Validade da Calibração/Aferição', align: 'center' }, { key: 'status', label: 'STATUS', align: 'center' },
       { key: 'observacao', label: 'Observação' }, { key: 'localizacao', label: 'Local' }, { key: 'serviceOS', label: 'Serviço (OS)' }, { key: 'unidade', label: 'Unidade', align: 'center' }
@@ -349,7 +349,7 @@ const STOCK_TABLES: StockTable[] = [
     'FERRAMENTAS',
     [
       { key: 'item', label: 'Item' }, { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
-      { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'patrimonio', label: 'Patrimônio' }, { key: 'dataEntradaPlanilha', label: 'Data(ENTRADA NA PLANILHA)', align: 'center' },
+      { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'peso', label: 'Peso', align: 'center' }, { key: 'patrimonio', label: 'Patrimônio' }, { key: 'dataEntradaPlanilha', label: 'Data(ENTRADA NA PLANILHA)', align: 'center' },
       { key: 'modelo', label: 'Modelo' }, { key: 'numeroSerial', label: 'N° Serial' }, { key: 'marca', label: 'Marca' },
       { key: 'status', label: 'STATUS', align: 'center' }, { key: 'observacao', label: 'Observação' }, { key: 'localizacao', label: 'Local' },
       { key: 'serviceOS', label: 'Serviço (OS)' }, { key: 'unidade', label: 'Unidade', align: 'center' }
@@ -363,7 +363,7 @@ const STOCK_TABLES: StockTable[] = [
     'TALHAS',
     [
       { key: 'item', label: 'Item' }, { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
-      { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'patrimonio', label: 'Patrimônio' }, { key: 'dataEntradaPlanilha', label: 'Data(ENTRADA NA PLANILHA)', align: 'center' },
+      { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'peso', label: 'Peso', align: 'center' }, { key: 'patrimonio', label: 'Patrimônio' }, { key: 'dataEntradaPlanilha', label: 'Data(ENTRADA NA PLANILHA)', align: 'center' },
       { key: 'modelo', label: 'Modelo' }, { key: 'numeroSerial', label: 'N° Serial' }, { key: 'marca', label: 'Marca' },
       { key: 'dataCalibracaoAfericao', label: 'Data da Calibração/Aferição', align: 'center' }, { key: 'validadeCalibracaoAfericao', label: 'Validade da Calibração/Aferição', align: 'center' },
       { key: 'status', label: 'STATUS', align: 'center' }, { key: 'observacao', label: 'Observação' }, { key: 'localizacao', label: 'Local' },

@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { formatDateBR } from '../../../utils/formatDate';
 
 // Logo da Linave servido a partir de /public.
 const LINAVE_LOGO_URL = '/image2.jpg';
@@ -50,9 +51,7 @@ export const loadRomaneioLogoBase64 = async (url = LINAVE_LOGO_URL): Promise<str
 
 const formatarData = (value?: string) => {
   if (!value) return new Date().toLocaleDateString('pt-BR');
-  const date = new Date(value);
-  if (!Number.isNaN(date.getTime())) return date.toLocaleDateString('pt-BR');
-  return value;
+  return formatDateBR(value) || value;
 };
 
 const getLogoFormat = (logoBase64?: string): 'PNG' | 'JPEG' => {

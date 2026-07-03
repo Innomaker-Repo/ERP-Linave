@@ -491,7 +491,7 @@ export const handleDownloadOSPDF = ({
   doc.setFontSize(7);
   doc.text('Data Emissão:', margin + 132, y + 5);
   doc.setFont('Helvetica', 'normal');
-  doc.text(osPrincipal.dataEmissao || new Date().toLocaleDateString('pt-BR'), margin + 155, y + 5);
+  doc.text(formatDateBR(osPrincipal.dataEmissao) || new Date().toLocaleDateString('pt-BR'), margin + 155, y + 5);
 
   doc.setFont('Helvetica', 'bold');
   doc.text('CC.:', margin + 132, y + 10);
@@ -522,11 +522,11 @@ export const handleDownloadOSPDF = ({
   const projetoTexto = `${obra?.nome || ''}${idProjetoForPrint ? ' • ' + idProjetoForPrint : ''}`;
 
   printDado('CLIENTE:', cliente?.razaoSocial || '', margin + 2, y + 3.5);
-  printDado('Início Previsto:', dataInicio ? new Date(dataInicio).toLocaleDateString('pt-BR') : '', margin + 102, y + 3.5);
+  printDado('Início Previsto:', dataInicio ? formatDateBR(dataInicio) : '', margin + 102, y + 3.5);
   y += rowH;
 
   printDado('EMBARCAÇÃO:', embarcacaoOS || localOS, margin + 2, y + 3.5);
-  printDado('Térm. Previsto:', dataTermino ? new Date(dataTermino).toLocaleDateString('pt-BR') : '', margin + 102, y + 3.5);
+  printDado('Térm. Previsto:', dataTermino ? formatDateBR(dataTermino) : '', margin + 102, y + 3.5);
   y += rowH;
 
   printDado('PROJETO:', projetoTexto, margin + 2, y + 3.5);

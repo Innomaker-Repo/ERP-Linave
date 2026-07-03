@@ -336,6 +336,8 @@ def criar_orcamento(request):
                         observacao=str(item.get('observacao') or ''),
                         valor_indenizacao=_num(item.get('valor_indenizacao') if item.get('valor_indenizacao') is not None else item.get('valorIndenizacao')),
                         valor_locacao=_num(item.get('valor_locacao') if item.get('valor_locacao') is not None else item.get('valorLocacao')),
+                        margem=_num(item.get('margem')),
+                        oh=_num(item.get('oh')),
                     )
             except Negocio.DoesNotExist:
                 pass

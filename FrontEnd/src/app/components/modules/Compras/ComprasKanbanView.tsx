@@ -198,7 +198,7 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
 
   // Apenas o gerente comercial / diretor financeiro (mockados) enxergam e operam a etapa
   // de Seleção do Gerente. Os demais perfis só veem as etapas seguintes.
-  const podeSelecionarGerente = podeSelecionarFornecedorGerente(userSession?.email);
+  const podeSelecionarGerente = podeSelecionarFornecedorGerente(userSession?.email, userSession?.role);
   const visibleBoardColumns = useMemo(
     () => (podeSelecionarGerente ? BOARD_COLUMNS : BOARD_COLUMNS.filter((column) => column.id !== 'SELECAO_GERENTE')),
     [podeSelecionarGerente]

@@ -34,6 +34,7 @@ type OrcamentoPayload = {
     impostos: number;
     impostos_locacao?: number;
     qnt: number;
+    atividades_macro?: any[];
   };
   mao_de_obra: any[];
   materiais: any[];
@@ -217,6 +218,7 @@ const mapTerceirizadoItem = (item: any) => ({
               unidade: String(it.unidade || '').trim(),
               valorUnitario: parseDecimal(it.valorUnitario || 0),
               dias: parseDecimal(it.dias || 0),
+              categoria: it.categoria === 'locacao' ? 'locacao' : 'servico',
             }))
         : [],
     },
@@ -245,6 +247,8 @@ const mapTerceirizadoItem = (item: any) => ({
             observacao: String(it.observacao || '').trim(),
             valor_indenizacao: parseDecimal(it.valorIndenizacao || 0),
             valor_locacao: parseDecimal(it.valorLocacao || 0),
+            margem: parseDecimal(it.margem || 0),
+            oh: parseDecimal(it.oh || 0),
           }))
       : [],
     observacoes: String(orcamentoData.observacoes || '').trim()

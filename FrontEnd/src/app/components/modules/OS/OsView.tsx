@@ -116,6 +116,7 @@ interface OsFormData {
   supervisorEncarregado: string;
   descricaoGeralServico: string;
   aSerIncluido: {
+    extras?: Array<{ id: string; label: string }>; // itens "a incluir" customizáveis
     certificadoGas: boolean;
     ventilacao: boolean;
     limpezaAntes: boolean;
@@ -143,6 +144,7 @@ interface OsFormData {
     eletrica: number;
     cq: number;
     sms: number;
+    extras?: Array<{ id: string; nome: string; hora: number }>; // H/H customizáveis
   };
   statusOs: 'rascunho' | 'emproducao' | 'concluida';
   tipoDocumento?: 'consolidada';
@@ -158,6 +160,7 @@ interface OSViewProps {
 }
 
 const A_SER_INCLUIDO_DEFAULT: OsFormData['aSerIncluido'] = {
+  extras: [],
   certificadoGas: false,
   ventilacao: false,
   limpezaAntes: false,
@@ -197,10 +200,11 @@ const A_SER_INCLUIDO_OPTIONS = [
   { key: 'vigiaFogo', label: 'Vigia de fogo' }
 ] as const;
 
-const listarItensASerIncluido = (aSerIncluido: OsFormData['aSerIncluido']) =>
+const listarItensASerIncluido = (aSerIncluido: OsFormData['aSerIncluido']): string[] =>
   A_SER_INCLUIDO_OPTIONS
     .filter((item) => aSerIncluido[item.key])
-    .map((item) => item.label);
+    .map((item) => item.label as string)
+    .concat((aSerIncluido.extras || []).map((e) => String(e.label || '').trim()).filter(Boolean));
 
 const criarInitialOsData = (): OsFormData => ({
   id: '',
@@ -228,7 +232,8 @@ const criarInitialOsData = (): OsFormData => ({
     pintura: 0,
     eletrica: 0,
     cq: 0,
-    sms: 0
+    sms: 0,
+    extras: []
   },
   statusOs: 'rascunho',
   tipoDocumento: 'consolidada',
@@ -718,6 +723,7 @@ Responsável Técnico: ${resumo?.negocio?.responsavelTecnico || '-'}
 Serviços:
 ${(resumo?.negocio?.servicos || []).map((servico: any) => `- ${servico.ordem}. ${servico.tipo || 'Serviço'} | ${servico.localExecucao || '-'} | ${servico.descricao || '-'}`).join('\n') || '-'}
 
+<<<<<<< HEAD
 --------------------------------------------------------------------------------
 ORÇAMENTO
 --------------------------------------------------------------------------------
@@ -737,24 +743,9 @@ ${(resumo?.orcamento?.maoDeObra || []).map((itemMao: any) => `- ${itemMao.funcao
 Materiais:
 ${(resumo?.orcamento?.materiais || []).map((mat: any) => `- ${mat.descricao || '-'} | ${mat.quantidade || '-'} ${mat.unidade || ''}`).join('\n') || '-'}
 
-Terceirizados:
 ${(resumo?.orcamento?.terceirizados || []).map((ter: any) => `- ${ter.descricao || '-'} | ${ter.quantidade || '-'} ${ter.unidade || ''}`).join('\n') || '-'}
-
-Atividades:
-${(resumo?.orcamento?.atividades || []).map((atividade: any) => `- ${atividade.atividade || '-'} | Dias: ${atividade.dias || '-'}`).join('\n') || '-'}
-
-Observações do Orçamento:
-${resumo?.orcamento?.observacoes || '-'}
-
---------------------------------------------------------------------------------
-PROPOSTA COMERCIAL
---------------------------------------------------------------------------------
-Número: ${resumo?.proposta?.numeroProposta || '-'}
-Versão: ${resumo?.proposta?.versao || '-'}
-Status: ${resumo?.proposta?.status || '-'}
-Assunto: ${resumo?.proposta?.assunto || '-'}
-
-Item A - Escopo Básico Consolidado:
+=======
+      const chk = (val: boolean) => val ? '[ X ]' : '[   ]';
 ${resumo?.proposta?.escopoA || '-'}
 
 Escopo Básico (planilha por serviço):
@@ -1031,6 +1022,144 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                     onChange={(e) => setFormData({ ...formData, descricaoGeralServico: e.target.value })}
                   />
                 </div>
+<<<<<<< HEAD
+=======
+
+                <div className="bg-[#0b1220] border border-white/10 rounded-xl p-4 space-y-3">
+                  <h4 className="text-white font-black text-sm uppercase">MÃO OBRA ( H/H )</h4>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className={labelClass}>Estrutura</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        className={inputClass}
+                        value={formData.maoObra.estrutura}
+                        onChange={(e) => setFormData({ ...formData, maoObra: { ...formData.maoObra, estrutura: Number(e.target.value || 0) } })}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className={labelClass}>Tubulação</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        className={inputClass}
+                        value={formData.maoObra.tubulacao}
+                        onChange={(e) => setFormData({ ...formData, maoObra: { ...formData.maoObra, tubulacao: Number(e.target.value || 0) } })}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className={labelClass}>Andaimes</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        className={inputClass}
+                        value={formData.maoObra.andaimes}
+                        onChange={(e) => setFormData({ ...formData, maoObra: { ...formData.maoObra, andaimes: Number(e.target.value || 0) } })}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className={labelClass}>Mecânica</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        className={inputClass}
+                        value={formData.maoObra.mecanica}
+                        onChange={(e) => setFormData({ ...formData, maoObra: { ...formData.maoObra, mecanica: Number(e.target.value || 0) } })}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className={labelClass}>Pintura</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        className={inputClass}
+                        value={formData.maoObra.pintura}
+                        onChange={(e) => setFormData({ ...formData, maoObra: { ...formData.maoObra, pintura: Number(e.target.value || 0) } })}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className={labelClass}>Elétrica</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        className={inputClass}
+                        value={formData.maoObra.eletrica}
+                        onChange={(e) => setFormData({ ...formData, maoObra: { ...formData.maoObra, eletrica: Number(e.target.value || 0) } })}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className={labelClass}>C.Q</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        className={inputClass}
+                        value={formData.maoObra.cq}
+                        onChange={(e) => setFormData({ ...formData, maoObra: { ...formData.maoObra, cq: Number(e.target.value || 0) } })}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className={labelClass}>SMS</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        className={inputClass}
+                        value={formData.maoObra.sms}
+                        onChange={(e) => setFormData({ ...formData, maoObra: { ...formData.maoObra, sms: Number(e.target.value || 0) } })}
+                      />
+                    </div>
+                  </div>
+
+                  {/* H/H customizáveis — permite incluir outras funções/categorias */}
+                  <div className="space-y-2 pt-2">
+                    {(formData.maoObra.extras || []).map((ex) => (
+                      <div key={ex.id} className="flex gap-2 items-center">
+                        <input type="text" className={inputClass} placeholder="Função / categoria (H/H)" value={ex.nome}
+                          onChange={(e) => setFormData({ ...formData, maoObra: { ...formData.maoObra, extras: (formData.maoObra.extras || []).map((x) => x.id === ex.id ? { ...x, nome: e.target.value } : x) } })} />
+                        <input type="number" min="0" step="0.5" className={`${inputClass} max-w-[120px]`} placeholder="H/H" value={ex.hora}
+                          onChange={(e) => setFormData({ ...formData, maoObra: { ...formData.maoObra, extras: (formData.maoObra.extras || []).map((x) => x.id === ex.id ? { ...x, hora: Number(e.target.value || 0) } : x) } })} />
+                        <button type="button" onClick={() => setFormData({ ...formData, maoObra: { ...formData.maoObra, extras: (formData.maoObra.extras || []).filter((x) => x.id !== ex.id) } })} className="text-red-300 p-2 hover:bg-red-500/10 rounded"><X size={14} /></button>
+                      </div>
+                    ))}
+                    <button type="button" onClick={() => setFormData({ ...formData, maoObra: { ...formData.maoObra, extras: [...(formData.maoObra.extras || []), { id: `hh-${Date.now()}`, nome: '', hora: 0 }] } })} className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg font-black text-[11px] uppercase">
+                      <Plus size={12} className="inline mr-1" /> Adicionar H/H
+                    </button>
+                  </div>
+
+                  <div className="pt-4">
+                    <div className="bg-white/5 p-3 rounded-lg inline-block">
+                      <div className="text-white/60 text-xs">HH TOTAL</div>
+                      <div className="text-white font-black text-xl">{(
+                        Number(formData.maoObra.estrutura || 0) +
+                        Number(formData.maoObra.tubulacao || 0) +
+                        Number(formData.maoObra.andaimes || 0) +
+                        Number(formData.maoObra.mecanica || 0) +
+                        Number(formData.maoObra.pintura || 0) +
+                        Number(formData.maoObra.eletrica || 0) +
+                        Number(formData.maoObra.cq || 0) +
+                        Number(formData.maoObra.sms || 0) +
+                        (formData.maoObra.extras || []).reduce((a, x) => a + Number(x.hora || 0), 0)
+                      ).toString()}</div>
+                    </div>
+                  </div>
+                </div>
+>>>>>>> 4a524a6 (feat: ultimas alterações)
               </div>
 
               <div className="bg-gradient-to-r from-cyan-500/10 to-blue-500/10 rounded-2xl border border-cyan-500/20 p-6 space-y-4">
@@ -1053,6 +1182,20 @@ Geração: ${new Date().toLocaleString('pt-BR')}
                       <span className="text-white/80 text-xs font-bold">{item.label}</span>
                     </label>
                   ))}
+                </div>
+
+                {/* Itens "a incluir" customizáveis — permite adicionar outros */}
+                <div className="space-y-2">
+                  {(formData.aSerIncluido.extras || []).map((ex) => (
+                    <div key={ex.id} className="flex gap-2 items-center">
+                      <input type="text" className="flex-1 bg-[#0b1220] border border-cyan-400/30 rounded-lg px-3 py-2 text-white text-xs outline-none" placeholder="Novo item a incluir" value={ex.label}
+                        onChange={(e) => setFormData({ ...formData, aSerIncluido: { ...formData.aSerIncluido, extras: (formData.aSerIncluido.extras || []).map((x) => x.id === ex.id ? { ...x, label: e.target.value } : x) } })} />
+                      <button type="button" onClick={() => setFormData({ ...formData, aSerIncluido: { ...formData.aSerIncluido, extras: (formData.aSerIncluido.extras || []).filter((x) => x.id !== ex.id) } })} className="text-red-300 p-2 hover:bg-red-500/10 rounded"><X size={14} /></button>
+                    </div>
+                  ))}
+                  <button type="button" onClick={() => setFormData({ ...formData, aSerIncluido: { ...formData.aSerIncluido, extras: [...(formData.aSerIncluido.extras || []), { id: `inc-${Date.now()}`, label: '' }] } })} className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg font-black text-[11px] uppercase">
+                    <Plus size={12} className="inline mr-1" /> Adicionar item
+                  </button>
                 </div>
               </div>
 

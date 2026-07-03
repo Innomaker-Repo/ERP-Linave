@@ -92,6 +92,8 @@ export function Sidebar({ activeSection, setActiveSection, onClose }: SidebarPro
         // Gestão
         { id: 'finBancos', label: 'Bancos', icon: Landmark },
         { id: 'finHistorico', label: 'Histórico', icon: History },
+        { id: 'finCustoOs', label: 'Custo por OS', icon: ClipboardList },
+        { id: 'finReciboLocacao', label: 'Fazer Recibo de Locação', icon: ScrollText },
       ]
     },
     {

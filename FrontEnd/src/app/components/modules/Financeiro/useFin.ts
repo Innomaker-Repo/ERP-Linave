@@ -82,13 +82,10 @@ export function useFin() {
       financeiro.filter((r) => r.tipo === 'nfe').map((r) => r.sourceId).filter(Boolean),
     );
 
-    // Uma obra também conta como finalizada quando tem medição APROVADA (novo fluxo).
-    const medicoesCtx = Array.isArray(ctx.medicoes) ? ctx.medicoes : [];
-    const temMedicaoAprovada = (obra: any) => medicoesCtx.some(
-      (m: any) => String(m.negocioBackendId) === String(obra?.negocioBackendId) && m.status === 'aprovada',
-    );
-
-    const derived: NfeSolicitacao[] = obras.filter((o: any) => obraFinalizada(o) || temMedicaoAprovada(o)).map((obra: any) => {
+    // A medição aprovada NÃO gera mais solicitação de NFe automaticamente — a solicitação é
+    // feita manualmente no popup da Medição (evita a duplicidade "automática + manual").
+    // Aqui só deriva o fluxo antigo de obra finalizada/arquivada (sem medição própria).
+    const derived: NfeSolicitacao[] = obras.filter((o: any) => obraFinalizada(o)).map((obra: any) => {
       const osLinked = osList.find((o: any) => String(o?.obraId) === String(obra?.id));
       const osVm = osLinked ? mapOsToFinanceiro(osLinked, obra) : null;
       const id = `SNF-${obra?.id}`;

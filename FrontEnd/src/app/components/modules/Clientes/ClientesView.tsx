@@ -4,6 +4,7 @@ import { useErp } from '../../../context/ErpContext';
 import { getClientes, createCliente, updateCliente, deleteCliente } from '../../../../services/clientes';
 import { toast } from 'sonner';
 import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
+import { formatDateBR } from '../../../utils/formatDate';
 import { NegocioDetalheModal } from '../Comercial/FinalizadosComercialView';
 
   export function ClientesView({ searchQuery }: { searchQuery: string }) {

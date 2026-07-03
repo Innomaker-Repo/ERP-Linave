@@ -277,33 +277,45 @@ export const handleDownloadPropostaPDF = (
     if (propostaForm.preco || itensPreco.length > 0) {
       writeText('D - Preco:', 11, true, 'left', 0, 4);
       if (itensPreco.length > 0) {
-        // Tabela D — descrição macro das atividades orçadas (Item, Descrição, Quant., Unit., Vl. Unit., Dias, Valor total).
-        ensureSpace(24);
+        // Tabela D dividida em Serviço e Locação (só sai a que tem itens).
+        const grupos = [
+          { titulo: 'Serviços', itens: itensPreco.filter((it: any) => (it.categoria || 'servico') !== 'locacao') },
+          { titulo: 'Locação', itens: itensPreco.filter((it: any) => (it.categoria || 'servico') === 'locacao') },
+        ].filter((g) => g.itens.length > 0);
         const head = [['Item', 'Descrição', 'Quant.', 'Unit.', 'Vl. Unit. R$', 'Dias', 'Valor total R$']];
-        const body = itensPreco.map((it: any, idx: number) => [
-          String(idx + 1),
-          it.descricao || it.nome || '',
-          String(it.quantidade ?? ''),
-          it.unidade || '',
-          (Number(it.valorUnitario ?? it.precoUnitario) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-          String(it.dias ?? ''),
-          (Number(it.total) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-        ]);
-        const totalGeral = itensPreco.reduce((s: number, it: any) => s + (Number(it.total) || 0), 0);
-        body.push(['', 'Valor total do serviço', '', '', '', '', totalGeral.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })]);
-        autoTable(doc, {
-          startY: y,
-          head,
-          body,
-          theme: 'grid',
-          margin: { left: margin + 5, right: margin },
-          headStyles: { fillColor: [230, 230, 230], textColor: [0, 0, 0], fontStyle: 'bold', fontSize: 9 },
-          styles: { fontSize: 9, cellPadding: 2, textColor: [0, 0, 0] },
-          columnStyles: { 0: { cellWidth: 11 }, 2: { cellWidth: 16 }, 3: { cellWidth: 16 }, 4: { cellWidth: 26 }, 5: { cellWidth: 13 }, 6: { cellWidth: 28 } },
+        grupos.forEach((grupo) => {
+          ensureSpace(24);
+          if (grupos.length > 1) writeText(grupo.titulo, 10, true, 'left', 5, 2);
+          const body = grupo.itens.map((it: any, idx: number) => [
+            String(idx + 1),
+            it.descricao || it.nome || '',
+            String(it.quantidade ?? ''),
+            it.unidade || '',
+            (Number(it.valorUnitario ?? it.precoUnitario) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            String(it.dias ?? ''),
+            (Number(it.total) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+          ]);
+          const subtotal = grupo.itens.reduce((s: number, it: any) => s + (Number(it.total) || 0), 0);
+          body.push(['', `Subtotal ${grupo.titulo}`, '', '', '', '', subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })]);
+          autoTable(doc, {
+            startY: y,
+            head,
+            body,
+            theme: 'grid',
+            margin: { left: margin + 5, right: margin },
+            headStyles: { fillColor: [230, 230, 230], textColor: [0, 0, 0], fontStyle: 'bold', fontSize: 9 },
+            styles: { fontSize: 9, cellPadding: 2, textColor: [0, 0, 0] },
+            columnStyles: { 0: { cellWidth: 11 }, 2: { cellWidth: 16 }, 3: { cellWidth: 16 }, 4: { cellWidth: 26 }, 5: { cellWidth: 13 }, 6: { cellWidth: 28 } },
+          });
+          y = (doc as any).lastAutoTable.finalY + 4;
         });
-        y = (doc as any).lastAutoTable.finalY + 4;
+        // Valor final da proposta — em NEGRITO.
+        const totalGeral = itensPreco.reduce((s: number, it: any) => s + (Number(it.total) || 0), 0);
+        ensureSpace(10);
+        writeText(`VALOR TOTAL DA PROPOSTA: R$ ${totalGeral.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 12, true, 'left', 5, 6);
       } else if (propostaForm.preco) {
-        writeText(propostaForm.preco, 11, false, 'left', 5, 4);
+        // Sem tabela: mostra o preço final em negrito.
+        writeText(propostaForm.preco, 12, true, 'left', 5, 4);
       }
       if (propostaForm.precoTextoLivre) {
         writeText(propostaForm.precoTextoLivre, 11, false, 'left', 5, 8);
