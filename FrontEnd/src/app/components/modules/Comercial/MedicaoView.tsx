@@ -7,9 +7,10 @@ import { criarMedicao, atualizarStatusMedicao } from '../../../../services/medic
 import { uploadDocumento } from '../../../../services/documentosService';
 import { atualizarOrdemServico } from '../../../../services/comercialService';
 import { handleDownloadMedicaoPDF } from '../CRM/handleDownloadMedicaoPDF';
-import { genFinId, todayStr, FORMAS_PAGAMENTO } from '../Financeiro/finData';
+import { genFinId, todayStr, FORMAS_PAGAMENTO, construirReciboDeMedicao } from '../Financeiro/finData';
 import { temServico, temLocacao } from '../../../utils/modalidade';
 import { formatDateBR } from '../../../utils/formatDate';
+import { boldOS } from '../../../utils/osHighlight';
 
 const TIPOS_NFE = ['NFe Serviço', 'NFe Alocado', 'Nota de débito', 'Outro'];
 
@@ -232,7 +233,7 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
             </thead>
             <tbody>
               {linhas.length === 0 && (
-                <tr><td colSpan={7 + (comDias ? 1 : 0) + cols.length} className="border border-white/10 px-2 py-3 text-white/40 text-center">Sem itens. Use "Puxar itens da OS" ou "+ Linha".</td></tr>
+                <tr><td colSpan={7 + (comDias ? 1 : 0) + cols.length} className="border border-white/10 px-2 py-3 text-white/40 text-center">{boldOS('Sem itens. Use "Puxar itens da OS" ou "+ Linha".')}</td></tr>
               )}
               {linhas.map((l: any) => (
                 <tr key={l.id} className="text-white">
@@ -368,35 +369,10 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
   // Ao aprovar uma medição com itens de LOCAÇÃO, cria automaticamente uma solicitação de
   // recibo de locação (aparece na aba "Fazer Recibo de Locação" do Financeiro, pré-preenchida).
   const criarSolicitacaoRecibo = async (med: any) => {
-    const itensLoc = (Array.isArray(med.itens) ? med.itens : []).filter((l: any) => (l.categoria || 'servico') === 'locacao');
-    if (itensLoc.length === 0) return;
     const fin = Array.isArray(financeiro) ? financeiro : [];
-    const ano = String(new Date().getFullYear()).slice(-2);
-    const maior = fin.filter((r: any) => r?.tipo === 'reciboLocacao' && String(r.numero || '').endsWith(`/${ano}`))
-      .reduce((m: number, r: any) => Math.max(m, parseInt(String(r.numero || '').split('/')[0], 10) || 0), 0);
-    const rec = {
-      id: `REC-${Date.now()}`,
-      tipo: 'reciboLocacao',
-      status: 'pendente',
-      numero: `${String(maior + 1).padStart(3, '0')}/${ano}`,
-      empresa: med.empresa || '',
-      dataEmissao: new Date().toISOString().slice(0, 10),
-      dataVencimento: new Date().toISOString().slice(0, 10),
-      clienteNome: med.cliente || '',
-      clienteCnpj: med.cnpj || '',
-      itens: itensLoc.map((l: any, i: number) => ({
-        id: `it-${Date.now()}-${i}`,
-        item: String(i + 1).padStart(2, '0'),
-        qtd: String(l.quantidadeProduzida ?? ''),
-        descricao: [l.descricao, med.embarcacao, med.periodo ? `Período: ${med.periodo}` : ''].filter(Boolean).join(' — '),
-        valorUnitario: String(l.valorUnitario ?? ''),
-        total: String(l.total ?? ''),
-      })),
-      obs: '',
-      medicaoId: med.id,
-      medicaoNumero: med.numeroMedicao,
-      createdAt: new Date().toISOString(),
-    };
+    // Numeração por OS + herança do cabeçalho do recibo anterior ficam no helper compartilhado.
+    const rec = construirReciboDeMedicao(fin, med);
+    if (!rec) return; // medição sem itens de locação
     await saveEntity('financeiro', [rec, ...fin]);
   };
 
@@ -408,8 +384,12 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
       toast.success(status === 'aprovada' ? 'Medição aprovada.' : 'Medição recusada.');
       if (status === 'aprovada') {
         const med = { ...medicao, ...(atualizada || {}) };
-        abrirSolicitacaoNfe(med);
-        await criarSolicitacaoRecibo(med); // além da NFe, solicita o recibo de locação
+        // Gera cada documento só quando há a parte correspondente na medição:
+        //  - NFe  → parte de SERVIÇO (itens com categoria !== 'locacao');
+        //  - Recibo → parte de LOCAÇÃO (criarSolicitacaoRecibo já retorna cedo se não houver).
+        const temItemServico = (Array.isArray(med.itens) ? med.itens : []).some((l: any) => (l.categoria || 'servico') !== 'locacao');
+        if (temItemServico) abrirSolicitacaoNfe(med);
+        await criarSolicitacaoRecibo(med);
       }
     } catch (error) {
       console.error('Erro ao atualizar status da medição:', error);
@@ -544,7 +524,7 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
         <div className="p-3 bg-emerald-500/10 rounded-xl text-emerald-400"><Ruler size={22} /></div>
         <div>
           <h1 className="text-3xl font-black text-white uppercase italic">Medição</h1>
-          <p className="text-white/40 text-xs font-bold uppercase tracking-widest mt-1">Medição por OS · só aprovada libera finalização</p>
+          <p className="text-white/40 text-xs font-bold uppercase tracking-widest mt-1">{boldOS('Medição por OS · só aprovada libera finalização')}</p>
         </div>
       </div>
 
@@ -575,7 +555,7 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
               ))}
             </select>
             {osAprovadas.length === 0 && (
-              <p className="text-amber-300/70 text-xs mt-2">Nenhuma OS aprovada disponível para medição.</p>
+              <p className="text-amber-300/70 text-xs mt-2">{boldOS('Nenhuma OS aprovada disponível para medição.')}</p>
             )}
           </div>
 
@@ -599,7 +579,7 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
             <div className="flex items-center justify-between">
               <h3 className="text-emerald-300 text-sm font-black uppercase">Tabela de medição (serviços e locação)</h3>
               <div className="flex gap-2">
-                <button onClick={preencherItensDaOS} className="px-3 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-200 text-xs font-black uppercase">Puxar itens da OS</button>
+                <button onClick={preencherItensDaOS} className="px-3 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-200 text-xs font-black uppercase">{boldOS('Puxar itens da OS')}</button>
               </div>
             </div>
             {renderTabelaMedicao('servico', 'Serviços', true)}
@@ -616,12 +596,12 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
         {osSelecionada && (
           <div className="bg-[#0b1220] rounded-2xl border border-red-500/20 p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="min-w-0">
-              <p className="text-red-300 font-black uppercase tracking-widest text-xs flex items-center gap-2"><Lock size={14} /> Fechamento da OS</p>
+              <p className="text-red-300 font-black uppercase tracking-widest text-xs flex items-center gap-2"><Lock size={14} /> {boldOS('Fechamento da OS')}</p>
               <p className="text-white/50 text-xs mt-1">
                 Depois de todas as medições, feche a OS. Ela <strong className="text-white/70">some das telas de uso</strong> (estoque, compras, adicionar/alocar por OS) e fica só finalizada.
               </p>
               {!temMedicaoAprovada(osSelecionada.backendId) && (
-                <p className="text-amber-300/80 text-[11px] mt-1.5">É necessária ao menos uma medição <strong>aprovada</strong> para fechar a OS.</p>
+                <p className="text-amber-300/80 text-[11px] mt-1.5">É necessária ao menos uma medição <strong>aprovada</strong> para fechar a {boldOS('OS')}.</p>
               )}
             </div>
             <button
@@ -690,7 +670,7 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
       {/* ===== OS FECHADAS (BLOQUEADAS) ===== */}
       {osFechadas.length > 0 && (
         <section className="space-y-4">
-          <h2 className="text-white font-black uppercase tracking-widest text-sm flex items-center gap-2"><Lock size={16} className="text-red-300" /> OS Fechadas <span className="text-white/30 normal-case font-semibold">— bloqueadas para uso no sistema</span></h2>
+          <h2 className="text-white font-black uppercase tracking-widest text-sm flex items-center gap-2"><Lock size={16} className="text-red-300" /> {boldOS('OS Fechadas')} <span className="text-white/30 normal-case font-semibold">— bloqueadas para uso no sistema</span></h2>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {osFechadas.map((o: any) => (
               <div key={o.id} className="bg-[#101f3d] rounded-2xl border border-red-500/20 p-5 flex items-center justify-between gap-3">
@@ -729,15 +709,15 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
             <div className="p-6 space-y-5">
               {bloqueioModal.mode === 'fechar' ? (
                 <p className="text-white/70 text-sm leading-relaxed">
-                  A OS será <strong className="text-white">fechada e bloqueada</strong>: vai sumir das telas de estoque, compras, adicionar/alocar por OS e produção. Ela passa a constar apenas como <strong className="text-white">finalizada</strong>. Confirmar?
+                  A {boldOS('OS')} será <strong className="text-white">fechada e bloqueada</strong>: vai sumir das telas de estoque, compras, adicionar/alocar por {boldOS('OS')} e produção. Ela passa a constar apenas como <strong className="text-white">finalizada</strong>. Confirmar?
                 </p>
               ) : (
                 <div className="space-y-3">
                   <div className="flex items-start gap-2 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
                     <ShieldAlert size={16} className="text-amber-300 mt-0.5 shrink-0" />
-                    <p className="text-amber-200/90 text-xs leading-relaxed">Ação restrita à <strong>diretoria</strong>. Reabrir volta a OS para uso no sistema (estoque/compras/alocação).</p>
+                    <p className="text-amber-200/90 text-xs leading-relaxed">Ação restrita à <strong>diretoria</strong>. Reabrir volta a {boldOS('OS')} para uso no sistema (estoque/compras/alocação).</p>
                   </div>
-                  <p className="text-white/70 text-sm">Confirmar reabertura desta OS?</p>
+                  <p className="text-white/70 text-sm">{boldOS('Confirmar reabertura desta OS?')}</p>
                 </div>
               )}
               <div className="flex justify-end gap-3">
@@ -779,7 +759,7 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
                     {empresasDisponiveis.map((e: string) => <option key={e} value={e}>{e}</option>)}
                   </select>
                 </NfeField>
-                <NfeField label="OS emitida (puxada da medição)">
+                <NfeField label={boldOS('OS emitida (puxada da medição)')}>
                   <input value={nfeForm.os} readOnly className={`${nfeInputCls} opacity-70 cursor-not-allowed`} title="Puxada automaticamente da medição" />
                 </NfeField>
                 <NfeField label="Valor NFe">
@@ -802,7 +782,7 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
               </div>
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 bg-[#101f3d] rounded-xl border border-white/10 p-4">
-                <Resumo label="OS" value={nfePopup.ordemServicoNumero} />
+                <Resumo label={boldOS('OS')} value={nfePopup.ordemServicoNumero} />
                 <Resumo label="Empresa" value={nfeForm.empresa} />
                 <Resumo label="Cliente" value={nfePopup.cliente} />
                 <Resumo label="Valor (só serviço)" value={`R$ ${money(nfeForm.valor)}`} accent />

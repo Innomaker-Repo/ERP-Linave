@@ -49,6 +49,7 @@ function getAbaForSection(section: string): { aba: string; item: string } {
     
     // Compras
     'compras': { aba: 'compras', item: 'compras' },
+    'minhasCompras': { aba: 'compras', item: 'minhasCompras' },
     'kanbanCompras': { aba: 'compras', item: 'kanbanCompras' },
     'aprovacoesCompras': { aba: 'compras', item: 'aprovacoesCompras' },
     'historicoCompras': { aba: 'compras', item: 'historicoCompras' },

@@ -35,6 +35,17 @@ export const TIPOS_REEMBOLSO = [
   'Outro',
 ];
 
+// Natureza da despesa (classificação contábil) — dropdown em Contas a Pagar.
+export const NATUREZAS_CONTA_PAGAR = [
+  'Custo Direto',
+  'Custo Indireto',
+  'Despesas Administrativa',
+  'Despesas Financeira',
+  'Impostos e Taxas',
+  'Investimentos',
+  'Folha de Pagamento',
+];
+
 export const days = (d: string, n: number) => {
   const x = new Date(d + 'T00:00:00');
   x.setDate(x.getDate() + n);
@@ -120,6 +131,7 @@ export interface ContaPagar {
   vinculoValor: string;
   fornecedor: string;
   tipo: string;
+  natureza?: string;
   documento: string;
   valor: number;
   vencimento: string;
@@ -373,12 +385,179 @@ export interface NfeSolicitacao {
   anexos: string[];
   contrato: string;
   derived: boolean;
+  medicaoId?: string;      // vínculo com a medição (para mesclar NF + recibo no recebível)
+  medicaoNumero?: string;
 }
 
 // Discriminador dos registros financeiros guardados na coleção `financeiro` do workspace.
 export type FinTipo = 'solicitacao' | 'contaPagar' | 'contaReceber' | 'nfeReq' | 'nfe' | 'banco' | 'locEstudo' | 'custoOsHH' | 'reciboLocacao';
 
 export const genFinId = (prefix: string) => `${prefix}-${Date.now().toString(36).toUpperCase()}`;
+
+// ---------- Recibo de Locação: numeração por OS + montagem a partir da medição ----------
+// A numeração do recibo é POR OS (não global): toda OS começa em 001/YY e só incrementa quando
+// outra medição da mesma OS é aprovada. O vínculo com a OS (`ordemServicoBackendId`) é uma variável
+// própria do recibo, independente do seu id (`REC-...`).
+const anoYY = () => String(new Date().getFullYear()).slice(-2);
+const seqNumero = (numero: any) => parseInt(String(numero || '').split('/')[0], 10) || 0;
+
+export const recibosLocacaoDaOs = (financeiro: any[], osBackendId: any): any[] =>
+  (Array.isArray(financeiro) ? financeiro : []).filter(
+    (r: any) => r?.tipo === 'reciboLocacao' && String(r?.ordemServicoBackendId ?? '') === String(osBackendId ?? ''),
+  );
+
+// Próximo número do recibo daquela OS no ano corrente: `${maior+1}/YY` (primeiro = 001/YY).
+export const proximoNumeroReciboLocacao = (financeiro: any[], osBackendId: any, ano: string = anoYY()): string => {
+  const doAno = recibosLocacaoDaOs(financeiro, osBackendId).filter((r: any) => String(r.numero || '').endsWith(`/${ano}`));
+  const maior = doAno.reduce((m: number, r: any) => Math.max(m, seqNumero(r.numero)), 0);
+  return `${String(maior + 1).padStart(3, '0')}/${ano}`;
+};
+
+// Recibo de maior número já existente para a OS (ou null) — usado para herdar o cabeçalho.
+export const ultimoReciboLocacaoDaOs = (financeiro: any[], osBackendId: any): any | null => {
+  const daOs = recibosLocacaoDaOs(financeiro, osBackendId);
+  if (!daOs.length) return null;
+  return daOs.reduce((a: any, b: any) => (seqNumero(b.numero) >= seqNumero(a.numero) ? b : a));
+};
+
+// Campos de cabeçalho herdados do recibo anterior da OS (cliente / emitente / banco / obs).
+const CAMPOS_CABECALHO_RECIBO = [
+  'empresa',
+  'emitenteNome', 'emitenteEndereco', 'emitenteCep', 'emitenteCidadeUf', 'emitenteCnpj',
+  'emitenteInscMunicipal', 'emitenteInscEstadual', 'atendimento', 'banco', 'formaPagamento',
+  'clienteNome', 'clienteLogradouro', 'clienteBairro', 'clienteMunicipio', 'clienteUf',
+  'clienteCep', 'clienteCnpj', 'clienteInscEst', 'clienteIncMun', 'obs',
+] as const;
+
+// Monta o objeto do recibo de locação a partir de uma medição aprovada. Devolve null se a medição
+// não tiver itens de locação. Cabeçalho vem do recibo anterior da OS (se houver); itens vêm SEMPRE
+// da medição informada. Reutilizado tanto na aprovação da medição quanto no dropdown de "Novo recibo".
+export const construirReciboDeMedicao = (financeiro: any[], med: any): any | null => {
+  const itensLoc = (Array.isArray(med?.itens) ? med.itens : []).filter(
+    (l: any) => (l?.categoria || 'servico') === 'locacao',
+  );
+  if (itensLoc.length === 0) return null;
+
+  const osBackendId = med?.ordemServicoBackendId ?? null;
+  const anterior = ultimoReciboLocacaoDaOs(financeiro, osBackendId);
+  const hoje = new Date().toISOString().slice(0, 10);
+
+  const cabecalho: Record<string, any> = anterior
+    ? CAMPOS_CABECALHO_RECIBO.reduce((acc, k) => ({ ...acc, [k]: anterior[k] }), {})
+    : { empresa: med?.empresa || '', clienteNome: med?.cliente || '', clienteCnpj: med?.cnpj || '', obs: '' };
+
+  return {
+    id: `REC-${Date.now()}`,
+    tipo: 'reciboLocacao' as FinTipo,
+    status: 'pendente',
+    numero: proximoNumeroReciboLocacao(financeiro, osBackendId),
+    // Vínculo com a OS (variável própria, independente do id do recibo).
+    ordemServicoBackendId: osBackendId,
+    ordemServicoNumero: med?.ordemServicoNumero || '',
+    medicaoId: med?.id,
+    medicaoNumero: med?.numeroMedicao,
+    ...cabecalho,
+    dataEmissao: hoje,
+    dataVencimento: hoje,
+    // Itens sempre da nova medição (é o que motiva o novo recibo).
+    itens: itensLoc.map((l: any, i: number) => ({
+      id: `it-${Date.now()}-${i}`,
+      item: String(i + 1).padStart(2, '0'),
+      qtd: String(l.quantidadeProduzida ?? ''),
+      descricao: [l.descricao, med?.embarcacao, med?.periodo ? `Período: ${med.periodo}` : ''].filter(Boolean).join(' — '),
+      valorUnitario: String(l.valorUnitario ?? ''),
+      total: String(l.total ?? ''),
+    })),
+    createdAt: new Date().toISOString(),
+  };
+};
+
+// ---------- Conta a Receber: mescla NFe (serviço) + Recibo de Locação por medição ----------
+// Cada medição vira UMA conta a receber que soma a NF (serviço) e o recibo (locação) daquele BM.
+// As contribuições ficam em `fontes` (uma por origem), o que torna o upsert idempotente: reemitir a
+// NF ou regerar o recibo substitui a fonte da mesma origem, sem duplicar valor. O vencimento do
+// recebível é o MAIS DISTANTE entre as fontes.
+export interface AporteReceber {
+  medicaoId?: string;
+  medicaoNumero?: string;
+  ordemServicoNumero?: string;
+  empresa?: string;
+  cliente?: string;
+  origem: 'NFe' | 'Recibo';
+  fonteId: string;
+  valorOriginal: number;
+  valorLiquido: number;
+  vencimento?: string;
+  referencia?: string;
+  baixado?: number;          // valor já recebido na emissão (NFe); semeia o recebimento na criação
+}
+
+const _maxData = (a?: string, b?: string): string => {
+  const da = String(a || '').slice(0, 10);
+  const db = String(b || '').slice(0, 10);
+  if (!da) return db;
+  if (!db) return da;
+  return da >= db ? da : db;
+};
+
+export const upsertContaReceberPorMedicao = (financeiro: any[], aporte: AporteReceber): any[] => {
+  const lista = Array.isArray(financeiro) ? financeiro : [];
+  const fonte = {
+    origem: aporte.origem,
+    id: aporte.fonteId,
+    valorOriginal: num(aporte.valorOriginal),
+    valorLiquido: num(aporte.valorLiquido),
+    vencimento: aporte.vencimento || '',
+    referencia: aporte.referencia || '',
+  };
+
+  // Reconstrói o recebível a partir das suas fontes (soma valores, vencimento = o mais distante).
+  const montarRecebivel = (fontes: any[], base?: any) => {
+    const valorLiquido = fontes.reduce((s, f) => s + num(f.valorLiquido), 0);
+    const baixado = num(aporte.baixado);
+    return {
+      id: base?.id || genFinId('CR'),
+      tipo: 'contaReceber' as FinTipo,
+      origem: Array.from(new Set(fontes.map((f) => f.origem))).join(' + '),
+      empresa: aporte.empresa ?? base?.empresa ?? '',
+      cliente: aporte.cliente ?? base?.cliente ?? '',
+      referencia: fontes.map((f) => f.referencia).filter(Boolean).join(' · '),
+      valorOriginal: fontes.reduce((s, f) => s + num(f.valorOriginal), 0),
+      valorLiquido,
+      vencimentoRecebimento: fontes.reduce((v, f) => _maxData(v, f.vencimento), ''),
+      // Recebível já existia → preserva o recebimento (manual ou anterior). Novo → semeia do `baixado`.
+      recebido: base ? (base.recebido ?? false) : (baixado > 0 && baixado >= valorLiquido),
+      dataRecebimento: base?.dataRecebimento ?? '',
+      valorRecebido: base ? (base.valorRecebido ?? 0) : baixado,
+      bancoRecebimento: base?.bancoRecebimento ?? '',
+      observacao: base?.observacao ?? '',
+      medicaoId: aporte.medicaoId || base?.medicaoId || '',
+      medicaoNumero: aporte.medicaoNumero || base?.medicaoNumero || '',
+      ordemServicoNumero: aporte.ordemServicoNumero || base?.ordemServicoNumero || '',
+      fontes,
+      createdAt: base?.createdAt || new Date().toISOString(),
+    };
+  };
+
+  // Sem medição: recebível avulso (ex.: NFe derivada de obra finalizada) — nunca mescla.
+  if (!aporte.medicaoId) {
+    return [montarRecebivel([fonte]), ...lista];
+  }
+
+  const idx = lista.findIndex(
+    (r: any) => r?.tipo === 'contaReceber' && String(r?.medicaoId ?? '') === String(aporte.medicaoId),
+  );
+  if (idx === -1) {
+    return [montarRecebivel([fonte]), ...lista];
+  }
+
+  const atual = lista[idx];
+  const fontesAtuais = Array.isArray(atual.fontes) ? atual.fontes : [];
+  const fontes = [...fontesAtuais.filter((f: any) => f.origem !== aporte.origem), fonte];
+  const copia = [...lista];
+  copia[idx] = montarRecebivel(fontes, atual);
+  return copia;
+};
 
 // Baixa um conteúdo de texto como arquivo (CSV/TXT) — frontend puro.
 export const download = (text: string, filename: string, type = 'text/plain;charset=utf-8') => {
@@ -401,6 +580,7 @@ export interface ContaPagarBase {
   vinculoValor: string;
   fornecedor: string;
   tipoPagamento: string;
+  natureza?: string;
   documento: string;
   valor: number;
   vencimento: string;
@@ -432,6 +612,7 @@ export const buildContasPagar = (
     vinculoValor: base.vinculoValor,
     fornecedor: base.fornecedor,
     tipoPagamento: base.tipoPagamento,
+    natureza: base.natureza || '',
     documento: base.documento,
     forma: base.forma,
     banco: base.banco,

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { formatDateBR } from '../../../utils/formatDate';
+import { boldOS } from '../../../utils/osHighlight';
 import { gerarIdOrcamento, gerarIdProjeto, extrairIdProjetoDoNumero, extrairComponentesDoId, gerarIdProjetoDeNegocio } from '../../../context/ErpContext';
 import { Plus, X, DollarSign, FileText, Trash2, Lock, Eye, Download, RefreshCw } from 'lucide-react';
 import jsPDF from 'jspdf';
@@ -1712,21 +1713,29 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     setOrcamentoData(prev => {
       const outras = (prev.atividadesMacro || []).filter(m => (m.categoria || 'servico') !== categoria);
       const novas: AtividadeMacro[] = [];
+      // Deriva o valor unitário a partir da quantidade (e dias) REAIS do item, preservando o
+      // total da linha: quantidade × valorUnitario × dias === base × fator (o mesmo total de antes).
+      // Assim o macro (e a proposta que o consome) mostra a quantidade real, e não "1".
       if (categoria === 'servico') {
         const fator = (1 + (pd(prev.margem) + pd(prev.oh)) / 100) * (1 + pd(prev.impostos) / 100);
-        const push = (desc: string, unidade: string, base: number) => {
+        const push = (desc: string, unidade: string, base: number, qtd: number, dias: number) => {
           if (!String(desc).trim() || base <= 0) return;
-          novas.push({ id: novoId(), descricao: String(desc).trim(), quantidade: '1', unidade, valorUnitario: (base * fator).toFixed(2), dias: '1', categoria: 'servico' });
+          const q = qtd > 0 ? qtd : 1;
+          const d = dias > 0 ? dias : 1;
+          const valorUnitario = (base * fator) / (q * d);
+          novas.push({ id: novoId(), descricao: String(desc).trim(), quantidade: String(q), unidade, valorUnitario: valorUnitario.toFixed(2), dias: String(d), categoria: 'servico' });
         };
-        (prev.maoDeObra || []).forEach((i: any) => push(i.funcao || '', 'MDO', pd(i.valorTotal)));
-        (prev.materiais || []).forEach((i: any) => push(i.descricao || '', i.unidade || 'un', pd(i.valorTotal)));
-        (prev.terceirizados || []).forEach((i: any) => push(i.descricao || '', i.unidade || 'serv', pd(i.valorTotal)));
+        (prev.maoDeObra || []).forEach((i: any) => push(i.funcao || '', 'MDO', pd(i.valorTotal), pd(i.quantidade), pd(i.dias)));
+        (prev.materiais || []).forEach((i: any) => push(i.descricao || '', i.unidade || 'un', pd(i.valorTotal), pd(i.quantidade), 1));
+        (prev.terceirizados || []).forEach((i: any) => push(i.descricao || '', i.unidade || 'serv', pd(i.valorTotal), pd(i.quantidade), 1));
       } else {
         const fatorLoc = 1 + pd(prev.impostosLocacao) / 100;
         (prev.itensAlocacao || []).forEach((i: any) => {
           const base = pd(i.valorTotal); // já embute margem/O.H do item
           if (!String(i.equipamento || '').trim() || base <= 0) return;
-          novas.push({ id: novoId(), descricao: String(i.equipamento).trim(), quantidade: '1', unidade: i.unidade || 'un', valorUnitario: (base * fatorLoc).toFixed(2), dias: '1', categoria: 'locacao' });
+          const q = pd(i.quantidade) > 0 ? pd(i.quantidade) : 1;
+          const valorUnitario = (base * fatorLoc) / q;
+          novas.push({ id: novoId(), descricao: String(i.equipamento).trim(), quantidade: String(q), unidade: i.unidade || 'un', valorUnitario: valorUnitario.toFixed(2), dias: '1', categoria: 'locacao' });
         });
       }
       return { ...prev, atividadesMacro: [...outras, ...novas] };
@@ -1881,7 +1890,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
           {/* FILTRO POR OS */}
           {osDisponiveis.length > 0 && (
             <div className="flex items-center gap-2">
-              <span className="text-white/40 text-xs font-bold uppercase tracking-widest">Filtrar por OS</span>
+              <span className="text-white/40 text-xs font-bold uppercase tracking-widest">{boldOS('Filtrar por OS')}</span>
               <select value={filtroOs} onChange={(e) => setFiltroOs(e.target.value)} className="bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-white text-xs">
                 <option value="">Todas as OS</option>
                 {osDisponiveis.map((n: any) => <option key={n} value={n}>{n}</option>)}

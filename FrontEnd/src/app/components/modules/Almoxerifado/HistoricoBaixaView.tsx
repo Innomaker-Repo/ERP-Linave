@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Archive, CalendarClock, Search, Trash2 } from 'lucide-react';
 import { useErp } from '../../../context/ErpContext';
+import { boldOS } from '../../../utils/osHighlight';
 import { Badge } from '../../../modules/shared/ui/badge';
 import { Input } from '../../../modules/shared/ui/input';
 
@@ -97,10 +98,10 @@ export function HistoricoBaixaView({ searchQuery }: HistoricoBaixaViewProps) {
                   <th className="px-6 py-4 text-left">Data</th>
                   <th className="px-6 py-4 text-left">Item</th>
                   <th className="px-6 py-4 text-left">Tabela</th>
-                  <th className="px-6 py-4 text-left">OS</th>
+                  <th className="px-6 py-4 text-left">{boldOS('OS')}</th>
                   <th className="px-6 py-4 text-left">Motivo</th>
                   <th className="px-6 py-4 text-left">Status anterior</th>
-                  <th className="px-6 py-4 text-left">Local / OS</th>
+                  <th className="px-6 py-4 text-left">{boldOS('Local / OS')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">

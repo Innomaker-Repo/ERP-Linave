@@ -12,6 +12,7 @@ import { handleDownloadOSPDF } from '../CRM/handleDownloadOSPDF';
 import { handleDownloadPropostaPDF } from '../CRM/handleDownloadPropostaPDF';
 import { handleDownloadMedicaoPDF } from '../CRM/handleDownloadMedicaoPDF';
 import { isEmpresaLinave, getLogoUrlForEmpresa } from '../../../utils/company';
+import { boldOS } from '../../../utils/osHighlight';
 
 interface FinalizadosComercialViewProps {
   searchQuery: string;
@@ -283,7 +284,7 @@ function Section({
   );
 }
 
-function Field({ label, value }: { label: string; value: any }) {
+function Field({ label, value }: { label: React.ReactNode; value: any }) {
   return (
     <div>
       <p className="text-white/40 text-[10px] uppercase tracking-widest mb-0.5">{label}</p>
@@ -393,13 +394,14 @@ export function NegocioDetalheModal({
     if (!ultimaProposta) return toast.error('Sem proposta para gerar.');
     const isLinave = isEmpresaLinave(obra?.empresaPrestadora);
     const logoBase64 = await carregarLogoBase64();
-    handleDownloadPropostaPDF(ultimaProposta, clienteCtx, obra, logoBase64, isLinave);
+    const fundoLinaveBase64 = isLinave ? await carregarLogoBase64('/linave-rodape.png') : undefined;
+    handleDownloadPropostaPDF(ultimaProposta, clienteCtx, obra, logoBase64, isLinave, fundoLinaveBase64);
     toast.success('PDF da proposta gerado!');
   };
 
-  const carregarLogoBase64 = async (): Promise<string | undefined> => {
+  const carregarLogoBase64 = async (url?: string): Promise<string | undefined> => {
     try {
-      const res = await fetch(getLogoUrlForEmpresa(obra?.empresaPrestadora));
+      const res = await fetch(url || getLogoUrlForEmpresa(obra?.empresaPrestadora));
       if (!res.ok) return undefined;
       const blob = await res.blob();
       if (blob.size === 0) return undefined;
@@ -533,7 +535,7 @@ export function NegocioDetalheModal({
                     className="bg-white/5 border border-white/10 rounded-lg p-3 space-y-2"
                   >
                     <div className="grid grid-cols-2 gap-3">
-                      <Field label="Número OS" value={osItem.ordemServicoNumero} />
+                      <Field label={boldOS('Número OS')} value={osItem.ordemServicoNumero} />
                       <Field label="Status Envio" value={osItem.statusEnvio} />
                       <Field label="Status Aprovação" value={osItem.statusAprovacao} />
                       <Field label="Supervisor" value={osItem.supervisorEncarregado} />
@@ -555,7 +557,7 @@ export function NegocioDetalheModal({
                 </button>
               </div>
             ) : (
-              <p className="text-white/40 text-sm">Sem OS registrada</p>
+              <p className="text-white/40 text-sm">{boldOS('Sem OS registrada')}</p>
             )}
           </Section>
 

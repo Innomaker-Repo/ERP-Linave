@@ -5,6 +5,10 @@
 import React, { useState } from 'react';
 import { SEED_BANKS } from './finData';
 
+// Realce do acrônimo "OS" (amarelo do tema) — fonte única em utils/osHighlight, re-exportado aqui
+// para as telas do Financeiro que já importam de '../finUi'.
+export { boldOS } from '../../../utils/osHighlight';
+
 // ---------- Tons de status (paleta escura do ERP) ----------
 type Tone = 'ok' | 'wait' | 'bad' | 'info' | 'neutral' | 'mother' | 'child' | 'linave' | 'servinave';
 
@@ -59,7 +63,7 @@ export function FinCard({ className = '', children }: { className?: string; chil
 }
 
 // ---------- Cabeçalho/Toolbar de seção ----------
-export function Toolbar({ title, hint, actions }: { title: string; hint?: string; actions?: React.ReactNode }) {
+export function Toolbar({ title, hint, actions }: { title: React.ReactNode; hint?: React.ReactNode; actions?: React.ReactNode }) {
   return (
     <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
       <div>
@@ -72,7 +76,7 @@ export function Toolbar({ title, hint, actions }: { title: string; hint?: string
 }
 
 // ---------- Cartão métrico (KPI grande) ----------
-export function Metric({ label, value, foot }: { label: string; value: React.ReactNode; foot?: string }) {
+export function Metric({ label, value, foot }: { label: React.ReactNode; value: React.ReactNode; foot?: string }) {
   return (
     <FinCard className="relative overflow-hidden">
       <div className="absolute -right-6 -top-6 h-24 w-24 rounded-full bg-amber-500/10" />
@@ -84,7 +88,7 @@ export function Metric({ label, value, foot }: { label: string; value: React.Rea
 }
 
 // KPI compacto.
-export function Kpi({ label, value }: { label: string; value: React.ReactNode }) {
+export function Kpi({ label, value }: { label: React.ReactNode; value: React.ReactNode }) {
   return (
     <div className="rounded-2xl border border-white/5 bg-[#0b1220] p-4">
       <p className="text-[10px] font-black uppercase tracking-widest text-white/35">{label}</p>
@@ -122,7 +126,7 @@ export const labelCls = 'mb-1.5 block text-[11px] font-black uppercase tracking-
 export const inputCls =
   'w-full rounded-xl border border-white/10 bg-white/5 px-3.5 py-2.5 text-sm text-white outline-none transition-colors placeholder:text-white/30 focus:border-amber-500';
 
-export function Field({ label, span = 4, children }: { label: string; span?: number; children: React.ReactNode }) {
+export function Field({ label, span = 4, children }: { label: React.ReactNode; span?: number; children: React.ReactNode }) {
   const colCls: Record<number, string> = {
     2: 'md:col-span-2', 3: 'md:col-span-3', 4: 'md:col-span-4', 6: 'md:col-span-6', 12: 'md:col-span-12',
   };
@@ -228,7 +232,7 @@ export const Td = ({ children, className = '' }: { children?: React.ReactNode; c
 );
 
 // Estado vazio.
-export function EmptyRow({ cols, text }: { cols: number; text: string }) {
+export function EmptyRow({ cols, text }: { cols: number; text: React.ReactNode }) {
   return (
     <tr>
       <td colSpan={cols} className="px-4 py-10 text-center text-xs font-bold uppercase tracking-widest text-white/30">{text}</td>

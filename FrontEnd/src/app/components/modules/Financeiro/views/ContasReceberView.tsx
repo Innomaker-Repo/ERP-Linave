@@ -1,10 +1,10 @@
 import React, { useMemo, useState } from 'react';
-import { Plus, Save } from 'lucide-react';
+import { Plus, Save, Download } from 'lucide-react';
 import {
   FinCard, Toolbar, DataTable, Th, Td, Btn, StatusTag, CompanyTag, AlertBar, EmptyRow,
   FinModal, Field, Input, Select, Textarea,
 } from '../finUi';
-import { br, money, num, isOld, todayStr, genFinId } from '../finData';
+import { br, money, num, isOld, todayStr, genFinId, download } from '../finData';
 import { useFin, type FinRecord } from '../useFin';
 import { useFinFilters } from '../finFilters';
 
@@ -97,12 +97,31 @@ export function ContasReceberView() {
     }
   };
 
+  // Resumo em CSV do que está na tela (respeita os filtros), com linha de TOTAL ao final.
+  const exportarCsv = () => {
+    const head = ['Origem', 'Empresa', 'Cliente', 'Referência', 'Valor original', 'Valor líquido', 'Vencimento', 'Recebido?', 'Data receb.', 'Valor recebido', 'Banco', 'Status'];
+    const linhas: any[][] = rows.map((r) => [
+      r.origem || 'Manual', r.empresa, r.cliente, r.referencia || '',
+      num(r.valorOriginal ?? r.valor), num(r.valorLiquido ?? r.valor), r.vencimentoRecebimento || '',
+      r.recebido ? 'Sim' : 'Não', r.dataRecebimento || '', num(r.valorRecebido), r.bancoRecebimento || '', status(r),
+    ]);
+    const totOrig = rows.reduce((s, r) => s + num(r.valorOriginal ?? r.valor), 0);
+    const totLiq = rows.reduce((s, r) => s + num(r.valorLiquido ?? r.valor), 0);
+    const totReceb = rows.reduce((s, r) => s + num(r.valorRecebido), 0);
+    linhas.push(['TOTAL', '', '', '', totOrig, totLiq, '', '', '', totReceb, '', '']);
+    const csv = [head, ...linhas].map((l) => l.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\n');
+    download(csv, 'contas_a_receber.csv', 'text/csv;charset=utf-8');
+  };
+
   return (
     <FinCard>
       <Toolbar
         title="Contas a Receber"
         hint="Valores a receber dos clientes. O banco é definido aqui, no recebimento."
-        actions={<Btn variant="amber" onClick={() => setCriando(true)}><Plus size={15} /> Conta a receber</Btn>}
+        actions={<>
+          <Btn variant="secondary" onClick={exportarCsv}><Download size={15} /> Exportar CSV</Btn>
+          <Btn variant="amber" onClick={() => setCriando(true)}><Plus size={15} /> Conta a receber</Btn>
+        </>}
       />
       {vencidas.length > 0 && (
         <AlertBar>⚠️ Existem {vencidas.length} conta(s) a receber vencida(s): vencimento anterior a hoje e ainda não recebido.</AlertBar>

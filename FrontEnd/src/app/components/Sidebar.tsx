@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { useErp } from '../context/ErpContext';
+import { boldOS } from '../utils/osHighlight';
 import {
   House, Users, HardHat, Anchor, ClipboardList,
   ShoppingCart, DollarSign, BarChart3, Settings, Factory,
   HeartHandshake, List, Clock, ChevronDown, ChevronRight,
   Briefcase, Wrench, Activity, FileText, Zap, CheckCircle2, Trash2, LayoutGrid, Package2, History,
-  FilePlus, Banknote, ScrollText, Wallet, TrendingUp, Landmark, Tags, Ruler, PanelLeftClose, UserCog
+  FilePlus, Banknote, ScrollText, Wallet, TrendingUp, Landmark, Tags, Ruler, PanelLeftClose, UserCog, ShoppingBag
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -64,7 +65,7 @@ export function Sidebar({ activeSection, setActiveSection, onClose }: SidebarPro
         { id: 'proposta', label: 'Fazer Proposta', icon: FileText },
         
         // Fazer Ordem de Serviço
-        { id: 'fazerOs', label: 'Fazer OS', icon: Zap },
+        { id: 'fazerOs', label: boldOS('Fazer OS'), icon: Zap },
 
         // Medição (por OS) — só aprovada libera finalização
         { id: 'medicao', label: 'Medição', icon: Ruler },
@@ -92,7 +93,7 @@ export function Sidebar({ activeSection, setActiveSection, onClose }: SidebarPro
         // Gestão
         { id: 'finBancos', label: 'Bancos', icon: Landmark },
         { id: 'finHistorico', label: 'Histórico', icon: History },
-        { id: 'finCustoOs', label: 'Custo por OS', icon: ClipboardList },
+        { id: 'finCustoOs', label: boldOS('Custo por OS'), icon: ClipboardList },
         { id: 'finReciboLocacao', label: 'Fazer Recibo de Locação', icon: ScrollText },
       ]
     },
@@ -102,6 +103,7 @@ export function Sidebar({ activeSection, setActiveSection, onClose }: SidebarPro
       icon: ShoppingCart,
       items: [
         { id: 'compras', label: 'Compras / Requisições', icon: ShoppingCart },
+        { id: 'minhasCompras', label: 'Minhas Compras', icon: ShoppingBag },
         { id: 'kanbanCompras', label: 'Kanban de Compras', icon: LayoutGrid },
         { id: 'aprovacoesCompras', label: 'Aprovações', icon: Clock },
         { id: 'historicoCompras', label: 'Histórico de Compras', icon: History },
@@ -118,7 +120,7 @@ export function Sidebar({ activeSection, setActiveSection, onClose }: SidebarPro
         { id: 'itensAdicionar', label: 'Itens para adicionar', icon: Package2 },
         { id: 'historicoBaixa', label: 'Histórico de Baixa', icon: Trash2 },
         { id: 'historicoRomaneio', label: 'Histórico de Romaneio', icon: ClipboardList },
-        { id: 'alocadosPorOS', label: 'Alocados por OS', icon: ClipboardList },
+        { id: 'alocadosPorOS', label: boldOS('Alocados por OS'), icon: ClipboardList },
       ]
     },
     {
@@ -147,6 +149,10 @@ export function Sidebar({ activeSection, setActiveSection, onClose }: SidebarPro
 
     // Gerente: acesso a tudo mais; usa "Meu Perfil"
     if (role === 'GERENTE') return true;
+
+    // Liberados a TODOS os usuários: solicitar compra e ver o próprio histórico de compras
+    // (o kanban e as demais telas de compras continuam controlados por permissão).
+    if (itemId === 'compras' || itemId === 'minhasCompras') return true;
 
     // Usuário: apenas itens explicitamente liberados pelo admin + Meu Perfil
     if (itemId === 'meuPerfil') return true;

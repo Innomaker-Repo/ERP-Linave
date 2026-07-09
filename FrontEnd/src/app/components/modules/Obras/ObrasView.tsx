@@ -3,6 +3,7 @@ import { useErp } from '../../../context/ErpContext';
 import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
 import { handleDownloadOSPDF } from '../CRM/handleDownloadOSPDF';
 import { getLogoUrlForEmpresa } from '../../../utils/company';
+import { boldOS } from '../../../utils/osHighlight';
 import {
   Anchor, Plus, Calendar, DollarSign, Users, User, Save, X, Edit2, Trash2,
   FileText, Briefcase, Activity, Hash, FolderOpen, Download, Link as LinkIcon, CheckCircle2, ChevronDown, ChevronRight, Eye
@@ -429,7 +430,7 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
           <h1 className="text-3xl font-black text-white uppercase italic tracking-tighter flex items-center gap-3">
             <Anchor className="text-amber-500" size={32} /> Gestão de Projetos
           </h1>
-          <p className="text-white/40 text-xs font-bold uppercase tracking-[0.2em] mt-2 ml-1">Serviços (Produção): apenas negócios com OS aprovada</p>
+          <p className="text-white/40 text-xs font-bold uppercase tracking-[0.2em] mt-2 ml-1">{boldOS('Serviços (Produção): apenas negócios com OS aprovada')}</p>
         </div>
       </div>
 
@@ -617,7 +618,7 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
                 )}
 
                 <div className="w-full bg-[#0b1220] p-4 rounded-2xl border border-white/5 flex justify-between items-center mb-4">
-                  <p className="text-[9px] text-white/30 font-black uppercase flex items-center gap-2"><Hash size={12}/> OS enviadas</p>
+                  <p className="text-[9px] text-white/30 font-black uppercase flex items-center gap-2"><Hash size={12}/> {boldOS('OS enviadas')}</p>
                   <span className="text-emerald-400 text-xs font-bold">{totalOSEnviada}/{osDoNegocio.length}</span>
                 </div>
 
@@ -650,7 +651,7 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
             );
           }) : (
             <div className="xl:col-span-2 bg-[#101f3d] p-10 rounded-3xl border border-white/5 text-center">
-              <p className="text-white/60 text-xs font-black uppercase tracking-widest">Nenhum negócio com OS enviada</p>
+              <p className="text-white/60 text-xs font-black uppercase tracking-widest">{boldOS('Nenhum negócio com OS enviada')}</p>
             </div>
           )}
         </div>
@@ -661,7 +662,7 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
           <div className="bg-[#101f3d] rounded-2xl border border-white/10 shadow-2xl max-w-[96vw] w-full max-h-[95vh] overflow-y-auto">
             <div className="sticky top-0 z-40 bg-gradient-to-r from-cyan-500/40 to-blue-500/40 backdrop-blur-md p-8 border-b border-white/10 flex justify-between items-center">
               <div>
-                <h2 className="text-3xl font-black text-white uppercase">OS Consolidada</h2>
+                <h2 className="text-3xl font-black text-white uppercase">{boldOS('OS Consolidada')}</h2>
                 <p className="text-white/60 text-base mt-2">{selectedOSConsolidada.ordemServicoNumero}</p>
               </div>
               <button

@@ -1,11 +1,11 @@
 import React, { useMemo } from 'react';
-import { FinCard, Metric } from '../finUi';
+import { FinCard, Metric, boldOS } from '../finUi';
 import { money, isOld, num, type Empresa } from '../finData';
 import { useFin } from '../useFin';
 import { useFinFilters } from '../finFilters';
 
 // Barra horizontal de comparação (A pagar / A receber / Previsão).
-function BarRow({ label, value, max }: { label: string; value: number; max: number }) {
+function BarRow({ label, value, max }: { label: React.ReactNode; value: number; max: number }) {
   const pct = Math.max(5, (value / (max || 1)) * 100);
   return (
     <div className="grid grid-cols-[110px_1fr_120px] items-center gap-3 py-1.5 text-sm">
@@ -57,7 +57,7 @@ export function DashboardView() {
       <FinCard>
         <div className="mb-4">
           <h2 className="text-xl font-black text-white">Resumo por empresa</h2>
-          <p className="mt-1 text-sm text-white/45">Previsão (OS reais), a pagar e a receber por empresa.</p>
+          <p className="mt-1 text-sm text-white/45">Previsão ({boldOS('OS')} reais), a pagar e a receber por empresa.</p>
         </div>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {(['Linave', 'Servinave'] as Empresa[]).map((empresa) => {
@@ -67,7 +67,7 @@ export function DashboardView() {
                 <h3 className="mb-2 font-black text-white">{empresa}</h3>
                 <BarRow label="A pagar" value={r.aPagar} max={r.max} />
                 <BarRow label="A receber" value={r.aReceber} max={r.max} />
-                <BarRow label="Previsão OS" value={r.previsao} max={r.max} />
+                <BarRow label={boldOS('Previsão OS')} value={r.previsao} max={r.max} />
               </div>
             );
           })}

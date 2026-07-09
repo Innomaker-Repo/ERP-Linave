@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { FinCard, Toolbar, Kpi, DataTable, Th, Td, CompanyTag, StatusTag, Pill, EmptyRow } from '../finUi';
+import { FinCard, Toolbar, Kpi, DataTable, Th, Td, CompanyTag, StatusTag, Pill, EmptyRow, boldOS } from '../finUi';
 import { br, isOld, money } from '../finData';
 import { useFin } from '../useFin';
 import { useFinFilters } from '../finFilters';
@@ -14,20 +14,20 @@ export function PrevisaoView() {
 
   return (
     <FinCard>
-      <Toolbar title="Previsão de Receita" hint="Baseada nas OS abertas: valor total e data de término previstos (dados reais do ERP)." />
+      <Toolbar title="Previsão de Receita" hint={boldOS('Baseada nas OS abertas: valor total e data de término previstos (dados reais do ERP).')} />
       <div className="mb-5 grid grid-cols-1 gap-4 md:grid-cols-3">
-        <Kpi label="Valor OS abertas" value={money(total)} />
+        <Kpi label={boldOS('Valor OS abertas')} value={money(total)} />
         <Kpi label="Término vencido" value={money(vencido)} />
-        <Kpi label="OS futuras" value={money(total - vencido)} />
+        <Kpi label={boldOS('OS futuras')} value={money(total - vencido)} />
       </div>
       <DataTable
         minWidth={1050}
         head={<>
-          <Th>Término</Th><Th>Empresa</Th><Th>Cliente</Th><Th>OS</Th><Th>Descrição</Th><Th>Valor</Th><Th>Status</Th><Th>Alerta</Th>
+          <Th>Término</Th><Th>Empresa</Th><Th>Cliente</Th><Th><strong className="font-black text-amber-400">OS</strong></Th><Th>Descrição</Th><Th>Valor</Th><Th>Status</Th><Th>Alerta</Th>
         </>}
       >
         {rows.length === 0 ? (
-          <EmptyRow cols={8} text="Nenhuma OS aberta para prever receita" />
+          <EmptyRow cols={8} text={boldOS('Nenhuma OS aberta para prever receita')} />
         ) : rows.map((o, i) => {
           const venceu = isOld(o.dataTermino);
           return (

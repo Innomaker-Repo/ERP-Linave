@@ -5,6 +5,7 @@ import { Badge } from '../../../modules/shared/ui/badge';
 import { Input } from '../../../modules/shared/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../modules/shared/ui/select';
 import { useErp } from '../../../context/ErpContext';
+import { boldOS } from '../../../utils/osHighlight';
 import { getOrdensServico, getOsOptionLabel, getOsOptionValue, getOsStableValue, type OrdemServicoResumo, isOsAprovada } from '../../../../services/ordensServico';
 import api from '../../../../services/api';
 import { gerarRomaneioPdf, loadRomaneioLogoBase64 } from './romaneioPdf';
@@ -2069,7 +2070,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                 <Package size={28} className="text-white/30" />
               </div>
               <p className="font-bold text-white/60">Nenhum registro encontrado</p>
-              <p className="mt-2 text-sm text-white/35">Ajuste a busca, o filtro de OS ou troque o tipo.</p>
+              <p className="mt-2 text-sm text-white/35">{boldOS('Ajuste a busca, o filtro de OS ou troque o tipo.')}</p>
             </div>
           </div>
         ) : (
@@ -2157,7 +2158,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                                       <tr className="border-b border-white/5 bg-white/5 text-[10px] uppercase tracking-widest text-white/40">
                                         <th className="py-3 px-4 text-left w-28">Status</th>
                                         <th className="py-3 px-4 text-left">Local</th>
-                                        <th className="py-3 px-4 text-left">Serviço (OS)</th>
+                                        <th className="py-3 px-4 text-left">{boldOS('Serviço (OS)')}</th>
                                         {gasTypes.map(g => <th key={g} className="py-3 px-4 text-center">{g}</th>)}
                                         <th className="py-3 px-4 text-center">Total Linha</th>
                                         <th className="py-3 px-4 text-right">Ações</th>
@@ -2419,7 +2420,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
 
               <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
                 <div className="space-y-2">
-                  <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">OS</label>
+                  <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">{boldOS('OS')}</label>
                   <Select value={baixaForm.osId} onValueChange={(value) => setBaixaForm((prev) => ({ ...prev, osId: value }))}>
                     <SelectTrigger className="h-12 rounded-xl border border-white/5 bg-[#0b1220]/80 px-4 text-white shadow-sm transition hover:border-red-400/40 focus:ring-1 focus:ring-red-400">
                       <SelectValue placeholder="Selecione a OS" />
@@ -2574,7 +2575,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-2">
                 <div className="space-y-2">
-                  <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">Serviço (OS)</label>
+                  <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">{boldOS('Serviço (OS)')}</label>
                   <Select
                     value={allocateForm.serviceOS}
                     onValueChange={(val) => setAllocateForm((prev) => ({ ...prev, serviceOS: val }))}
@@ -2665,7 +2666,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
             <div className="p-8 space-y-6">
               <div className="flex flex-col md:flex-row items-end justify-between gap-6">
                 <div className="flex-1 w-full">
-                  <label className="block ml-1 mb-2 text-[11px] font-bold uppercase tracking-wider text-white/50">Ordem de Serviço (OS)</label>
+                  <label className="block ml-1 mb-2 text-[11px] font-bold uppercase tracking-wider text-white/50">{boldOS('Ordem de Serviço (OS)')}</label>
                   <Select value={romaneioOsId} onValueChange={setRomaneioOsId}>
                     <SelectTrigger className="w-full rounded-xl border border-white/5 bg-[#0b1220]/80 h-12 text-white shadow-sm focus:border-white/30 hover:border-white/20">
                       <SelectValue placeholder="Selecione a OS..." />
@@ -2689,7 +2690,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
               </div>
 
               <div className="rounded-xl border border-white/5 bg-white/[0.02] p-4 shadow-inner">
-                <p className="text-[11px] font-bold uppercase tracking-wider text-white/50">Local de destino (preenchido pela OS)</p>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-white/50">{boldOS('Local de destino (preenchido pela OS)')}</p>
                 <p className="mt-2 text-sm font-semibold text-white/80">
                   {(() => {
                     const { osLocal } = resolveSelectedOsData(romaneioOsId);
@@ -2815,7 +2816,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
               </div>
 
               <div className="space-y-2">
-                <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">Ordem de Serviço (OS)</label>
+                <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">{boldOS('Ordem de Serviço (OS)')}</label>
                 <Select 
                   value={equipAllocateForm.osId} 
                   onValueChange={(val) => setEquipAllocateForm(prev => ({ ...prev, osId: val }))}

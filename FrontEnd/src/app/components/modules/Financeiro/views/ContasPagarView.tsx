@@ -2,9 +2,9 @@ import React, { useMemo, useState } from 'react';
 import { Plus, Download, Save, Banknote, Split, Paperclip, CalendarClock } from 'lucide-react';
 import {
   FinCard, Toolbar, DataTable, Th, Td, Btn, StatusTag, CompanyTag, TypeTag, Pill, EmptyRow,
-  FinModal, Field, Input, Select, Textarea, Kpi, labelCls,
+  FinModal, Field, Input, Select, Textarea, Kpi, labelCls, boldOS,
 } from '../finUi';
-import { br, money, num, todayStr, genFinId, download, days, FORMAS_PAGAMENTO, TIPOS_REEMBOLSO } from '../finData';
+import { br, money, num, todayStr, genFinId, download, days, FORMAS_PAGAMENTO, TIPOS_REEMBOLSO, NATUREZAS_CONTA_PAGAR } from '../finData';
 import { useFin, type FinRecord } from '../useFin';
 import { useFinFilters } from '../finFilters';
 import { uploadDocumento } from '../../../../../services/documentosService';
@@ -20,7 +20,7 @@ export function ContasPagarView() {
   // ---- Modal criar/editar ----
   const formVazio = () => ({
     empresa: empresas[0] || 'Linave', vinculoTipo: 'OS' as 'OS' | 'Departamento', vinculoValor: '',
-    fornecedor: '', tipoPagamento: 'Material', documento: '', valor: '', vencimento: todayStr, banco: '', forma: '', obs: '',
+    fornecedor: '', tipoPagamento: 'Material', natureza: '', documento: '', valor: '', vencimento: todayStr, banco: '', forma: '', obs: '',
   });
   const [editId, setEditId] = useState<string | null | undefined>(undefined); // undefined=fechado, null=novo
   const [form, setForm] = useState(formVazio());
@@ -34,6 +34,7 @@ export function ContasPagarView() {
       vinculoValor: p.vinculoValor || '',
       fornecedor: p.fornecedor || '',
       tipoPagamento: p.tipoPagamento || 'Material',
+      natureza: p.natureza || '',
       documento: p.documento || '',
       valor: String(p.valor || ''),
       vencimento: p.vencimento || todayStr,
@@ -51,7 +52,7 @@ export function ContasPagarView() {
     try {
       const base = {
         empresa: form.empresa, vinculoTipo: form.vinculoTipo, vinculoValor: form.vinculoValor,
-        fornecedor: form.fornecedor, tipoPagamento: form.tipoPagamento, documento: form.documento,
+        fornecedor: form.fornecedor, tipoPagamento: form.tipoPagamento, natureza: form.natureza, documento: form.documento,
         valor: num(form.valor), vencimento: form.vencimento, banco: form.banco, forma: form.forma, obs: form.obs,
       };
       if (editId) await updateRecord(editId, base);
@@ -127,12 +128,17 @@ export function ContasPagarView() {
   };
 
   const exportarCsv = () => {
-    const head = ['Tipo', 'ID', 'Parcela', 'Empresa', 'Vínculo', 'Fornecedor', 'Documento', 'Valor', 'Vencimento', 'Banco', 'Status', 'Pago em', 'Valor pago', 'Juros', 'Comprovantes'];
+    const head = ['Tipo', 'ID', 'Parcela', 'Empresa', 'Vínculo', 'Natureza', 'Fornecedor', 'Documento', 'Valor', 'Vencimento', 'Banco', 'Status', 'Pago em', 'Valor pago', 'Juros', 'Comprovantes'];
     const linhas = rows.map((p) => [
-      p.type || 'single', p.id, p.parcela || '-', p.empresa, `${p.vinculoTipo}: ${p.vinculoValor || ''}`,
+      p.type || 'single', p.id, p.parcela || '-', p.empresa, `${p.vinculoTipo}: ${p.vinculoValor || ''}`, p.natureza || '',
       p.fornecedor, p.documento || '', num(p.valor), p.vencimento, p.banco || '', p.status || 'Aberto',
       p.dataPagamento || '', num(p.valorPago), num(p.jurosPago), (p.comprovantes || []).join('|'),
     ]);
+    // Resumo (totais) no fim do CSV.
+    const totValor = rows.reduce((s, p) => s + num(p.valor), 0);
+    const totPago = rows.reduce((s, p) => s + num(p.valorPago), 0);
+    const totJuros = rows.reduce((s, p) => s + num(p.jurosPago), 0);
+    linhas.push(['TOTAL', '', '', '', '', '', '', '', totValor, '', '', '', '', totPago, totJuros, '']);
     const csv = [head, ...linhas].map((l) => l.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\n');
     download(csv, 'contas_a_pagar.csv', 'text/csv;charset=utf-8');
   };
@@ -169,22 +175,23 @@ export function ContasPagarView() {
         </>}
       />
       <DataTable
-        minWidth={1550}
+        minWidth={1650}
         head={<>
-          <Th>Tipo</Th><Th>ID</Th><Th>Parcela</Th><Th>Empresa</Th><Th>Vínculo</Th>
+          <Th>Tipo</Th><Th>ID</Th><Th>Parcela</Th><Th>Empresa</Th><Th>Vínculo</Th><Th>Natureza</Th>
           <Th>Fornecedor</Th><Th>Doc</Th><Th>Valor</Th><Th>Vencimento</Th><Th>Banco</Th>
           <Th>Status</Th><Th>Pago em</Th><Th>Juros</Th><Th>Comprov.</Th><Th>Ação</Th>
         </>}
       >
         {rows.length === 0 ? (
-          <EmptyRow cols={15} text="Nenhuma conta a pagar (aprove uma solicitação ou adicione manualmente)" />
+          <EmptyRow cols={16} text="Nenhuma conta a pagar (aprove uma solicitação ou adicione manualmente)" />
         ) : rows.map((p) => (
           <tr key={p.id} className={`transition-colors hover:bg-white/5 ${p.type === 'parent' ? 'bg-violet-500/[0.05]' : p.type === 'child' ? 'bg-sky-500/[0.04]' : ''}`}>
             <Td><TypeTag type={p.type || 'single'} /></Td>
             <Td className="font-black text-white">{p.id}</Td>
             <Td>{p.parcela || '-'}</Td>
             <Td><CompanyTag empresa={String(p.empresa)} /></Td>
-            <Td className="text-white/60">{p.vinculoTipo}: {p.vinculoValor || '-'}</Td>
+            <Td className="text-white/60">{boldOS(p.vinculoTipo)}: {p.vinculoValor || '-'}</Td>
+            <Td className="text-white/60">{p.natureza || '—'}</Td>
             <Td className="text-white">{p.fornecedor}</Td>
             <Td>{p.documento || '-'}</Td>
             <Td className="font-bold text-white">{money(num(p.valor))}</Td>
@@ -212,7 +219,7 @@ export function ContasPagarView() {
             <Field label="Empresa" span={3}>
               <Select value={form.empresa} onChange={(e) => setF('empresa', e.target.value)}>{empresas.map((emp) => <option key={emp}>{emp}</option>)}</Select>
             </Field>
-            <Field label="OS" span={3}>
+            <Field label={boldOS('OS')} span={3}>
               <Select value={form.vinculoValor} onChange={(e) => setF('vinculoValor', e.target.value)}>
                 <option value="">{oss.length ? 'Selecione...' : 'Nenhuma OS'}</option>
                 {oss.map((o, i) => <option key={`${o.numero}-${i}`} value={o.numero}>{o.numero} - {o.cliente}</option>)}
@@ -220,6 +227,12 @@ export function ContasPagarView() {
             </Field>
             <Field label="Tipo (reembolso/adiantamento)" span={3}>
               <Select value={form.tipoPagamento} onChange={(e) => setF('tipoPagamento', e.target.value)}>{TIPOS_REEMBOLSO.map((t) => <option key={t}>{t}</option>)}</Select>
+            </Field>
+            <Field label="Natureza" span={3}>
+              <Select value={form.natureza} onChange={(e) => setF('natureza', e.target.value)}>
+                <option value="">Selecione...</option>
+                {NATUREZAS_CONTA_PAGAR.map((n) => <option key={n}>{n}</option>)}
+              </Select>
             </Field>
 
             <Field label="Fornecedor" span={6}><Input value={form.fornecedor} onChange={(e) => setF('fornecedor', e.target.value)} /></Field>

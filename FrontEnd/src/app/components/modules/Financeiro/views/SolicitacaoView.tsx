@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Send, CheckCircle2 } from 'lucide-react';
-import { FinCard, Toolbar, Field, Input, Select, Textarea, FileInput, Btn } from '../finUi';
+import { FinCard, Toolbar, Field, Input, Select, Textarea, FileInput, Btn, boldOS } from '../finUi';
 import { todayStr, genFinId, num, FORMAS_PAGAMENTO, TIPOS_REEMBOLSO } from '../finData';
 import { useFin } from '../useFin';
 import { uploadDocumento } from '../../../../../services/documentosService';
@@ -93,7 +93,7 @@ export function SolicitacaoView() {
         <Field label="Tipo (reembolso/adiantamento)" span={3}>
           <Select value={form.tipo} onChange={(e) => set('tipo', e.target.value)}>{TIPOS_REEMBOLSO.map((t) => <option key={t}>{t}</option>)}</Select>
         </Field>
-        <Field label="OS emitida" span={3}>
+        <Field label={boldOS('OS emitida')} span={3}>
           <Select value={form.vinculoValor} onChange={(e) => set('vinculoValor', e.target.value)}>
             <option value="">{oss.length ? 'Selecione...' : 'Nenhuma OS no ERP'}</option>
             {oss.map((o, i) => <option key={`${o.numero}-${i}`} value={o.numero}>{o.numero} - {o.cliente}</option>)}

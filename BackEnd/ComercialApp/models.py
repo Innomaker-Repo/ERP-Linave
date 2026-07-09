@@ -577,6 +577,7 @@ class PropostaComercial(models.Model):
     condicoes_gerais = models.TextField(blank=True, default='') # free text field for the general terms and conditions of the proposal
     condicoes_pagamento = models.TextField(blank=True, default='') # free text field for the payment terms and conditions of the proposal
     prazo = models.TextField(blank=True, default='') # free text field to specify the delivery time or deadline for the proposal
+    efetivo_previsto = models.TextField(blank=True, default='') # texto livre do item G - Efetivo previsto (equipe/efetivo)
     encerramento = models.TextField() # free text field for the closing remarks or conclusion of the proposal
 
     # Estrutura rica da proposta guardada FIELMENTE em JSON (round-trip sem perda):
@@ -704,6 +705,7 @@ class ContaPagar(FinanceiroBase):
     vinculo_valor = models.CharField(max_length=120, blank=True, default='')
     fornecedor = models.CharField(max_length=200, blank=True, default='')
     tipo = models.CharField(max_length=80, blank=True, default='')
+    natureza = models.CharField(max_length=60, blank=True, default='')  # classificação contábil da despesa
     documento = models.CharField(max_length=150, blank=True, default='')
     valor = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     vencimento = models.CharField(max_length=20, blank=True, default='')
@@ -763,6 +765,24 @@ class EstudoLocacao(FinanceiroBase):
 
     def __str__(self):
         return f'Locação {self.record_id}'
+
+
+class ReciboLocacao(FinanceiroBase):
+    # Recibo de locação (tipo='reciboLocacao'). Numeração é POR OS (001/YY por OS); o vínculo com a
+    # OS fica em `ordem_servico_backend_id` (id estável) + `ordem_servico_numero` (exibição). O corpo
+    # completo (itens, emitente, destinatário) é preservado em `extra`.
+    numero = models.CharField(max_length=20, blank=True, default='')
+    ordem_servico_backend_id = models.CharField(max_length=40, blank=True, default='')
+    ordem_servico_numero = models.CharField(max_length=120, blank=True, default='')
+    medicao_id = models.CharField(max_length=80, blank=True, default='')
+    medicao_numero = models.CharField(max_length=40, blank=True, default='')
+    cliente_nome = models.CharField(max_length=200, blank=True, default='')
+    data_emissao = models.CharField(max_length=20, blank=True, default='')
+    data_vencimento = models.CharField(max_length=20, blank=True, default='')
+    valor_total = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+
+    def __str__(self):
+        return f'Recibo de Locação {self.numero or self.record_id}'
 #--------------------- Fim Financeiro ------------------
 
 #--------------------- Compras ------------------
