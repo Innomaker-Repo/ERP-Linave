@@ -6,6 +6,7 @@ import {
 import { useErp } from '../../../context/ErpContext';
 import { fetchUsuarios, createUsuario, updateUsuario, deleteUsuario } from '../../../../services/authService';
 import { PasswordStrength, senhaValida } from '../../PasswordStrength';
+import { boldOS } from '../../../utils/osHighlight';
 
 // ─── Mapa de permissões por departamento ───────────────────────────────────
 const PERMISSAO_GRUPOS = [
@@ -31,7 +32,7 @@ const PERMISSAO_GRUPOS = [
       { id: 'crm', label: 'Negócios (CRM)' },
       { id: 'orcamentos', label: 'Orçar Negócios' },
       { id: 'proposta', label: 'Fazer Proposta' },
-      { id: 'fazerOs', label: 'Fazer OS' },
+      { id: 'fazerOs', label: boldOS('Fazer OS') },
       { id: 'medicao', label: 'Medição' },
       { id: 'finalizadosComercial', label: 'Finalizados' },
       { id: 'clientes', label: 'Base de Clientes' },
@@ -50,13 +51,16 @@ const PERMISSAO_GRUPOS = [
       { id: 'finPrevisao', label: 'Previsão de Receita' },
       { id: 'finBancos', label: 'Bancos' },
       { id: 'finHistorico', label: 'Histórico' },
+      { id: 'finCustoOs', label: boldOS('Custo por OS') },
+      { id: 'finReciboLocacao', label: 'Fazer Recibo de Locação' },
     ],
   },
   {
     id: 'compras',
     label: 'Compras',
+    // "Compras / Requisições" e "Minhas Compras" são liberadas a todos os usuários
+    // (todo colaborador pode solicitar e ver o próprio histórico), por isso não entram aqui.
     itens: [
-      { id: 'compras', label: 'Compras / Requisições' },
       { id: 'kanbanCompras', label: 'Kanban de Compras' },
       { id: 'aprovacoesCompras', label: 'Aprovações' },
       { id: 'historicoCompras', label: 'Histórico de Compras' },
@@ -72,7 +76,7 @@ const PERMISSAO_GRUPOS = [
       { id: 'itensAdicionar', label: 'Itens para adicionar' },
       { id: 'historicoBaixa', label: 'Histórico de Baixa' },
       { id: 'historicoRomaneio', label: 'Histórico de Romaneio' },
-      { id: 'alocadosPorOS', label: 'Alocados por OS' },
+      { id: 'alocadosPorOS', label: boldOS('Alocados por OS') },
     ],
   },
 ];

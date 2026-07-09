@@ -12,6 +12,7 @@ from django.db import transaction
 
 from .models import (
     Banco, SolicitacaoPagamento, ContaPagar, NotaFiscal, ContaReceber, EstudoLocacao,
+    ReciboLocacao,
 )
 
 
@@ -39,6 +40,13 @@ def _bool(v):
 
 def _list(v):
     return v if isinstance(v, list) else []
+
+
+def _soma_itens_total(itens):
+    """Soma o `total` dos itens do recibo (para a coluna consultável valor_total)."""
+    if not isinstance(itens, list):
+        return Decimal('0')
+    return sum((_dec(it.get('total')) for it in itens if isinstance(it, dict)), Decimal('0'))
 
 
 # Para cada `tipo` (FinTipo): model + mapa coluna_modelo -> (chave_frontend, caster).
@@ -70,7 +78,7 @@ SPECS = {
             'parcela': ('parcela', _str), 'total_parcelas': ('totalParcelas', _int),
             'empresa': ('empresa', _str), 'vinculo_tipo': ('vinculoTipo', _str),
             'vinculo_valor': ('vinculoValor', _str), 'fornecedor': ('fornecedor', _str),
-            'tipo': ('tipo', _str), 'documento': ('documento', _str),
+            'tipo': ('tipo', _str), 'natureza': ('natureza', _str), 'documento': ('documento', _str),
             'valor': ('valor', _dec), 'vencimento': ('vencimento', _str),
             'banco': ('banco', _str), 'forma': ('forma', _str), 'status': ('status', _str),
             'anexos': ('anexos', _list), 'comprovantes': ('comprovantes', _list),
@@ -119,6 +127,18 @@ SPECS = {
             'cobranca': ('cobranca', _str), 'status': ('status', _str),
         },
     },
+    'reciboLocacao': {
+        'model': ReciboLocacao,
+        'cols': {
+            'numero': ('numero', _str), 'empresa': ('empresa', _str), 'status': ('status', _str),
+            'ordem_servico_backend_id': ('ordemServicoBackendId', _str),
+            'ordem_servico_numero': ('ordemServicoNumero', _str),
+            'medicao_id': ('medicaoId', _str), 'medicao_numero': ('medicaoNumero', _str),
+            'cliente_nome': ('clienteNome', _str),
+            'data_emissao': ('dataEmissao', _str), 'data_vencimento': ('dataVencimento', _str),
+            'valor_total': ('itens', _soma_itens_total),
+        },
+    },
 }
 
 # kind do NotaFiscal -> tipo do frontend
@@ -145,7 +165,7 @@ def replace_all(records):
     (lista de FinRecord). Espelha o comportamento do blob, que reescrevia tudo.
     """
     # Limpa todas as tabelas financeiras.
-    for model in (Banco, SolicitacaoPagamento, ContaPagar, NotaFiscal, ContaReceber, EstudoLocacao):
+    for model in (Banco, SolicitacaoPagamento, ContaPagar, NotaFiscal, ContaReceber, EstudoLocacao, ReciboLocacao):
         model.objects.all().delete()
 
     buckets = {}
@@ -188,4 +208,5 @@ def read_all():
     out += [_instance_to_record(NFE_KIND_TO_TIPO.get(x.kind, 'nfe'), x) for x in NotaFiscal.objects.all()]
     out += [_instance_to_record('contaReceber', x) for x in ContaReceber.objects.all()]
     out += [_instance_to_record('locEstudo', x) for x in EstudoLocacao.objects.all()]
+    out += [_instance_to_record('reciboLocacao', x) for x in ReciboLocacao.objects.all()]
     return out

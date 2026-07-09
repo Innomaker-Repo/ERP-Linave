@@ -77,6 +77,10 @@ export interface ItemCompra {
 export interface RequisicaoCompra {
   id: string;
   solicitante: string;
+  // Identidade estável do solicitante (login) — permite o histórico por usuário mesmo
+  // que o nome digitado mude. Opcionais para compat. com pedidos antigos (só têm `solicitante`).
+  solicitanteCpf?: string;
+  solicitanteEmail?: string;
   departamento: string;
   centroCusto: string;
   itens: ItemCompra[];
@@ -223,6 +227,8 @@ export const normalizeRequests = (value: unknown): RequisicaoCompra[] => {
     .map((item: any) => ({
       id: String(item.id || createId()),
       solicitante: String(item.solicitante || ''),
+      solicitanteCpf: String(item.solicitanteCpf || ''),
+      solicitanteEmail: String(item.solicitanteEmail || ''),
       departamento: String(item.departamento || ''),
       centroCusto: String(item.centroCusto || ''),
       itens: Array.isArray(item.itens)
@@ -295,6 +301,8 @@ export interface CompraHistoricoRegistro {
   pedidoId: string;
   centroCusto: string;
   solicitante: string;
+  solicitanteCpf?: string;
+  solicitanteEmail?: string;
   departamento: string;
   itemId: string;
   itemNome: string;
@@ -337,6 +345,8 @@ export const buildHistoricoRecord = (
     pedidoId: request.id,
     centroCusto: request.centroCusto,
     solicitante: request.solicitante,
+    solicitanteCpf: request.solicitanteCpf || '',
+    solicitanteEmail: request.solicitanteEmail || '',
     departamento: request.departamento,
     itemId: item.id,
     itemNome: item.nome,
@@ -355,4 +365,74 @@ export const buildHistoricoRecord = (
     compradoEm: new Date().toISOString(),
     compradoPor: userLabel,
   };
+};
+
+// Rótulo da etapa do pedido no funil de compras (usado no histórico por usuário).
+export const stageLabel: Record<BoardStage, string> = {
+  SOLICITACOES: 'Solicitação',
+  SELECAO_GERENTE: 'Em cotação',
+  APROVACAO: 'Em aprovação',
+  COMPRADOS: 'Em compra',
+};
+
+// O registro (pedido ou item de histórico) pertence ao usuário logado?
+// Casa por CPF/e-mail (identidade estável do login) e, para dados antigos, pelo nome digitado.
+export const matchesSolicitante = (
+  record: { solicitante?: string; solicitanteCpf?: string; solicitanteEmail?: string },
+  session: { cpf?: string; email?: string; nome?: string } | null | undefined,
+): boolean => {
+  if (!session) return false;
+  const norm = (v?: string) => String(v || '').trim().toLowerCase();
+  const cpf = norm(session.cpf);
+  const email = norm(session.email);
+  const nome = norm(session.nome);
+  if (cpf && norm(record.solicitanteCpf) === cpf) return true;
+  if (email && norm(record.solicitanteEmail) === email) return true;
+  const s = norm(record.solicitante);
+  if (!s) return false;
+  return (!!nome && s === nome) || (!!email && s === email);
+};
+
+// Achata registros de histórico legados (shape antigo por pedido, com `itens`) em registros por
+// item (somente leitura) para que o histórico anterior continue aparecendo. Registros já no
+// novo shape (por item) passam direto. Compartilhado pelas telas de Histórico de Compras.
+export const toItemRecords = (registros: any[]): CompraHistoricoRegistro[] => {
+  const rows: CompraHistoricoRegistro[] = [];
+  for (const r of registros || []) {
+    if (r && Array.isArray(r.itens)) {
+      const details = Array.isArray(r.budgetDetails) ? r.budgetDetails : [];
+      for (const it of r.itens) {
+        const d = details.find((x: any) => x.itemId === it.id) || null;
+        const isItem = (d?.naturezaFornecimento || it.naturezaFornecimento) === 'ITEM';
+        rows.push({
+          id: `${r.id}::${it.id}`,
+          pedidoId: String(r.id || ''),
+          centroCusto: String(r.centroCusto || ''),
+          solicitante: String(r.solicitante || ''),
+          solicitanteCpf: String(r.solicitanteCpf || ''),
+          solicitanteEmail: String(r.solicitanteEmail || ''),
+          departamento: String(r.departamento || ''),
+          itemId: String(it.id || ''),
+          itemNome: String(it.nome || ''),
+          itemDescricao: String(it.descricao || ''),
+          categoria: String(it.categoria || ''),
+          qtd: Number(it.qtd || 0),
+          un: String(it.un || 'un'),
+          naturezaFornecimento: isItem ? 'ITEM' : 'SERVICO',
+          fornecedor: d?.fornecedorSelecionado || it.fornecedor || '',
+          valor: d?.valorSelecionado ?? null,
+          prazoEntrega: d?.prazoEntregaSelecionado || '',
+          condicaoPagamento: d?.condicaoPagamentoSelecionada || '',
+          purchaseState: it.purchaseState === 'estoque' ? 'estoque' : it.purchaseState === 'contratado' ? 'contratado' : 'comprado',
+          nfeStatus: 'pendente',
+          compradoEm: String(r.finalizadoEm || ''),
+          compradoPor: String(r.finalizadoPor || ''),
+          _legacy: true,
+        } as CompraHistoricoRegistro & { _legacy: boolean });
+      }
+    } else if (r && (r.itemId || r.pedidoId)) {
+      rows.push(r as CompraHistoricoRegistro);
+    }
+  }
+  return rows;
 };

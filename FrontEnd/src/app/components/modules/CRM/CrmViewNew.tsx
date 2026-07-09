@@ -10,6 +10,7 @@ import { handleDownloadPropostaPDF } from './handleDownloadPropostaPDF';
 import { handleDownloadOrcamentoPDF as gerarOrcamentoPDF } from './handleDownloadOrcamentoPDF';
 import { handleDownloadOSPDF as gerarOSPDF } from './handleDownloadOSPDF';
 import { getCachedWorkspace } from '../../../services/workspaceStorage';
+import { boldOS } from '../../../utils/osHighlight';
 import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
 import { formatDateBR } from '../../../utils/formatDate';
 import { isEmpresaLinave, getLogoUrlForEmpresa } from '../../../utils/company';
@@ -939,6 +940,7 @@ const initialServico: Servico = {
       const logoUrl = getLogoUrlForEmpresa(selectedObraDetalhes.empresaPrestadora);
 
       logoBase64 = await getBase64FromUrl(logoUrl);
+      const fundoLinaveBase64 = isLinave ? await getBase64FromUrl('/linave-rodape.png') : undefined;
 
       const resultadoPdf = handleDownloadPropostaPDF(
         ultimaProposta,
@@ -946,6 +948,7 @@ const initialServico: Servico = {
         selectedObraDetalhes,
         logoBase64,
         isLinave,
+        fundoLinaveBase64,
       );
 
       if (!resultadoPdf) {
@@ -2123,11 +2126,11 @@ const obrasOrdenadas = useMemo(() => {
                                     </div>
                                   ) : osEnviada ? (
                                     <div className="px-1.5 py-0.5 bg-green-500/20 border border-green-500/40 rounded-full whitespace-nowrap">
-                                      <span className="text-green-300 text-[10px] font-black">OS Enviada</span>
+                                      <span className="text-green-300 text-[10px] font-black">{boldOS('OS Enviada')}</span>
                                     </div>
                                   ) : (
                                     <div className="px-1.5 py-0.5 bg-amber-500/20 border border-amber-500/40 rounded-full whitespace-nowrap">
-                                      <span className="text-amber-300 text-[10px] font-black">Aguard. OS</span>
+                                      <span className="text-amber-300 text-[10px] font-black">{boldOS('Aguard. OS')}</span>
                                     </div>
                                   )}
                                 </>
@@ -2300,7 +2303,7 @@ const obrasOrdenadas = useMemo(() => {
 
                               <div className="rounded-lg p-2.5 border bg-purple-500/15 border-purple-500/30">
                                 <div className="flex justify-between items-center text-xs">
-                                  <span className="text-purple-200 font-black uppercase">OS</span>
+                                  <span className="text-purple-200 font-black uppercase">{boldOS('OS')}</span>
                                   <span className="text-purple-300 font-black">{temOS ? `${osDoNegocio.length} total` : '0 total'}</span>
                                 </div>
                                 <p className="text-purple-100 text-xs mt-1">{temOS ? `${osAprovadas} aprovada(s)` : 'Nenhuma OS vinculada'}</p>
@@ -3248,9 +3251,9 @@ const obrasOrdenadas = useMemo(() => {
                         {osProntaFinalizacao ? (
                           <span className="px-2 py-0.5 bg-emerald-500/30 border border-emerald-500/50 rounded-full text-emerald-300 text-[10px] font-black">Pronta p/ Finalização</span>
                         ) : osEnviada ? (
-                          <span className="px-2 py-0.5 bg-green-500/30 border border-green-500/50 rounded-full text-green-300 text-[10px] font-black">OS Enviada</span>
+                          <span className="px-2 py-0.5 bg-green-500/30 border border-green-500/50 rounded-full text-green-300 text-[10px] font-black">{boldOS('OS Enviada')}</span>
                         ) : (
-                          <span className="px-2 py-0.5 bg-amber-500/30 border border-amber-500/50 rounded-full text-amber-300 text-[10px] font-black">Aguard. OS</span>
+                          <span className="px-2 py-0.5 bg-amber-500/30 border border-amber-500/50 rounded-full text-amber-300 text-[10px] font-black">{boldOS('Aguard. OS')}</span>
                         )}
                       </div>
                     </div>
@@ -4091,14 +4094,14 @@ const obrasOrdenadas = useMemo(() => {
                 </div>
 
                 <div className="bg-white/5 border border-white/10 rounded-xl p-6 space-y-3">
-                  <h3 className="text-white font-black text-lg">SUMÁRIO CONSOLIDADO DA OS</h3>
+                  <h3 className="text-white font-black text-lg">{boldOS('SUMÁRIO CONSOLIDADO DA OS')}</h3>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                     <div>
                       <p className="text-white/50 text-xs mb-1">CC</p>
                       <p className="text-white font-bold">{osPrincipal?.cc || 'LN-0731A/26'}</p>
                     </div>
                     <div>
-                      <p className="text-white/50 text-xs mb-1">Número OS</p>
+                      <p className="text-white/50 text-xs mb-1">{boldOS('Número OS')}</p>
                       <p className="text-white font-bold">{osPrincipal?.ordemServicoNumero || '0731A'}</p>
                     </div>
                     <div>
@@ -4140,7 +4143,7 @@ const obrasOrdenadas = useMemo(() => {
                       </table>
                     </div>
                   ) : (
-                    <p className="text-white/50 text-sm">Nenhuma hora trabalhada cadastrada para esta OS.</p>
+                    <p className="text-white/50 text-sm">{boldOS('Nenhuma hora trabalhada cadastrada para esta OS.')}</p>
                   )}
                 </div>
 
@@ -4241,7 +4244,7 @@ const obrasOrdenadas = useMemo(() => {
                       )}
                     </div>
                   ) : (
-                    <p className="text-white/50 text-sm">Nenhum orçamento vinculado a esta OS.</p>
+                    <p className="text-white/50 text-sm">{boldOS('Nenhum orçamento vinculado a esta OS.')}</p>
                   )}
                 </div>
 
@@ -4283,7 +4286,7 @@ const obrasOrdenadas = useMemo(() => {
                       </div>
                     </div>
                   ) : (
-                    <p className="text-white/50 text-sm">Nenhuma proposta vinculada a esta OS.</p>
+                    <p className="text-white/50 text-sm">{boldOS('Nenhuma proposta vinculada a esta OS.')}</p>
                   )}
                 </div>
 
@@ -4312,7 +4315,7 @@ const obrasOrdenadas = useMemo(() => {
 
                 {documentosDaOS.length > 0 && (
                   <div className="bg-white/5 border border-white/10 rounded-xl p-6 space-y-3">
-                    <h3 className="text-white font-black text-lg">DOCUMENTOS DA OS</h3>
+                    <h3 className="text-white font-black text-lg">{boldOS('DOCUMENTOS DA OS')}</h3>
                     <div className="space-y-2">
                       {documentosDaOS.map((doc: any) => (
                         <div key={doc.id || doc.nome} className="bg-[#0b1220] rounded-lg p-3 border border-white/5 flex items-center justify-between gap-3">

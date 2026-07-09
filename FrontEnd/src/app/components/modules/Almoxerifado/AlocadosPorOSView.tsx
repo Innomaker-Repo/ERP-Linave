@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ClipboardList, Package, Search } from 'lucide-react';
 import { useErp } from '../../../context/ErpContext';
+import { boldOS } from '../../../utils/osHighlight';
 import { Badge } from '../../../modules/shared/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../modules/shared/ui/select';
 import { getOrdensServico, getOsOptionLabel, getOsOptionValue, getOsStableValue, type OrdemServicoResumo, isOsAlvo } from '../../../../services/ordensServico';
@@ -163,10 +164,10 @@ export function AlocadosPorOSView({ searchQuery }: AlocadosPorOSViewProps) {
     <div className="flex h-full flex-col gap-6 p-8 animate-in fade-in duration-300">
       <div className="flex flex-col gap-2">
         <div className="inline-flex items-center gap-2 text-cyan-300 text-[10px] font-black uppercase tracking-widest">
-          <ClipboardList size={14} /> Histórico por OS
+          <ClipboardList size={14} /> {boldOS('Histórico por OS')}
         </div>
-        <h1 className="text-3xl font-black text-white">Histórico de alocações por OS</h1>
-        <p className="text-white/50 text-sm">Mostra todas as alocações já realizadas na OS, mesmo após desalocação dos itens no estoque.</p>
+        <h1 className="text-3xl font-black text-white">{boldOS('Histórico de alocações por OS')}</h1>
+        <p className="text-white/50 text-sm">{boldOS('Mostra todas as alocações já realizadas na OS, mesmo após desalocação dos itens no estoque.')}</p>
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_280px]">
@@ -210,7 +211,7 @@ export function AlocadosPorOSView({ searchQuery }: AlocadosPorOSViewProps) {
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <div className="rounded-2xl border border-white/10 bg-[#101f3d] px-4 py-3">
-          <p className="text-[10px] font-black uppercase tracking-widest text-white/40">OS selecionada</p>
+          <p className="text-[10px] font-black uppercase tracking-widest text-white/40">{boldOS('OS selecionada')}</p>
           <p className="mt-1 text-lg font-black text-white">{selectedOsLabel || '—'}</p>
         </div>
         <div className="rounded-2xl border border-white/10 bg-[#101f3d] px-4 py-3">
@@ -225,13 +226,13 @@ export function AlocadosPorOSView({ searchQuery }: AlocadosPorOSViewProps) {
 
       <div className="overflow-hidden rounded-[28px] border border-white/10 bg-[#101f3d] shadow-2xl shadow-black/20">
         <div className="border-b border-white/10 px-6 py-4">
-          <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Alocações registradas dessa OS</p>
+          <p className="text-[10px] font-black uppercase tracking-widest text-white/40">{boldOS('Alocações registradas dessa OS')}</p>
         </div>
 
         {currentAllocations.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-3 p-10 text-center text-white/40">
             <Package size={42} className="text-white/20" />
-            <p className="text-sm font-bold">Nenhum item encontrado para esta OS</p>
+            <p className="text-sm font-bold">{boldOS('Nenhum item encontrado para esta OS')}</p>
           </div>
         ) : (
           <div className="overflow-auto">

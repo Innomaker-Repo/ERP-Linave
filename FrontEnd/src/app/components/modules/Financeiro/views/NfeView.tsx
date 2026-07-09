@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Plus, FileCheck2, ExternalLink } from 'lucide-react';
 import {
   FinCard, Toolbar, DataTable, Th, Td, Btn, StatusTag, CompanyTag, Pill, AlertBar, EmptyRow,
-  FinModal, Field, Input, Select, FileInput,
+  FinModal, Field, Input, Select, FileInput, boldOS,
 } from '../finUi';
 import { br, money, num, todayStr, genFinId, TAX_DEFAULTS, calcNfeLiquido, FORMAS_PAGAMENTO, type NfeSolicitacao } from '../finData';
 import { useFin } from '../useFin';
@@ -110,7 +110,7 @@ export function NfeView() {
       <DataTable
         minWidth={1200}
         head={<>
-          <Th>Solicitação</Th><Th>OS</Th><Th>Empresa</Th><Th>Cliente</Th><Th>Valor</Th>
+          <Th>Solicitação</Th><Th>{boldOS('OS')}</Th><Th>Empresa</Th><Th>Cliente</Th><Th>Valor</Th>
           <Th>Origem</Th><Th>Data emitir</Th><Th>Tipo NFe</Th><Th>Status</Th><Th>Anexos</Th><Th>Ação</Th>
         </>}
       >
@@ -157,7 +157,7 @@ export function NfeView() {
             <Field label="ISS %" span={2}><Input type="number" step="0.0001" value={nf.iss} onChange={(e) => setNfField('iss', e.target.value)} /></Field>
 
             <Field label="Vencimento do recebimento" span={6}><Input type="date" value={nf.vencimento} onChange={(e) => setNfField('vencimento', e.target.value)} /></Field>
-            <Field label="Contrato / OS / P.O" span={6}><Input value={nf.contrato} onChange={(e) => setNfField('contrato', e.target.value)} /></Field>
+            <Field label={boldOS('Contrato / OS / P.O')} span={6}><Input value={nf.contrato} onChange={(e) => setNfField('contrato', e.target.value)} /></Field>
 
             <div className="col-span-12 rounded-xl border border-white/10 bg-[#0b1220] p-4">
               <p className="mb-3 text-xs font-black uppercase tracking-widest text-amber-300">Impostos retidos (detalhado)</p>
@@ -210,7 +210,7 @@ export function NfeView() {
             <Field label="Empresa" span={4}>
               <Select value={sf.empresa} onChange={(e) => setSfField('empresa', e.target.value)}>{empresas.map((emp) => <option key={emp}>{emp}</option>)}</Select>
             </Field>
-            <Field label="OS" span={4}>
+            <Field label={boldOS('OS')} span={4}>
               <Select value={sf.os} onChange={(e) => setSfField('os', e.target.value)}>
                 <option value="">{oss.length ? 'Selecione...' : 'Nenhuma OS'}</option>
                 {oss.map((o, i) => <option key={`${o.numero}-${i}`} value={o.numero}>{o.numero} - {o.cliente}</option>)}

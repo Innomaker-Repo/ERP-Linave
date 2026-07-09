@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Plus, Trash2, Lock } from 'lucide-react';
-import { FinCard, Toolbar, Kpi, DataTable, Th, Td, EmptyRow } from '../finUi';
+import { FinCard, Toolbar, Kpi, DataTable, Th, Td, EmptyRow, boldOS } from '../finUi';
 import { money, br, num } from '../finData';
 import { useErp } from '../../../../context/ErpContext';
 
@@ -170,7 +170,7 @@ export function CustoPorOsView() {
 
   return (
     <FinCard>
-      <Toolbar title="Custo por OS" hint="Todos os custos da OS: serviço (mão de obra/materiais/terceirizados), alocação, compras aprovadas, contas a pagar vinculadas e H.H. OS fechada fica somente leitura." />
+      <Toolbar title={boldOS('Custo por OS')} hint={boldOS('Todos os custos da OS: serviço (mão de obra/materiais/terceirizados), alocação, compras aprovadas, contas a pagar vinculadas e H.H. OS fechada fica somente leitura.')} />
 
       {/* Filtros: OS + período */}
       <div className="mb-5 grid grid-cols-1 gap-4 md:grid-cols-4">
@@ -196,12 +196,12 @@ export function CustoPorOsView() {
       </div>
 
       {!selected ? (
-        <p className="text-white/40 text-sm bg-[#0b1220] rounded-xl border border-white/5 p-6">Selecione uma OS para listar os custos.</p>
+        <p className="text-white/40 text-sm bg-[#0b1220] rounded-xl border border-white/5 p-6">{boldOS('Selecione uma OS para listar os custos.')}</p>
       ) : (
         <>
           {/* Cabeçalho da OS: id + embarcação + status */}
           <div className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-4">
-            <Kpi label="OS" value={selected.numero} />
+            <Kpi label={boldOS('OS')} value={selected.numero} />
             <Kpi label="Embarcação" value={selected.embarcacao} />
             <Kpi label="Custo total (período)" value={money(totalCusto)} />
             <Kpi label="Status" value={selected.fechada ? 'Fechada' : 'Aberta'} />
@@ -210,7 +210,7 @@ export function CustoPorOsView() {
           {/* Adicionar H.H — só quando a OS está ABERTA */}
           {selected.fechada ? (
             <div className="mb-5 flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-amber-200 text-xs">
-              <Lock size={14} /> OS fechada — somente leitura. Não é possível adicionar novos custos.
+              <Lock size={14} /> {boldOS('OS fechada — somente leitura. Não é possível adicionar novos custos.')}
             </div>
           ) : (
             <div className="mb-5 rounded-xl border border-white/10 bg-[#0b1220] p-4">
@@ -249,7 +249,7 @@ export function CustoPorOsView() {
             head={<><Th>Data</Th><Th>Tipo</Th><Th>Descrição</Th><Th>Valor</Th><Th></Th></>}
           >
             {linhas.length === 0 ? (
-              <EmptyRow cols={5} text="Nenhum custo para esta OS no período." />
+              <EmptyRow cols={5} text={boldOS('Nenhum custo para esta OS no período.')} />
             ) : linhas.map((l, i) => (
               <tr key={l.id || `${l.tipo}-${i}`} className="transition-colors hover:bg-white/5">
                 <Td>{l.data ? br(l.data) : '—'}</Td>
@@ -267,7 +267,7 @@ export function CustoPorOsView() {
 
           <div className="mt-4 flex flex-wrap items-center justify-end gap-6 border-t border-white/10 pt-4">
             <p className="text-white/50 text-xs uppercase font-black tracking-widest">H.H adicionado: <span className="text-emerald-300">{money(totalHH)}</span></p>
-            <p className="text-white/50 text-xs uppercase font-black tracking-widest">Custo total da OS: <span className="text-emerald-300 text-lg">{money(totalCusto)}</span></p>
+            <p className="text-white/50 text-xs uppercase font-black tracking-widest">{boldOS('Custo total da OS: ')}<span className="text-emerald-300 text-lg">{money(totalCusto)}</span></p>
           </div>
         </>
       )}

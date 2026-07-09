@@ -11,6 +11,7 @@ import { saveAs } from 'file-saver';
 import { getNegocios } from '../../../../services/comercial';
 import { getClientes, criarProposta, atualizarProposta, atualizarNegocio } from '../../../../services/comercialService';
 import { temServico, temLocacao } from '../../../utils/modalidade';
+import { boldOS } from '../../../utils/osHighlight';
 import { ObservacoesNegocio } from '../../ObservacoesNegocio';
 
 interface EscopoLinha {
@@ -48,6 +49,7 @@ interface PropostaFormData {
   condicoesGerais: string;
   condicoesPagamento: string;
   prazo: string;
+  efetivoPrevisto: string;
   encerramento: string;
 }
 
@@ -141,7 +143,8 @@ const mapNegocioToObra = (n: any): any => ({
     responsabilidadeContratante: p.responsabilidadeContratante || '', // item C (PDF)
     escopoC: p.responsabilidadeContratante || '',                     // alias p/ o form
     condicoesGerais: p.condicoesGerais || '',                         // item E (PDF)
-    condicoesPagamento: p.condicoesPagamento || '',                   // item G (PDF)
+    condicoesPagamento: p.condicoesPagamento || '',                   // item H (PDF)
+    efetivoPrevisto: p.efetivoPrevisto || '',                         // item G (PDF)
     encerramento: p.encerramento || '',
     escopoA: p.escopoA || '',
     escopoBasicoServicos: p.escopoBasicoServicos || [],
@@ -230,6 +233,7 @@ export function PropostaView() {
     condicoesGerais: '',
     condicoesPagamento: '',
     prazo: '',
+    efetivoPrevisto: '',
     encerramento: ''
   });
 
@@ -683,7 +687,9 @@ export function PropostaView() {
     const logoUrl = getLogoUrlForEmpresa(nomeEmpresa);
 
     const logoBase64 = await getBase64FromUrl(logoUrl);
-    handleDownloadPropostaPDF(proposta, cliente, obra, logoBase64, isLinave);
+    // Fundo decorativo do rodapé — só a Linave usa (fica atrás do texto em todas as páginas).
+    const fundoLinaveBase64 = isLinave ? await getBase64FromUrl('/linave-rodape.png') : undefined;
+    handleDownloadPropostaPDF(proposta, cliente, obra, logoBase64, isLinave, fundoLinaveBase64);
   };
 
   const getRascunhoKey = (obraId: number) => `proposta_rascunho_${obraId}`;
@@ -780,6 +786,7 @@ export function PropostaView() {
       condicoesGerais: propostaForm.condicoesGerais,
       condicoesPagamento: propostaForm.condicoesPagamento,
       prazo: propostaForm.prazo,
+      efetivoPrevisto: propostaForm.efetivoPrevisto,
       encerramento: propostaForm.encerramento,
       // Estrutura rica persistida FIELMENTE: escopo A (tabelas) + tabela D de preço.
       escopoBasicoServicos: propostaForm.escopoBasicoServicos || [],
@@ -878,6 +885,7 @@ export function PropostaView() {
         condicoesGerais: propostaForm.condicoesGerais,
         condicoesPagamento: propostaForm.condicoesPagamento,
         prazo: propostaForm.prazo,
+        efetivoPrevisto: propostaForm.efetivoPrevisto,
         encerramento: propostaForm.encerramento
       };
 
@@ -898,6 +906,19 @@ export function PropostaView() {
     try {
       await atualizarProposta(ultimaProposta.id, { status: 'aceita' });
       await atualizarNegocio(obra.backendId, { categoria: 'Em Andamento', status: 'Em andamento' });
+      // Atualização otimista: mantém o negócio na tela já como "Aceita" (categoria Em Andamento),
+      // preservando as propostas — assim ele continua no "Histórico de Propostas" mesmo que o
+      // refetch demore/varie. O refresh abaixo apenas confirma com os dados do servidor.
+      setListaNegocios((prev) => prev.map((o) =>
+        o.backendId === obra.backendId
+          ? {
+              ...o,
+              categoria: 'Em Andamento',
+              status: 'Em andamento',
+              propostas: (o.propostas || []).map((p: any, i: number, arr: any[]) =>
+                i === arr.length - 1 ? { ...p, status: 'aceita' } : p),
+            }
+          : o));
       await refreshNegocios();
       if (selectedObra?.backendId === obra.backendId) {
         setSelectedObra(null);
@@ -975,6 +996,7 @@ export function PropostaView() {
       condicoesGerais: propostaAntiga?.condicoesGerais || '',
       condicoesPagamento: propostaAntiga?.condicoesPagamento || '',
       prazo: propostaAntiga?.prazo || '',
+      efetivoPrevisto: propostaAntiga?.efetivoPrevisto || '',
       encerramento: propostaAntiga?.encerramento || '',
     };
   };
@@ -1089,7 +1111,7 @@ export function PropostaView() {
         {/* FILTRO POR OS */}
         {osDisponiveis.length > 0 && (
           <div className="flex items-center gap-2">
-            <span className="text-white/40 text-xs font-bold uppercase tracking-widest">Filtrar por OS</span>
+            <span className="text-white/40 text-xs font-bold uppercase tracking-widest">{boldOS('Filtrar por OS')}</span>
             <select value={filtroOs} onChange={(e) => setFiltroOs(e.target.value)} className="bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-white text-xs">
               <option value="">Todas as OS</option>
               {osDisponiveis.map((n: any) => <option key={n} value={n}>{n}</option>)}
@@ -1120,15 +1142,15 @@ export function PropostaView() {
                       <div className="bg-white/3 rounded-lg p-4 mb-4 space-y-2 text-xs border border-white/5">
                         <div className="flex justify-between">
                           <span className="text-white/70">Subtotal:</span>
-                          <span className="text-white font-black">R$ {obra.orcamentoValores.subtotal.toFixed(2)}</span>
+                          <span className="text-white font-black">R$ {Number(obra.orcamentoValores.subtotal || 0).toFixed(2)}</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-white/70">Margem:</span>
-                          <span className="text-white font-black">R$ {((obra.orcamentoValores.subtotal * obra.orcamentoValores.margem) / 100).toFixed(2)}</span>
+                          <span className="text-white font-black">R$ {((Number(obra.orcamentoValores.subtotal || 0) * Number(obra.orcamentoValores.margem || 0)) / 100).toFixed(2)}</span>
                         </div>
                         <div className="flex justify-between text-blue-300 font-black">
                           <span>Preço Final:</span>
-                          <span>R$ {obra.orcamentoValores.precoFinal.toFixed(2)}</span>
+                          <span>R$ {Number(obra.orcamentoValores.precoFinal || 0).toFixed(2)}</span>
                         </div>
                       </div>
                     )}
@@ -1796,22 +1818,9 @@ export function PropostaView() {
         </div>
       </div>
 
-      {/* SEÇÃO 15: F - CONDIÇÕES DE PAGAMENTO */}
+      {/* SEÇÃO 15: F - PRAZO */}
       <div className={sectionClass}>
-        <h3 className="text-base font-black text-white uppercase mb-4">F - Condições de Pagamento</h3>
-        <div className="space-y-1.5">
-          <label className={labelClass}>Condições</label>
-          <textarea 
-            className={`${inputClass} h-32`}
-            value={propostaForm.condicoesPagamento}
-            onChange={e => setPropostaForm({...propostaForm, condicoesPagamento: e.target.value})}
-          />
-        </div>
-      </div>
-
-      {/* SEÇÃO 16: G - PRAZO */}
-      <div className={sectionClass}>
-        <h3 className="text-base font-black text-white uppercase mb-4">G - Prazo</h3>
+        <h3 className="text-base font-black text-white uppercase mb-4">F - Prazo</h3>
         <div className="grid grid-cols-3 gap-4 items-start">
           <div className="col-span-2 space-y-1.5">
             <label className={labelClass}>Prazo</label>
@@ -1852,7 +1861,32 @@ export function PropostaView() {
         </div>
       </div>
 
-      
+      {/* SEÇÃO 16: G - EFETIVO PREVISTO */}
+      <div className={sectionClass}>
+        <h3 className="text-base font-black text-white uppercase mb-4">G - Efetivo previsto</h3>
+        <div className="space-y-1.5">
+          <label className={labelClass}>Efetivo previsto</label>
+          <textarea
+            className={`${inputClass} h-24`}
+            value={propostaForm.efetivoPrevisto}
+            onChange={e => setPropostaForm({...propostaForm, efetivoPrevisto: e.target.value})}
+          />
+        </div>
+      </div>
+
+      {/* SEÇÃO 17: H - CONDIÇÕES DE PAGAMENTO */}
+      <div className={sectionClass}>
+        <h3 className="text-base font-black text-white uppercase mb-4">H - Condições de Pagamento</h3>
+        <div className="space-y-1.5">
+          <label className={labelClass}>Condições</label>
+          <textarea
+            className={`${inputClass} h-32`}
+            value={propostaForm.condicoesPagamento}
+            onChange={e => setPropostaForm({...propostaForm, condicoesPagamento: e.target.value})}
+          />
+        </div>
+      </div>
+
       {/* SEÇÃO 18: ENCERRAMENTO */}
       <div className={sectionClass}>
         <h3 className="text-base font-black text-white uppercase mb-4">Encerramento</h3>

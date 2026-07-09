@@ -61,6 +61,7 @@ export const valorPorExtenso = (valor: number): string => {
 
 export interface ReciboLocacaoData {
   numero: string;
+  ordemServicoNumero?: string;
   empresa?: string;
   emitenteNome: string;
   emitenteEndereco: string;
@@ -116,9 +117,16 @@ export const gerarReciboLocacaoPDF = async (r: ReciboLocacaoData) => {
     });
   };
 
+  // O documento da LINAVE é "Nota de Débito"; das demais prestadoras (Servinave/VTS) é
+  // "Recibo de Locação". Logo e emitente já variam pela empresa; aqui variam também os textos.
+  const isLinave = String(r.empresa || '').toLowerCase().includes('linave');
+  const docTitulo = isLinave ? 'NOTA DE DÉBITO' : 'RECIBO DE LOCAÇÃO';
+  const docValorTotalLabel = isLinave ? 'VALOR TOTAL DA NOTA DE DÉBITO' : 'VALOR TOTAL DO RECIBO';
+  const docNumeroLabel = isLinave ? 'Nº DA NOTA DE DÉBITO' : 'Nº DO RECIBO';
+  const docArquivo = isLinave ? 'Nota_Debito' : 'Recibo_Locacao';
+
   // ===== Logo + 1ª VIA =====
   try {
-    const isLinave = String(r.empresa || '').toLowerCase().includes('linave');
     const img = await loadImage(isLinave ? '/image2.jpg' : '/image1.png');
     doc.addImage(img, isLinave ? 'JPEG' : 'PNG', margin, y, 45, 24);
   } catch { /* segue sem logo */ }
@@ -153,17 +161,18 @@ export const gerarReciboLocacaoPDF = async (r: ReciboLocacaoData) => {
 
   // Título (direita, topo)
   const rx = margin + leftW;
-  cell(rx, y, rightW, 14, 'RECIBO DE LOCAÇÃO', { align: 'center', bold: true, size: 13 });
+  cell(rx, y, rightW, 14, docTitulo, { align: 'center', bold: true, size: 13 });
   cell(rx, y, rightW, 14, `Nº ${r.numero}`, { align: 'right', bold: true, size: 11, border: false });
   // Datas / forma (direita, rótulo + valor)
   const dyStart = y + 14;
-  const dh = (topH - 14) / 3;
   const lblW = rightW * 0.55;
   const rows: [string, string][] = [
+    ...(r.ordemServicoNumero ? [['OS VINCULADA:', r.ordemServicoNumero] as [string, string]] : []),
     ['DATA DA EMISSÃO:', dataBr(r.dataEmissao)],
     ['DATA DO VENCIMENTO:', dataBr(r.dataVencimento)],
     ['FORMA DE PAGAMENTO:', r.formaPagamento || ''],
   ];
+  const dh = (topH - 14) / rows.length;
   rows.forEach(([lbl, val], i) => {
     const ry = dyStart + i * dh;
     cell(rx, ry, lblW, dh, lbl, { align: 'right', bold: true, size: 8.5, fill: true });
@@ -245,7 +254,7 @@ export const gerarReciboLocacaoPDF = async (r: ReciboLocacaoData) => {
   for (let i = itens.length; i < 3; i++) { cell(margin, y, fullW, 8, '', {}); y += 8; }
 
   const totalRecibo = itens.reduce((s, it) => s + (Number(it.total) || 0), 0);
-  cell(margin, y, fullW - cTotal, 8, 'VALOR TOTAL DO RECIBO', { bold: true, align: 'center', fill: true });
+  cell(margin, y, fullW - cTotal, 8, docValorTotalLabel, { bold: true, align: 'center', fill: true });
   cell(margin + fullW - cTotal, y, cTotal, 8, `R$ ${money(totalRecibo)}`, { italic: true, size: 8 });
   y += 8;
   cell(margin, y, 34, 10, 'VALOR POR EXTENSO', { bold: true, size: 7.5, align: 'center' });
@@ -273,11 +282,11 @@ export const gerarReciboLocacaoPDF = async (r: ReciboLocacaoData) => {
   const c2 = fullW - c1 - c3;
   cell(margin, y, c1, 7, 'DOCUMENTO RECEBIDO EM', { bold: true, size: 6.5, align: 'center' });
   cell(margin + c1, y, c2, 7, 'ASSINATURA E IDENTIFICAÇÃO DO RECEBEDOR', { bold: true, size: 6.5, align: 'center' });
-  cell(margin + c1 + c2, y, c3, 7, 'Nº DO RECIBO', { bold: true, size: 9, align: 'center' });
+  cell(margin + c1 + c2, y, c3, 7, docNumeroLabel, { bold: true, size: 9, align: 'center' });
   y += 7;
   cell(margin, y, c1, 16, '', {});
   cell(margin + c1, y, c2, 16, '', {});
   cell(margin + c1 + c2, y, c3, 16, r.numero, { bold: true, size: 10, align: 'center' });
 
-  doc.save(`Recibo_Locacao_${String(r.numero || 'recibo').replace(/[\\/]/g, '-')}.pdf`);
+  doc.save(`${docArquivo}_${String(r.numero || 'documento').replace(/[\\/]/g, '-')}.pdf`);
 };

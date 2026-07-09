@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { criarOrdemServico, atualizarOrdemServico, deleteOrdemServico } from '../../../../services/comercialService';
 import { getLogoUrlForEmpresa } from '../../../utils/company';
 import { formatDateBR } from '../../../utils/formatDate';
+import { boldOS } from '../../../utils/osHighlight';
 import { ObservacoesNegocio } from '../../ObservacoesNegocio';
 
 // ==========================================
@@ -1238,7 +1239,7 @@ export function OsView({ searchQuery }: OSViewProps) {
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-black text-white">ORDEM DE SERVIÇO CONSOLIDADA</h1>
-          <p className="text-white/50 text-xs mt-1">OS com dados unificados do negócio, orçamento e proposta</p>
+          <p className="text-white/50 text-xs mt-1">{boldOS('OS com dados unificados do negócio, orçamento e proposta')}</p>
         </div>
         <button
           onClick={() => {
@@ -1787,7 +1788,7 @@ export function OsView({ searchQuery }: OSViewProps) {
           <div className="bg-[#101f3d] rounded-2xl border border-white/10 shadow-2xl max-w-[96vw] w-full max-h-[95vh] overflow-y-auto">
             <div className="sticky top-0 z-40 bg-gradient-to-r from-orange-500/40 to-amber-500/40 backdrop-blur-md p-8 border-b border-white/10 flex justify-between items-center">
               <div>
-                <h2 className="text-3xl font-black text-white">Detalhes da OS Consolidada</h2>
+                <h2 className="text-3xl font-black text-white">{boldOS('Detalhes da OS Consolidada')}</h2>
                 <p className="text-white/60 text-base mt-2">{selectedOS.ordemServicoNumero}</p>
               </div>
               <button onClick={() => setShowDetalhesOS(false)} className="p-2 bg-white/5 rounded-full hover:bg-white/10">
@@ -1921,7 +1922,7 @@ export function OsView({ searchQuery }: OSViewProps) {
                     </table>
                   </div>
                 ) : (
-                  <p className="text-white/50 text-sm">Nenhuma hora trabalhada cadastrada para esta OS.</p>
+                  <p className="text-white/50 text-sm">{boldOS('Nenhuma hora trabalhada cadastrada para esta OS.')}</p>
                 )}
               </div>
 

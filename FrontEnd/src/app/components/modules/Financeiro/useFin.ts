@@ -10,6 +10,7 @@ import { useMemo } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import {
   mapOsToFinanceiro, obraFinalizada, docsMediacao, negocioValor, empresaFromCC, todayStr, days, num,
+  upsertContaReceberPorMedicao,
   type OS, type Empresa, type FinTipo, type NfeSolicitacao,
 } from './finData';
 
@@ -121,6 +122,8 @@ export function useFin() {
         anexos: r.anexos || [],
         contrato: r.contrato || r.os || '',
         derived: false,
+        medicaoId: r.medicaoId || '',
+        medicaoNumero: r.medicaoNumero || '',
       }));
 
     return [...derived, ...manual];
@@ -160,6 +163,7 @@ export function useFin() {
       vinculoValor: sol.vinculoValor,
       fornecedor: sol.fornecedor,
       tipoPagamento: sol.tipoPagamento,
+      natureza: sol.natureza || '',
       documento: sol.documento,
       valor: sol.valor,
       vencimento: sol.vencimento,
@@ -201,23 +205,23 @@ export function useFin() {
       anexos: payload.anexos || [],
       createdAt: now,
     };
-    const receber: FinRecord = {
-      id: `CR-${ts}`,
-      tipo: 'contaReceber',
-      origem: 'NFe',
+    // A conta a receber da parte de SERVIÇO é mesclada por medição: se o recibo de locação da
+    // mesma medição já criou (ou criar depois) um recebível, os dois somam num só.
+    const next = upsertContaReceberPorMedicao([nfe, ...financeiro], {
+      medicaoId: sol.medicaoId || '',
+      medicaoNumero: sol.medicaoNumero || '',
+      ordemServicoNumero: sol.os || '',
       empresa: sol.empresa,
       cliente: payload.cliente,
-      referencia: payload.numero,
+      origem: 'NFe',
+      fonteId: nfe.id,
       valorOriginal: payload.original,
       valorLiquido: payload.liquido,
-      vencimentoRecebimento: payload.vencimento,
-      recebido: payload.baixado >= payload.liquido && payload.liquido > 0,
-      dataRecebimento: '',
-      valorRecebido: payload.baixado || 0,
-      bancoRecebimento: '',
-      createdAt: now,
-    };
-    await ctx.saveEntity('financeiro', [nfe, receber, ...financeiro]);
+      vencimento: payload.vencimento,
+      referencia: `NF ${payload.numero}`,
+      baixado: payload.baixado,
+    });
+    await ctx.saveEntity('financeiro', next);
   };
 
   // Parcela uma conta a pagar: cria a conta mãe (valor total) e as parcelas filhas

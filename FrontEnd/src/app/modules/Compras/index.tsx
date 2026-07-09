@@ -3,6 +3,7 @@ import { ComprasKanbanView } from '../../components/modules/Compras/ComprasKanba
 import { ComprasSolicitacoesView } from '../../components/modules/Compras/ComprasSolicitacoesView';
 import { ComprasAprovacoesView } from '../../components/modules/Compras/ComprasAprovacoesView';
 import { HistoricoComprasView } from '../../components/modules/Compras/HistoricoComprasView';
+import { MinhasComprasView } from '../../components/modules/Compras/MinhasComprasView';
 import { FornecedoresView } from '../../components/modules/Fornecedores/FornecedoresView';
 
 interface ComprasModuleProps {
@@ -14,6 +15,8 @@ export function ComprasModule({ activeItem, searchQuery }: ComprasModuleProps) {
   switch (activeItem) {
     case 'compras':
       return <ComprasSolicitacoesView searchQuery={searchQuery} />;
+    case 'minhasCompras':
+      return <MinhasComprasView searchQuery={searchQuery} />;
     case 'kanbanCompras':
       return <ComprasKanbanView searchQuery={searchQuery} />;
     case 'aprovacoesCompras':

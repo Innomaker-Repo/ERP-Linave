@@ -291,6 +291,7 @@ class PropostaComercialSerializer(serializers.ModelSerializer):
     condicoesGerais = serializers.CharField(source='condicoes_gerais', required=False, allow_blank=True, default='')
     condicoesPagamento = serializers.CharField(source='condicoes_pagamento', required=False, allow_blank=True, default='')
     prazo = serializers.CharField(required=False, allow_blank=True, default='')
+    efetivoPrevisto = serializers.CharField(source='efetivo_previsto', required=False, allow_blank=True, default='')
     encerramento = serializers.CharField(required=False, allow_blank=True, default='')
     proposta_escopo = EscopoSerializer(many=True, read_only=True)
     proposta_escopo_input = EscopoSerializer(source='proposta_escopo', many=True, write_only=True, required=False)
@@ -305,7 +306,7 @@ class PropostaComercialSerializer(serializers.ModelSerializer):
             'cliente', 'cliente_detalhes', 'negocio', 'negocio_detalhes',
             'referencias', 'saudacao', 'assunto', 'textoAbertura',
             'responsabilidadeContratada', 'responsabilidadeContratante', 'preco',
-            'condicoesGerais', 'condicoesPagamento', 'prazo', 'encerramento',
+            'condicoesGerais', 'condicoesPagamento', 'prazo', 'efetivoPrevisto', 'encerramento',
             'escopoBasicoServicos', 'precoItens',
             'proposta_escopo', 'proposta_escopo_input'
         ]

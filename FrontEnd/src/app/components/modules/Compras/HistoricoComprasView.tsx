@@ -4,6 +4,7 @@ import { useErp } from '../../../context/ErpContext';
 import {
   formatCurrency,
   purchaseStateLabel,
+  toItemRecords,
   type CompraHistoricoRegistro,
 } from './comprasLocal';
 import { FinModal, Field, Input, FileInput, Btn } from '../Financeiro/finUi';
@@ -31,48 +32,6 @@ const purchaseStateTone = (state: string) => {
     default:
       return 'border-amber-500/30 bg-amber-500/15 text-amber-200';
   }
-};
-
-// Achata registros legados (shape antigo por pedido, com `itens`) em registros por item,
-// somente leitura, para que o histórico anterior continue aparecendo. Registros no novo
-// shape (por item) passam direto.
-const toItemRecords = (registros: any[]): CompraHistoricoRegistro[] => {
-  const rows: CompraHistoricoRegistro[] = [];
-  for (const r of registros) {
-    if (r && Array.isArray(r.itens)) {
-      const details = Array.isArray(r.budgetDetails) ? r.budgetDetails : [];
-      for (const it of r.itens) {
-        const d = details.find((x: any) => x.itemId === it.id) || null;
-        const isItem = (d?.naturezaFornecimento || it.naturezaFornecimento) === 'ITEM';
-        rows.push({
-          id: `${r.id}::${it.id}`,
-          pedidoId: String(r.id || ''),
-          centroCusto: String(r.centroCusto || ''),
-          solicitante: String(r.solicitante || ''),
-          departamento: String(r.departamento || ''),
-          itemId: String(it.id || ''),
-          itemNome: String(it.nome || ''),
-          itemDescricao: String(it.descricao || ''),
-          categoria: String(it.categoria || ''),
-          qtd: Number(it.qtd || 0),
-          un: String(it.un || 'un'),
-          naturezaFornecimento: isItem ? 'ITEM' : 'SERVICO',
-          fornecedor: d?.fornecedorSelecionado || it.fornecedor || '',
-          valor: d?.valorSelecionado ?? null,
-          prazoEntrega: d?.prazoEntregaSelecionado || '',
-          condicaoPagamento: d?.condicaoPagamentoSelecionada || '',
-          purchaseState: it.purchaseState === 'estoque' ? 'estoque' : it.purchaseState === 'contratado' ? 'contratado' : 'comprado',
-          nfeStatus: 'pendente',
-          compradoEm: String(r.finalizadoEm || ''),
-          compradoPor: String(r.finalizadoPor || ''),
-          _legacy: true,
-        } as CompraHistoricoRegistro & { _legacy: boolean });
-      }
-    } else if (r && (r.itemId || r.pedidoId)) {
-      rows.push(r as CompraHistoricoRegistro);
-    }
-  }
-  return rows;
 };
 
 export function HistoricoComprasView({ searchQuery }: HistoricoComprasViewProps) {

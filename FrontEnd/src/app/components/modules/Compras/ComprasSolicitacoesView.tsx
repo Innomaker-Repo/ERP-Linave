@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
-import { Eraser, Plus, Send, ShoppingCart, Trash2 } from 'lucide-react';
+import { Eraser, Lock, Plus, Send, ShoppingCart, Trash2, UserCircle } from 'lucide-react';
 import { createDefaultRequest, createEmptyItem, createId, type ItemCompra } from './comprasLocal';
 import { isOsAprovada } from '../../../../services/ordensServico';
 
@@ -20,6 +20,10 @@ export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQ
   );
   const [itens, setItens] = useState<ItemCompra[]>([createEmptyItem()]);
   const { compras, saveEntity } = useErp();
+
+  // Solicitante é SEMPRE o usuário logado (não é mais digitado à mão): nome de exibição +
+  // identidade estável (CPF/e-mail) gravada na requisição para o histórico por usuário.
+  const solicitanteNome = userSession?.nome || userSession?.email || '';
 
   const updateItem = (id: string, field: keyof ItemCompra, value: string | number) => {
     setItens((current) => current.map((item) => (item.id === id ? { ...item, [field]: value } : item)));
@@ -41,8 +45,11 @@ export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQ
   };
 
   const handleCreateRequest = () => {
-    if (!formData.solicitante || !formData.centroCusto) {
-      return window.alert('Por favor, preencha todos os campos obrigatórios (*).');
+    if (!solicitanteNome) {
+      return window.alert('Não foi possível identificar seu usuário. Faça login novamente.');
+    }
+    if (!formData.centroCusto) {
+      return window.alert('Selecione o Centro de Custo (Obra).');
     }
 
     const itensValidos = itens
@@ -57,7 +64,11 @@ export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQ
 
     const novaRequisicao = {
       id: createId(),
-      solicitante: formData.solicitante,
+      // Solicitante = usuário logado (nome de exibição) + identidade estável (CPF/e-mail),
+      // usada no "Minhas Compras" por usuário. Não vem mais de um campo digitável.
+      solicitante: solicitanteNome,
+      solicitanteCpf: userSession?.cpf || '',
+      solicitanteEmail: userSession?.email || '',
       departamento: '',
       centroCusto: formData.centroCusto,
       itens: itensValidos,
@@ -94,13 +105,20 @@ export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQ
         <h3 className="text-amber-400 text-xs font-bold uppercase tracking-widest mb-6">1. Nova Solicitação</h3>
         <div className="grid grid-cols-1 gap-8">
           <div className="space-y-2">
-            <label className="text-sm font-medium text-white/70 ml-1">Solicitante <span className="text-red-400">*</span></label>
-            <input
-              className="w-full bg-[#0b1220] border border-white/10 p-4 rounded-xl text-white text-sm outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/50 transition-all"
-              placeholder="Seu nome completo"
-              value={formData.solicitante}
-              onChange={(event) => setFormData({ ...formData, solicitante: event.target.value })}
-            />
+            <label className="text-sm font-medium text-white/70 ml-1">Solicitante</label>
+            <div className="flex items-center gap-3 w-full bg-[#0b1220] border border-white/10 p-4 rounded-xl">
+              <div className="p-2 rounded-lg bg-amber-500/10 text-amber-400 shrink-0">
+                <UserCircle size={20} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-white text-sm font-bold truncate">{solicitanteNome || 'Usuário não identificado'}</p>
+                {userSession?.email && <p className="text-white/40 text-xs truncate">{userSession.email}</p>}
+              </div>
+              <span className="flex items-center gap-1 text-white/30 text-[10px] font-bold uppercase tracking-widest shrink-0">
+                <Lock size={12} /> Automático
+              </span>
+            </div>
+            <p className="text-white/30 text-xs ml-1">Registrado automaticamente pelo seu login.</p>
           </div>
 
           <div className="space-y-2 md:col-span-2">

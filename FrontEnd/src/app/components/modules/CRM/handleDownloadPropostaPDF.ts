@@ -83,6 +83,7 @@ export const handleDownloadPropostaPDF = (
   obra: any,
   logoBase64?: string,
   isLinave?: boolean,
+  fundoLinaveBase64?: string,
 ) => {
   if (!propostaForm) return;
 
@@ -122,7 +123,24 @@ export const handleDownloadPropostaPDF = (
       doc.setTextColor(0, 0, 0);
     };
 
+    // Imagem decorativa da Linave no rodapé (atrás do texto). Desenhada no INÍCIO de cada página
+    // (dentro de drawHeader) para ficar por baixo de todo o conteúdo. Full-width, ancorada embaixo.
+    const drawLinaveBackground = () => {
+      if (!isLinave || !fundoLinaveBase64) return;
+      try {
+        const fmt = getLogoFormat(fundoLinaveBase64);
+        const imgW = pageWidth;
+        let imgH = pageWidth * (263 / 768); // fallback: proporção do linave-rodape.png
+        try {
+          const props = (doc as any).getImageProperties?.(fundoLinaveBase64);
+          if (props?.width && props?.height) imgH = imgW * (props.height / props.width);
+        } catch { /* usa o fallback */ }
+        doc.addImage(fundoLinaveBase64, fmt, 0, pageHeight - imgH, imgW, imgH);
+      } catch { /* segue sem o fundo */ }
+    };
+
     const drawHeader = () => {
+      drawLinaveBackground();
       let currentY = 15;
 
       if (logoBase64) {
@@ -337,8 +355,13 @@ export const handleDownloadPropostaPDF = (
       writeText(propostaForm.prazo, 11, false, 'left', 5, 8);
     }
 
+    if (propostaForm.efetivoPrevisto) {
+      writeText('G - Efetivo previsto:', 11, true, 'left', 0, 4);
+      writeText(propostaForm.efetivoPrevisto, 11, false, 'left', 5, 8);
+    }
+
     if (propostaForm.condicoesPagamento) {
-      writeText('G - Condicoes de Pagamento:', 11, true, 'left', 0, 4);
+      writeText('H - Condicoes de Pagamento:', 11, true, 'left', 0, 4);
       writeText(propostaForm.condicoesPagamento, 11, false, 'left', 5, 12);
     }
 

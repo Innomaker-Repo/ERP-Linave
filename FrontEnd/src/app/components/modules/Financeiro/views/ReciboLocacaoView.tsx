@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Plus, X, Download, FileText, Trash2, Pencil } from 'lucide-react';
-import { FinCard, Toolbar } from '../finUi';
-import { money } from '../finData';
+import { FinCard, Toolbar, boldOS } from '../finUi';
+import { money, construirReciboDeMedicao, ultimoReciboLocacaoDaOs, proximoNumeroReciboLocacao, upsertContaReceberPorMedicao } from '../finData';
 import { useErp } from '../../../../context/ErpContext';
 import { gerarReciboLocacaoPDF } from '../reciboLocacaoPdf';
 
@@ -89,7 +89,7 @@ const formInicial = (recibos: any[], empresa: any, config: any) => ({
 });
 
 export function ReciboLocacaoView() {
-  const { financeiro, saveEntity, config } = useErp() as any;
+  const { financeiro, saveEntity, config, os, medicoes } = useErp() as any;
   const [form, setForm] = useState<any>(null);
 
   const recibos = useMemo(
@@ -97,13 +97,49 @@ export function ReciboLocacaoView() {
     [financeiro],
   );
 
+  // OS que já receberam medição APROVADA — origem do dropdown de "Novo recibo".
+  const osComMedicaoAprovada = useMemo(() => {
+    const meds = Array.isArray(medicoes) ? medicoes : [];
+    const aprovadas = new Set(
+      meds.filter((m: any) => String(m.status).toLowerCase() === 'aprovada').map((m: any) => String(m.ordemServicoBackendId)),
+    );
+    return (Array.isArray(os) ? os : []).filter((o: any) => aprovadas.has(String(o.backendId)) && !o.usoInterno);
+  }, [os, medicoes]);
+
   const persistir = async (rec: any) => {
     const outros = (Array.isArray(financeiro) ? financeiro : []).filter((r: any) => r?.id !== rec.id);
     await saveEntity('financeiro', [rec, ...outros]);
   };
 
-  const abrirNovo = () => setForm(formInicial(recibos, 'Servinave', config));
   const editar = (r: any) => setForm({ ...formInicial(recibos, r.empresa, config), ...r, itens: (Array.isArray(r.itens) && r.itens.length ? r.itens : [linhaItem()]).map((i: any) => ({ ...linhaItem(), ...i })) });
+
+  // "Novo recibo" a partir de uma OS: se a OS já tem recibo (criado pela medição), abre o existente
+  // (não duplica — o número só incrementa com nova medição). Senão, monta a partir da última medição
+  // aprovada daquela OS. Fallback: OS sem locação → form em branco já vinculado à OS.
+  const abrirParaOs = (osBackendId: string) => {
+    if (!osBackendId) return;
+    const fin = Array.isArray(financeiro) ? financeiro : [];
+    const existente = ultimoReciboLocacaoDaOs(fin, osBackendId);
+    if (existente) { editar(existente); return; }
+
+    const osObj = (Array.isArray(os) ? os : []).find((o: any) => String(o.backendId) === String(osBackendId));
+    const medsDaOs = (Array.isArray(medicoes) ? medicoes : []).filter(
+      (m: any) => String(m.ordemServicoBackendId) === String(osBackendId) && String(m.status).toLowerCase() === 'aprovada',
+    );
+    const ultimaMed = medsDaOs.length ? medsDaOs[medsDaOs.length - 1] : null;
+    const rec = ultimaMed ? construirReciboDeMedicao(fin, ultimaMed) : null;
+
+    if (rec) {
+      setForm({ ...formInicial(recibos, rec.empresa, config), ...rec, itens: (Array.isArray(rec.itens) && rec.itens.length ? rec.itens : [linhaItem()]).map((i: any) => ({ ...linhaItem(), ...i })) });
+    } else {
+      setForm({
+        ...formInicial(recibos, osObj?.empresaPrestadora || 'Servinave', config),
+        ordemServicoBackendId: osBackendId,
+        ordemServicoNumero: osObj?.ordemServicoNumero || '',
+        numero: proximoNumeroReciboLocacao(fin, osBackendId),
+      });
+    }
+  };
 
   const set = (campo: string, valor: any) => setForm((f: any) => ({ ...f, [campo]: valor }));
   // Trocar a empresa prestadora reaplica o emitente (razão social, CNPJ, banco...) e o logo do PDF.
@@ -144,7 +180,28 @@ export function ReciboLocacaoView() {
   };
   const gerar = async () => {
     if (!form) return;
-    await persistir({ ...form, status: 'emitido' });
+    const recEmitido = { ...form, status: 'emitido' };
+    const total = (recEmitido.itens || []).reduce((s: number, i: any) => s + (parseFloat(String(i.total).replace(',', '.')) || 0), 0);
+    const outros = (Array.isArray(financeiro) ? financeiro : []).filter((r: any) => r?.id !== recEmitido.id);
+    let next = [recEmitido, ...outros];
+    // Locação não é sujeita a NFS-e → líquido = original (sem imposto). A conta a receber é mesclada
+    // por medição: se a NFe da mesma medição já criou (ou criar depois) um recebível, somam num só.
+    if (recEmitido.medicaoId && total > 0) {
+      next = upsertContaReceberPorMedicao(next, {
+        medicaoId: recEmitido.medicaoId,
+        medicaoNumero: recEmitido.medicaoNumero || '',
+        ordemServicoNumero: recEmitido.ordemServicoNumero || '',
+        empresa: recEmitido.empresa,
+        cliente: recEmitido.clienteNome,
+        origem: 'Recibo',
+        fonteId: recEmitido.id,
+        valorOriginal: total,
+        valorLiquido: total,
+        vencimento: recEmitido.dataVencimento,
+        referencia: `Rec.Loc. ${recEmitido.numero}`,
+      });
+    }
+    await saveEntity('financeiro', next);
     await gerarReciboLocacaoPDF(dadosPdf(form));
     setForm(null);
   };
@@ -165,10 +222,18 @@ export function ReciboLocacaoView() {
 
       {!form ? (
         <>
-          <div className="mb-4 flex justify-end">
-            <button onClick={abrirNovo} className="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-[#0b1220] text-xs font-black uppercase flex items-center gap-2">
-              <Plus size={15} /> Novo recibo
-            </button>
+          <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
+            <span className="text-white/50 text-[11px] uppercase font-black tracking-widest flex items-center gap-1"><Plus size={14} /> {boldOS('Novo recibo a partir da OS')}</span>
+            <select
+              value=""
+              onChange={(e) => { if (e.target.value) abrirParaOs(e.target.value); }}
+              className="bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-white text-xs min-w-[260px]"
+            >
+              <option value="">{osComMedicaoAprovada.length ? 'Selecione uma OS com medição…' : 'Nenhuma OS com medição aprovada'}</option>
+              {osComMedicaoAprovada.map((o: any) => (
+                <option key={o.backendId} value={o.backendId}>{o.ordemServicoNumero || o.id} — {o.cliente || ''}</option>
+              ))}
+            </select>
           </div>
           {recibos.length === 0 ? (
             <p className="text-white/40 text-sm bg-[#0b1220] rounded-xl border border-white/5 p-6">Nenhum recibo. Crie um novo ou aprove uma medição de locação.</p>
@@ -178,7 +243,7 @@ export function ReciboLocacaoView() {
                 <div key={r.id} className="bg-[#101f3d] rounded-2xl border border-white/10 p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="text-white font-black">Recibo {r.numero} {r.medicaoNumero ? <span className="text-cyan-300/70 text-xs">· da medição {r.medicaoNumero}</span> : null}</p>
+                      <p className="text-white font-black">Recibo {r.numero} {r.ordemServicoNumero ? <span className="text-sky-300/80 text-xs">· {r.ordemServicoNumero}</span> : null} {r.medicaoNumero ? <span className="text-cyan-300/70 text-xs">· da medição {r.medicaoNumero}</span> : null}</p>
                       <p className="text-white/50 text-xs truncate">{r.clienteNome || 'Cliente não informado'}</p>
                       <p className="text-emerald-300 text-sm font-black mt-1">R$ {money((r.itens || []).reduce((s: number, i: any) => s + (Number(i.total) || 0), 0))}</p>
                     </div>
@@ -213,6 +278,7 @@ export function ReciboLocacaoView() {
                 </select>
               </div>
               <div><label className={lbl}>Nº do recibo</label><input className={inp} value={form.numero} onChange={(e) => set('numero', e.target.value)} /></div>
+              <div><label className={lbl}>{boldOS('OS vinculada')}</label><input className={`${inp} opacity-70`} value={form.ordemServicoNumero || '—'} readOnly title="Vínculo definido pela medição/OS de origem" /></div>
               <div><label className={lbl}>Data de emissão</label><input type="date" className={inp} value={form.dataEmissao} onChange={(e) => set('dataEmissao', e.target.value)} /></div>
               <div><label className={lbl}>Data de vencimento</label><input type="date" className={inp} value={form.dataVencimento} onChange={(e) => set('dataVencimento', e.target.value)} /></div>
               <div><label className={lbl}>Forma de pagamento</label><input className={inp} value={form.formaPagamento} onChange={(e) => set('formaPagamento', e.target.value)} /></div>

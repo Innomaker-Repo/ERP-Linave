@@ -14,7 +14,7 @@ import {
   type QuoteItem,
   type RequisicaoCompra,
 } from './comprasLocal';
-import { FinModal, Field, Input, Select, Textarea, Btn } from '../Financeiro/finUi';
+import { FinModal, Field, Input, Select, Textarea, Btn, boldOS } from '../Financeiro/finUi';
 import {
   br, money, num, todayStr, days,
   FORMAS_PAGAMENTO, TIPOS_REEMBOLSO, empresaFromCC, buildContasPagar,
@@ -1125,7 +1125,7 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
                 {empresasOptions.map((emp) => <option key={emp}>{emp}</option>)}
               </Select>
             </Field>
-            <Field label="Vínculo (OS / Centro de custo)" span={5}>
+            <Field label={boldOS('Vínculo (OS / Centro de custo)')} span={5}>
               <Input value={buyContext.request.centroCusto} disabled />
             </Field>
             <Field label="Tipo" span={4}>
