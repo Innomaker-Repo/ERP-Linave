@@ -1,0 +1,599 @@
+import React, { useState, useEffect } from 'react';
+import { UserPlus, Save, X, Edit2, Trash2, Building2, User, MapPin, Phone, Calendar, UserCheck, History, Eye, FileText } from 'lucide-react';
+import { useErp } from '../../../context/ErpContext';
+import { getClientes, createCliente, updateCliente, deleteCliente } from '../../../../services/clientes';
+import { toast } from 'sonner';
+import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
+import { NegocioDetalheModal } from '../Comercial/FinalizadosComercialView';
+
+export function ClientesView({ searchQuery }: { searchQuery: string }) {
+  const { obras, os, userSession, medicoes, config } = useErp() as any;
+  const [negocioDetalhe, setNegocioDetalhe] = useState<any>(null);
+
+  // Helpers compartilhados com o modal de detalhes do negócio
+  const safeNumber = (value: any) => {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  const formatDate = (value: any) => {
+    if (!value) return '-';
+    try {
+      return new Date(value).toLocaleDateString('pt-BR');
+    } catch {
+      return String(value);
+    }
+  };
+
+  const isDocumentoValido = (doc: any) => Boolean(getDocumentHref(doc));
+
+  const handleDownloadDocumento = (doc: any, obraId: string, fallbackName: string) => {
+    downloadDocument(doc, {
+      fallbackName,
+      onInvalid: () => toast.error(`Documento inválido para o negócio ${obraId}. Gere novamente.`),
+    });
+  };
+
+  const obterDocumentos = (obra: any) =>
+    Array.isArray(obra?.documentosNegocio) ? obra.documentosNegocio : [];
+
+  const encontrarDocumento = (obra: any, palavras: string[]) => {
+    const docs = obterDocumentos(obra);
+    return docs
+      .filter((doc: any) => {
+        const id = String(doc?.id || '').toLowerCase();
+        const nome = String(doc?.nome || '').toLowerCase();
+        return palavras.some((p) => id.includes(p) || nome.includes(p));
+      })
+      .sort((a: any, b: any) =>
+        new Date(b?.dataUpload || 0).getTime() - new Date(a?.dataUpload || 0).getTime()
+      )[0] || null;
+  };
+
+  const obterDocsMediacao = (obra: any) =>
+    obterDocumentos(obra).filter((doc: any) => {
+      const id = String(doc?.id || '').toLowerCase();
+      const nome = String(doc?.nome || '').toLowerCase();
+      return id.includes('mediacao') || nome.includes('medi') || nome.includes('medição');
+    });
+  const [listaClientes, setListaClientes] = useState<any[]>([]);
+  
+ //variáveis que controlam os modais e carregamentos
+  const [showForm, setShowForm] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [selectedClienteDetalhes, setSelectedClienteDetalhes] = useState<any>(null);
+  const [showClienteModal, setShowClienteModal] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+
+  // Carregar clientes do backend na montagem
+
+  // Carregar clientes do backend na montagem
+  useEffect(() => {
+    const carregarClientes = async () => {
+      setLoading(true);
+      try {
+        const clientesBackend = await getClientes();
+        if (Array.isArray(clientesBackend)) {
+          setListaClientes(clientesBackend);
+        }
+      } catch (error) {
+        console.error('Erro ao carregar clientes:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    carregarClientes();
+  }, []); 
+  // Estado inicial com a estrutura exata solicitada
+  const initialClienteState = {
+    tipoPessoa: 'PJ',
+    razaoSocial: '',
+    nomeFantasia: '',
+    cpfCnpj: '',
+    inscricaoEstadual: '',
+    status: 'Ativo',
+    contato: '',
+    endereco: '',
+    dataCadastro: new Date().toISOString().split('T')[0],
+    usuarioResponsavel: '' // Campo vazio por padrão
+  };
+
+  const [currentCliente, setCurrentCliente] = useState<any>(initialClienteState);
+
+  const handleOpenForm = (cliente: any = null) => {
+    if (cliente) {
+      setCurrentCliente(cliente);
+      setEditMode(true);
+    } else {
+      setCurrentCliente(initialClienteState);
+      setEditMode(false);
+    }
+    setShowForm(true);
+  };
+
+  const handleSave = async () => {
+    // Validação de campos obrigatórios
+    if (!currentCliente.razaoSocial?.trim()) {
+      alert('Preencha a Razão Social do cliente.');
+      return;
+    }
+
+    const cpfCnpjTrimmed = currentCliente.cpfCnpj?.trim();
+    if (!cpfCnpjTrimmed) {
+      alert('Preencha o CPF/CNPJ do cliente.');
+      return;
+    }
+
+    if (!currentCliente.contato?.trim()) {
+      alert('Preencha o contato (telefone ou e-mail) do cliente.');
+      return;
+    }
+
+    if (!currentCliente.endereco?.trim()) {
+      alert('Preencha o endereço completo do cliente.');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      let clienteAtualizado;
+      
+      if (editMode && currentCliente.id && !isNaN(Number(currentCliente.id))) {
+        // Atualizar cliente existente no backend
+        clienteAtualizado = await updateCliente(String(currentCliente.id), currentCliente);
+        setListaClientes((prev) =>
+          prev.map((c) => c.id === currentCliente.id ? clienteAtualizado : c)
+        );
+      } else {
+        // Criar novo cliente no backend
+        clienteAtualizado = await createCliente(currentCliente);
+        setListaClientes((prev) => [...prev, clienteAtualizado]);
+      }
+
+      alert(`Cliente ${editMode ? 'atualizado' : 'cadastrado'} com sucesso!`);
+      setShowForm(false);
+      setCurrentCliente(initialClienteState);
+    } catch (error: any) {
+      console.error(error);
+      alert(`Erro ao salvar cliente: ${error?.response?.data?.detail || error?.message || 'Falha desconhecida'}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("Tem certeza que deseja excluir este cliente?")) {
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await deleteCliente(id);
+      setListaClientes((prev: any[]) => prev.filter((c: any) => c.id !== id));
+      alert('Cliente excluído com sucesso!');
+    } catch (error: any) {
+      console.error(error);
+      alert(`Erro ao deletar cliente: ${error?.response?.data?.detail || error?.message || 'Falha desconhecida'}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Filtro de busca
+  const listaFiltrada = listaClientes.filter((c: any) => 
+    c.razaoSocial?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    c.nomeFantasia?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    c.cpfCnpj?.includes(searchQuery)
+  );
+
+  return (
+    <div className="p-10 space-y-8 animate-in fade-in duration-500">
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-2xl font-black text-white uppercase italic tracking-tighter">Gestão de Clientes</h1>
+          <p className="text-white/40 text-sm">Cadastro completo e CRM</p>
+        </div>
+        <button 
+          onClick={() => handleOpenForm()}
+          disabled={loading}
+          className="bg-amber-500 text-[#0b1220] px-6 py-3 rounded-2xl font-black text-[10px] uppercase flex items-center gap-2 hover:scale-105 transition-transform disabled:opacity-60 disabled:cursor-not-allowed"
+        >
+          <UserPlus size={16} /> {loading ? 'Carregando...' : 'Novo Cliente'}
+        </button>
+      </div>
+
+      {loading && (
+        <div className="bg-[#101f3d] p-10 rounded-[48px] border border-blue-500/30 flex flex-col items-center justify-center gap-4">
+          <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-blue-500"></div>
+          <p className="text-blue-400 font-black uppercase text-sm">Carregando clientes...</p>
+        </div>
+      )}
+
+      {showForm && (
+        <div className="bg-[#101f3d] p-10 rounded-[48px] border border-amber-500/30 space-y-8 shadow-2xl relative">
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+            
+            {/* LINHA 1: IDENTIFICAÇÃO BÁSICA */}
+            <div className="md:col-span-2 space-y-2">
+              <label className="text-[9px] font-black text-white/30 uppercase tracking-widest ml-1">Tipo</label>
+              <select 
+                className="w-full bg-[#0b1220] border border-white/5 p-4 rounded-2xl text-white outline-none focus:border-amber-500"
+                value={currentCliente.tipoPessoa}
+                onChange={e => setCurrentCliente({...currentCliente, tipoPessoa: e.target.value})}
+              >
+                <option value="PJ">Jurídica</option>
+                <option value="PF">Física</option>
+              </select>
+            </div>
+            <div className="md:col-span-5 space-y-2">
+              <label className="text-[9px] font-black text-white/30 uppercase tracking-widest ml-1">Razão Social / Nome Completo</label>
+              <input 
+                className="w-full bg-[#0b1220] border border-white/5 p-4 rounded-2xl text-white outline-none focus:border-amber-500"
+                value={currentCliente.razaoSocial}
+                onChange={e => setCurrentCliente({...currentCliente, razaoSocial: e.target.value})}
+              />
+            </div>
+            <div className="md:col-span-5 space-y-2">
+              <label className="text-[9px] font-black text-white/30 uppercase tracking-widest ml-1">Nome Fantasia</label>
+              <input 
+                className="w-full bg-[#0b1220] border border-white/5 p-4 rounded-2xl text-white outline-none focus:border-amber-500"
+                value={currentCliente.nomeFantasia}
+                onChange={e => setCurrentCliente({...currentCliente, nomeFantasia: e.target.value})}
+              />
+            </div>
+
+            {/* LINHA 2: DOCUMENTOS E STATUS */}
+            <div className="md:col-span-4 space-y-2">
+              <label className="text-[9px] font-black text-white/30 uppercase tracking-widest ml-1">CPF / CNPJ</label>
+              <input 
+                className="w-full bg-[#0b1220] border border-white/5 p-4 rounded-2xl text-white outline-none focus:border-amber-500"
+                value={currentCliente.cpfCnpj}
+                onChange={e => setCurrentCliente({...currentCliente, cpfCnpj: e.target.value})}
+              />
+            </div>
+            <div className="md:col-span-4 space-y-2">
+              <label className="text-[9px] font-black text-white/30 uppercase tracking-widest ml-1">Inscrição Estadual</label>
+              <input 
+                className="w-full bg-[#0b1220] border border-white/5 p-4 rounded-2xl text-white outline-none focus:border-amber-500"
+                value={currentCliente.inscricaoEstadual}
+                onChange={e => setCurrentCliente({...currentCliente, inscricaoEstadual: e.target.value})}
+              />
+            </div>
+            <div className="md:col-span-4 space-y-2">
+              <label className="text-[9px] font-black text-white/30 uppercase tracking-widest ml-1">Status</label>
+              <select 
+                className="w-full bg-[#0b1220] border border-white/5 p-4 rounded-2xl text-white outline-none focus:border-amber-500"
+                value={currentCliente.status}
+                onChange={e => setCurrentCliente({...currentCliente, status: e.target.value})}
+              >
+                <option value="Ativo">Ativo</option>
+                <option value="Inativo">Inativo</option>
+                <option value="Prospect">Prospect</option>
+              </select>
+            </div>
+
+            {/* LINHA 3: CONTATO E ENDEREÇO */}
+            <div className="md:col-span-6 space-y-2">
+              <label className="text-[9px] font-black text-white/30 uppercase tracking-widest ml-1">Contato (Tel / Email)</label>
+              <input 
+                className="w-full bg-[#0b1220] border border-white/5 p-4 rounded-2xl text-white outline-none focus:border-amber-500"
+                value={currentCliente.contato}
+                onChange={e => setCurrentCliente({...currentCliente, contato: e.target.value})}
+              />
+            </div>
+            <div className="md:col-span-6 space-y-2">
+              <label className="text-[9px] font-black text-white/30 uppercase tracking-widest ml-1">Endereço Completo</label>
+              <input 
+                className="w-full bg-[#0b1220] border border-white/5 p-4 rounded-2xl text-white outline-none focus:border-amber-500"
+                value={currentCliente.endereco}
+                onChange={e => setCurrentCliente({...currentCliente, endereco: e.target.value})}
+              />
+            </div>
+
+            {/* LINHA 4: DADOS DO SISTEMA (AUTO) */}
+            <div className="md:col-span-6 space-y-2 opacity-50 pointer-events-none">
+              <label className="text-[9px] font-black text-white/30 uppercase tracking-widest ml-1">Data Cadastro</label>
+              <input readOnly className="w-full bg-[#0b1220] border border-white/5 p-4 rounded-2xl text-white/50" value={currentCliente.dataCadastro} />
+            </div>
+            <div className="md:col-span-6 space-y-2 opacity-50 pointer-events-none">
+              <label className="text-[9px] font-black text-white/30 uppercase tracking-widest ml-1">Usuário Responsável</label>
+              <input readOnly className="w-full bg-[#0b1220] border border-white/5 p-4 rounded-2xl text-white/50" value={currentCliente.usuarioResponsavel} />
+            </div>
+
+          </div>
+
+          <div className="flex gap-4 border-t border-white/5 pt-8">
+            <button 
+              onClick={handleSave}
+              disabled={saving}
+              className="bg-emerald-500 text-[#0b1220] px-10 py-4 rounded-2xl font-black text-[10px] uppercase flex items-center gap-2 shadow-lg shadow-emerald-500/10 hover:bg-emerald-400 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              <Save size={16}/> {saving ? 'Salvando...' : (editMode ? 'Salvar Alterações' : 'Cadastrar Cliente')}
+            </button>
+            <button 
+              onClick={() => setShowForm(false)}
+              disabled={saving}
+              className="text-white/40 font-black text-[10px] uppercase px-10 py-4 rounded-2xl border border-white/5 hover:bg-white/5 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              <X size={16}/> Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* LISTAGEM */}
+      <div className="bg-[#101f3d] rounded-[48px] border border-white/5 overflow-hidden shadow-2xl">
+        <table className="w-full text-left border-collapse">
+          <thead className="bg-[#0b1220]/50 text-[9px] font-black text-white/20 uppercase tracking-widest">
+            <tr>
+              <th className="p-8">Empresa / Cliente</th>
+              <th className="p-8">Documentação</th>
+              <th className="p-8">Contato / Local</th>
+              <th className="p-8">Responsável</th>
+              <th className="p-8 text-right">Ações</th>
+            </tr>
+          </thead>
+          <tbody className="text-white font-bold text-xs">
+            {listaFiltrada.map((c: any) => (
+              <tr key={c.id} className="border-t border-white/5 hover:bg-white/5 transition-all group">
+                <td className="p-8">
+                  <div className="flex items-center gap-4">
+                    <div className="p-3 bg-white/5 rounded-xl text-amber-500">
+                      {c.tipoPessoa === 'PJ' ? <Building2 size={20} /> : <User size={20} />}
+                    </div>
+                    <div>
+                      <p className="text-sm">{c.razaoSocial}</p>
+                      <p className="text-[10px] text-white/30 uppercase mt-0.5 font-normal">{c.nomeFantasia}</p>
+                    </div>
+                  </div>
+                </td>
+                <td className="p-8">
+                  <p>{c.cpfCnpj}</p>
+                  <p className="text-[10px] text-white/30 uppercase mt-0.5 font-mono">IE: {c.inscricaoEstadual || 'Isento'}</p>
+                </td>
+                <td className="p-8 space-y-1">
+                  <div className="flex items-center gap-2 text-white/60"><Phone size={12}/> {c.contato}</div>
+                  <div className="flex items-center gap-2 text-white/60"><MapPin size={12}/> {c.endereco}</div>
+                </td>
+                <td className="p-8">
+                  <div className="flex items-center gap-2 text-[10px] uppercase text-white/40 font-black tracking-wider">
+                    <UserCheck size={12} /> {c.usuarioResponsavel?.split(' ')[0]}
+                  </div>
+                  <div className="flex items-center gap-2 text-[10px] uppercase text-white/40 font-mono mt-1">
+                    <Calendar size={12} /> {c.dataCadastro}
+                  </div>
+                </td>
+                <td className="p-8 text-right">
+                  <div className="flex justify-end gap-2 opacity-30 group-hover:opacity-100 transition-opacity">
+                    <button 
+                      onClick={() => {
+                        setSelectedClienteDetalhes(c);
+                        setShowClienteModal(true);
+                      }}
+                      disabled={saving}
+                      className="p-2 hover:text-blue-500 hover:bg-blue-500/10 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Ver histórico"
+                    >
+                      <History size={16}/>
+                    </button>
+                    <button 
+                      onClick={() => handleOpenForm(c)}
+                      disabled={saving}
+                      className="p-2 hover:text-amber-500 hover:bg-amber-500/10 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Edit2 size={16}/>
+                    </button>
+                    <button 
+                      onClick={() => handleDelete(c.id)}
+                      disabled={saving}
+                      className="p-2 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Trash2 size={16}/>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {!loading && listaFiltrada.length === 0 && (
+          <div className="p-20 text-center text-white/20 font-black uppercase tracking-widest text-xs">
+            Nenhum cliente encontrado.
+          </div>
+        )}
+      </div>
+
+     {/* MODAL - DETALHES E HISTÓRICO DO CLIENTE */}
+      {showClienteModal && selectedClienteDetalhes && (() => {
+        // BLINDAGEM: Comparamos os IDs como String para garantir que número e texto se encontrem
+        const negociosDoCliente = (obras || []).filter((o: any) => String(o.clienteId) === String(selectedClienteDetalhes.id));
+        
+        return (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-[#101f3d] rounded-2xl border border-white/10 shadow-2xl max-w-5xl w-full max-h-[90vh] overflow-y-auto">
+              
+              <div className="sticky top-0 z-40 bg-gradient-to-r from-blue-500/40 to-cyan-500/40 backdrop-blur-md p-8 border-b border-white/10 flex justify-between items-center">
+                <div>
+                  <h2 className="text-2xl font-black text-white">DETALHES DO CLIENTE</h2>
+                  <p className="text-white/50 text-sm mt-2">{selectedClienteDetalhes.razaoSocial}</p>
+                </div>
+                <button 
+                  onClick={() => setShowClienteModal(false)}
+                  className="p-2 bg-white/5 rounded-full hover:bg-white/10"
+                >
+                  <X size={24} className="text-white/60" />
+                </button>
+              </div>
+
+              <div className="p-8 space-y-6">
+
+                {/* Informações Básicas */}
+                <div className="bg-white/5 border border-white/10 rounded-lg p-6 grid grid-cols-2 gap-6">
+                  <div>
+                    <p className="text-white/50 text-xs mb-2 font-black uppercase">Razão Social</p>
+                    <p className="text-white font-bold text-lg">{selectedClienteDetalhes.razaoSocial}</p>
+                  </div>
+                  <div>
+                    <p className="text-white/50 text-xs mb-2 font-black uppercase">Nome Fantasia</p>
+                    <p className="text-white font-bold text-lg">{selectedClienteDetalhes.nomeFantasia}</p>
+                  </div>
+                  <div>
+                    <p className="text-white/50 text-xs mb-2 font-black uppercase">CNPJ / CPF</p>
+                    <p className="text-white font-mono text-sm">{selectedClienteDetalhes.cpfCnpj}</p>
+                  </div>
+                  <div>
+                    <p className="text-white/50 text-xs mb-2 font-black uppercase">Status</p>
+                    <span className={`px-3 py-1 rounded-full text-xs font-black ${
+                      selectedClienteDetalhes.status === 'Ativo' 
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                        : selectedClienteDetalhes.status === 'Prospect'
+                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                        : 'bg-red-500/20 text-red-300 border border-red-500/40'
+                    }`}>
+                      {selectedClienteDetalhes.status}
+                    </span>
+                  </div>
+                  <div className="col-span-2">
+                    <p className="text-white/50 text-xs mb-2 font-black uppercase">Contato</p>
+                    <p className="text-white text-sm">{selectedClienteDetalhes.contato}</p>
+                  </div>
+                  <div className="col-span-2">
+                    <p className="text-white/50 text-xs mb-2 font-black uppercase">Endereço</p>
+                    <p className="text-white text-sm">{selectedClienteDetalhes.endereco}</p>
+                  </div>
+                  <div>
+                    <p className="text-white/50 text-xs mb-2 font-black uppercase">Data de Cadastro</p>
+                    <p className="text-white text-sm">{selectedClienteDetalhes.dataCadastro}</p>
+                  </div>
+                  <div>
+                    <p className="text-white/50 text-xs mb-2 font-black uppercase">Responsável</p>
+                    <p className="text-white text-sm">{selectedClienteDetalhes.usuarioResponsavel}</p>
+                  </div>
+                </div>
+
+                {/* Histórico de Negócios */}
+                <div className="bg-white/5 border border-white/10 rounded-lg p-6 space-y-4">
+                  <div className="flex items-center gap-3">
+                    <History size={20} className="text-blue-400" />
+                    <h3 className="text-white font-black text-lg">HISTÓRICO DE NEGÓCIOS ({negociosDoCliente.length})</h3>
+                  </div>
+
+                  {negociosDoCliente.length > 0 ? (
+                    <div className="space-y-3">
+                      {negociosDoCliente.map((negocio: any) => {
+                        const osDoNegocio = (Array.isArray(os) ? os : []).filter((item: any) => item.obraId === negocio.id);
+                        const docsMediacaoNegocio = obterDocsMediacao(negocio);
+                        return (
+                        <div key={negocio.id} className="bg-[#0b1220] rounded-lg p-4 border border-white/10 hover:border-blue-500/50 transition-all space-y-2">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <p className="text-white font-black text-sm">{negocio.nome}</p>
+                              <p className="text-white/70 text-xs mt-1">Solicitante: {negocio.solicitante}</p>
+                            </div>
+                            <div className={`px-3 py-1 rounded-full text-xs font-black ${
+                              negocio.categoria === 'Planejamento'
+                                ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
+                                : negocio.categoria === 'Negociação'
+                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                : negocio.categoria === 'Em Andamento'
+                                ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
+                                : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                            }`}>
+                              {negocio.categoria}
+                            </div>
+                          </div>
+                          
+                          <div className="grid grid-cols-3 gap-4 text-xs">
+                            <div>
+                              <p className="text-white/50">Tipo</p>
+                              <p className="text-white font-bold">{negocio.tipo || '−'}</p>
+                            </div>
+                            <div>
+                              <p className="text-white/50">Responsável Técnico</p>
+                              <p className="text-white font-bold">{negocio.responsavelTecnico || '−'}</p>
+                            </div>
+                            <div>
+                              <p className="text-white/50">Data Cadastro</p>
+                              <p className="text-white font-bold">{negocio.dataCadastro}</p>
+                            </div>
+                          </div>
+
+                          {negocio.orcamentos && negocio.orcamentos.length > 0 && (
+                            <div className="bg-white/5 rounded p-2 text-xs border border-white/10">
+                              <p className="text-emerald-400 font-black">Orçamentos: {negocio.orcamentos.length} (Última versão: v{negocio.orcamentos[negocio.orcamentos.length - 1].versao})</p>
+                            </div>
+                          )}
+
+                          {negocio.propostas && negocio.propostas.length > 0 && (
+                            <div className="bg-white/5 rounded p-2 text-xs border border-white/10">
+                              <p className="text-blue-400 font-black">Propostas: {negocio.propostas.length} (Última versão: v{negocio.propostas[negocio.propostas.length - 1].versao})</p>
+                            </div>
+                          )}
+
+                          {osDoNegocio.length > 0 && (
+                            <div className="bg-white/5 rounded p-2 text-xs border border-white/10">
+                              <p className="text-violet-400 font-black">OS: {osDoNegocio.length} (Última: {osDoNegocio[osDoNegocio.length - 1].ordemServicoNumero || '—'})</p>
+                            </div>
+                          )}
+
+                          {docsMediacaoNegocio.length > 0 && (
+                            <div className="bg-white/5 rounded p-2 text-xs border border-white/10">
+                              <p className="text-amber-400 font-black">Medição: {docsMediacaoNegocio.length} documento(s)</p>
+                            </div>
+                          )}
+
+                          <button
+                            onClick={() => setNegocioDetalhe(negocio)}
+                            className="mt-1 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition bg-blue-600 hover:bg-blue-700 text-white"
+                          >
+                            <FileText size={13} /> Ver detalhes & baixar PDFs
+                          </button>
+                        </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-white/40 text-sm">
+                      Nenhum negócio realizado com este cliente ainda.
+                    </div>
+                  )}
+                </div>
+
+                {/* Botão de Fechar */}
+                <div className="flex gap-4 pt-6 border-t border-white/5">
+                  <button 
+                    onClick={() => setShowClienteModal(false)}
+                    className="flex-1 bg-white/10 text-white py-3 rounded-lg font-black text-sm hover:bg-white/15 transition"
+                  >
+                    Fechar
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* MODAL - DETALHES DO NEGÓCIO (orçamento, proposta, OS, medição + download de PDFs) */}
+      {negocioDetalhe && (
+        <NegocioDetalheModal
+          obra={negocioDetalhe}
+          clientes={listaClientes}
+          os={os}
+          medicoes={medicoes}
+          config={config}
+          onClose={() => setNegocioDetalhe(null)}
+          onDownload={handleDownloadDocumento}
+          encontrarDocumento={encontrarDocumento}
+          obterDocsMediacao={obterDocsMediacao}
+          isDocumentoValido={isDocumentoValido}
+          formatDate={formatDate}
+          safeNumber={safeNumber}
+        />
+      )}
+    </div>
+  );
+}

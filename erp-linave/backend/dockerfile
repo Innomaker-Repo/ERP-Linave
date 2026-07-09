@@ -1,0 +1,30 @@
+FROM python:3.12-slim
+
+# Evita que o Python escreva arquivos .pyc no disco (economiza espaço/performance)
+ENV PYTHONDONTWRITEBYTECODE=1
+# Garante que os logs do console apareçam em tempo real sem buffering
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# 1. Instala dependências de sistema necessárias para compilar o mysqlclient e pacotes nativos
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    default-libmysqlclient-dev \
+    pkg-config \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# 2. Copia o SEU requirements.txt real primeiro para aproveitar o cache de camadas do Docker
+COPY requirements.txt ./
+
+# 3. Instala todas as dependências Python do seu projeto real
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 4. Copia todo o código-fonte do seu backend para dentro do container
+COPY . .
+# 5. Expõe a porta padrão do Django que você especificou na arquitetura
+EXPOSE 8000
+
+# 6. Inicializa o servidor de desenvolvimento escutando em todas as interfaces de rede
+CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]

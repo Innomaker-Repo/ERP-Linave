@@ -1,0 +1,26 @@
+api:
+  dashboard: true # Desativa o painel do Traefik para produção
+  insecure: false # Libera o painel do Traefik na porta 8080 para desenvolvimento
+
+entryPoints:
+  web:
+    address: ":80"
+    # http:
+    #   redirections:
+    #     entryPoint:
+    #       to: websecure
+    #       scheme: https
+  websecure:
+    address: ":443"
+
+certificatesResolvers:
+  meu-resolvedor:
+    acme:
+      email: "silvasilas@servinave.com.br" # mapeamento do .env
+      storage: "acme.json"
+      httpChallenge:
+        entryPoint: web
+
+providers:
+  docker:
+    exposedByDefault: false # Segurança: só expõe containers que nós autorizarmos via labels
