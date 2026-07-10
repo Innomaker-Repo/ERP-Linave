@@ -5,22 +5,29 @@ api:
 entryPoints:
   web:
     address: ":80"
-    # http:
-    #   redirections:
-    #     entryPoint:
-    #       to: websecure
-    #       scheme: https
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+          
   websecure:
     address: ":443"
+    http:
+      tls: {}
+
 
 certificatesResolvers:
   meu-resolvedor:
     acme:
-      email: "silvasilas@servinave.com.br" # mapeamento do .env
+      email: "silvasilas@servinave.com.br" #email para receber notificações sobre o certificado SSL
       storage: "acme.json"
-      httpChallenge:
-        entryPoint: web
+      tlsChallenge: {}
+      # httpChallenge:
+      #   entryPoint: web
+      #   httpRouter: true 
 
 providers:
   docker:
-    exposedByDefault: false # Segurança: só expõe containers que nós autorizarmos via labels
+    exposedByDefault: false #só expõe containers que nós autorizarmos via labels

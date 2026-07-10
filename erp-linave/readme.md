@@ -9,17 +9,18 @@
 - Checar compose: docker compose ps
 
 
------------- Criação de Usuários -----------------
+------------ Servidor -----------
 
-- 
+- cat << EOF > .env : colar ; EOF ; chmod 600 .env
+- touch acme.json : chmod 600 acme.json
 
 ----------- Conectar ------------
 
-Frontend: http://localhost
+Frontend: https://vts-wlm.com.br
 
 --------- Falta? ----------------
 - Atualizar aplicação 
 - Assegurar funcionamento
 - Adicionar icone em frontend/public/favicon.ico
 
-- Recriar .env a mão na VPS
+- chmod 600 .env e no novo acme gerado
