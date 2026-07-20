@@ -139,20 +139,18 @@ export function CustoPorOsView() {
     return out;
   }, [selected, compras, comprasHistorico]);
 
-  // ---- DERIVADO: mão de obra (H.H) da aba "Alocar HH" (folha de ponto) ---------------------
-  const linhaHH = useMemo<LinhaCusto[]>(() => {
-    const reg = (Array.isArray(financeiro) ? financeiro : []).find((r: any) => r?.tipo === 'hhAlocacao' && String(r?.os) === osNumero);
-    if (!reg || num(reg.valor) <= 0) return [];
-    const nPessoas = Array.isArray(reg.pessoas) ? reg.pessoas.length : 0;
-    return [{
-      id: `hh-${osNumero}`,
-      categoria: 'Mão de obra',
-      descricao: `Mão de obra (H.H) — ${nPessoas} pessoa(s) · ver aba "Alocar HH"`,
-      valor: num(reg.valor),
-      data: String(reg.data || reg.updatedAt || '').slice(0, 10),
-      origem: 'hh',
-    }];
-  }, [financeiro, osNumero]);
+  // ---- MÃO DE OBRA: valor VIVO do timesheet (aba "Alocar HH") -----------------------------
+  // NÃO é uma linha da planilha. Antes era, e por isso "não entrava na conta": uma vez salva,
+  // a linha virava propriedade da planilha e congelava — editar a folha de ponto depois não
+  // mexia mais no total. Agora é lido direto do registro `hhAlocacao` a cada render, então o
+  // total do custo acompanha o timesheet automaticamente.
+  const registroHH = useMemo(
+    () => (Array.isArray(financeiro) ? financeiro : [])
+      .find((r: any) => r?.tipo === 'hhAlocacao' && String(r?.os) === String(osNumero)) || null,
+    [financeiro, osNumero],
+  );
+  const totalHH = round2(num(registroHH?.valor));
+  const pessoasHH = Array.isArray(registroHH?.pessoas) ? registroHH.pessoas.length : 0;
 
   // ---- Último orçamento da obra (fonte do preço da proposta e da classificação dos itens) ---
   const ultimoOrcamento = useMemo(() => {
@@ -194,17 +192,26 @@ export function CustoPorOsView() {
     return 'Outros'; // linha criada à mão na medição: entra (só mão de obra fica de fora).
   };
 
-  // ---- DERIVADO: última medição APROVADA da OS -------------------------------------------
-  const medicaoAtual = useMemo(() => {
+  // ---- DERIVADO: medição que alimenta a planilha ------------------------------------------
+  // Regra: a ÚLTIMA medição APROVADA da OS. Se ainda não houver nenhuma aprovada, usamos a
+  // última medição existente (pendente) só para já mostrar tudo discretizado, com aviso na
+  // tela — antes a planilha simplesmente vinha vazia e não dava para saber o porquê.
+  const medicoesDaOs = useMemo(() => {
     const backendId = selected?.backendId;
-    if (backendId == null) return null;
-    const aprovadas = (Array.isArray(medicoes) ? medicoes : []).filter(
-      (m: any) => String(m?.ordemServicoBackendId) === String(backendId) && String(m?.status).toLowerCase() === 'aprovada',
-    );
-    if (!aprovadas.length) return null;
+    if (backendId == null) return [] as any[];
     const ordem = (m: any) => `${String(m?.dataEmissao || m?.createdAt || '').slice(0, 10)}|${String(m?.id || '').padStart(12, '0')}`;
-    return aprovadas.reduce((a: any, b: any) => (ordem(b) >= ordem(a) ? b : a));
+    return (Array.isArray(medicoes) ? medicoes : [])
+      .filter((m: any) => String(m?.ordemServicoBackendId) === String(backendId))
+      .sort((a: any, b: any) => ordem(a).localeCompare(ordem(b)));
   }, [medicoes, selected]);
+
+  const medicaoAtual = useMemo(() => {
+    const aprovadas = medicoesDaOs.filter((m: any) => String(m?.status).toLowerCase() === 'aprovada');
+    const lista = aprovadas.length ? aprovadas : medicoesDaOs;
+    return lista.length ? lista[lista.length - 1] : null;
+  }, [medicoesDaOs]);
+
+  const medicaoAprovada = String(medicaoAtual?.status || '').toLowerCase() === 'aprovada';
 
   // Itens da medição DISCRETIZADOS: 1 linha por item, com qtd/unidade/valor unitário. Os valores
   // da medição já vêm do preço da proposta, ou seja, JÁ COM impostos (margem + O.H + imposto no
@@ -238,8 +245,9 @@ export function CustoPorOsView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [medicaoAtual, dicionario, selected]);
 
-  // Todas as linhas derivadas do sistema (usadas para semear/mesclar na planilha).
-  const derivadas = useMemo<LinhaCusto[]>(() => [...linhasCompra, ...linhaHH, ...seedMedicao], [linhasCompra, linhaHH, seedMedicao]);
+  // A planilha é semeada SÓ pela medição. Mão de obra é valor vivo do timesheet (fora daqui) e
+  // compras não compõem mais o Real — ver `linhasCompra`, que virou bloco de referência.
+  const derivadas = useMemo<LinhaCusto[]>(() => seedMedicao, [seedMedicao]);
 
   // ---- Planilha persistida (todas as linhas ficam aqui e são editáveis) --------------------
   const sheetRecord = useMemo(
@@ -263,10 +271,16 @@ export function CustoPorOsView() {
     if (loadedRef.current === chave) return;
     loadedRef.current = chave;
     const brutas: LinhaCusto[] = (sheetRecord && Array.isArray(sheetRecord.linhas)) ? sheetRecord.linhas.map(normalizeLinha) : [];
-    // Só valem as linhas de medição da medição ATUAL: as dos resumos antigos (3 lump sums) e as
-    // de medições anteriores são descartadas, senão somariam junto com os itens discretizados.
+    // Descarta o que não pertence mais à planilha, senão planilhas salvas em versões
+    // anteriores somariam em dobro:
+    //  - `hh-*`   : mão de obra virou valor VIVO do timesheet, somado fora da planilha;
+    //  - `cmp*`   : compras saíram do Real (viraram bloco de referência);
+    //  - resumos  : os 3 lump sums do orçamento da versão antiga (hoje é item a item);
+    //  - medições anteriores: só valem os itens da medição vigente.
     const prefixoAtual = medicaoAtual ? `med-${medicaoAtual.id}-` : null;
     const salvas = brutas.filter((l) => {
+      if (l.origem === 'hh' || l.origem === 'compra') return false;
+      if (l.id.startsWith('hh-') || l.id.startsWith('cmp-') || l.id.startsWith('cmph-')) return false;
       if (l.origem !== 'medicao') return true;
       if (LEGACY_MED_IDS.has(l.id)) return false;
       return prefixoAtual != null && l.id.startsWith(prefixoAtual);
@@ -371,10 +385,14 @@ export function CustoPorOsView() {
       out.push(['', `Subtotal ${cat}`, '', '', '', '', brNum(subtotal), '']);
       out.push([]);
     });
-    out.push(['', 'TOTAL GERAL (REAL)', '', '', '', '', brNum(totalGeral), '']);
+    // Mão de obra não é linha da planilha: entra aqui como o total vivo do timesheet.
+    out.push(['', 'Mão de obra (timesheet)', `${pessoasHH} pessoa(s)`, '', '', '', brNum(totalHH), 'Timesheet']);
+    out.push([]);
+    const realCsv = round2(totalGeral + totalHH);
+    out.push(['', 'TOTAL REAL (medição + manuais + timesheet)', '', '', '', '', brNum(realCsv), '']);
     out.push([]);
     out.push(['', 'Valor da proposta (preço)', '', '', '', '', brNum(valorProposta), '']);
-    out.push(['', valorProposta - totalGeral >= 0 ? 'Saldo da proposta' : 'Estouro da proposta', '', '', '', '', brNum(Math.abs(round2(valorProposta - totalGeral))), '']);
+    out.push(['', valorProposta - realCsv >= 0 ? 'Saldo da proposta' : 'Estouro da proposta', '', '', '', '', brNum(Math.abs(round2(valorProposta - realCsv))), '']);
 
     const csv = out.map((linha) => linha.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(';')).join('\n');
     download(csv, `custo_os_${String(selected?.numero || 'OS').replace(/[\\/]/g, '-')}.csv`, 'text/csv;charset=utf-8');
@@ -391,12 +409,13 @@ export function CustoPorOsView() {
 
   const linhasVisiveis = useMemo(() => linhas.filter((l) => !l.removido && dentroPeriodo(l.data)), [linhas, de, ate]);
   const somaDe = (pred: (l: LinhaCusto) => boolean) => round2(linhasVisiveis.filter(pred).reduce((s, l) => s + num(l.valor), 0));
-  const totalCusto = round2(linhasVisiveis.reduce((s, l) => s + num(l.valor), 0));
-  const totalHH = somaDe((l) => l.origem === 'hh');
-  const totalCompra = somaDe((l) => l.origem === 'compra');
   const totalMedicao = somaDe((l) => l.origem === 'medicao');
   const totalManual = somaDe((l) => l.origem === 'manual');
-  // Real = tudo que está na planilha (medição + timesheet + compras + manuais).
+  const totalPlanilha = round2(linhasVisiveis.reduce((s, l) => s + num(l.valor), 0));
+  // REAL = planilha (itens da medição, já com suas alterações, + linhas manuais) + timesheet.
+  // O timesheet entra aqui como valor vivo, não como linha salva.
+  const totalCusto = round2(totalPlanilha + totalHH);
+  const totalCompra = round2(linhasCompra.reduce((s, l) => s + num(l.valor), 0)); // só referência
   const saldoProposta = round2(valorProposta - totalCusto);
 
   // Linhas agrupadas por categoria (com subtotal) — é o que dá a leitura discretizada.
@@ -410,9 +429,10 @@ export function CustoPorOsView() {
       .filter((g) => g.itens.length > 0);
   }, [linhasVisiveis]);
 
-  // Custos de SERVIÇO (tudo menos a mão de obra H.H) para o documento "Custo completo" da aba Alocar HH.
+  // Custos de SERVIÇO (tudo menos a mão de obra H.H) para o documento "Custo completo" da aba
+  // Alocar HH. A planilha já não guarda linha de H.H, então basta mandar tudo.
   const outrosCustos = useMemo(
-    () => linhas.filter((l) => !l.removido && l.origem !== 'hh').map((l) => ({ tipo: l.categoria, descricao: l.descricao, valor: num(l.valor) })),
+    () => linhas.filter((l) => !l.removido).map((l) => ({ tipo: l.categoria, descricao: l.descricao, valor: num(l.valor) })),
     [linhas],
   );
 
@@ -431,12 +451,14 @@ export function CustoPorOsView() {
     };
   }, [ultimoOrcamento]);
 
-  // Real = planilha atual (timesheet + compras + medição já com as modificações + manuais).
+  // Real por categoria = planilha (medição com as modificações + manuais) + o timesheet, que
+  // entra inteiro na categoria "Mão de obra".
   const realPorCategoria = useMemo<Record<string, number>>(() => {
     const map: Record<string, number> = {};
     linhas.filter((l) => !l.removido).forEach((l) => { map[l.categoria] = round2((map[l.categoria] || 0) + num(l.valor)); });
+    if (totalHH > 0) map['Mão de obra'] = round2((map['Mão de obra'] || 0) + totalHH);
     return map;
-  }, [linhas]);
+  }, [linhas, totalHH]);
 
   const comparativo = useMemo(() => {
     const extras = Object.keys(realPorCategoria).filter((c) => !ORDEM_CATEGORIAS.includes(c));
@@ -464,7 +486,7 @@ export function CustoPorOsView() {
 
   return (
     <FinCard>
-      <Toolbar title={boldOS('Custo por OS')} hint={boldOS('Planilha 100% editável e discretizada: cada item da última medição aprovada (materiais, terceirizados e alocação, já com impostos) vira uma linha; a mão de obra vem só do timesheet e as compras aprovadas entram automaticamente. OS fechada fica somente leitura.')} />
+      <Toolbar title={boldOS('Custo por OS')} hint={boldOS('Real = itens da última medição (discretizados e editáveis) + linhas manuais + timesheet da aba Alocar HH. Comparado com o preço da proposta. OS fechada fica somente leitura.')} />
 
       {/* OS (compartilhada pelas duas abas) */}
       <div className="mb-4">
@@ -531,17 +553,38 @@ export function CustoPorOsView() {
                 </p>
               </div>
             </div>
-            <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 border-t border-white/10 pt-3 text-[11px] font-bold uppercase tracking-widest">
-              <span className="text-white/40">Medição: <span className="text-emerald-300/80">{money(totalMedicao)}</span></span>
-              <span className="text-white/40">Timesheet: <span className="text-sky-300">{money(totalHH)}</span></span>
-              <span className="text-white/40">Compras: <span className="text-violet-300">{money(totalCompra)}</span></span>
-              <span className="text-white/40">Manuais: <span className="text-white/70">{money(totalManual)}</span></span>
+            {/* Composição EXATA do Real, para não restar dúvida de onde sai cada parcela. */}
+            <div className="mt-3 border-t border-white/10 pt-3 text-[11px] font-bold uppercase tracking-widest">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="text-white/40">Medição (itens, editáveis): <span className="text-emerald-300/80">{money(totalMedicao)}</span></span>
+                <span className="text-white/25">+</span>
+                <span className="text-white/40">Linhas manuais: <span className="text-white/70">{money(totalManual)}</span></span>
+                <span className="text-white/25">+</span>
+                <span className="text-white/40">Timesheet (H.H): <span className="text-sky-300">{money(totalHH)}</span></span>
+                <span className="text-white/25">=</span>
+                <span className="text-white/40">Real: <span className="text-emerald-300">{money(totalCusto)}</span></span>
+              </div>
+              {totalCompra > 0 && (
+                <p className="mt-2 text-white/30 normal-case tracking-normal font-normal text-[11px]">
+                  Compras vinculadas a esta {boldOS('OS')}: <span className="text-violet-300 font-bold">{money(totalCompra)}</span> — <strong className="text-white/50">fora do Real</strong>, porque os materiais já entram pelos itens da medição. Só referência.
+                </p>
+              )}
             </div>
           </div>
 
-          {!medicaoAtual && (
+          {/* De onde vêm os itens — sem isto não dá para saber por que a planilha está vazia. */}
+          {!medicaoAtual ? (
+            <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-amber-200 text-xs">
+              Esta {boldOS('OS')} ainda não tem medição — por isso não há itens discretizados. Crie a medição em <strong>Comercial → Medição</strong>; os itens (materiais, terceirizados e alocação) aparecem aqui automaticamente.
+            </div>
+          ) : !medicaoAprovada ? (
+            <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-amber-200 text-xs">
+              Itens da medição <strong>{medicaoAtual.numeroMedicao || medicaoAtual.numeroBM || medicaoAtual.id}</strong>, que está <strong>{String(medicaoAtual.status || 'pendente')}</strong> — valores provisórios até a aprovação.
+            </div>
+          ) : (
             <div className="mb-4 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white/50 text-xs">
-              Nenhuma medição <strong className="text-white/70">aprovada</strong> para esta {boldOS('OS')} — os itens de materiais, terceirizados e alocação aparecem aqui assim que uma medição for aprovada.
+              Itens da medição aprovada <strong className="text-white/70">{medicaoAtual.numeroMedicao || medicaoAtual.numeroBM || medicaoAtual.id}</strong>
+              {medicoesDaOs.length > 1 ? ` (a mais recente das ${medicoesDaOs.length} desta OS)` : ''} — edite à vontade abaixo; a mão de obra vem do timesheet.
             </div>
           )}
 
@@ -608,10 +651,33 @@ export function CustoPorOsView() {
                 ))}
               </React.Fragment>
             ))}
+
+            {/* MÃO DE OBRA — sempre a última faixa. Não é linha editável da planilha: é o valor
+                atual do timesheet, recalculado sozinho a cada alteração da folha de ponto. */}
+            <tr className="bg-sky-500/10">
+              <td colSpan={6} className="px-4 py-2 text-[11px] font-black uppercase tracking-widest text-sky-300">Mão de obra (timesheet)</td>
+              <td className="px-4 py-2 text-right text-[11px] font-black text-sky-300">{money(totalHH)}</td>
+              <td colSpan={2} className="px-4 py-2 text-[10px] uppercase tracking-widest text-white/30">automático</td>
+            </tr>
+            <tr>
+              <Td>{registroHH?.data ? br(String(registroHH.data)) : '—'}</Td>
+              <Td className="text-white/50">Mão de obra</Td>
+              <Td className="text-white/50">
+                {totalHH > 0
+                  ? `Folha de ponto — ${pessoasHH} pessoa(s)`
+                  : 'Sem horas lançadas — preencha a aba “Alocar HH”'}
+              </Td>
+              <Td>—</Td>
+              <Td>—</Td>
+              <Td>—</Td>
+              <Td className="text-right font-bold text-sky-300">{money(totalHH)}</Td>
+              <Td><span className="text-[11px] font-bold text-sky-300">Timesheet</span></Td>
+              <Td><span className="text-[10px] text-white/25">não editável aqui</span></Td>
+            </tr>
           </DataTable>
           <p className="mt-2 text-[10px] text-white/40">
-            Valores de medição já vêm <strong className="text-white/60">com impostos</strong> (margem, O.H e imposto no serviço; imposto de locação nos alocados).
-            Mão de obra <strong className="text-white/60">não</strong> vem da medição — entra apenas pelo timesheet da aba “Alocar HH”.
+            Valores de medição já vêm <strong className="text-white/60">com impostos</strong> (margem, O.H e imposto no serviço; imposto de locação nos alocados) e são <strong className="text-white/60">100% editáveis</strong> aqui.
+            Mão de obra <strong className="text-white/60">não</strong> vem da medição: é o total vivo do timesheet da aba “Alocar HH” e acompanha automaticamente o que for lançado lá.
           </p>
 
           {/* Ações da planilha */}
@@ -670,10 +736,9 @@ export function CustoPorOsView() {
           </div>
 
           <div className="mt-4 flex flex-wrap items-center justify-end gap-6 border-t border-white/10 pt-4">
-            <p className="text-white/50 text-xs uppercase font-black tracking-widest">Medição: <span className="text-emerald-300/80">{money(totalMedicao)}</span></p>
-            <p className="text-white/50 text-xs uppercase font-black tracking-widest">Compras: <span className="text-violet-300">{money(totalCompra)}</span></p>
-            <p className="text-white/50 text-xs uppercase font-black tracking-widest">H.H (mão de obra): <span className="text-sky-300">{money(totalHH)}</span></p>
-            <p className="text-white/50 text-xs uppercase font-black tracking-widest">{boldOS('Custo total da OS: ')}<span className="text-emerald-300 text-lg">{money(totalCusto)}</span></p>
+            <p className="text-white/50 text-xs uppercase font-black tracking-widest">Medição + manuais: <span className="text-emerald-300/80">{money(totalPlanilha)}</span></p>
+            <p className="text-white/50 text-xs uppercase font-black tracking-widest">H.H (timesheet): <span className="text-sky-300">{money(totalHH)}</span></p>
+            <p className="text-white/50 text-xs uppercase font-black tracking-widest">{boldOS('Real da OS: ')}<span className="text-emerald-300 text-lg">{money(totalCusto)}</span></p>
           </div>
         </>
       )}
