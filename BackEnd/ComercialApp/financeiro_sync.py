@@ -12,7 +12,7 @@ from django.db import transaction
 
 from .models import (
     Banco, SolicitacaoPagamento, ContaPagar, NotaFiscal, ContaReceber, EstudoLocacao,
-    ReciboLocacao,
+    ReciboLocacao, FinanceiroExtra,
 )
 
 
@@ -165,30 +165,39 @@ def replace_all(records):
     (lista de FinRecord). Espelha o comportamento do blob, que reescrevia tudo.
     """
     # Limpa todas as tabelas financeiras.
-    for model in (Banco, SolicitacaoPagamento, ContaPagar, NotaFiscal, ContaReceber, EstudoLocacao, ReciboLocacao):
+    for model in (Banco, SolicitacaoPagamento, ContaPagar, NotaFiscal, ContaReceber, EstudoLocacao, ReciboLocacao, FinanceiroExtra):
         model.objects.all().delete()
 
     buckets = {}
+    extras = []
     seen_ids = set()
     for record in records or []:
         if not isinstance(record, dict):
             continue
         tipo = record.get('tipo')
-        if tipo not in SPECS:
-            continue
         rid = _str(record.get('id') or '').strip()
         if not rid or rid in seen_ids:
             continue
-        instance = _build_instance(tipo, record)
-        if instance is None:
-            continue
-        seen_ids.add(rid)
-        buckets.setdefault(SPECS[tipo]['model'], []).append(instance)
+        if tipo in SPECS:
+            instance = _build_instance(tipo, record)
+            if instance is None:
+                continue
+            seen_ids.add(rid)
+            buckets.setdefault(SPECS[tipo]['model'], []).append(instance)
+        elif tipo:
+            # tipo sem tabela tipada (ex.: custoOsHH, hhAlocacao) → catch-all FinanceiroExtra.
+            seen_ids.add(rid)
+            extras.append(FinanceiroExtra(
+                record_id=rid, tipo=_str(tipo)[:40], os=_str(record.get('os'))[:120],
+                valor=_dec(record.get('valor')), extra=record,
+            ))
 
     for model, instances in buckets.items():
         model.objects.bulk_create(instances)
+    if extras:
+        FinanceiroExtra.objects.bulk_create(extras)
 
-    return sum(len(v) for v in buckets.values())
+    return sum(len(v) for v in buckets.values()) + len(extras)
 
 
 def _instance_to_record(tipo, inst):
@@ -209,4 +218,6 @@ def read_all():
     out += [_instance_to_record('contaReceber', x) for x in ContaReceber.objects.all()]
     out += [_instance_to_record('locEstudo', x) for x in EstudoLocacao.objects.all()]
     out += [_instance_to_record('reciboLocacao', x) for x in ReciboLocacao.objects.all()]
+    # Catch-all: cada FinanceiroExtra volta com o seu próprio `tipo` (custoOsHH, hhAlocacao, ...).
+    out += [_instance_to_record(x.tipo, x) for x in FinanceiroExtra.objects.all()]
     return out

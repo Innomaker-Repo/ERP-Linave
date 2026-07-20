@@ -1,18 +1,38 @@
 import React, { useMemo } from 'react';
 import { Bell, CheckCircle2, Package2 } from 'lucide-react';
 import { useErp } from '../../../context/ErpContext';
+import { contaTemDocumento } from '../Financeiro/finData';
 import type { CompraHistoricoRegistro } from '../Compras/comprasLocal';
 
 // Esta tela consome diretamente o Histórico de Compras (fonte única). Cada item de
 // natureza ITEM marcado como "comprado" no kanban entra aqui como pendente; ao clicar
 // OK, o status do registro vira "estoque" — gravado de volta no comprasHistorico (SQL).
 export function ItensParaAdicionarView({ searchQuery }: { searchQuery: string }) {
-  const { comprasHistorico, saveEntity, userSession } = useErp() as any;
+  const { comprasHistorico, financeiro, saveEntity, userSession } = useErp() as any;
 
   const registros = useMemo<CompraHistoricoRegistro[]>(
     () => (Array.isArray(comprasHistorico) ? comprasHistorico : []).filter((r: any) => r?.naturezaFornecimento === 'ITEM'),
     [comprasHistorico],
   );
+
+  // Conta a pagar vinculada a cada item — usada para saber se o documento de compra já foi anexado.
+  const contaById = useMemo(() => {
+    const map = new Map<string, any>();
+    (Array.isArray(financeiro) ? financeiro : []).forEach((r: any) => {
+      if (r?.tipo === 'contaPagar' && r?.id != null) map.set(String(r.id), r);
+    });
+    return map;
+  }, [financeiro]);
+
+  // O item só é liberado para adicionar ao estoque quando o documento de compra (NF de entrada,
+  // boleto...) da sua conta a pagar foi anexado. Itens legados sem vínculo de conta seguem
+  // visíveis (não há o que checar).
+  const documentoAnexado = (item: CompraHistoricoRegistro): boolean => {
+    if (!item.contaPagarId) return true;
+    const conta = contaById.get(String(item.contaPagarId));
+    if (!conta) return true;
+    return contaTemDocumento(conta);
+  };
 
   const handleConfirm = (recordId: string) => {
     const all = Array.isArray(comprasHistorico) ? comprasHistorico : [];
@@ -38,7 +58,8 @@ export function ItensParaAdicionarView({ searchQuery }: { searchQuery: string })
       .includes(query);
   });
 
-  const pendentes = filteredItems.filter((item) => item.purchaseState !== 'estoque');
+  const pendentes = filteredItems.filter((item) => item.purchaseState !== 'estoque' && documentoAnexado(item));
+  const aguardandoDoc = filteredItems.filter((item) => item.purchaseState !== 'estoque' && !documentoAnexado(item));
   const confirmados = filteredItems.filter((item) => item.purchaseState === 'estoque');
 
   return (
@@ -50,19 +71,23 @@ export function ItensParaAdicionarView({ searchQuery }: { searchQuery: string })
           </div>
           <div>
             <h1 className="text-3xl font-bold text-white tracking-tight">Itens para adicionar</h1>
-            <p className="text-white/50 text-sm mt-1">Itens comprados que precisam ser adicionados ao estoque. Marque OK para mudar o status para Estoque.</p>
+            <p className="text-white/50 text-sm mt-1">Itens comprados aparecem aqui só depois que o documento de compra (NF de entrada, boleto...) é anexado no contas a pagar. Marque OK para mudar o status para Estoque.</p>
           </div>
         </div>
         <div className="flex items-center gap-3 text-xs font-bold uppercase tracking-widest text-white/40">
           <Package2 size={14} />
-          Somente itens (produtos) comprados aparecem aqui
+          Só aparece com o documento anexado na conta a pagar
         </div>
       </div>
 
-      <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <section className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-5">
           <p className="text-white/35 text-[10px] uppercase tracking-[0.3em] font-black">Pendentes</p>
           <p className="text-white font-black text-3xl mt-2">{pendentes.length}</p>
+        </div>
+        <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-5">
+          <p className="text-white/35 text-[10px] uppercase tracking-[0.3em] font-black">Aguardando documento</p>
+          <p className="text-white font-black text-3xl mt-2">{aguardandoDoc.length}</p>
         </div>
         <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-5">
           <p className="text-white/35 text-[10px] uppercase tracking-[0.3em] font-black">Em estoque</p>

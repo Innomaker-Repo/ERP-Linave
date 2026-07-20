@@ -4,7 +4,7 @@ import {
   FinCard, Toolbar, DataTable, Th, Td, Btn, StatusTag, CompanyTag, TypeTag, Pill, EmptyRow,
   FinModal, Field, Input, Select, Textarea, Kpi, labelCls, boldOS,
 } from '../finUi';
-import { br, money, num, todayStr, genFinId, download, days, FORMAS_PAGAMENTO, TIPOS_REEMBOLSO, NATUREZAS_CONTA_PAGAR } from '../finData';
+import { br, money, num, todayStr, genFinId, download, days, FORMAS_PAGAMENTO, TIPOS_REEMBOLSO, NATUREZAS_CONTA_PAGAR, CP_STATUS, documentoDuplicado } from '../finData';
 import { useFin, type FinRecord } from '../useFin';
 import { useFinFilters } from '../finFilters';
 import { uploadDocumento } from '../../../../../services/documentosService';
@@ -13,14 +13,25 @@ import { toast } from 'sonner';
 export function ContasPagarView() {
   const { records, empresas, oss, addRecord, updateRecord, parcelarConta, pagarConta } = useFin();
   const { match } = useFinFilters();
-  const rows = records('contaPagar').filter(match);
+  const allContasPagar = records('contaPagar');
   const bancos = records('banco').map((b) => b.nome).filter(Boolean) as string[];
   const [salvando, setSalvando] = useState(false);
+
+  // Filtro local por status (Aberto S/Documento, C/Documento, Parcelado, Pago...).
+  const [statusFiltro, setStatusFiltro] = useState('Todos');
+  const statusDisponiveis = useMemo(
+    () => Array.from(new Set(allContasPagar.map((r) => String(r.status || 'Aberto')))).sort(),
+    [allContasPagar],
+  );
+  const rows = allContasPagar
+    .filter(match)
+    .filter((r) => statusFiltro === 'Todos' || String(r.status || 'Aberto') === statusFiltro);
 
   // ---- Modal criar/editar ----
   const formVazio = () => ({
     empresa: empresas[0] || 'Linave', vinculoTipo: 'OS' as 'OS' | 'Departamento', vinculoValor: '',
     fornecedor: '', tipoPagamento: 'Material', natureza: '', documento: '', valor: '', vencimento: todayStr, banco: '', forma: '', obs: '',
+    nfAnexo: '', nfAnexoNome: '',
   });
   const [editId, setEditId] = useState<string | null | undefined>(undefined); // undefined=fechado, null=novo
   const [form, setForm] = useState(formVazio());
@@ -28,6 +39,7 @@ export function ContasPagarView() {
 
   const abrirNovo = () => { setForm(formVazio()); setEditId(null); };
   const abrirEdicao = (p: FinRecord) => {
+    const nfAnexo = Array.isArray(p.anexos) && p.anexos.length ? String(p.anexos[0]) : '';
     setForm({
       empresa: String(p.empresa || empresas[0] || 'Linave'),
       vinculoTipo: (p.vinculoTipo as any) || 'OS',
@@ -37,26 +49,77 @@ export function ContasPagarView() {
       natureza: p.natureza || '',
       documento: p.documento || '',
       valor: String(p.valor || ''),
-      vencimento: p.vencimento || todayStr,
+      // Conta de compra chega sem vencimento; só é preenchido quando a NF é anexada.
+      vencimento: p.vencimento || '',
       banco: p.banco || '',
       forma: p.forma || '',
       obs: p.obs || '',
+      nfAnexo,
+      nfAnexoNome: nfAnexo ? 'Nota fiscal anexada' : '',
     });
     setEditId(p.id);
+  };
+
+  // Upload do documento de compra (NF de entrada, boleto...) vinculado ao id da conta.
+  const [enviandoNf, setEnviandoNf] = useState(false);
+  const handleSelecionarNf = async (file: File | undefined) => {
+    if (!file || !editId) return;
+    setEnviandoNf(true);
+    try {
+      const doc = await uploadDocumento(file, { vinculoTipo: 'financeiro', vinculoId: editId, categoria: 'fin_documento' });
+      setForm((p) => ({ ...p, nfAnexo: doc.url, nfAnexoNome: doc.nome }));
+      toast.success('Documento anexado e salvo no banco.');
+    } catch {
+      toast.error('Não foi possível enviar o documento.');
+    } finally {
+      setEnviandoNf(false);
+    }
   };
 
   const salvarConta = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.fornecedor.trim() || !num(form.valor)) return;
+
+    const editingRec = editId ? allContasPagar.find((r) => r.id === editId) : null;
+    const doc = form.documento.trim();
+
+    // Ao anexar o documento é obrigatório informar número e vencimento (quando a conta ganha documento).
+    if (form.nfAnexo && (!doc || !form.vencimento)) {
+      toast.error('Ao anexar o documento, informe o número e o vencimento.');
+      return;
+    }
+    // Duplicidade: o mesmo número de documento não pode se repetir para o MESMO fornecedor.
+    if (documentoDuplicado(allContasPagar, {
+      fornecedor: form.fornecedor,
+      documento: doc,
+      selfId: editId || null,
+      parentId: (editingRec?.parentId as string | null) || null,
+    })) {
+      toast.error(`Já existe uma conta com o documento "${doc}" para o fornecedor ${form.fornecedor.trim()}.`);
+      return;
+    }
+
     setSalvando(true);
     try {
-      const base = {
+      const anexos = form.nfAnexo ? [form.nfAnexo] : (Array.isArray(editingRec?.anexos) ? editingRec!.anexos : []);
+      const base: Record<string, any> = {
         empresa: form.empresa, vinculoTipo: form.vinculoTipo, vinculoValor: form.vinculoValor,
-        fornecedor: form.fornecedor, tipoPagamento: form.tipoPagamento, natureza: form.natureza, documento: form.documento,
+        fornecedor: form.fornecedor, tipoPagamento: form.tipoPagamento, natureza: form.natureza, documento: doc,
         valor: num(form.valor), vencimento: form.vencimento, banco: form.banco, forma: form.forma, obs: form.obs,
+        anexos,
       };
-      if (editId) await updateRecord(editId, base);
-      else await addRecord({ id: genFinId('CP'), tipo: 'contaPagar', type: 'single', parentId: null, parcela: '-', status: 'Aberto', valorPago: 0, jurosPago: 0, comprovantes: [], ...base });
+      if (editId) {
+        // Transição de status: anexar a NF (ou informar o documento) leva "Aberto S/Documento"
+        // → "Aberto C/Documento". Nunca rebaixa contas já Pagas/Parceladas.
+        const st = String(editingRec?.status || '');
+        if (st !== CP_STATUS.pago && st !== CP_STATUS.parcelado) {
+          const temNf = !!form.nfAnexo || !!doc;
+          base.status = temNf ? CP_STATUS.comDoc : (st || CP_STATUS.aberto);
+        }
+        await updateRecord(editId, base);
+      } else {
+        await addRecord({ id: genFinId('CP'), tipo: 'contaPagar', type: 'single', parentId: null, parcela: '-', status: CP_STATUS.aberto, valorPago: 0, jurosPago: 0, comprovantes: [], ...base });
+      }
       setEditId(undefined);
     } finally {
       setSalvando(false);
@@ -145,7 +208,7 @@ export function ContasPagarView() {
 
   const confirmarPagamento = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!pagando || !pay.banco || !pay.comprovante) return; // banco e comprovante obrigatórios
+    if (!pagando || !pay.banco) return; // só o banco é obrigatório; comprovante é opcional
     setSalvando(true);
     try {
       const houveJuros = pay.houveJuros === 'Sim';
@@ -156,7 +219,7 @@ export function ContasPagarView() {
         houveJuros,
         jurosPago: houveJuros ? num(pay.jurosPago) : 0,
         motivoJuros: houveJuros ? pay.motivoJuros : '',
-        comprovantes: [pay.comprovante],
+        comprovantes: pay.comprovante ? [pay.comprovante] : [],
       });
       setPagando(null);
     } finally {
@@ -168,8 +231,17 @@ export function ContasPagarView() {
     <FinCard>
       <Toolbar
         title="Contas a Pagar"
-        hint="Adicionar, editar, parcelar (mãe/filhas) e pagar com banco, juros e comprovante obrigatório."
+        hint="Adicionar, editar, parcelar (mãe/filhas) e pagar com banco e juros (comprovante opcional)."
         actions={<>
+          <label className="flex items-center gap-2">
+            <span className="text-[10px] font-black uppercase tracking-widest text-white/40">Status</span>
+            <div className="w-48">
+              <Select value={statusFiltro} onChange={(e) => setStatusFiltro(e.target.value)}>
+                <option value="Todos">Todos</option>
+                {statusDisponiveis.map((s) => <option key={s} value={s}>{s}</option>)}
+              </Select>
+            </div>
+          </label>
           <Btn variant="amber" onClick={abrirNovo}><Plus size={15} /> Conta a pagar</Btn>
           <Btn variant="secondary" onClick={exportarCsv}><Download size={15} /> Exportar CSV</Btn>
         </>}
@@ -204,7 +276,7 @@ export function ContasPagarView() {
             <Td>
               <div className="flex gap-2">
                 {p.type !== 'parent' && <Btn small variant="secondary" onClick={() => abrirEdicao(p)}>Editar</Btn>}
-                {p.type === 'single' && p.status !== 'Pago' && <Btn small variant="blue" onClick={() => abrirParcelar(p)}><Split size={12} /> Parcelar</Btn>}
+                {p.type === 'single' && p.status !== 'Pago' && p.status !== CP_STATUS.semDoc && <Btn small variant="blue" onClick={() => abrirParcelar(p)}><Split size={12} /> Parcelar</Btn>}
                 {p.type !== 'parent' && p.status !== 'Pago' && <Btn small variant="green" onClick={() => abrirPagamento(p)}><Banknote size={12} /> Pagar</Btn>}
               </div>
             </Td>
@@ -254,9 +326,24 @@ export function ContasPagarView() {
             </Field>
 
             <Field label="Observação" span={12}><Textarea value={form.obs} onChange={(e) => setF('obs', e.target.value)} /></Field>
+
+            {editId && (
+              <div className="col-span-12">
+                <label className={labelCls}>Documento de compra (anexo)</label>
+                <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-dashed border-white/15 bg-[#0b1220] px-4 py-4 text-sm text-white/60 transition-colors hover:border-amber-500/40">
+                  <Paperclip size={16} /> {enviandoNf ? 'Enviando...' : (form.nfAnexoNome || 'Anexar documento — NF de entrada, boleto... (PDF, imagem)')}
+                  <input type="file" className="hidden" disabled={enviandoNf} onChange={(e) => handleSelecionarNf(e.target.files?.[0])} />
+                </label>
+                {form.nfAnexo && (
+                  <a href={form.nfAnexo} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block text-xs font-bold text-amber-300 underline">Ver documento anexado</a>
+                )}
+                <p className="mt-2 text-[11px] text-white/40">Ao anexar o documento e preencher número + vencimento, a conta passa para <strong className="text-white/70">Aberto C/Documento</strong>.</p>
+              </div>
+            )}
+
             <div className="col-span-12 flex justify-end gap-2">
               <Btn type="button" variant="ghost" onClick={() => setEditId(undefined)}>Cancelar</Btn>
-              <Btn type="submit" variant="amber" disabled={salvando}><Save size={15} /> {salvando ? 'Salvando...' : 'Salvar conta a pagar'}</Btn>
+              <Btn type="submit" variant="amber" disabled={salvando || enviandoNf}><Save size={15} /> {salvando ? 'Salvando...' : 'Salvar conta a pagar'}</Btn>
             </div>
           </form>
         </FinModal>
@@ -268,10 +355,8 @@ export function ContasPagarView() {
           <form className="grid grid-cols-12 gap-4" onSubmit={confirmarParcelar}>
             <Field label="Nº de parcelas" span={4}><Input type="number" min="2" value={parc.n} onChange={(e) => setParc((p) => ({ ...p, n: e.target.value }))} /></Field>
             <Field label="Data de início das parcelas" span={4}><Input type="date" value={parc.dataInicio} onChange={(e) => setParc((p) => ({ ...p, dataInicio: e.target.value }))} /></Field>
-            <Field label="Intervalo" span={4}>
-              <Select value={parc.intervalo} onChange={(e) => setParc((p) => ({ ...p, intervalo: e.target.value }))}>
-                <option value="30">Mensal</option><option value="15">Quinzenal</option><option value="7">Semanal</option>
-              </Select>
+            <Field label="Intervalo (dias)" span={4}>
+              <Input type="number" min="1" value={parc.intervalo} onChange={(e) => setParc((p) => ({ ...p, intervalo: e.target.value }))} placeholder="Ex.: 30" />
             </Field>
 
             <div className="col-span-12">
@@ -312,7 +397,7 @@ export function ContasPagarView() {
 
       {/* MODAL: pagar */}
       {pagando && (
-        <FinModal title={`Pagar ${pagando.id}`} hint="Data real, banco, juros e comprovante obrigatório." onClose={() => setPagando(null)}>
+        <FinModal title={`Pagar ${pagando.id}`} hint="Data real, banco e juros. Comprovante opcional (dá para pagar antes da nota chegar)." onClose={() => setPagando(null)}>
           <form className="grid grid-cols-12 gap-4" onSubmit={confirmarPagamento}>
             <Field label="Conta" span={6}><Input value={`${pagando.fornecedor || ''} • ${money(num(pagando.valor))}`} disabled /></Field>
             <Field label="Quando paguei?" span={3}><Input type="date" value={pay.dataPagamento} onChange={(e) => setPayF('dataPagamento', e.target.value)} /></Field>
@@ -334,7 +419,7 @@ export function ContasPagarView() {
             </>}
 
             <div className="col-span-12">
-              <label className={labelCls}>Comprovante de pagamento * (obrigatório)</label>
+              <label className={labelCls}>Comprovante de pagamento (opcional)</label>
               <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-dashed border-white/15 bg-[#0b1220] px-4 py-4 text-sm text-white/60 transition-colors hover:border-amber-500/40">
                 <Paperclip size={16} /> {enviandoComprovante ? 'Enviando...' : (pay.comprovanteNome || 'Anexar comprovante (PDF, imagem...)')}
                 <input type="file" className="hidden" disabled={enviandoComprovante} onChange={(e) => handleSelecionarComprovante(e.target.files?.[0])} />
@@ -353,7 +438,7 @@ export function ContasPagarView() {
 
             <div className="col-span-12 flex justify-end gap-2">
               <Btn type="button" variant="ghost" onClick={() => setPagando(null)}>Cancelar</Btn>
-              <Btn type="submit" variant="green" disabled={salvando || enviandoComprovante || !pay.banco || !pay.comprovante}>
+              <Btn type="submit" variant="green" disabled={salvando || enviandoComprovante || !pay.banco}>
                 <Banknote size={15} /> {salvando ? 'Registrando...' : 'Confirmar pagamento'}
               </Btn>
             </div>

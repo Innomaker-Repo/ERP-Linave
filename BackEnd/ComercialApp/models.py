@@ -783,6 +783,18 @@ class ReciboLocacao(FinanceiroBase):
 
     def __str__(self):
         return f'Recibo de Locação {self.numero or self.record_id}'
+
+
+class FinanceiroExtra(FinanceiroBase):
+    # Catch-all para FinRecord cujo `tipo` não tem tabela tipada própria (ex.: 'custoOsHH',
+    # 'hhAlocacao' — custo/alocação de H.H por OS). O registro inteiro fica em `extra`
+    # (round-trip fiel); `tipo` discrimina e `os`/`valor` servem para consultas.
+    tipo = models.CharField(max_length=40, blank=True, default='', db_index=True)
+    os = models.CharField(max_length=120, blank=True, default='')
+    valor = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+
+    def __str__(self):
+        return f'FinExtra {self.tipo} {self.record_id}'
 #--------------------- Fim Financeiro ------------------
 
 #--------------------- Compras ------------------
@@ -878,6 +890,7 @@ class Documento(models.Model):
         ('os_assinatura', 'Assinatura/aprovação de OS'),
         ('fin_anexo', 'Anexo financeiro'),
         ('fin_comprovante', 'Comprovante de pagamento'),
+        ('fin_documento', 'Documento de compra (NF entrada/boleto)'),
         ('outro', 'Outro'),
     ]
 

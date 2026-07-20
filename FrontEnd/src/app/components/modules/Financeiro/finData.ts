@@ -561,7 +561,11 @@ export const upsertContaReceberPorMedicao = (financeiro: any[], aporte: AporteRe
 
 // Baixa um conteúdo de texto como arquivo (CSV/TXT) — frontend puro.
 export const download = (text: string, filename: string, type = 'text/plain;charset=utf-8') => {
-  const blob = new Blob([text], { type });
+  // CSV aberto no Excel (pt-BR/Windows) é lido como ANSI e "buga" os acentos (ã, õ, ç, ô, â...).
+  // O BOM UTF-8 (U+FEFF) força o Excel a interpretar como UTF-8. Só entra em arquivos CSV.
+  const isCsv = /csv/i.test(type) || /\.csv$/i.test(filename);
+  const conteudo = isCsv ? String.fromCharCode(0xFEFF) + text : text;
+  const blob = new Blob([conteudo], { type });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -595,6 +599,58 @@ export interface ParcelamentoOpcoes {
   intervaloDias?: number;
   dataInicio?: string;
 }
+
+// Status possíveis de uma conta a pagar. As contas geradas por Compras começam em
+// `semDoc` (sem NF/vencimento/banco); ao anexar a NF viram `comDoc`; ao pagar, `pago`.
+export const CP_STATUS = {
+  semDoc: 'Aberto S/Documento',
+  comDoc: 'Aberto C/Documento',
+  aberto: 'Aberto',
+  parcelado: 'Parcelado',
+  pago: 'Pago',
+} as const;
+
+const normTxt = (v?: string | null) => String(v ?? '').trim().toLowerCase();
+
+// Uma conta "tem documento" (documento de compra: NF de entrada, boleto etc. — NÃO é a NF de
+// saída que o sistema emite) quando já foi paga/parcelada, quando está em "Aberto C/Documento",
+// quando tem número de documento OU quando tem algum anexo. Usada para liberar o item no
+// estoque e para o fluxo de status.
+export const contaTemDocumento = (conta?: { status?: string; documento?: string; anexos?: any[] } | null): boolean => {
+  if (!conta) return false;
+  const st = String(conta.status || '');
+  if (st === CP_STATUS.comDoc || st === CP_STATUS.pago || st === CP_STATUS.parcelado) return true;
+  if (normTxt(conta.documento)) return true;
+  return Array.isArray(conta.anexos) && conta.anexos.length > 0;
+};
+
+// Regra: o número da NF (documento) não pode se repetir para o MESMO fornecedor. Mesmo número
+// em fornecedores diferentes é permitido. Ignora as contas do mesmo grupo de parcelamento
+// (mãe/filhas compartilham fornecedor+documento legitimamente) e a própria conta em edição.
+export const documentoDuplicado = (
+  records: Array<{ id?: string; tipo?: string; parentId?: string | null; fornecedor?: string; documento?: string }>,
+  args: { fornecedor: string; documento: string; selfId?: string | null; parentId?: string | null },
+): boolean => {
+  const doc = normTxt(args.documento);
+  const forn = normTxt(args.fornecedor);
+  if (!doc || !forn) return false; // sem documento ou sem fornecedor → nada a validar
+
+  // Ids do mesmo grupo de parcelamento da conta em edição (raiz + filhas + a própria).
+  const rootId = args.parentId || args.selfId || '';
+  const grupo = new Set<string>();
+  if (rootId) {
+    grupo.add(rootId);
+    for (const r of records) if (r?.parentId === rootId && r.id) grupo.add(r.id);
+  }
+  if (args.selfId) grupo.add(args.selfId);
+
+  return records.some((r) =>
+    r?.tipo === 'contaPagar' &&
+    !!r.id && !grupo.has(r.id) &&
+    normTxt(r.fornecedor) === forn &&
+    normTxt(r.documento) === doc,
+  );
+};
 
 export const buildContasPagar = (
   base: ContaPagarBase,

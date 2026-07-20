@@ -634,6 +634,13 @@ export const handleDownloadOSPDF = ({
     { lbl: 'VIGIA DE FOGO', v: isChecked('vigiaFogo') }
   ];
 
+  // Itens "A SER INCLUÍDO" customizados (adicionados na OS) — sempre marcados, pois foram
+  // incluídos de propósito. Antes só o PDF inline os mostrava; aqui também passam a aparecer.
+  const extrasInc = (Array.isArray(baseChecks?.extras) ? baseChecks.extras : [])
+    .map((e: any) => ({ lbl: String(e?.label || '').trim().toUpperCase(), v: true }))
+    .filter((e: any) => e.lbl);
+  listChecks.push(...extrasInc);
+
   let cursorDir = bodyY + 5;
   doc.setFontSize(7);
   listChecks.forEach((c) => {

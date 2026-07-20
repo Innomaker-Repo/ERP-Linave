@@ -6,7 +6,7 @@ import { Input } from '../../../modules/shared/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../modules/shared/ui/select';
 import { useErp } from '../../../context/ErpContext';
 import { boldOS } from '../../../utils/osHighlight';
-import { getOrdensServico, getOsOptionLabel, getOsOptionValue, getOsStableValue, type OrdemServicoResumo, isOsAprovada } from '../../../../services/ordensServico';
+import { getOrdensServico, getOsOptionLabel, getOsOptionValue, getOsStableValue, type OrdemServicoResumo, isOsAprovada, formatOsLabel } from '../../../../services/ordensServico';
 import api from '../../../../services/api';
 import { gerarRomaneioPdf, loadRomaneioLogoBase64 } from './romaneioPdf';
 
@@ -483,7 +483,15 @@ const createRegisterValues = (table?: StockTable, baseValues: Record<string, str
 };
 
 export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
-  const { os, almoxerifado, saveEntity, loading } = useErp();
+  const { os, obras, almoxerifado, saveEntity, loading } = useErp();
+
+  // Rótulo EXIBIDO da OS: "<número> — <embarcação>" (padrão do ERP). Só para a interface —
+  // `getOsOptionLabel` continua sendo a identidade usada para casar/gravar valores, então
+  // registros antigos (romaneio, histórico de baixa) seguem batendo.
+  const osDisplayLabel = React.useCallback(
+    (item: any) => formatOsLabel(item, obras) || getOsOptionLabel(item),
+    [obras],
+  );
   const hasHydratedPersistedState = useRef(false);
   const [ordensServicoBackend, setOrdensServicoBackend] = useState<OrdemServicoResumo[]>([]);
   const [publicSearch, setPublicSearch] = useState<string>(searchQuery || '');
@@ -1871,7 +1879,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
           <SelectContent className="border border-white/10 bg-[#0b1220] text-white shadow-2xl">
             {availableOS.map((ordemServico) => (
               <SelectItem key={getOsOptionValue(ordemServico)} value={getOsOptionValue(ordemServico)} className="cursor-pointer rounded-lg px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
-                {getOsOptionLabel(ordemServico)}
+                {osDisplayLabel(ordemServico)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -1989,7 +1997,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                     value={getOsOptionValue(ordemServico)}
                     className="cursor-pointer rounded-lg px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white"
                   >
-                    {getOsOptionLabel(ordemServico)}
+                    {osDisplayLabel(ordemServico)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -2435,7 +2443,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                           const value = String((ordemServico as any)?.id || getOsOptionValue(ordemServico as any));
                           return (
                             <SelectItem key={value} value={value} className="cursor-pointer rounded-lg px-3 py-3 text-sm text-white/80 focus:bg-white/10 focus:text-white">
-                              {getOsOptionLabel(ordemServico as any)}
+                              {osDisplayLabel(ordemServico as any)}
                             </SelectItem>
                           );
                         })
@@ -2591,7 +2599,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
 
                           return (
                             <SelectItem key={value} value={value} className="rounded-lg">
-                              {getOsOptionLabel(ordemServico) || value}
+                              {osDisplayLabel(ordemServico) || value}
                             </SelectItem>
                           );
                         })
@@ -2602,7 +2610,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
 
                           return (
                             <SelectItem key={value} value={value} className="rounded-lg">
-                              {getOsOptionLabel(ordemServico) || value}
+                              {osDisplayLabel(ordemServico) || value}
                             </SelectItem>
                           );
                         })
@@ -2674,7 +2682,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                     <SelectContent className="border border-white/10 bg-[#0b1220] text-white">
                       {availableOS.map((ordemServico: any) => (
                         <SelectItem key={ordemServico.id} value={String(ordemServico.id)} className="rounded-lg">
-                          {getOsOptionLabel(ordemServico)}
+                          {osDisplayLabel(ordemServico)}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -2828,13 +2836,13 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                     {availableOS.length > 0 ? (
                       availableOS.map((ordemServico: any) => (
                         <SelectItem key={getOsOptionValue(ordemServico) || ordemServico?.id} value={getOsOptionValue(ordemServico) || ordemServico?.id} className="rounded-lg cursor-pointer">
-                          {getOsOptionLabel(ordemServico) || String(ordemServico?.ordemServicoNumero || ordemServico?.numeroOs || ordemServico?.id || 'OS')}
+                          {osDisplayLabel(ordemServico) || String(ordemServico?.ordemServicoNumero || ordemServico?.numeroOs || ordemServico?.id || 'OS')}
                         </SelectItem>
                       ))
                     ) : Array.isArray(os) && os.length > 0 ? (
                       os.map((ordemServico: any) => (
                         <SelectItem key={getOsOptionValue(ordemServico) || ordemServico?.id} value={getOsOptionValue(ordemServico) || ordemServico?.id} className="rounded-lg cursor-pointer">
-                          {getOsOptionLabel(ordemServico) || String(ordemServico?.ordemServicoNumero || ordemServico?.numeroOs || ordemServico?.id || 'OS')}
+                          {osDisplayLabel(ordemServico) || String(ordemServico?.ordemServicoNumero || ordemServico?.numeroOs || ordemServico?.id || 'OS')}
                         </SelectItem>
                       ))
                     ) : (

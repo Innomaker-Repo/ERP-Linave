@@ -26,6 +26,7 @@ const TONE_CLASS: Record<Tone, string> = {
 
 const STATUS_TONE: Record<string, Tone> = {
   'Aguardando aprovação': 'wait', 'Aprovado': 'ok', 'Reprovado': 'bad', 'Aberto': 'wait',
+  'Aberto S/Documento': 'wait', 'Aberto C/Documento': 'info',
   'Em andamento': 'info', 'Medição aprovada': 'ok', 'Finalizada': 'ok', 'Cancelada': 'bad',
   'Aguardando emissão': 'wait', 'Emitida e arquivada': 'ok', 'Vencido': 'bad', 'A receber': 'wait',
   'Recebido': 'ok', 'Pago': 'ok', 'Parcelado': 'info', 'Ativa': 'ok', 'Pausada': 'wait', 'Encerrada': 'neutral',

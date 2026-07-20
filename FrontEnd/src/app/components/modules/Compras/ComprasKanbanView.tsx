@@ -17,7 +17,7 @@ import {
 import { FinModal, Field, Input, Select, Textarea, Btn, boldOS } from '../Financeiro/finUi';
 import {
   br, money, num, todayStr, days,
-  FORMAS_PAGAMENTO, TIPOS_REEMBOLSO, empresaFromCC, buildContasPagar,
+  FORMAS_PAGAMENTO, TIPOS_REEMBOLSO, empresaFromCC, buildContasPagar, CP_STATUS,
   type Empresa,
 } from '../Financeiro/finData';
 
@@ -84,6 +84,11 @@ const resolveNaturezaFromSupplierName = (supplierName: string, supplierCatalog: 
   const supplier = supplierCatalog.find((entry) => String(entry?.razaoSocial || '') === supplierName);
   return supplier?.naturezaFornecimento === 'ITEM' ? 'ITEM' : 'SERVICO';
 };
+
+// Natureza do fornecedor (Itens/ITEM ou Serviços/SERVICO). Aceita o legado tipo "Empresas"=ITEM.
+// Define onde a compra entra no Custo por OS: ITEM→Materiais, SERVICO→Serviços Terceirizados.
+const naturezaFornecedor = (s: any): 'ITEM' | 'SERVICO' =>
+  (s?.naturezaFornecimento === 'ITEM' || s?.tipo === 'Itens' || s?.tipo === 'Empresas') ? 'ITEM' : 'SERVICO';
 
 const buildDraftRows = (request: RequisicaoCompra): QuoteRowDraft[] =>
   request.itens.map((item) => {
@@ -440,20 +445,6 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
     ? (buyContext.detail?.naturezaFornecimento || buyContext.item.naturezaFornecimento) === 'ITEM'
     : true;
 
-  // Prévia das parcelas (espelha buildContasPagar) quando "Parcelar" está marcado.
-  const buyParcelasPreview = useMemo(() => {
-    if (!buyModal || !buyForm.parcelar) return [] as { parcela: string; vencimento: string; valor: number }[];
-    const n = Math.max(2, Math.floor(Number(buyForm.nParcelas) || 0));
-    const total = num(buyForm.valor);
-    const base = Math.floor((total / n) * 100) / 100;
-    const sobra = Math.round((total - base * n) * 100) / 100;
-    return Array.from({ length: n }, (_, i) => ({
-      parcela: `${i + 1}/${n}`,
-      vencimento: days(buyForm.dataInicio || todayStr, Number(buyForm.intervalo) * i),
-      valor: i === n - 1 ? Math.round((base + sobra) * 100) / 100 : base,
-    }));
-  }, [buyModal, buyForm]);
-
   // Confirma a compra do item: cria a(s) Conta(s) a Pagar, registra no Histórico (NFe
   // pendente) e remove o item do kanban (removendo o card se ele ficar vazio).
   const handleConfirmBuy = async (event: React.FormEvent) => {
@@ -465,38 +456,43 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
       window.alert('Informe o fornecedor e o valor da conta a pagar.');
       return;
     }
-    if (buyForm.parcelar && Number(buyForm.nParcelas) < 2) {
-      window.alert('Para parcelar, informe ao menos 2 parcelas.');
-      return;
-    }
-
     setBuySaving(true);
     try {
-      const contas = buildContasPagar(
-        {
-          empresa: buyForm.empresa,
-          vinculoTipo: 'OS',
-          vinculoValor: request.centroCusto,
-          fornecedor: buyForm.fornecedor.trim(),
-          tipoPagamento: buyForm.tipoPagamento,
-          documento: buyForm.documento.trim(),
-          valor: num(buyForm.valor),
-          vencimento: buyForm.vencimento,
-          banco: buyForm.banco,
-          forma: buyForm.forma,
-          obs: buyForm.obs,
-        },
-        {
-          parcelar: buyForm.parcelar,
-          nParcelas: Number(buyForm.nParcelas),
-          intervaloDias: Number(buyForm.intervalo),
-          dataInicio: buyForm.dataInicio,
-        },
-      );
-      const contaPagarId = contas[0]?.id as string | undefined;
-
-      // 1) Financeiro — cria a(s) conta(s) a pagar (única ou mãe+filhas).
-      await saveEntity?.('financeiro', [...contas, ...(Array.isArray(financeiro) ? financeiro : [])]);
+      // 1) Financeiro — cria a Conta a Pagar EM BRANCO, marcada como originada de Compras.
+      //    Ela nasce sem documento (NF de entrada/boleto), sem vencimento e sem banco, com status
+      //    "Aberto S/Documento". O gerente anexa o documento e preenche esses dados depois, ao
+      //    editar a conta em Contas a Pagar — carregando o fornecedor da compra (p/ a checagem
+      //    de duplicidade de documento por fornecedor).
+      const contaPagarId = `CP-${Date.now().toString(36).toUpperCase()}`;
+      const conta = {
+        id: contaPagarId,
+        tipo: 'contaPagar' as const,
+        type: 'single' as const,
+        parentId: null,
+        parcela: '-',
+        totalParcelas: 1,
+        origemCompra: true,
+        empresa: buyForm.empresa,
+        vinculoTipo: 'OS' as const,
+        vinculoValor: request.centroCusto,
+        fornecedor: buyForm.fornecedor.trim(),
+        tipoPagamento: buyForm.tipoPagamento,
+        natureza: '',
+        documento: '',
+        valor: num(buyForm.valor),
+        vencimento: '',
+        banco: '',
+        forma: '',
+        obs: buyForm.obs || '',
+        status: CP_STATUS.semDoc,
+        valorPago: 0,
+        jurosPago: 0,
+        anexos: [] as string[],
+        comprovantes: [] as string[],
+        dataPagamento: '',
+        createdAt: new Date().toISOString(),
+      };
+      await saveEntity?.('financeiro', [conta, ...(Array.isArray(financeiro) ? financeiro : [])]);
 
       // 2) Histórico de Compras — um registro por item, NFe do fornecedor pendente.
       const userLabel = userSession?.nome || userSession?.email || 'sistema';
@@ -1111,7 +1107,7 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
         <FinModal
           wide
           title={buyIsItem ? 'Marcar como comprado · Conta a Pagar' : 'Marcar como contratado · Conta a Pagar'}
-          hint="Crie a conta a pagar com os dados do financeiro. Ao confirmar, o item sai do kanban e vai ao Histórico como NFe pendente."
+          hint="Gera a conta a pagar como Aberto S/Documento (sem documento/vencimento/banco). Ao confirmar, o item sai do kanban e vai ao Histórico como NFe pendente."
           onClose={closeBuyModal}
         >
           <form className="grid grid-cols-12 gap-4" onSubmit={handleConfirmBuy}>
@@ -1134,72 +1130,42 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
               </Select>
             </Field>
 
-            <Field label="Fornecedor" span={6}><Input value={buyForm.fornecedor} onChange={(e) => setBuyF('fornecedor', e.target.value)} /></Field>
-            <Field label="Documento (NF / boleto)" span={3}><Input value={buyForm.documento} onChange={(e) => setBuyF('documento', e.target.value)} placeholder="Opcional" /></Field>
-            <Field label="Valor total" span={3}><Input type="number" step="0.01" value={buyForm.valor} onChange={(e) => setBuyF('valor', e.target.value)} /></Field>
+            <Field label="Fornecedor" span={8}>
+              <Select value={buyForm.fornecedor} onChange={(e) => setBuyF('fornecedor', e.target.value)}>
+                <option value="">Selecione o fornecedor…</option>
+                {buyForm.fornecedor && !supplierOptions.some((s: any) => String(s?.razaoSocial) === buyForm.fornecedor) && (
+                  <option value={buyForm.fornecedor}>{buyForm.fornecedor} (não cadastrado)</option>
+                )}
+                {supplierOptions.map((s: any) => (
+                  <option key={s.id || s.razaoSocial} value={s.razaoSocial}>
+                    {s.razaoSocial} — {naturezaFornecedor(s) === 'ITEM' ? 'ITEM' : 'SERVIÇO'}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Valor total" span={4}><Input type="number" step="0.01" value={buyForm.valor} onChange={(e) => setBuyF('valor', e.target.value)} /></Field>
 
-            <Field label="Vencimento" span={3}><Input type="date" value={buyForm.vencimento} onChange={(e) => setBuyF('vencimento', e.target.value)} /></Field>
-            <Field label="Banco" span={3}>
-              <Select value={buyForm.banco} onChange={(e) => setBuyF('banco', e.target.value)}>
-                <option value="">{bancosOptions.length ? 'A definir...' : 'Nenhum banco cadastrado'}</option>
-                {bancosOptions.map((b) => <option key={b}>{b}</option>)}
-              </Select>
-            </Field>
-            <Field label="Forma de pagamento" span={6}>
-              <Select value={buyForm.forma} onChange={(e) => setBuyF('forma', e.target.value)}>
-                <option value="">Selecione...</option>
-                {FORMAS_PAGAMENTO.map((f) => <option key={f}>{f}</option>)}
-              </Select>
-            </Field>
+            {buyForm.fornecedor && (() => {
+              const s = supplierOptions.find((x: any) => String(x?.razaoSocial) === buyForm.fornecedor);
+              const nat = s ? naturezaFornecedor(s) : null;
+              return (
+                <div className="col-span-12 -mt-1 text-[11px] font-bold">
+                  {nat === 'ITEM' ? (
+                    <span className="text-emerald-300/90">Fornecedor de <strong>ITEM</strong> → o custo entra em <strong>Materiais</strong> no Custo por OS.</span>
+                  ) : nat === 'SERVICO' ? (
+                    <span className="text-sky-300/90">Fornecedor de <strong>SERVIÇO</strong> → o custo entra em <strong>Serviços Terceirizados</strong> no Custo por OS.</span>
+                  ) : (
+                    <span className="text-amber-300/80">Fornecedor não cadastrado — cadastre-o em Fornecedores para classificar como Item ou Serviço.</span>
+                  )}
+                </div>
+              );
+            })()}
 
             <Field label="Observação" span={12}><Textarea value={buyForm.obs} onChange={(e) => setBuyF('obs', e.target.value)} /></Field>
 
-            <div className="col-span-12 rounded-xl border border-white/10 bg-[#0b1220] p-4 space-y-3">
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={buyForm.parcelar}
-                  onChange={(e) => setBuyF('parcelar', e.target.checked)}
-                  className="h-5 w-5 accent-emerald-500 cursor-pointer"
-                />
-                <span className="text-sm font-bold text-white flex items-center gap-2"><Split size={14} /> Foi parcelado?</span>
-              </label>
-
-              {buyForm.parcelar && (
-                <>
-                  <div className="grid grid-cols-12 gap-4">
-                    <Field label="Nº de parcelas" span={4}><Input type="number" min="2" value={buyForm.nParcelas} onChange={(e) => setBuyF('nParcelas', e.target.value)} /></Field>
-                    <Field label="Início das parcelas" span={4}><Input type="date" value={buyForm.dataInicio} onChange={(e) => setBuyF('dataInicio', e.target.value)} /></Field>
-                    <Field label="Intervalo" span={4}>
-                      <Select value={buyForm.intervalo} onChange={(e) => setBuyF('intervalo', e.target.value)}>
-                        <option value="30">Mensal</option><option value="15">Quinzenal</option><option value="7">Semanal</option>
-                      </Select>
-                    </Field>
-                  </div>
-                  {buyParcelasPreview.length > 0 && (
-                    <div className="overflow-hidden rounded-xl border border-white/10">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="bg-white/5 text-white/50 text-xs uppercase tracking-wider">
-                            <th className="px-4 py-2 text-left">Parcela</th>
-                            <th className="px-4 py-2 text-left">Vencimento</th>
-                            <th className="px-4 py-2 text-right">Valor</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {buyParcelasPreview.map((pr) => (
-                            <tr key={pr.parcela} className="border-t border-white/5">
-                              <td className="px-4 py-2 font-bold text-white">{pr.parcela}</td>
-                              <td className="px-4 py-2 text-white/70">{br(pr.vencimento)}</td>
-                              <td className="px-4 py-2 text-right font-bold text-emerald-300">{money(pr.valor)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </>
-              )}
+            <div className="col-span-12 rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-[11px] leading-relaxed text-amber-200/90">
+              A conta a pagar nasce como <strong>Aberto S/Documento</strong> — sem documento, vencimento nem banco.
+              Quando o documento de compra (NF de entrada, boleto...) chegar, o gerente anexa e preenche número, vencimento e banco em <strong>Contas a Pagar → Editar</strong>.
             </div>
 
             <div className="col-span-12 flex items-center justify-between gap-2">
