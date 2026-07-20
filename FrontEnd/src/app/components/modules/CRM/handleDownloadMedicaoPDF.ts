@@ -197,33 +197,73 @@ export const handleDownloadMedicaoPDF = async (
 
     y += headerHeight;
 
-    let totalGeral = 0;
-    if (documentoMediacaoForm.tabelaItens && Array.isArray(documentoMediacaoForm.tabelaItens)) {
-      documentoMediacaoForm.tabelaItens.forEach((linha: any, index: number) => {
-        doc.setFont('Arial', 'normal');
-        doc.setFontSize(8);
-        const lines = doc.splitTextToSize(linha.descricao || '', colWidths[1] - 4);
-        const itemRowHeight = Math.max(8, lines.length * 4 + 4);
+    // Itens separados: SERVIÇO (mão de obra, materiais, terceirizados) e LOCAÇÃO, cada grupo
+    // com seu subtotal; o total geral vem no rodapé. Espelha a tela de medição e a proposta.
+    const todosItens = Array.isArray(documentoMediacaoForm.tabelaItens) ? documentoMediacaoForm.tabelaItens : [];
+    const itensServico = todosItens.filter((l: any) => (l?.categoria || 'servico') !== 'locacao');
+    const itensLocacao = todosItens.filter((l: any) => (l?.categoria || 'servico') === 'locacao');
 
-        if (y + itemRowHeight > pageHeight - 60) {
-          doc.addPage();
-          y = margin;
-        }
+    const somaFirst = colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4]; // 155
+    const lastW = colWidths[5]; // 35
 
-        x = margin;
-        const total = parseBrFloat(linha.total);
-        totalGeral += total;
+    // Desenha uma linha de item. Devolve o total (R$) da linha.
+    const drawItemRow = (linha: any, numero: number): number => {
+      doc.setFont('Arial', 'normal');
+      doc.setFontSize(8);
+      const lines = doc.splitTextToSize(linha.descricao || '', colWidths[1] - 4);
+      const itemRowHeight = Math.max(8, lines.length * 4 + 4);
+      if (y + itemRowHeight > pageHeight - 60) { doc.addPage(); y = margin; }
+      const bx = margin;
+      const total = parseBrFloat(linha.total);
+      drawCellWithAutoWrap(bx, y, colWidths[0], itemRowHeight, String(linha.item || numero), 'center');
+      drawCellWithAutoWrap(bx + colWidths[0], y, colWidths[1], itemRowHeight, linha.descricao || '');
+      drawCellWithAutoWrap(bx + colWidths[0] + colWidths[1], y, colWidths[2], itemRowHeight, formatNumber(linha.quantidadeProduzida), 'center');
+      drawCellWithAutoWrap(bx + 110, y, colWidths[3], itemRowHeight, linha.unidade || '', 'center');
+      drawCellWithAutoWrap(bx + 125, y, colWidths[4], itemRowHeight, formatCurrency(linha.valorUnitario), 'right');
+      drawCellWithAutoWrap(bx + 155, y, colWidths[5], itemRowHeight, formatCurrency(total), 'right');
+      y += itemRowHeight;
+      return total;
+    };
 
-        drawCellWithAutoWrap(x, y, colWidths[0], itemRowHeight, String(linha.item || index + 1), 'center');
-        drawCellWithAutoWrap(x + colWidths[0], y, colWidths[1], itemRowHeight, linha.descricao || '');
-        drawCellWithAutoWrap(x + colWidths[0] + colWidths[1], y, colWidths[2], itemRowHeight, formatNumber(linha.quantidadeProduzida), 'center');
-        drawCellWithAutoWrap(x + 110, y, colWidths[3], itemRowHeight, linha.unidade || '', 'center');
-        drawCellWithAutoWrap(x + 125, y, colWidths[4], itemRowHeight, formatCurrency(linha.valorUnitario), 'right');
-        drawCellWithAutoWrap(x + 155, y, colWidths[5], itemRowHeight, formatCurrency(total), 'right');
+    // Faixa de título do grupo (SERVIÇOS / LOCAÇÃO).
+    const drawGroupHeader = (label: string) => {
+      const h = 7;
+      if (y + h > pageHeight - 60) { doc.addPage(); y = margin; }
+      doc.setFillColor(225, 225, 225);
+      doc.rect(margin, y, somaFirst + lastW, h, 'FD');
+      doc.setFont('Arial', 'bold');
+      doc.setFontSize(9);
+      doc.setTextColor(0, 0, 0);
+      doc.text(label, margin + 2, y + 4.8);
+      y += h;
+    };
 
-        y += itemRowHeight;
-      });
+    // Linha de subtotal (rótulo à direita + valor na coluna de total).
+    const drawSubtotalRow = (rotulo: string, valor: number) => {
+      const h = 8;
+      if (y + h > pageHeight - 60) { doc.addPage(); y = margin; }
+      drawCellWithAutoWrap(margin, y, somaFirst, h, rotulo, 'right', true);
+      drawCellWithAutoWrap(margin + somaFirst, y, lastW, h, `R$ ${formatCurrency(valor)}`, 'right', true);
+      y += h;
+    };
+
+    let numero = 0;
+    let subtotalServico = 0;
+    let subtotalLocacao = 0;
+
+    if (itensServico.length > 0) {
+      drawGroupHeader('SERVIÇOS — mão de obra, materiais e terceirizados');
+      itensServico.forEach((linha: any) => { subtotalServico += drawItemRow(linha, ++numero); });
+      drawSubtotalRow('Total Serviços', subtotalServico);
     }
+
+    if (itensLocacao.length > 0) {
+      drawGroupHeader('LOCAÇÃO — equipamentos e itens locados');
+      itensLocacao.forEach((linha: any) => { subtotalLocacao += drawItemRow(linha, ++numero); });
+      drawSubtotalRow('Total Locação', subtotalLocacao);
+    }
+
+    const totalGeral = subtotalServico + subtotalLocacao;
 
     // ===== 4. RODAPÉ E ASSINATURAS =====
     y += 10;
@@ -265,7 +305,8 @@ export const handleDownloadMedicaoPDF = async (
     doc.setFontSize(8);
     doc.text('Representante do Cliente', x + sigWidth / 2, lineY + 4, { align: 'center' });
     
-    const tituloFixoPrestadora = isLinave ? 'Representante Linave Enga. Serviços' : 'Representante Servinave';
+    // Título fixo da prestadora reflete a empresa prestadora do serviço (não é fixo na Linave).
+    const tituloFixoPrestadora = isLinave ? 'Representante Linave Enga. Serviços' : `Representante ${empresaNome}`;
     doc.text(tituloFixoPrestadora, x + sigWidth + spacing + sigWidth / 2, lineY + 4, { align: 'center' });
 
     // ===== 5. SALVAR =====

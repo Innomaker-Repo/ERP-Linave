@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { Ruler, Plus, X, Save, Download, Check, Ban, Filter, Clock, CheckCircle2, Copy, FilePlus, Send, FileText, Lock, Unlock, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
-import { isOsAprovada } from '../../../../services/ordensServico';
+import { isOsAprovada, formatOsLabel } from '../../../../services/ordensServico';
 import { criarMedicao, atualizarStatusMedicao } from '../../../../services/medicoesService';
 import { uploadDocumento } from '../../../../services/documentosService';
 import { atualizarOrdemServico } from '../../../../services/comercialService';
@@ -194,8 +194,10 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
   // Subtotais por categoria (o de serviço é o que vai para a NF).
   const subtotalServico = round2((form.itens || []).filter((l: any) => (l.categoria || 'servico') !== 'locacao').reduce((s: number, l: any) => s + parseDecimal(l.total), 0));
   const subtotalLocacao = round2((form.itens || []).filter((l: any) => (l.categoria || 'servico') === 'locacao').reduce((s: number, l: any) => s + parseDecimal(l.total), 0));
+  const temServicoLinhas = (form.itens || []).some((l: any) => (l.categoria || 'servico') !== 'locacao');
+  const temLocacaoLinhas = (form.itens || []).some((l: any) => (l.categoria || 'servico') === 'locacao');
 
-  const renderTabelaMedicao = (categoria: 'servico' | 'locacao', titulo: string, comDias: boolean) => {
+  const renderTabelaMedicao = (categoria: 'servico' | 'locacao', titulo: string, comDias: boolean, hint?: string) => {
     const linhas = (form.itens || []).filter((l: any) => (l.categoria || 'servico') === categoria);
     const cols = colunasExtras(categoria);
     const subtotal = categoria === 'locacao' ? subtotalLocacao : subtotalServico;
@@ -203,7 +205,10 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
     return (
       <div className="bg-[#0b1220] rounded-xl border border-white/10 p-4 space-y-3">
         <div className="flex items-center justify-between flex-wrap gap-2">
-          <h4 className="text-emerald-300 text-xs font-black uppercase">{titulo}</h4>
+          <div>
+            <h4 className="text-emerald-300 text-xs font-black uppercase">{titulo}</h4>
+            {hint && <p className="text-white/35 text-[10px] uppercase tracking-widest font-bold mt-0.5">{hint}</p>}
+          </div>
           <div className="flex gap-2">
             <button onClick={() => addColuna(categoria)} className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[11px] font-black uppercase">+ Coluna</button>
             <button onClick={() => addLinha(categoria)} className="px-2.5 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-[11px] font-black uppercase">+ Linha</button>
@@ -259,36 +264,62 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
     );
   };
 
-  // Puxa os itens medíveis da OS selecionada conforme a modalidade: uma linha por
-  // serviço (preço do orçamento) e/ou por item de locação (valor de locação).
+  // Puxa os itens medíveis da OS DISCRETIZANDO o preço da proposta: cada gasto do orçamento
+  // (mão de obra, material, terceirizado, locação) vira uma linha própria — com quantidade,
+  // dias e valor unitário já preenchidos —, para o usuário só ajustar ao real da medição.
+  // Fonte: a tabela macro de preço do último orçamento (mesma do item D da proposta).
   const preencherItensDaOS = () => {
     if (!contexto?.obra) return toast.error('Selecione uma OS aprovada.');
     const obra = contexto.obra;
+    const orcs = Array.isArray(obra.orcamentos) ? obra.orcamentos : [];
+    const ultimo = orcs.length ? orcs[orcs.length - 1] : null;
+    const macro = Array.isArray(ultimo?.data?.atividadesMacro) ? ultimo.data.atividadesMacro : [];
     const linhas: any[] = [];
 
-    if (temServico(obra.modalidade)) {
-      const orcs = Array.isArray(obra.orcamentos) ? obra.orcamentos : [];
-      const ultimo = orcs.length ? orcs[orcs.length - 1] : null;
-      const valores = ultimo?.valores || obra.orcamentoValores || null;
-      const precoServico = Number(valores?.precoFinal ?? 0) || 0;
-      if (precoServico > 0) {
-        linhas.push({ ...novaLinha(), item: String(linhas.length + 1), descricao: 'Serviços (conforme orçamento)', unidade: 'vb', quantidadeProduzida: '1', valorUnitario: String(round2(precoServico)), total: String(round2(precoServico)) });
+    // 1) Preferência: discretizar pela tabela macro de preço (o que aparece no preço da proposta).
+    macro.forEach((it: any) => {
+      const isLoc = (it?.categoria || 'servico') === 'locacao';
+      if (isLoc && !temLocacao(obra.modalidade)) return;
+      if (!isLoc && !temServico(obra.modalidade)) return;
+      if (!String(it?.descricao || '').trim()) return;
+      const q = parseDecimal(it.quantidade) || (isLoc ? 0 : 1);
+      const u = parseDecimal(it.valorUnitario);
+      const d = isLoc ? 1 : (parseDecimal(it.dias) || 1);
+      linhas.push({
+        ...novaLinha(isLoc ? 'locacao' : 'servico'),
+        item: String(linhas.length + 1),
+        descricao: String(it.descricao),
+        unidade: String(it.unidade || (isLoc ? 'un' : '')),
+        quantidadeProduzida: String(q),
+        dias: String(d),
+        valorUnitario: String(round2(u)),
+        total: String(round2(q * d * u)),
+      });
+    });
+
+    // 2) Fallback (orçamento antigo sem tabela macro): serviço em bloco + locação item a item.
+    if (linhas.length === 0) {
+      if (temServico(obra.modalidade)) {
+        const valores = ultimo?.valores || obra.orcamentoValores || null;
+        const precoServico = Number(valores?.precoFinal ?? 0) || 0;
+        if (precoServico > 0) {
+          linhas.push({ ...novaLinha(), item: String(linhas.length + 1), descricao: 'Serviços (conforme orçamento)', unidade: 'vb', quantidadeProduzida: '1', valorUnitario: String(round2(precoServico)), total: String(round2(precoServico)) });
+        }
+      }
+      if (temLocacao(obra.modalidade)) {
+        (Array.isArray(obra.itensAlocacao) ? obra.itensAlocacao : [])
+          .filter((it: any) => it.equipamento)
+          .forEach((it: any) => {
+            const q = Number(it.quantidade) || 0;
+            const unit = Number(it.valorLocacao) || 0;
+            linhas.push({ ...novaLinha('locacao'), item: String(linhas.length + 1), descricao: it.equipamento, unidade: it.unidade || '', quantidadeProduzida: String(q), valorUnitario: String(round2(unit)), total: String(round2(q * unit)) });
+          });
       }
     }
 
-    if (temLocacao(obra.modalidade)) {
-      (Array.isArray(obra.itensAlocacao) ? obra.itensAlocacao : [])
-        .filter((it: any) => it.equipamento)
-        .forEach((it: any) => {
-          const q = Number(it.quantidade) || 0;
-          const unit = Number(it.valorLocacao) || 0;
-          linhas.push({ ...novaLinha('locacao'), item: String(linhas.length + 1), descricao: it.equipamento, unidade: it.unidade || '', quantidadeProduzida: String(q), valorUnitario: String(round2(unit)), total: String(round2(q * unit)) });
-        });
-    }
-
-    if (linhas.length === 0) return toast.error('Nada para puxar: cadastre o orçamento (serviço) e/ou itens de locação.');
+    if (linhas.length === 0) return toast.error('Nada para puxar: gere a tabela de preço no orçamento (item D) e/ou cadastre itens de locação.');
     setForm((f: any) => ({ ...f, itens: linhas }));
-    toast.success(`${linhas.length} item(ns) puxado(s) da OS.`);
+    toast.success(`${linhas.length} item(ns) puxado(s) e discriminado(s) do preço da proposta.`);
   };
 
   // Auto-preenche a medição com os dados da OS assim que uma OS é selecionada (form vazio).
@@ -506,7 +537,8 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
     }
   };
 
-  const osLabel = (o: any) => `${o.ordemServicoNumero || o.id} — ${o.cliente || ''}`.trim();
+  // Rótulo padrão do ERP: "<número da OS> — <embarcação>" (ver formatOsLabel).
+  const osLabel = (o: any) => formatOsLabel(o, obras);
 
   // Histórico filtrado por OS (e busca).
   const historico = useMemo(() => {
@@ -569,7 +601,7 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
               <Field label="Nr. BM" value={form.numeroBM} onChange={(v) => setForm({ ...form, numeroBM: v })} placeholder="Ex.: 001" />
               <Field label="Período" value={form.periodo} onChange={(v) => setForm({ ...form, periodo: v })} className="md:col-span-2" />
               <Field label="Representante Cliente" value={form.representanteCliente} onChange={(v) => setForm({ ...form, representanteCliente: v })} />
-              <Field label="Representante Linave" value={form.representanteLinave} onChange={(v) => setForm({ ...form, representanteLinave: v })} />
+              <Field label={`Representante ${contexto.empresa}`} value={form.representanteLinave} onChange={(v) => setForm({ ...form, representanteLinave: v })} />
             </>
           )}
         </div>
@@ -582,10 +614,30 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
                 <button onClick={preencherItensDaOS} className="px-3 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-200 text-xs font-black uppercase">{boldOS('Puxar itens da OS')}</button>
               </div>
             </div>
-            {renderTabelaMedicao('servico', 'Serviços', true)}
-            {renderTabelaMedicao('locacao', 'Locação', false)}
-            <div className="flex items-center justify-between pt-2">
-              <p className="text-white/50 text-xs uppercase font-black tracking-widest">Total da medição: <span className="text-emerald-300 text-lg">R$ {money(totalMedicao)}</span></p>
+            {renderTabelaMedicao('servico', 'Serviços', true, 'Mão de obra, materiais e terceirizados')}
+            {renderTabelaMedicao('locacao', 'Locação', false, 'Equipamentos e itens locados')}
+
+            {/* Totais: serviços, depois locação, depois o total geral. */}
+            <div className="rounded-xl border border-white/10 bg-[#101f3d] p-4 space-y-2">
+              {temServicoLinhas && (
+                <div className="flex items-center justify-between">
+                  <span className="text-white/60 text-xs uppercase font-black tracking-widest">Total Serviços</span>
+                  <span className="text-white font-black">R$ {money(subtotalServico)}</span>
+                </div>
+              )}
+              {temLocacaoLinhas && (
+                <div className="flex items-center justify-between">
+                  <span className="text-white/60 text-xs uppercase font-black tracking-widest">Total Locação</span>
+                  <span className="text-white font-black">R$ {money(subtotalLocacao)}</span>
+                </div>
+              )}
+              <div className="flex items-center justify-between border-t border-white/10 pt-2">
+                <span className="text-emerald-300 text-xs uppercase font-black tracking-widest">Total geral da medição</span>
+                <span className="text-emerald-300 font-black text-lg">R$ {money(totalMedicao)}</span>
+              </div>
+            </div>
+
+            <div className="flex justify-end">
               <button onClick={handleSalvar} disabled={salvando} className="px-6 py-3 rounded-lg bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-white font-black uppercase text-xs tracking-widest disabled:opacity-50 flex items-center gap-2">
                 <Save size={16} /> {salvando ? 'Salvando…' : 'Salvar Medição'}
               </button>
@@ -624,7 +676,7 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
             <select value={filtroOsHistorico} onChange={(e) => setFiltroOsHistorico(e.target.value)} className="bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-white text-xs">
               <option value="">Todas as OS</option>
               {osAprovadas.map((o: any) => (
-                <option key={o.id} value={o.backendId}>{o.ordemServicoNumero || o.id}</option>
+                <option key={o.id} value={o.backendId}>{osLabel(o)}</option>
               ))}
             </select>
           </div>

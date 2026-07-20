@@ -133,6 +133,24 @@ class Migration(migrations.Migration):
             },
         ),
         migrations.CreateModel(
+            name='FinanceiroExtra',
+            fields=[
+                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+                ('record_id', models.CharField(max_length=80, unique=True)),
+                ('empresa', models.CharField(blank=True, default='', max_length=50)),
+                ('status', models.CharField(blank=True, default='', max_length=60)),
+                ('extra', models.JSONField(blank=True, default=dict)),
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('updated_at', models.DateTimeField(auto_now=True)),
+                ('tipo', models.CharField(blank=True, db_index=True, default='', max_length=40)),
+                ('os', models.CharField(blank=True, default='', max_length=120)),
+                ('valor', models.DecimalField(decimal_places=2, default=0, max_digits=15)),
+            ],
+            options={
+                'abstract': False,
+            },
+        ),
+        migrations.CreateModel(
             name='Escopo',
             fields=[
                 ('id', models.BigAutoField(primary_key=True, serialize=False)),
@@ -312,7 +330,7 @@ class Migration(migrations.Migration):
                 ('nome_original', models.CharField(blank=True, default='', max_length=255)),
                 ('tipo', models.CharField(blank=True, default='', max_length=120)),
                 ('tamanho', models.BigIntegerField(default=0)),
-                ('categoria', models.CharField(choices=[('negocio', 'Documento do Negócio'), ('cliente_assinado', 'Documento assinado pelo cliente'), ('os_assinatura', 'Assinatura/aprovação de OS'), ('fin_anexo', 'Anexo financeiro'), ('fin_comprovante', 'Comprovante de pagamento'), ('outro', 'Outro')], default='outro', max_length=40)),
+                ('categoria', models.CharField(choices=[('negocio', 'Documento do Negócio'), ('cliente_assinado', 'Documento assinado pelo cliente'), ('os_assinatura', 'Assinatura/aprovação de OS'), ('fin_anexo', 'Anexo financeiro'), ('fin_comprovante', 'Comprovante de pagamento'), ('fin_documento', 'Documento de compra (NF entrada/boleto)'), ('outro', 'Outro')], default='outro', max_length=40)),
                 ('vinculo_tipo', models.CharField(blank=True, default='', max_length=40)),
                 ('vinculo_id', models.CharField(blank=True, default='', max_length=120)),
                 ('uploaded_at', models.DateTimeField(auto_now_add=True)),

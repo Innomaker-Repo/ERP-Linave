@@ -23,6 +23,7 @@ export type DocumentoCategoria =
   | 'os_assinatura'
   | 'fin_anexo'
   | 'fin_comprovante'
+  | 'fin_documento'
   | 'outro';
 
 // Shape cru retornado pelo backend (snake_case).

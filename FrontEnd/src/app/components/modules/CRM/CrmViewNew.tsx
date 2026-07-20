@@ -4116,7 +4116,7 @@ const obrasOrdenadas = useMemo(() => {
                 </div>
 
                 <div className="bg-white/5 border border-white/10 rounded-xl p-6 space-y-3">
-                  <h3 className="text-white font-black text-lg">HORAS TRABALHADAS POR SERVIÇO</h3>
+                  <h3 className="text-white font-black text-lg">HORAS PREVISTAS POR SERVIÇO</h3>
                   {Array.isArray(osPrincipal?.horasTrabalhadasPorServico) && osPrincipal.horasTrabalhadasPorServico.length > 0 ? (
                     <div className="overflow-x-auto">
                       <table className="w-full text-xs border border-white/10">
@@ -4143,7 +4143,7 @@ const obrasOrdenadas = useMemo(() => {
                       </table>
                     </div>
                   ) : (
-                    <p className="text-white/50 text-sm">{boldOS('Nenhuma hora trabalhada cadastrada para esta OS.')}</p>
+                    <p className="text-white/50 text-sm">{boldOS('Nenhuma hora prevista cadastrada para esta OS.')}</p>
                   )}
                 </div>
 

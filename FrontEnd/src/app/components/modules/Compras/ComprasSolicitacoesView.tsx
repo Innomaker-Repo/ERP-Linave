@@ -2,18 +2,24 @@ import React, { useMemo, useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { Eraser, Lock, Plus, Send, ShoppingCart, Trash2, UserCircle } from 'lucide-react';
 import { createDefaultRequest, createEmptyItem, createId, type ItemCompra } from './comprasLocal';
-import { isOsAprovada } from '../../../../services/ordensServico';
+import { formatOsLabel, getOsNumero, podeComprarNaOs } from '../../../../services/ordensServico';
 
 export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQuery: string }) {
   const { obras, os, userSession } = useErp();
 
-  // Centro de Custo só lista obras que já têm uma OS APROVADA (mesma regra da aba de Produção).
-  const obrasComOSAprovada = useMemo(() => {
-    const listaOS = Array.isArray(os) ? os : [];
-    const obraIdsAprovadas = new Set(
-      listaOS.filter((item: any) => isOsAprovada(item)).map((item: any) => item.obraId).filter(Boolean)
-    );
-    return (obras || []).filter((obra: any) => obraIdsAprovadas.has(obra.id));
+  // A compra é vinculada direto à OS (o "centro de custo" da requisição É o número da OS).
+  // Antes esta lista era de OBRAS, cruzadas com as OS por `obraId` — um id formatado que
+  // depende do prefixo da empresa e do ano, então o cruzamento falhava e a lista vinha vazia.
+  // Entram as OS APROVADAS e ainda não finalizadas; ter medição feita NÃO tira a OS da lista,
+  // só fechar/concluir tira (ver `podeComprarNaOs`).
+  // OS de uso interno (café/papel/etc.) entram: elas não são medidas/faturadas, mas é
+  // justamente nelas que se compra material de consumo interno.
+  const osDisponiveis = useMemo(() => {
+    const lista = (Array.isArray(os) ? os : []).filter((item: any) => podeComprarNaOs(item));
+    return lista
+      .map((item: any) => ({ numero: getOsNumero(item), label: formatOsLabel(item, obras) }))
+      .filter((item) => item.numero)
+      .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
   }, [obras, os]);
   const [formData, setFormData] = useState(() =>
     createDefaultRequest(userSession?.nome || userSession?.email || '', '', '')
@@ -49,7 +55,7 @@ export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQ
       return window.alert('Não foi possível identificar seu usuário. Faça login novamente.');
     }
     if (!formData.centroCusto) {
-      return window.alert('Selecione o Centro de Custo (Obra).');
+      return window.alert('Selecione a Ordem de Serviço.');
     }
 
     const itensValidos = itens
@@ -122,24 +128,27 @@ export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQ
           </div>
 
           <div className="space-y-2 md:col-span-2">
-            <label className="text-sm font-medium text-white/70 ml-1">Centro de Custo (Obra) <span className="text-red-400">*</span></label>
+            <label className="text-sm font-medium text-white/70 ml-1">Ordem de Serviço (centro de custo) <span className="text-red-400">*</span></label>
             <div className="relative">
               <select
                 className="w-full bg-[#0b1220] border border-white/10 p-4 rounded-xl text-white text-sm outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/50 transition-all appearance-none cursor-pointer"
                 value={formData.centroCusto}
                 onChange={(event) => setFormData({ ...formData, centroCusto: event.target.value })}
               >
-                <option value="">Vincular a um projeto...</option>
-                {obrasComOSAprovada.length === 0 ? (
-                  <option value="" disabled>Nenhuma obra com OS aprovada</option>
+                <option value="">Vincular a uma OS...</option>
+                {osDisponiveis.length === 0 ? (
+                  <option value="" disabled>Nenhuma OS aprovada disponível para compra</option>
                 ) : (
-                  obrasComOSAprovada.map((obra: any) => (
-                    <option key={obra.id} value={obra.nome}>{obra.nome}</option>
+                  osDisponiveis.map((item) => (
+                    <option key={item.numero} value={item.numero}>{item.label}</option>
                   ))
                 )}
               </select>
               <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-white/30">▼</div>
             </div>
+            <p className="text-white/30 text-xs ml-1">
+              OS aprovadas, inclusive as que já têm medição. OS finalizada (fechada ou concluída) não aceita nova compra.
+            </p>
           </div>
         </div>
       </section>

@@ -23,11 +23,13 @@ export function FornecedoresView({ searchQuery }: { searchQuery: string }) {
     if (!fornecedor.endereco.trim()) return 'Endereço é obrigatório.';
     if (!fornecedor.status.trim()) return 'Status é obrigatório.';
     if (!fornecedor.tipo.trim()) return 'Tipo é obrigatório.';
-    if (fornecedor.tipo === 'Empresas' && !fornecedor.descricaoEstadual.trim()) return 'Descrição estadual é obrigatória para empresas.';
+    if ((fornecedor.tipo === 'Itens' || fornecedor.tipo === 'Empresas') && !fornecedor.descricaoEstadual.trim()) return 'Descrição estadual é obrigatória para fornecedores de itens.';
     return null;
   };
 
-  const resolveNaturezaFornecimento = (tipo: string) => (tipo === 'Empresas' ? 'ITEM' : 'SERVICO');
+  // "Itens" (produtos/materiais) → ITEM; "Serviços" → SERVICO. Aceita legado "Empresas" como ITEM.
+  // Essa natureza define onde a compra entra no Custo por OS (ITEM→Materiais, SERVICO→Terceirizados).
+  const resolveNaturezaFornecimento = (tipo: string) => (tipo === 'Itens' || tipo === 'Empresas' ? 'ITEM' : 'SERVICO');
 
   const salvar = async () => {
     const erro = validar();
@@ -65,9 +67,9 @@ export function FornecedoresView({ searchQuery }: { searchQuery: string }) {
           <input placeholder="Endereço *" value={fornecedor.endereco} className="bg-[#0b1220] p-4 rounded-xl text-white text-sm border border-white/10 focus:border-amber-500 outline-none" onChange={e => setFornecedor({...fornecedor, endereco: e.target.value})} />
           <select value={fornecedor.tipo} onChange={e => setFornecedor({...fornecedor, tipo: e.target.value})} className="bg-[#0b1220] p-4 rounded-xl text-white text-sm border border-white/10 focus:border-amber-500 outline-none">
             <option value="Serviços">Serviços</option>
-            <option value="Empresas">Empresas</option>
+            <option value="Itens">Itens</option>
           </select>
-          {fornecedor.tipo === 'Empresas' && (
+          {(fornecedor.tipo === 'Itens' || fornecedor.tipo === 'Empresas') && (
             <input placeholder="Descrição estadual" value={fornecedor.descricaoEstadual} className="bg-[#0b1220] p-4 rounded-xl text-white text-sm border border-white/10 focus:border-amber-500 outline-none" onChange={e => setFornecedor({...fornecedor, descricaoEstadual: e.target.value})} />
           )}
           <select value={fornecedor.status} onChange={e => setFornecedor({...fornecedor, status: e.target.value})} className="col-span-2 bg-[#0b1220] p-4 rounded-xl text-white text-sm border border-white/10 focus:border-amber-500 outline-none">
@@ -83,7 +85,7 @@ export function FornecedoresView({ searchQuery }: { searchQuery: string }) {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {lista.map((f: any) => {
-          const naturezaFornecimento = f.naturezaFornecimento || (f.tipo === 'Empresas' ? 'ITEM' : 'SERVICO');
+          const naturezaFornecimento = f.naturezaFornecimento || (f.tipo === 'Itens' || f.tipo === 'Empresas' ? 'ITEM' : 'SERVICO');
 
           return (
           <div key={f.id} onClick={() => setSelectedFornecedor(f)} className="cursor-pointer bg-[#101f3d] p-6 rounded-[32px] border border-white/5 group hover:border-amber-500/20 transition-all">
@@ -104,7 +106,7 @@ export function FornecedoresView({ searchQuery }: { searchQuery: string }) {
       </div>
       {selectedFornecedor && (
         (() => {
-          const naturezaFornecimento = selectedFornecedor.naturezaFornecimento || (selectedFornecedor.tipo === 'Empresas' ? 'ITEM' : 'SERVICO');
+          const naturezaFornecimento = selectedFornecedor.naturezaFornecimento || (selectedFornecedor.tipo === 'Itens' || selectedFornecedor.tipo === 'Empresas' ? 'ITEM' : 'SERVICO');
 
           return (
         <div className="fixed inset-0 z-[90] bg-black/60 flex items-center justify-center p-4">

@@ -823,7 +823,13 @@ export function OsView({ searchQuery }: OSViewProps) {
       { id: `hora-pintura-${Date.now()}`, servico: 'Pintura', hora: Number(mao.pintura || 0) },
       { id: `hora-eletrica-${Date.now()}`, servico: 'Elétrica', hora: Number(mao.eletrica || 0) },
       { id: `hora-cq-${Date.now()}`, servico: 'C.Q', hora: Number(mao.cq || 0) },
-      { id: `hora-sms-${Date.now()}`, servico: 'SMS', hora: Number(mao.sms || 0) }
+      { id: `hora-sms-${Date.now()}`, servico: 'SMS', hora: Number(mao.sms || 0) },
+      // H/H customizáveis ("Adicionar H/H") — antes eram ignorados aqui; agora entram no total.
+      ...(Array.isArray(mao.extras) ? mao.extras : []).map((e: any, i: number) => ({
+        id: e?.id || `hora-extra-${Date.now()}-${i}`,
+        servico: String(e?.nome || 'H/H'),
+        hora: Number(e?.hora || 0),
+      })),
     ].filter((r) => Number(r.hora) > 0);
 
     // Ao editar, preserva os status atuais da OS (não regredir uma OS já aprovada/enviada).
@@ -1160,8 +1166,40 @@ export function OsView({ searchQuery }: OSViewProps) {
       
       y = bodyY + maxH + 5;
 
-      // Tabelas de "Mão de Obra" e "Mão Obra (H/H)" foram removidas do rodapé do PDF por
-      // serem dados duplicados. Ficam apenas Materiais e Terceirizados (especificações).
+      // --- HORAS PREVISTAS POR SERVIÇO (H/H) com HH TOTAL ---
+      // Usa as horas salvas; se a OS for antiga (sem a lista), reconstrói do maoObra
+      // (8 categorias fixas + H/H customizáveis). Inclui a linha de total somado.
+      const horasHH = (() => {
+        const norm = normalizarHorasTrabalhadas(osPrincipal?.horasTrabalhadasPorServico || []);
+        if (norm.length > 0) return norm;
+        const mo = osPrincipal?.maoObra || {};
+        const fixas = [
+          ['Estrutura', mo.estrutura], ['Tubulação', mo.tubulacao], ['Andaimes', mo.andaimes],
+          ['Mecânica', mo.mecanica], ['Pintura', mo.pintura], ['Elétrica', mo.eletrica],
+          ['C.Q', mo.cq], ['SMS', mo.sms],
+        ].map(([s, h]: any, i: number) => ({ id: `hh-fix-${i}`, servico: String(s), hora: Number(h || 0) }));
+        const extras = (Array.isArray(mo.extras) ? mo.extras : []).map((e: any, i: number) => ({ id: e?.id || `hh-ex-${i}`, servico: String(e?.nome || 'H/H'), hora: Number(e?.hora || 0) }));
+        return [...fixas, ...extras].filter((r: any) => r.hora > 0);
+      })();
+      if (horasHH.length > 0) {
+        const totalHH = horasHH.reduce((acc: number, r: any) => acc + (Number.isFinite(r.hora) ? r.hora : 0), 0);
+        autoTable(doc, {
+          startY: y,
+          head: [['HORAS PREVISTAS POR SERVIÇO', 'HORA (H/H)']],
+          body: [
+            ...horasHH.map((r: any) => [r.servico, String(r.hora)]),
+            ['HH TOTAL', String(totalHH)],
+          ],
+          theme: 'grid',
+          headStyles: { fillColor: [230, 230, 230], textColor: [0, 0, 0], fontStyle: 'bold', fontSize: 8 },
+          styles: { fontSize: 7, cellPadding: 2, textColor: [0, 0, 0] },
+          margin: { left: margin, right: margin },
+        });
+        y = (doc as any).lastAutoTable.finalY + 5;
+      }
+
+      // Tabela de "Mão de Obra" (do orçamento) foi removida do rodapé por ser dado duplicado.
+      // Ficam apenas Materiais e Terceirizados (especificações), além do H/H acima.
 
       // --- TABELA DE MATERIAIS ATUALIZADA (SEM VALORES) ---
       const isConsolidada = osPrincipal.tipoDocumento === 'consolidada';
@@ -1897,7 +1935,7 @@ export function OsView({ searchQuery }: OSViewProps) {
               </div>
 
               <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-4">
-                <h3 className="text-white font-black text-lg">HORAS TRABALHADAS POR SERVIÇO</h3>
+                <h3 className="text-white font-black text-lg">HORAS PREVISTAS POR SERVIÇO</h3>
                 {normalizarHorasTrabalhadas(selectedOS.horasTrabalhadasPorServico || []).length > 0 ? (
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm border border-white/10">
@@ -1922,7 +1960,7 @@ export function OsView({ searchQuery }: OSViewProps) {
                     </table>
                   </div>
                 ) : (
-                  <p className="text-white/50 text-sm">{boldOS('Nenhuma hora trabalhada cadastrada para esta OS.')}</p>
+                  <p className="text-white/50 text-sm">{boldOS('Nenhuma hora prevista cadastrada para esta OS.')}</p>
                 )}
               </div>
 

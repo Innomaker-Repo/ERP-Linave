@@ -93,6 +93,8 @@ export const handleDownloadPropostaPDF = (
     const pageHeight = doc.internal.pageSize.getHeight();
     const margin = 20;
     const usableWidth = pageWidth - margin * 2;
+    // Faixa reservada ao rodapé da Linave (endereço) — nenhum conteúdo/tabela é desenhado nela.
+    const footerReserve = isLinave ? 32 : margin;
     const linaveFooterLines = [
       'W.L.M Linave Servicos Navais e Offshore',
       'Rua Visconde de Itaborai, 24 - Centro - Niteroi - RJ',
@@ -153,7 +155,7 @@ export const handleDownloadPropostaPDF = (
       currentY += 25;
 
       if (isLinave) {
-        doc.text('Engenharia e servicos navais', margin, currentY);
+        doc.text('Engenharia & Serviços Navais', margin, currentY);
         doc.setFont('Arial', 'normal');
         doc.setFontSize(9);
       } else {
@@ -174,17 +176,15 @@ export const handleDownloadPropostaPDF = (
       }
 
       currentY += 5;
-      doc.setDrawColor(200, 200, 200);
-      doc.setLineWidth(0.5);
-      doc.line(margin, currentY, pageWidth - margin, currentY);
 
       return currentY + 15;
     };
 
-    y = drawHeader();
+    const headerBottom = drawHeader();
+    y = headerBottom;
 
     const ensureSpace = (neededHeight = 10) => {
-      if (y + neededHeight > pageHeight - margin) {
+      if (y + neededHeight > pageHeight - footerReserve) {
         doc.addPage();
         y = drawHeader();
       }
@@ -267,7 +267,7 @@ export const handleDownloadPropostaPDF = (
           head,
           body,
           theme: 'grid',
-          margin: { left: margin + 10, right: margin },
+          margin: { left: margin + 10, right: margin, top: headerBottom, bottom: footerReserve },
           headStyles: { fillColor: [230, 230, 230], textColor: [0, 0, 0], fontStyle: 'bold', fontSize: 9 },
           styles: { fontSize: 9, cellPadding: 2, textColor: [0, 0, 0] },
         });
@@ -320,7 +320,7 @@ export const handleDownloadPropostaPDF = (
             head,
             body,
             theme: 'grid',
-            margin: { left: margin + 5, right: margin },
+            margin: { left: margin + 5, right: margin, top: headerBottom, bottom: footerReserve },
             headStyles: { fillColor: [230, 230, 230], textColor: [0, 0, 0], fontStyle: 'bold', fontSize: 9 },
             styles: { fontSize: 9, cellPadding: 2, textColor: [0, 0, 0] },
             columnStyles: { 0: { cellWidth: 11 }, 2: { cellWidth: 16 }, 3: { cellWidth: 16 }, 4: { cellWidth: 26 }, 5: { cellWidth: 13 }, 6: { cellWidth: 28 } },
