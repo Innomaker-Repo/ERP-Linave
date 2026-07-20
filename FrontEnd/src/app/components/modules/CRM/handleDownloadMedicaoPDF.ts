@@ -27,10 +27,20 @@ export const handleDownloadMedicaoPDF = async (
     let y = 15;
 
     // --- FUNÇÕES UTILITÁRIAS ---
+    // Aceita os DOIS formatos que chegam aqui:
+    //  - "1234.56"   → ponto DECIMAL. É o que a medição grava (String(number)) e o que a API
+    //                  devolve nos DecimalField do Django. Ponto NÃO pode ser removido.
+    //  - "1.234,56"  → formato pt-BR digitado à mão; aí sim o ponto é separador de milhar.
+    // O ponto só é tratado como milhar quando existe vírgula na string — mesma regra de
+    // `parseDecimal` na MedicaoView/medicoesService. Remover o ponto sempre inflava todo
+    // valor em 100× (R$ 1.234,56 saía como R$ 123.456,00) — era a origem dos valores errados.
     const parseBrFloat = (val: any) => {
       if (typeof val === 'number') return val;
-      const str = String(val || '').replace(/\./g, '').replace(',', '.');
-      return parseFloat(str) || 0;
+      const s = String(val ?? '').trim();
+      if (!s) return 0;
+      const normalized = s.includes(',') ? s.replace(/\./g, '').replace(',', '.') : s;
+      const n = Number(normalized);
+      return Number.isFinite(n) ? n : 0;
     };
 
     const formatCurrency = (value: any) => {
