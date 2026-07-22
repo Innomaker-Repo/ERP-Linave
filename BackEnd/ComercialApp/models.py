@@ -589,7 +589,44 @@ class PropostaComercial(models.Model):
 
     def __str__(self):
         return f"Proposta Comercial {self.id} - {self.cliente.razao_social} - Valor: {self.preco}"
-    
+
+
+class TemplateProposta(models.Model):
+    """Modelo de texto reaproveitável para preencher o formulário da Proposta.
+
+    Guarda SÓ o texto padrão da proposta — as colunas espelham as de
+    PropostaComercial, para o mapeamento ser direto. De propósito NÃO tem
+    preço nem escopo: preço vem do orçamento e escopo é levantado a bordo,
+    então são sempre específicos do negócio e nunca reaproveitáveis.
+    """
+
+    id = models.BigAutoField(primary_key=True)
+    nome = models.CharField(max_length=120, unique=True)  # como aparece no dropdown
+
+    referencia = models.TextField(blank=True, default='')
+    saudacao = models.TextField(blank=True, default='')
+    assunto = models.TextField(blank=True, default='')
+    texto_de_abertura = models.TextField(blank=True, default='')
+    responsabilidade_contratada = models.TextField(blank=True, default='')   # item B
+    responsabilidade_contratante = models.TextField(blank=True, default='')  # item C
+    condicoes_gerais = models.TextField(blank=True, default='')              # item E
+    prazo = models.TextField(blank=True, default='')                         # item F
+    efetivo_previsto = models.TextField(blank=True, default='')              # item G
+    condicoes_pagamento = models.TextField(blank=True, default='')           # item H
+    encerramento = models.TextField(blank=True, default='')
+
+    criado_por = models.CharField(max_length=150, blank=True, default='')
+    criado_em = models.DateTimeField(auto_now_add=True)
+    atualizado_em = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['nome']
+        verbose_name = 'Template de Proposta'
+        verbose_name_plural = 'Templates de Proposta'
+
+    def __str__(self):
+        return f"Template de Proposta: {self.nome}"
+
 #--------------------- Fim Proposta Comercial ------------------
 
 #--------------------- Medição ------------------

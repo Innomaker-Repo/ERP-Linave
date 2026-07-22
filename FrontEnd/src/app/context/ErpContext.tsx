@@ -1092,6 +1092,15 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
       }
     };
 
+    // Só hidrata com sessão ativa. A API agora exige autenticação (antes respondia
+    // AllowAny), então hidratar deslogado dispararia 401 em todas as coleções e o
+    // interceptor do api.ts faria _forceLogout() -> redirect -> remount -> loop de
+    // recarregamento na própria tela de login.
+    if (!userSession) {
+      setLoading(false);
+      return () => { mounted = false; };
+    }
+
     void hydrateWorkspace();
 
     return () => {

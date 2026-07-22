@@ -9,13 +9,17 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from .models import (
     Cliente, Negocio, Servico, ItemAlocacao,
     Levantamento, MDO, Material, Servico_terceirizado, Orcamento, Ativ_prevista, Resumo_orcamento,
-    OrdemServico, Escopo, PropostaComercial, Fornecedor, Medicao, Documento, User, LogAtividade
+    OrdemServico, Escopo, PropostaComercial, TemplateProposta, Fornecedor, Medicao, Documento, User, LogAtividade
 )
 from .serializers import (
     ClienteSerializer, NegocioSerializer, ServicoSerializer,
     OrcamentoSerializer, OrdemServicoSerializer, EscopoSerializer,
-    PropostaComercialSerializer, FornecedorSerializer, MedicaoSerializer,
+    PropostaComercialSerializer, TemplatePropostaSerializer, FornecedorSerializer, MedicaoSerializer,
     DocumentoSerializer, UserSerializer
+)
+from .permissions import (
+    IsAdmin, permissao_modulo, eh_admin,
+    COMERCIAL, PRODUCAO, FINANCEIRO, COMPRAS_GESTAO, SUPRIMENTOS,
 )
 
 
@@ -105,15 +109,55 @@ class FlexTokenView(TokenObtainPairView):
 
 # --- Usuários ---
 class UserViewSet(LogMixin, viewsets.ModelViewSet):
+    """Gestão de usuários — exclusiva de admin, com UMA exceção: cada usuário pode
+    editar o próprio cadastro pela tela "Meu Perfil" (PerfilView).
+
+    Nesse autoatendimento só passam `email` e `password`: `role`, `permissoes` e
+    `is_active` são descartados, senão qualquer usuário se promoveria a admin
+    com um PATCH no próprio CPF.
+    """
     queryset = User.objects.all().order_by('nome')
     serializer_class = UserSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     LOG_MODULO = 'Usuários'
+    # CPF é a PK e vem com pontos/traço ("111.222.333-44"); o regex padrão do router
+    # não casa com pontos e devolvia 404 até no "Meu Perfil".
+    lookup_value_regex = '[^/]+'
+
+    # Campos que o usuário comum pode mudar em si mesmo.
+    CAMPOS_AUTOATENDIMENTO = {'email', 'password'}
+
+    def _e_o_proprio(self, request):
+        alvo = self.kwargs.get(self.lookup_field or 'pk')
+        return alvo is not None and str(alvo) == str(getattr(request.user, 'cpf', ''))
+
+    def check_permissions(self, request):
+        super().check_permissions(request)
+        if eh_admin(request.user):
+            return
+        # Único caso liberado ao não-admin: editar o próprio registro.
+        if self.action in ('retrieve', 'update', 'partial_update') and self._e_o_proprio(request):
+            return
+        self.permission_denied(request, message='Apenas administradores podem gerenciar usuários.')
+
+    def update(self, request, *args, **kwargs):
+        if not eh_admin(request.user):
+            proibidos = set(request.data.keys()) - self.CAMPOS_AUTOATENDIMENTO
+            if proibidos:
+                return Response(
+                    {'detail': f"Você só pode alterar {', '.join(sorted(self.CAMPOS_AUTOATENDIMENTO))} "
+                               f"no próprio perfil. Campos recusados: {', '.join(sorted(proibidos))}."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+        return super().update(request, *args, **kwargs)
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
         if instance.is_superuser:
             return Response({'detail': 'Não é possível excluir o administrador principal.'},
+                            status=status.HTTP_403_FORBIDDEN)
+        if str(instance.cpf) == str(getattr(request.user, 'cpf', '')):
+            return Response({'detail': 'Você não pode excluir a própria conta.'},
                             status=status.HTTP_403_FORBIDDEN)
         self.perform_destroy(instance)
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -129,6 +173,7 @@ def usuario_me(request):
 class ClienteViewSet(LogMixin, viewsets.ModelViewSet):
     queryset = Cliente.objects.all()
     serializer_class = ClienteSerializer
+    permission_classes = [permissao_modulo(*COMERCIAL, *FINANCEIRO)]
     LOG_MODULO = 'Clientes'
 
     def create(self, request, *args, **kwargs):
@@ -150,6 +195,7 @@ class ClienteViewSet(LogMixin, viewsets.ModelViewSet):
 class FornecedorViewSet(LogMixin, viewsets.ModelViewSet):
     queryset = Fornecedor.objects.all()
     serializer_class = FornecedorSerializer
+    permission_classes = [permissao_modulo(*COMPRAS_GESTAO, *FINANCEIRO)]
     LOG_MODULO = 'Fornecedores'
 
 #NEGÓCIOS
@@ -158,6 +204,7 @@ class NegocioViewSet(LogMixin, viewsets.ModelViewSet):
 
     queryset = Negocio.objects.select_related('cliente').prefetch_related('servicos').all()
     serializer_class = NegocioSerializer
+    permission_classes = [permissao_modulo(*COMERCIAL, *PRODUCAO)]
     LOG_MODULO = 'Negócios'
 
     @transaction.atomic
@@ -214,6 +261,7 @@ class NegocioViewSet(LogMixin, viewsets.ModelViewSet):
 #ORÇAMENTOS
 # --- Funções Customizadas ---
 @api_view(['POST'])
+@permission_classes([permissao_modulo('orcamentos', 'crm')])
 def criar_orcamento(request):
     with transaction.atomic():
         # 1. Levantamento
@@ -373,6 +421,7 @@ class OrdemServicoViewSet(LogMixin, viewsets.ModelViewSet):
     """
     queryset = OrdemServico.objects.select_related('cliente', 'negocio').all()
     serializer_class = OrdemServicoSerializer
+    permission_classes = [permissao_modulo(*COMERCIAL, *PRODUCAO, *FINANCEIRO)]
     LOG_MODULO = 'Ordens de Serviço'
     
     def list(self, request, *args, **kwargs):
@@ -480,6 +529,16 @@ def configuracoes_data(request):
         )
 
     payload = request.data if isinstance(request.data, dict) else {}
+
+    # `config` são os dados da empresa (nome, CNPJ, empresas prestadoras) — só admin.
+    # `listas` são auxiliares (departamentos, categorias) e o Financeiro grava nelas
+    # ao cadastrar um departamento novo (useFin), então segue liberada a autenticados.
+    if 'config' in payload and not eh_admin(request.user):
+        return Response(
+            {'detail': 'Apenas administradores podem alterar as configurações da empresa.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
     if inst is None:
         inst = ConfiguracaoApp.objects.create()
     if 'config' in payload and isinstance(payload['config'], dict):
@@ -493,6 +552,7 @@ def configuracoes_data(request):
 
 
 @api_view(['GET', 'POST', 'PUT'])
+@permission_classes([permissao_modulo(*SUPRIMENTOS, *COMPRAS_GESTAO)])
 def almoxarifado_data(request):
     """Estado do Estoque/Almoxarifado (objeto agregado único).
 
@@ -513,6 +573,7 @@ def almoxarifado_data(request):
 
 
 @api_view(['GET', 'POST', 'PUT'])
+@permission_classes([permissao_modulo(*FINANCEIRO, *COMPRAS_GESTAO)])
 def financeiro_data(request):
     """Estado financeiro como lista unificada de FinRecord.
 
@@ -540,6 +601,11 @@ def financeiro_data(request):
 @api_view(['GET', 'POST', 'PUT'])
 def compras_data(request):
     """Estado de Compras (requisições do kanban + histórico de compras concluídas).
+
+    SEM permissão de módulo de propósito (fica só no IsAuthenticated padrão): as telas
+    "Compras / Requisições" e "Minhas Compras" são liberadas a TODO usuário na Sidebar
+    — qualquer colaborador pode abrir uma requisição —, então exigir kanbanCompras aqui
+    quebraria o fluxo de solicitação.
 
     GET  -> {'compras': [...requisições...], 'comprasHistorico': [...histórico...]}
     POST/PUT -> recebe {'compras'?: [...], 'comprasHistorico'?: [...]} e substitui
@@ -624,6 +690,7 @@ def ordens_servico_por_negocio(request, negocio_id):
 
 
 @api_view(['PATCH'])
+@permission_classes([permissao_modulo(*COMERCIAL, *PRODUCAO, *FINANCEIRO)])
 def atualizar_status_os(request, pk):
     """
     Endpoint para atualizar apenas o status de uma OS
@@ -666,12 +733,27 @@ def atualizar_status_os(request, pk):
         )
 
 
+class TemplatePropostaViewSet(LogMixin, viewsets.ModelViewSet):
+    """CRUD dos templates de texto da Proposta (só texto padrão — sem preço/escopo)."""
+    queryset = TemplateProposta.objects.all()
+    serializer_class = TemplatePropostaSerializer
+    permission_classes = [permissao_modulo('proposta', 'crm', 'orcamentos')]
+    LOG_MODULO = 'Templates de Proposta'
+
+    def perform_create(self, serializer):
+        # Carimba o autor a partir do usuário autenticado quando o front não mandar.
+        u = getattr(self.request, 'user', None)
+        autor = getattr(u, 'nome', '') if (u and u.is_authenticated) else ''
+        serializer.save(criado_por=serializer.validated_data.get('criado_por') or autor)
+
+
 class PropostaComercialViewSet(LogMixin, viewsets.ModelViewSet):
     """
     ViewSet para gerenciar Propostas Comerciais
     """
     queryset = PropostaComercial.objects.select_related('cliente', 'negocio').prefetch_related('proposta_escopo').all()
     serializer_class = PropostaComercialSerializer
+    permission_classes = [permissao_modulo('proposta', 'crm', 'orcamentos')]
     LOG_MODULO = 'Propostas Comerciais'
     
     def list(self, request, *args, **kwargs):
@@ -730,6 +812,7 @@ class MedicaoViewSet(LogMixin, viewsets.ModelViewSet):
     """Medições (por OS). Suporta filtros ?ordem_servico= / ?negocio= / ?status=."""
     queryset = Medicao.objects.select_related('negocio', 'ordem_servico').prefetch_related('itens').all()
     serializer_class = MedicaoSerializer
+    permission_classes = [permissao_modulo('medicao', 'crm', 'finalizadosComercial', *FINANCEIRO)]
     LOG_MODULO = 'Medições'
 
     def list(self, request, *args, **kwargs):
@@ -760,6 +843,7 @@ class DocumentoViewSet(LogMixin, viewsets.ModelViewSet):
     """
     queryset = Documento.objects.all()
     serializer_class = DocumentoSerializer
+    permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get_queryset(self):
@@ -792,6 +876,7 @@ class DocumentoViewSet(LogMixin, viewsets.ModelViewSet):
 
 
 @api_view(['PATCH'])
+@permission_classes([permissao_modulo('medicao', 'crm', 'finalizadosComercial', *FINANCEIRO)])
 def atualizar_status_medicao(request, pk):
     """Aprova/recusa uma medição. Payload: {status: 'aprovada'|'recusada'|'pendente', motivo_recusa?}."""
     try:
@@ -819,11 +904,10 @@ def atualizar_status_medicao(request, pk):
 from .serializers import LogAtividadeSerializer
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAdmin])
 def logs_atividade(request):
-    if not request.user.is_superuser:
-        return Response({'detail': 'Acesso restrito ao administrador.'}, status=status.HTTP_403_FORBIDDEN)
-
+    # IsAdmin cobre role='admin' E is_superuser — antes checava só is_superuser,
+    # o que barrava um admin criado pelo painel (role=admin, superuser=False).
     qs = LogAtividade.objects.all()
     data_inicio = request.query_params.get('data_inicio')
     data_fim = request.query_params.get('data_fim')

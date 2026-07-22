@@ -2,7 +2,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
     NegocioViewSet, ClienteViewSet, OrdemServicoViewSet,
-    PropostaComercialViewSet, FornecedorViewSet, MedicaoViewSet,
+    PropostaComercialViewSet, TemplatePropostaViewSet, FornecedorViewSet, MedicaoViewSet,
     DocumentoViewSet, UserViewSet, usuario_me,
     criar_orcamento,
     ordens_servico_por_cliente, ordens_servico_por_negocio, atualizar_status_os,
@@ -18,6 +18,7 @@ router.register(r'fornecedores', FornecedorViewSet)
 router.register(r'negocios', NegocioViewSet)
 router.register(r'ordens-servico', OrdemServicoViewSet, basename='ordem-servico')
 router.register(r'propostas-comerciais', PropostaComercialViewSet, basename='proposta-comercial')
+router.register(r'templates-proposta', TemplatePropostaViewSet, basename='template-proposta')
 router.register(r'medicoes', MedicaoViewSet, basename='medicao')
 router.register(r'documentos', DocumentoViewSet, basename='documento')
 router.register(r'usuarios', UserViewSet, basename='usuario')
