@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Building2, Edit2, Plus, Save, Trash2, X } from 'lucide-react';
 import { useErp } from '../../../context/ErpContext';
+import { toast } from 'sonner';
 
 interface EmpresaPrestadora {
   id: string;
@@ -150,7 +151,7 @@ export function EmpresasPrestadorasView() {
 
     const nome = formData.nome.trim();
     if (!nome) {
-      alert('Informe o nome da empresa prestadora.');
+      toast.error('Informe o nome da empresa prestadora.');
       return;
     }
 
@@ -159,7 +160,7 @@ export function EmpresasPrestadorasView() {
     );
 
     if (nomeJaExiste) {
-      alert('Já existe uma empresa prestadora com esse nome.');
+      toast.error('Já existe uma empresa prestadora com esse nome.');
       return;
     }
 
@@ -194,7 +195,7 @@ export function EmpresasPrestadorasView() {
 
   const handleRemover = (id: string) => {
     if (empresas.length <= 1) {
-      alert('Mantenha pelo menos uma empresa prestadora cadastrada.');
+      toast.error('Mantenha pelo menos uma empresa prestadora cadastrada.');
       return;
     }
 
@@ -209,7 +210,7 @@ export function EmpresasPrestadorasView() {
         ...config,
         empresasPrestadoras: empresas
       });
-      alert('Empresas prestadoras salvas com sucesso.');
+      toast.success('Empresas prestadoras salvas com sucesso.');
     } finally {
       setSaving(false);
     }

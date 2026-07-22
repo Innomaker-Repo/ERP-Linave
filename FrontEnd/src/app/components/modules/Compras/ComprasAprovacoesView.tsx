@@ -108,10 +108,10 @@ export function ComprasAprovacoesView({ searchQuery }: { searchQuery: string }) 
       ...request,
       stage: 'COMPRADOS',
       // Ao entrar em finalizados, cada item começa no estado inicial conforme a natureza do
-      // fornecedor selecionado: ITEM -> "Comprar"; SERVIÇO -> "À contratar".
+      // próprio item (Material/Serviço escolhida na solicitação): Material -> "Comprar";
+      // Serviço -> "À contratar".
       itens: request.itens.map((item) => {
-        const detail = (request.budgetDetails || []).find((d) => d.itemId === item.id);
-        const natureza = detail?.naturezaFornecimento || item.naturezaFornecimento || 'SERVICO';
+        const natureza = item.naturezaFornecimento === 'ITEM' ? 'ITEM' : 'SERVICO';
         return {
           ...item,
           naturezaFornecimento: natureza,

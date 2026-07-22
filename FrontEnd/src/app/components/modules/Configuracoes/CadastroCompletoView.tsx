@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { User, Building2, Rocket, ShieldCheck, Mail, MapPin, Phone } from 'lucide-react';
 import { useErp } from '../../../context/ErpContext';
+import { toast } from 'sonner';
 
 interface CadastroProps {
   onFinalizar: (dados: any) => void;
@@ -30,7 +31,7 @@ export function CadastroCompletoView({ onFinalizar }: CadastroProps) {
     e.preventDefault();
     
     if (!formData.adminNome || !formData.empresaNome) {
-      return alert("Por favor, preencha o Nome do Gestor e o Nome da Empresa.");
+      return toast.error("Por favor, preencha o Nome do Gestor e o Nome da Empresa.");
     }
 
     setLoading(true);
@@ -42,7 +43,7 @@ export function CadastroCompletoView({ onFinalizar }: CadastroProps) {
       onFinalizar(formData);
     } catch (error) {
       console.error("Erro ao salvar configuração:", error);
-      alert("Erro ao salvar as configurações. Tente novamente.");
+      toast.error("Erro ao salvar as configurações. Tente novamente.");
     } finally {
       setLoading(false);
     }

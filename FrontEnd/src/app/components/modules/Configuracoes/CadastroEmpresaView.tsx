@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { User, Building2, Rocket, ShieldCheck } from 'lucide-react';
+import { toast } from 'sonner';
 
 export function CadastroCompletoView({ onFinalizar }: { onFinalizar: (dados: any) => void }) {
   const [formData, setFormData] = useState({
@@ -13,7 +14,7 @@ export function CadastroCompletoView({ onFinalizar }: { onFinalizar: (dados: any
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.adminNome || !formData.empresaNome) return alert("Preencha os campos principais.");
+    if (!formData.adminNome || !formData.empresaNome) return toast.error("Preencha os campos principais.");
     onFinalizar(formData);
   };
 

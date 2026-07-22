@@ -7,6 +7,8 @@ import { useErp } from '../../../context/ErpContext';
 import { fetchUsuarios, createUsuario, updateUsuario, deleteUsuario } from '../../../../services/authService';
 import { PasswordStrength, senhaValida } from '../../PasswordStrength';
 import { boldOS } from '../../../utils/osHighlight';
+import { toast } from 'sonner';
+import { confirmDialog } from '../../ui/feedback';
 
 // ─── Mapa de permissões por departamento ───────────────────────────────────
 const PERMISSAO_GRUPOS = [
@@ -307,15 +309,15 @@ export function UsuariosView() {
 
   const handleExcluir = async (u: Usuario) => {
     if (u.role === 'admin' || u.is_superuser) {
-      alert('Não é possível excluir o administrador.');
+      toast.error('Não é possível excluir o administrador.');
       return;
     }
-    if (!confirm(`Excluir usuário "${u.nome}" (${u.cpf})?`)) return;
+    if (!(await confirmDialog({ message: `Excluir usuário "${u.nome}" (${u.cpf})?`, danger: true, confirmText: 'Excluir' }))) return;
     try {
       await deleteUsuario(u.cpf);
       setUsuarios((prev) => prev.filter((x) => x.cpf !== u.cpf));
     } catch {
-      alert('Erro ao excluir usuário.');
+      toast.error('Erro ao excluir usuário.');
     }
   };
 

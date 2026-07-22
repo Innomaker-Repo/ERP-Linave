@@ -8,6 +8,7 @@ import { getAlmoxarifado, syncAlmoxarifado } from '../../services/almoxarifadoSe
 import { getConfiguracoes, syncConfig, syncListas } from '../../services/configuracoesService';
 import { getMedicoes } from '../../services/medicoesService';
 import { getStoredSession as getAuthSession, getStoredTokens, storeSession, clearTokens, refreshAccessToken } from '../../services/authService';
+import { toast } from 'sonner';
 
 
 const cloneDeep = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -1075,7 +1076,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
   }, [userSession?.email]);
 
   const showTestAlert = (operacao: string) => {
-    alert(`VERSÃO DE TESTE\n\nOperação "${operacao}" requer conexão com backend.\n\nEsta é uma versão demonstrativa apenas com frontend.`);
+    toast.info(`VERSÃO DE TESTE\n\nOperação "${operacao}" requer conexão com backend.\n\nEsta é uma versão demonstrativa apenas com frontend.`);
   };
 
   // Função simulada - não faz requisição real

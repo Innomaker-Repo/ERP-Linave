@@ -4,6 +4,8 @@ import { downloadDocument, getDocumentHref } from '../../../utils/documentDownlo
 import { handleDownloadOSPDF } from '../CRM/handleDownloadOSPDF';
 import { getLogoUrlForEmpresa } from '../../../utils/company';
 import { boldOS } from '../../../utils/osHighlight';
+import { toast } from 'sonner';
+import { confirmDialog } from '../../ui/feedback';
 import {
   Anchor, Plus, Calendar, DollarSign, Users, User, Save, X, Edit2, Trash2,
   FileText, Briefcase, Activity, Hash, FolderOpen, Download, Link as LinkIcon, CheckCircle2, ChevronDown, ChevronRight, Eye
@@ -129,7 +131,7 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
   };
 
   const handleSave = () => {
-    if (!formData.nome || !formData.clienteId) return alert("Nome e Cliente são obrigatórios.");
+    if (!formData.nome || !formData.clienteId) return toast.error("Nome e Cliente são obrigatórios.");
     let novaLista = editingId 
       ? listaObras.map((o: any) => o.id === editingId ? { ...formData, id: editingId } : o)
       : [...listaObras, { ...formData, id: `OBR-${Date.now()}` }];
@@ -137,8 +139,8 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
     setShowForm(false);
   };
 
-  const handleDelete = (id: string) => {
-    if (confirm("Excluir obra?")) saveEntity('obras', listaObras.filter((o: any) => o.id !== id));
+  const handleDelete = async (id: string) => {
+    if (await confirmDialog({ message: 'Excluir obra?', danger: true, confirmText: 'Excluir' })) saveEntity('obras', listaObras.filter((o: any) => o.id !== id));
   };
 
   const updateDocLink = (key: string, value: string) => {
@@ -359,14 +361,14 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
   const handleVerDocumento = (doc: any) => {
     const href = getDocumentHref(doc);
     if (!href) {
-      alert('Documento indisponível para visualização.');
+      toast.error('Documento indisponível para visualização.');
       return;
     }
 
     if (href.startsWith('data:')) {
       const blob = dataUrlToBlob(href);
       if (!blob) {
-        alert('Falha ao abrir documento.');
+        toast.error('Falha ao abrir documento.');
         return;
       }
 
@@ -383,7 +385,7 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
     downloadDocument(doc, {
       fallbackName: 'documento',
       onInvalid: () => {
-        alert('Documento indisponível para download.');
+        toast.error('Documento indisponível para download.');
       },
     });
   };
