@@ -244,8 +244,9 @@ class NegocioViewSet(LogMixin, viewsets.ModelViewSet):
 
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
+        # perform_update (LogMixin) já grava o log de 'atualizacao'. NÃO chamar _registrar_log
+        # aqui de novo, senão cada PATCH/PUT de Negócio gera DOIS registros no LogAtividade.
         self.perform_update(serializer)
-        _registrar_log(request, 'atualizacao', self.LOG_MODULO, str(instance))
 
         # Se houver uma nova lista de serviços, substitua os antigos
         if servicos_data is not None:

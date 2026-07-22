@@ -160,9 +160,17 @@ export const createEmptyItem = (): ItemCompra => ({
   un: 'un',
   link: '',
   fornecedor: '',
-  naturezaFornecimento: 'SERVICO',
-  purchaseState: 'aContratar',
+  // A natureza (Material/Serviço) agora é ESCOLHIDA pelo solicitante na tela de compras,
+  // item a item — não é mais herdada do fornecedor. Como é o módulo de Compras, o padrão
+  // é Material (ITEM); o usuário troca para Serviço quando for o caso.
+  naturezaFornecimento: 'ITEM',
+  purchaseState: 'comprar',
 });
+
+// Estado inicial do item ao entrar em "Comprados", conforme a natureza escolhida:
+// Material → "Comprar"; Serviço → "À contratar". Fonte única usada aqui e nas Aprovações.
+export const initialPurchaseStateFor = (natureza: 'ITEM' | 'SERVICO'): PurchaseState =>
+  natureza === 'ITEM' ? 'comprar' : 'aContratar';
 
 export const createDefaultRequest = (solicitante = '', departamento = '', centroCusto = ''): FormState => ({
   solicitante,

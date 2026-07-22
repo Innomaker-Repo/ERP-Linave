@@ -9,6 +9,8 @@ import { getBackendUrl } from '../../../../services/network';
 import { mapDocsApiToFront } from '../../../../services/documentosService';
 import { temServico, temLocacao } from '../../../utils/modalidade';
 import { ObservacoesNegocio } from '../../ObservacoesNegocio';
+import { toast } from 'sonner';
+import { confirmDialog, promptDialog } from '../../ui/feedback';
 
 interface MaoDeObra {
   id: string;
@@ -408,7 +410,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
 
   const handleSelectObra = async (obra: any) => {
     if (!isOrcamentoEditavel(obra)) {
-      alert('Este orçamento está imutável. Apenas projetos em Planejamento podem receber novo orçamento.');
+      toast.error('Este orçamento está imutável. Apenas projetos em Planejamento podem receber novo orçamento.');
       return;
     }
 
@@ -641,12 +643,12 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   // SALVAR RASCUNHO — sem validações rígidas, mantém o negócio em Planejamento
   const handleSalvarOrcamentoClick = async (event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
-    if (!selectedObra) return alert("Nenhum projeto selecionado.");
+    if (!selectedObra) return toast.error("Nenhum projeto selecionado.");
 
     const negocioId = selectedObra.negocioBackendId || extrairIdProjetoDoNumero(selectedObra.id);
     const clienteId = Number(selectedObra.clienteId);
     if (!negocioId || !clienteId) {
-      alert("Não foi possível identificar o negócio ou cliente. Recarregue a página.");
+      toast.error("Não foi possível identificar o negócio ou cliente. Recarregue a página.");
       return;
     }
 
@@ -677,7 +679,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
         // ignore
       }
 
-      alert("Rascunho salvo! O negócio permanece em Planejamento.");
+      toast.success("Rascunho salvo! O negócio permanece em Planejamento.");
       fecharOrcamentoComoX();
       setOrcamentoData(getInitialOrcamentoData());
     } finally {
@@ -687,73 +689,73 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
 
   // CONCLUIR ORÇAMENTO — validação completa + move para Negociação
   const handleConcluirOrcamento = async () => {
-    if (!selectedObra) return alert("Nenhum projeto selecionado.");
-    if (!isOrcamentoEditavel(selectedObra)) return alert('Não é possível alterar orçamento após Planejamento.');
+    if (!selectedObra) return toast.error("Nenhum projeto selecionado.");
+    if (!isOrcamentoEditavel(selectedObra)) return toast.error('Não é possível alterar orçamento após Planejamento.');
 
-    if (!orcamentoData.numeroOrcamento.trim()) { alert("Número do orçamento é obrigatório."); return; }
-    if (!orcamentoData.solicitante.trim()) { alert("Solicitante é obrigatório."); return; }
+    if (!orcamentoData.numeroOrcamento.trim()) { toast.error("Número do orçamento é obrigatório."); return; }
+    if (!orcamentoData.solicitante.trim()) { toast.error("Solicitante é obrigatório."); return; }
 
     // Validações específicas de SERVIÇO — só aplicam quando a modalidade contempla serviço.
     if (orcTemServico) {
-    if (!orcamentoData.escopoOrcamento.trim()) { alert("Escopo do orçamento é obrigatório."); return; }
+    if (!orcamentoData.escopoOrcamento.trim()) { toast.error("Escopo do orçamento é obrigatório."); return; }
     const qtdItens = Number(orcamentoData.quantidadeItensProduzidos);
-    if (!qtdItens || qtdItens < 1) { alert("Quantidade de itens produzidos é obrigatória para concluir o orçamento."); return; }
+    if (!qtdItens || qtdItens < 1) { toast.error("Quantidade de itens produzidos é obrigatória para concluir o orçamento."); return; }
     const atividadesPreenchidas = orcamentoData.atividades.filter(i => i.atividade?.trim());
-    if (atividadesPreenchidas.length === 0) { alert("É obrigatório preencher pelo menos uma atividade prevista para concluir o orçamento."); return; }
+    if (atividadesPreenchidas.length === 0) { toast.error("É obrigatório preencher pelo menos uma atividade prevista para concluir o orçamento."); return; }
 
     // Mão de obra: pelo menos um item com funcao preenchida
     const mdoPreenchido = orcamentoData.maoDeObra.filter((item: MaoDeObra) => item.funcao?.trim());
     if (mdoPreenchido.length === 0) {
-      alert("É necessário informar pelo menos uma função de mão de obra para concluir o orçamento.");
+      toast.error("É necessário informar pelo menos uma função de mão de obra para concluir o orçamento.");
       return;
     }
     for (const item of mdoPreenchido) {
       const qVal = parseNumber(item.quantidade);
       const diasVal = parseNumber(item.dias);
       const custoVal = parseNumber(item.custoUnitDia);
-      if (!Number.isFinite(qVal) || qVal <= 0) { alert(`Quantidade inválida para a função "${item.funcao}".`); return; }
-      if (!Number.isFinite(diasVal) || diasVal <= 0) { alert(`Dias inválido para a função "${item.funcao}".`); return; }
-      if (!Number.isFinite(custoVal) || custoVal <= 0) { alert(`Custo por dia inválido para a função "${item.funcao}".`); return; }
+      if (!Number.isFinite(qVal) || qVal <= 0) { toast.error(`Quantidade inválida para a função "${item.funcao}".`); return; }
+      if (!Number.isFinite(diasVal) || diasVal <= 0) { toast.error(`Dias inválido para a função "${item.funcao}".`); return; }
+      if (!Number.isFinite(custoVal) || custoVal <= 0) { toast.error(`Custo por dia inválido para a função "${item.funcao}".`); return; }
     }
 
     // Validar apenas linhas de materiais que foram preenchidas
     for (const item of orcamentoData.materiais) {
       if (!isMaterialRowFilled(item)) continue;
-      if (!item.descricao.trim()) { alert("Descrição obrigatória para materiais preenchidos."); return; }
-      const q = parseNumber(item.quantidade); if (isNaN(q) || q <= 0) { alert(`Quantidade inválida para o material "${item.descricao}".`); return; }
-      const c = parseNumber(item.custoUnit); if (isNaN(c) || c <= 0) { alert(`Custo unitário inválido para o material "${item.descricao}".`); return; }
+      if (!item.descricao.trim()) { toast.error("Descrição obrigatória para materiais preenchidos."); return; }
+      const q = parseNumber(item.quantidade); if (isNaN(q) || q <= 0) { toast.error(`Quantidade inválida para o material "${item.descricao}".`); return; }
+      const c = parseNumber(item.custoUnit); if (isNaN(c) || c <= 0) { toast.error(`Custo unitário inválido para o material "${item.descricao}".`); return; }
     }
 
     // Validar apenas linhas de terceirizados que foram preenchidas
     for (const item of orcamentoData.terceirizados) {
       if (!isTerceirizadoRowFilled(item)) continue;
-      if (!item.descricao.trim()) { alert("Descrição obrigatória para terceirizados preenchidos."); return; }
-      const q = parseNumber(item.quantidade); if (isNaN(q) || q <= 0) { alert(`Quantidade inválida para "${item.descricao}".`); return; }
-      const c = parseNumber(item.custoUnit); if (isNaN(c) || c <= 0) { alert(`Custo inválido para "${item.descricao}".`); return; }
+      if (!item.descricao.trim()) { toast.error("Descrição obrigatória para terceirizados preenchidos."); return; }
+      const q = parseNumber(item.quantidade); if (isNaN(q) || q <= 0) { toast.error(`Quantidade inválida para "${item.descricao}".`); return; }
+      const c = parseNumber(item.custoUnit); if (isNaN(c) || c <= 0) { toast.error(`Custo inválido para "${item.descricao}".`); return; }
     }
 
     // Validar apenas linhas de atividades que foram preenchidas
     for (const item of orcamentoData.atividades) {
       if (!isAtividadeRowFilled(item)) continue;
-      if (!item.atividade.trim()) { alert("Nome da atividade obrigatório."); return; }
-      const d = parseNumber(item.dias); if (isNaN(d) || d <= 0) { alert(`Dias inválido para a atividade "${item.atividade}".`); return; }
+      if (!item.atividade.trim()) { toast.error("Nome da atividade obrigatório."); return; }
+      const d = parseNumber(item.dias); if (isNaN(d) || d <= 0) { toast.error(`Dias inválido para a atividade "${item.atividade}".`); return; }
     }
     } // fim das validações de SERVIÇO
 
     // Validações de LOCAÇÃO — exige itens com equipamento e valor de locação.
     if (orcTemLocacao) {
       const itensLocValidos = (orcamentoData.itensAlocacao || []).filter(i => i.equipamento.trim());
-      if (itensLocValidos.length === 0) { alert("Adicione ao menos um item de locação na seção Locação."); return; }
+      if (itensLocValidos.length === 0) { toast.error("Adicione ao menos um item de locação na seção Locação."); return; }
       for (const i of itensLocValidos) {
-        if (!(parseDecimal(i.valorLocacao) > 0)) { alert(`Informe o valor unitário de locação do item "${i.equipamento}".`); return; }
-        if (!(parseDecimal(i.quantidade) > 0)) { alert(`Informe a quantidade do item "${i.equipamento}".`); return; }
+        if (!(parseDecimal(i.valorLocacao) > 0)) { toast.error(`Informe o valor unitário de locação do item "${i.equipamento}".`); return; }
+        if (!(parseDecimal(i.quantidade) > 0)) { toast.error(`Informe a quantidade do item "${i.equipamento}".`); return; }
       }
     }
 
     const negocioId = selectedObra.negocioBackendId || extrairIdProjetoDoNumero(selectedObra.id);
     const clienteId = Number(selectedObra.clienteId);
     if (!negocioId || !clienteId) {
-      alert("Não foi possível identificar o negócio ou cliente. Recarregue a página.");
+      toast.error("Não foi possível identificar o negócio ou cliente. Recarregue a página.");
       return;
     }
 
@@ -807,9 +809,9 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   }, [orcamentoData, showForm, selectedObra?.id]);
 
   const handleRecusarOrcamento = async (obra: any) => {
-    const motivo = window.prompt('Informe o motivo da recusa do orçamento:');
+    const motivo = await promptDialog({ title: 'Recusar orçamento', message: 'Informe o motivo da recusa do orçamento:', placeholder: 'Motivo da recusa' });
     if (motivo === null) return;
-    if (!motivo.trim()) { alert('O motivo da recusa é obrigatório.'); return; }
+    if (!motivo.trim()) { toast.error('O motivo da recusa é obrigatório.'); return; }
     const orcamentosExistentes = normalizarOrcamentos(obra);
     const ultimoOrcamento = orcamentosExistentes[orcamentosExistentes.length - 1];
     if (!ultimoOrcamento) return;
@@ -831,11 +833,11 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
     } catch (err) {
       console.warn('Erro ao persistir recusa no backend:', err);
     }
-    alert("Orçamento recusado. Projeto retornou para reorçamento.");
+    toast.success("Orçamento recusado. Projeto retornou para reorçamento.");
   };
 
   const handleArquivarNegocio = async (obra: any) => {
-    if (!window.confirm(`Confirma o arquivamento do negócio "${obra.nome}"?\n\nO negócio será marcado como Arquivado e não aparecerá mais nos fluxos ativos.`)) return;
+    if (!(await confirmDialog({ title: 'Arquivar negócio', message: `Confirma o arquivamento do negócio "${obra.nome}"?\n\nO negócio será marcado como Arquivado e não aparecerá mais nos fluxos ativos.`, danger: true, confirmText: 'Arquivar' }))) return;
     const obraAtualizada = { ...obra, categoria: 'Arquivado', status: 'Arquivado' };
     const obrasAtualizadas = (obras || []).map((o: any) => o.id === obra.id ? obraAtualizada : o);
     saveEntity('obras', obrasAtualizadas);
@@ -1500,7 +1502,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
 >>>>>>> fccd5af (ultimas alterações)
     } catch (error) {
       console.error('Erro ao gerar PDF:', error);
-      alert('Erro ao gerar PDF do orçamento');
+      toast.error('Erro ao gerar PDF do orçamento');
     }
   };
 

@@ -4,6 +4,7 @@ import { FinCard, Toolbar, boldOS } from '../finUi';
 import { money, construirReciboDeMedicao, ultimoReciboLocacaoDaOs, proximoNumeroReciboLocacao, upsertContaReceberPorMedicao } from '../finData';
 import { useErp } from '../../../../context/ErpContext';
 import { gerarReciboLocacaoPDF } from '../reciboLocacaoPdf';
+import { confirmDialog } from '../../../ui/feedback';
 
 const isLinaveEmpresa = (empresa?: any) => {
   const s = String(empresa || '').toLowerCase();
@@ -206,7 +207,7 @@ export function ReciboLocacaoView() {
     setForm(null);
   };
   const excluir = async (r: any) => {
-    if (!window.confirm(`Excluir o recibo ${r.numero}?`)) return;
+    if (!(await confirmDialog({ message: `Excluir o recibo ${r.numero}?`, danger: true, confirmText: 'Excluir' }))) return;
     await saveEntity('financeiro', (Array.isArray(financeiro) ? financeiro : []).filter((x: any) => x?.id !== r.id));
   };
 

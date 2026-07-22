@@ -15,6 +15,7 @@ import {
   type RequisicaoCompra,
 } from './comprasLocal';
 import { FinModal, Field, Input, Select, Textarea, Btn, boldOS } from '../Financeiro/finUi';
+import { toast } from 'sonner';
 import {
   br, money, num, todayStr, days,
   FORMAS_PAGAMENTO, TIPOS_REEMBOLSO, empresaFromCC, buildContasPagar, CP_STATUS,
@@ -32,6 +33,8 @@ type QuoteSupplierDraft = {
 type QuoteRowDraft = {
   itemId: string;
   itemLabel: string;
+  // Natureza vem do ITEM (escolhida na solicitação), não do fornecedor.
+  naturezaFornecimento: 'ITEM' | 'SERVICO';
   fornecedores: QuoteSupplierDraft[];
   jaEmEstoque: boolean;
 };
@@ -80,13 +83,12 @@ const ensureMinimumSuppliers = (suppliers: QuoteSupplierDraft[]) => {
   return base;
 };
 
-const resolveNaturezaFromSupplierName = (supplierName: string, supplierCatalog: any[]): 'ITEM' | 'SERVICO' => {
-  const supplier = supplierCatalog.find((entry) => String(entry?.razaoSocial || '') === supplierName);
-  return supplier?.naturezaFornecimento === 'ITEM' ? 'ITEM' : 'SERVICO';
-};
+const normalizarNatureza = (natureza: any): 'ITEM' | 'SERVICO' =>
+  natureza === 'ITEM' ? 'ITEM' : 'SERVICO';
 
 // Natureza do fornecedor (Itens/ITEM ou Serviços/SERVICO). Aceita o legado tipo "Empresas"=ITEM.
-// Define onde a compra entra no Custo por OS: ITEM→Materiais, SERVICO→Serviços Terceirizados.
+// Continua sendo o RÓTULO do fornecedor no catálogo (exibido nos dropdowns), mas NÃO define mais
+// a natureza da compra — essa agora vem do item, escolhida na solicitação.
 const naturezaFornecedor = (s: any): 'ITEM' | 'SERVICO' =>
   (s?.naturezaFornecimento === 'ITEM' || s?.tipo === 'Itens' || s?.tipo === 'Empresas') ? 'ITEM' : 'SERVICO';
 
@@ -97,6 +99,7 @@ const buildDraftRows = (request: RequisicaoCompra): QuoteRowDraft[] =>
     return {
       itemId: item.id,
       itemLabel: item.descricao || item.nome,
+      naturezaFornecimento: normalizarNatureza(item.naturezaFornecimento),
       jaEmEstoque: Boolean(existing?.jaEmEstoque),
       fornecedores: ensureMinimumSuppliers(
         (existing?.fornecedores || []).map((supplier, index) =>
@@ -129,8 +132,7 @@ const calculateSelectedBudgetValue = (details: QuoteItem[]) => {
 
 const calculateBudgetDetails = (
   rows: QuoteRowDraft[],
-  previousDetails: QuoteItem[] = [],
-  supplierCatalog: any[] = []
+  previousDetails: QuoteItem[] = []
 ) => {
   const details: QuoteItem[] = rows.map((row) => {
     const fornecedores: QuoteFornecedor[] = row.fornecedores.map((supplier) => ({
@@ -146,14 +148,11 @@ const calculateBudgetDetails = (
       : null;
     const previousSelection = previousDetails.find((detail) => detail.itemId === row.itemId)?.fornecedorSelecionado || '';
     const selectedQuote = fornecedores.find((entry) => entry.fornecedor === previousSelection) || null;
-    const selectedNatureza = selectedQuote
-      ? resolveNaturezaFromSupplierName(selectedQuote.fornecedor, supplierCatalog)
-      : previousDetails.find((detail) => detail.itemId === row.itemId)?.naturezaFornecimento || 'SERVICO';
-    const winnerNatureza = winner ? resolveNaturezaFromSupplierName(winner.fornecedor, supplierCatalog) : 'SERVICO';
 
     return {
       itemId: row.itemId,
-      naturezaFornecimento: selectedQuote ? selectedNatureza : winnerNatureza,
+      // Natureza do ITEM (escolhida na solicitação) — independe do fornecedor selecionado.
+      naturezaFornecimento: row.naturezaFornecimento,
       fornecedores,
       menorValor: winner ? winner.valor : null,
       fornecedorVencedor: winner ? winner.fornecedor : '',
@@ -309,29 +308,29 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
     if (!activeRequest || !quoteModal) return;
 
     if (supplierOptions.length === 0) {
-      return window.alert('Cadastre fornecedores na página de Fornecedores antes de orçar.');
+      return toast.error('Cadastre fornecedores na página de Fornecedores antes de orçar.');
     }
 
     const rows = quoteRows[activeRequest.id] || [];
     if (rows.length === 0) {
-      return window.alert('Nenhum item encontrado para cotação.');
+      return toast.error('Nenhum item encontrado para cotação.');
     }
 
     for (const row of rows) {
       if (!row.jaEmEstoque && row.fornecedores.length < 3) {
-        return window.alert('Cada item precisa ter no mínimo 3 fornecedores para salvar a cotação.');
+        return toast.error('Cada item precisa ter no mínimo 3 fornecedores para salvar a cotação.');
       }
 
       if (!row.jaEmEstoque) {
         for (const supplier of row.fornecedores) {
           if (!supplier.fornecedor || !supplier.valor || !supplier.prazoEntrega || !supplier.condicaoPagamento) {
-            return window.alert('Preencha fornecedor, valor, prazo de entrega e condição de pagamento em cada fornecedor do item.');
+            return toast.error('Preencha fornecedor, valor, prazo de entrega e condição de pagamento em cada fornecedor do item.');
           }
         }
       }
     }
 
-    const { details } = calculateBudgetDetails(rows, activeRequest?.budgetDetails || [], supplierOptions);
+    const { details } = calculateBudgetDetails(rows, activeRequest?.budgetDetails || []);
 
     // Itens marcados como "já em estoque" não seguem o fluxo de compra: ao concluir o
     // orçamento eles são removidos do pedido (somem da seleção, aprovação e finalizados).
@@ -340,10 +339,13 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
     const itensAtualizados = activeRequest.itens
       .filter((item) => !idsEmEstoque.has(item.id))
       .map((item) => {
-        const detail = detailsFiltrados.find((entry) => entry.itemId === item.id);
+        // A natureza é a do próprio item (escolhida na solicitação). O detalhe da cotação só
+        // a espelha; o item continua sendo a fonte da verdade.
+        const natureza = normalizarNatureza(item.naturezaFornecimento);
         return {
           ...item,
-          naturezaFornecimento: detail?.naturezaFornecimento || item.naturezaFornecimento || 'SERVICO',
+          naturezaFornecimento: natureza,
+          purchaseState: item.purchaseState || (natureza === 'ITEM' ? 'comprar' : 'aContratar'),
         };
       });
 
@@ -370,12 +372,12 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
     if (!request) return;
 
     if ((request.budgetDetails || []).length === 0) {
-      return window.alert('Faça a cotação completa antes de enviar para aprovação.');
+      return toast.error('Faça a cotação completa antes de enviar para aprovação.');
     }
 
     const hasAllSelections = (request.budgetDetails || []).every((detail) => detail.jaEmEstoque || (detail.fornecedorSelecionado && detail.valorSelecionado !== null));
     if (!hasAllSelections || !request.budgetValue || request.budgetValue <= 0) {
-      return window.alert('Selecione manualmente o fornecedor de cada item que não estiver em estoque antes de enviar para aprovação.');
+      return toast.error('Selecione manualmente o fornecedor de cada item que não estiver em estoque antes de enviar para aprovação.');
     }
 
     patchRequest(requestId, (current) => ({
@@ -391,7 +393,7 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
     if (!request) return;
 
     if ((request.budgetDetails || []).length === 0) {
-      return window.alert('Faça a cotação completa antes de enviar para seleção do gerente.');
+      return toast.error('Faça a cotação completa antes de enviar para seleção do gerente.');
     }
 
     patchRequest(requestId, (current) => ({
@@ -453,7 +455,7 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
     const { request, item, detail } = buyContext;
 
     if (!buyForm.fornecedor.trim() || !num(buyForm.valor)) {
-      window.alert('Informe o fornecedor e o valor da conta a pagar.');
+      toast.error('Informe o fornecedor e o valor da conta a pagar.');
       return;
     }
     setBuySaving(true);
@@ -538,12 +540,12 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
     if (!req) return;
 
     if (req.stage !== 'SELECAO_GERENTE') {
-      window.alert('A seleção de fornecedor só pode ser feita na etapa Seleção do Gerente.');
+      toast.error('A seleção de fornecedor só pode ser feita na etapa Seleção do Gerente.');
       return;
     }
 
     if (!podeSelecionarGerente) {
-      window.alert('Apenas o gerente comercial ou o diretor financeiro podem selecionar o fornecedor.');
+      toast.error('Apenas o gerente comercial ou o diretor financeiro podem selecionar o fornecedor.');
       return;
     }
 
@@ -556,13 +558,10 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
         if (detail.jaEmEstoque) return detail;
 
         const selectedQuote = detail.fornecedores.find((entry) => entry.fornecedor === fornecedorSelecionado) || null;
-        const naturezaFornecimento = selectedQuote
-          ? resolveNaturezaFromSupplierName(selectedQuote.fornecedor, supplierOptions)
-          : detail.naturezaFornecimento || 'SERVICO';
 
+        // A natureza NÃO muda com o fornecedor escolhido — ela é do item (definida na solicitação).
         return {
           ...detail,
-          naturezaFornecimento,
           fornecedorSelecionado: selectedQuote?.fornecedor || '',
           valorSelecionado: selectedQuote ? selectedQuote.valor : null,
           prazoEntregaSelecionado: selectedQuote?.prazoEntrega || '',
@@ -621,7 +620,7 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
 
   const modalRequest = quoteModal ? requests.find((request) => request.id === quoteModal.requestId) || null : null;
   const modalRows = modalRequest ? quoteRows[modalRequest.id] || buildDraftRows(modalRequest) : [];
-  const modalSummary = calculateBudgetDetails(modalRows, activeRequest?.budgetDetails || [], supplierOptions);
+  const modalSummary = calculateBudgetDetails(modalRows, activeRequest?.budgetDetails || []);
 
   return (
     <>
@@ -725,7 +724,7 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
                                   </div>
                                   <div className="text-right">
                                     <span className="text-[10px] uppercase tracking-widest text-amber-300/80 font-bold block">{item.qtd} {item.un}</span>
-                                    <span className="text-[10px] uppercase tracking-widest text-violet-300/80 font-black">{itemDetail?.naturezaFornecimento === 'ITEM' ? 'ITEM' : 'SERVIÇO'}</span>
+                                    <span className="text-[10px] uppercase tracking-widest text-violet-300/80 font-black">{item.naturezaFornecimento === 'ITEM' ? 'MATERIAL' : 'SERVIÇO'}</span>
                                   </div>
                                 </div>
 
@@ -935,7 +934,7 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
 
               <div className="space-y-4">
                 {modalRows.map((row) => {
-                  const rowSummary = calculateBudgetDetails([row], activeRequest?.budgetDetails || [], supplierOptions).details[0];
+                  const rowSummary = calculateBudgetDetails([row], activeRequest?.budgetDetails || []).details[0];
 
                   return (
                     <div key={row.itemId} className="rounded-[28px] border border-white/10 bg-white/[0.03] p-5 space-y-4">
@@ -1145,21 +1144,15 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
             </Field>
             <Field label="Valor total" span={4}><Input type="number" step="0.01" value={buyForm.valor} onChange={(e) => setBuyF('valor', e.target.value)} /></Field>
 
-            {buyForm.fornecedor && (() => {
-              const s = supplierOptions.find((x: any) => String(x?.razaoSocial) === buyForm.fornecedor);
-              const nat = s ? naturezaFornecedor(s) : null;
-              return (
-                <div className="col-span-12 -mt-1 text-[11px] font-bold">
-                  {nat === 'ITEM' ? (
-                    <span className="text-emerald-300/90">Fornecedor de <strong>ITEM</strong> → o custo entra em <strong>Materiais</strong> no Custo por OS.</span>
-                  ) : nat === 'SERVICO' ? (
-                    <span className="text-sky-300/90">Fornecedor de <strong>SERVIÇO</strong> → o custo entra em <strong>Serviços Terceirizados</strong> no Custo por OS.</span>
-                  ) : (
-                    <span className="text-amber-300/80">Fornecedor não cadastrado — cadastre-o em Fornecedores para classificar como Item ou Serviço.</span>
-                  )}
-                </div>
-              );
-            })()}
+            {/* A classificação no Custo por OS vem da NATUREZA DO ITEM (escolhida na solicitação),
+                não do fornecedor. */}
+            <div className="col-span-12 -mt-1 text-[11px] font-bold">
+              {buyIsItem ? (
+                <span className="text-emerald-300/90">Item de <strong>MATERIAL</strong> → o custo entra em <strong>Materiais</strong> no Custo por OS.</span>
+              ) : (
+                <span className="text-sky-300/90">Item de <strong>SERVIÇO</strong> → o custo entra em <strong>Serviços Terceirizados</strong> no Custo por OS.</span>
+              )}
+            </div>
 
             <Field label="Observação" span={12}><Textarea value={buyForm.obs} onChange={(e) => setBuyF('obs', e.target.value)} /></Field>
 

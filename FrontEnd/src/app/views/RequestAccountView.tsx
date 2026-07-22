@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { ensureWorkspaceShape, getActiveAdminEmail, loadWorkspace, saveWorkspace, setActiveAdminEmail } from "../services/workspaceStorage";
+import { toast } from 'sonner';
 
 export function RequestAccountView({ onRequested }: { onRequested: () => void }) {
   const [email, setEmail] = useState("");
@@ -22,7 +23,7 @@ export function RequestAccountView({ onRequested }: { onRequested: () => void })
     workspace.pendingUsers = pending;
     await saveWorkspace(adminEmail, workspace);
 
-    alert(
+    toast.success(
       `Solicitação enviada!\n\nCódigo gerado: ${code}\n\nEste código deve ser validado pelo admin (admin@linave.com.br).`
     );
 

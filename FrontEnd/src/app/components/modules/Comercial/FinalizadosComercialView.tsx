@@ -6,6 +6,7 @@ import {
   Wrench, Trash2, X, Eye, ChevronDown, ChevronUp, Archive
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { confirmDialog } from '../../ui/feedback';
 import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
 import { handleDownloadOrcamentoPDF } from '../CRM/handleDownloadOrcamentoPDF';
 import { handleDownloadOSPDF } from '../CRM/handleDownloadOSPDF';
@@ -73,8 +74,8 @@ export function FinalizadosComercialView({ searchQuery }: FinalizadosComercialVi
       return id.includes('mediacao') || nome.includes('medi') || nome.includes('medição');
     });
 
-  const handleHideCard = (obra: any) => {
-    if (!window.confirm(`Remover "${obra?.nome || 'este negócio'}" da lista de finalizados?`)) return;
+  const handleHideCard = async (obra: any) => {
+    if (!(await confirmDialog(`Remover "${obra?.nome || 'este negócio'}" da lista de finalizados?`))) return;
     const obrasAtualizadas = (Array.isArray(obras) ? obras : []).map((item: any) =>
       item.id === obra.id ? { ...item, ocultarDosFinalizados: true } : item
     );

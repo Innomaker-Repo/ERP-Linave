@@ -3,6 +3,7 @@ import axios from 'axios';
 import { useErp } from '../../../context/ErpContext';
 import { HardHat, Save, Folder, FileSpreadsheet, Plus, Search, ChevronDown, ChevronUp, ExternalLink, User, Calendar, CreditCard, BookOpen } from 'lucide-react';
 import { getServiceUrl } from '../../../../services/network';
+import { toast } from 'sonner';
 
 export function FuncionariosView({ searchQuery }: { searchQuery: string }) {
   const { funcionarios, userSession, saveEntity } = useErp();
@@ -82,7 +83,7 @@ export function FuncionariosView({ searchQuery }: { searchQuery: string }) {
 
   const handleSave = async () => {
     if (!formData.nomeCompleto || !formData.cpf) {
-      return alert("Nome e CPF são obrigatórios para gerar a documentação.");
+      return toast.error("Nome e CPF são obrigatórios para gerar a documentação.");
     }
     
     setLoading(true);
@@ -94,7 +95,7 @@ export function FuncionariosView({ searchQuery }: { searchQuery: string }) {
       });
 
       if (res.data.success) {
-        alert(`Funcionário cadastrado com sucesso!\nMatrícula Gerada: ${res.data.data.matricula}\n\nAs pastas e planilhas foram criadas no Google Drive.`);
+        toast.success(`Funcionário cadastrado com sucesso!\nMatrícula Gerada: ${res.data.data.matricula}\n\nAs pastas e planilhas foram criadas no Google Drive.`);
         setShowForm(false);
         setFormData(initialForm);
         // Recarrega para atualizar a lista com os links novos
@@ -102,7 +103,7 @@ export function FuncionariosView({ searchQuery }: { searchQuery: string }) {
       }
     } catch (error) {
       console.error(error);
-      alert(`Erro ao criar: ${error.response?.data?.error || error.message}`);
+      toast.error(`Erro ao criar: ${error.response?.data?.error || error.message}`);
     } finally {
       setLoading(false);
     }

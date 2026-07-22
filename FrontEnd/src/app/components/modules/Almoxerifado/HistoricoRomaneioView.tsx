@@ -4,6 +4,7 @@ import { useErp } from '../../../context/ErpContext';
 import { Badge } from '../../../modules/shared/ui/badge';
 import { Input } from '../../../modules/shared/ui/input';
 import { gerarRomaneioPdf, loadRomaneioLogoBase64 } from './romaneioPdf';
+import { toast } from 'sonner';
 
 interface RomaneioHistoricoItemRow {
   tableName: string;
@@ -123,7 +124,7 @@ export function HistoricoRomaneioView({ searchQuery }: HistoricoRomaneioViewProp
   // Abre o modal de devolução, pré-preenchendo cada item com o total que saiu (devolver tudo).
   const openReturnModal = (romaneio: RomaneioHistoricoItem) => {
     if (romaneio.revertedAt) {
-      alert('Este romaneio já foi devolvido ao estoque.');
+      toast.error('Este romaneio já foi devolvido ao estoque.');
       return;
     }
 
@@ -170,7 +171,7 @@ export function HistoricoRomaneioView({ searchQuery }: HistoricoRomaneioViewProp
       doc.save(`romaneio-${romaneio.osLabel || romaneio.osId || romaneio.id}.pdf`);
     } catch (error) {
       console.error('Erro ao gerar pdf do romaneio', error);
-      alert('Não foi possível gerar o documento do romaneio.');
+      toast.error('Não foi possível gerar o documento do romaneio.');
     }
   };
 

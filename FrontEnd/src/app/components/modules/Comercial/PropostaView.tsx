@@ -21,6 +21,8 @@ import {
 import { temServico, temLocacao } from '../../../utils/modalidade';
 import { boldOS } from '../../../utils/osHighlight';
 import { ObservacoesNegocio } from '../../ObservacoesNegocio';
+import { toast } from 'sonner';
+import { confirmDialog } from '../../ui/feedback';
 
 interface EscopoLinha {
   id: string;
@@ -286,7 +288,7 @@ export function PropostaView() {
 
   // Preenche só os campos que o template tem conteúdo — assim um template parcial
   // (ex.: só condições de pagamento) não apaga o resto do que já foi digitado.
-  const aplicarTemplate = (id: string) => {
+  const aplicarTemplate = async (id: string) => {
     setTemplateSelecionado(id);
     if (!id) return;
 
@@ -295,7 +297,7 @@ export function PropostaView() {
 
     const camposDoTemplate = camposPreenchidosDoTemplate(tpl);
     if (camposDoTemplate.length === 0) {
-      window.alert(`O template "${tpl.nome}" está vazio.`);
+      toast.error(`O template "${tpl.nome}" está vazio.`);
       return;
     }
 
@@ -304,9 +306,11 @@ export function PropostaView() {
     );
     if (seraoSobrescritos.length > 0) {
       const lista = seraoSobrescritos.map((campo) => `• ${ROTULOS_CAMPO_TEMPLATE[campo]}`).join('\n');
-      const ok = window.confirm(
-        `Aplicar o template "${tpl.nome}"?\n\nOs campos abaixo já têm conteúdo e serão substituídos:\n${lista}\n\nPreço e escopo não são alterados.`,
-      );
+      const ok = await confirmDialog({
+        title: 'Aplicar template',
+        message: `Aplicar o template "${tpl.nome}"?\n\nOs campos abaixo já têm conteúdo e serão substituídos:\n${lista}\n\nPreço e escopo não são alterados.`,
+        confirmText: 'Aplicar',
+      });
       if (!ok) {
         setTemplateSelecionado('');
         return;
@@ -322,7 +326,7 @@ export function PropostaView() {
 
   const salvarTemplate = async () => {
     const nome = nomeNovoTemplate.trim();
-    if (!nome) { window.alert('Dê um nome ao template.'); return; }
+    if (!nome) { toast.error('Dê um nome ao template.'); return; }
 
     const campos: Partial<Record<CampoTemplateProposta, string>> = {};
     CAMPOS_TEMPLATE_PROPOSTA.forEach((campo) => {
@@ -330,7 +334,7 @@ export function PropostaView() {
       if (valor.trim()) campos[campo] = valor;
     });
     if (Object.keys(campos).length === 0) {
-      window.alert('Preencha ao menos um campo (fora preço e escopo) antes de salvar o template.');
+      toast.error('Preencha ao menos um campo (fora preço e escopo) antes de salvar o template.');
       return;
     }
 
@@ -338,7 +342,7 @@ export function PropostaView() {
     const existente = templatesProposta.find(
       (t) => String(t.nome || '').trim().toLowerCase() === nome.toLowerCase(),
     );
-    if (existente && !window.confirm(`Já existe um template "${existente.nome}". Substituir o conteúdo dele?`)) return;
+    if (existente && !(await confirmDialog(`Já existe um template "${existente.nome}". Substituir o conteúdo dele?`))) return;
 
     const autor = userSession?.nome || userSession?.username || userSession?.email || '';
     setPersistindoTemplate(true);
@@ -350,11 +354,11 @@ export function PropostaView() {
       setTemplateSelecionado(String(salvo.id));
       setNomeNovoTemplate('');
       setSalvandoTemplate(false);
-      window.alert(`Template "${nome}" salvo com ${Object.keys(campos).length} campo(s).`);
+      toast.success(`Template "${nome}" salvo com ${Object.keys(campos).length} campo(s).`);
     } catch (error: any) {
       console.error('Erro ao salvar template de proposta:', error);
       const detalhe = error?.response?.data?.nome?.[0] || error?.response?.data?.detail || '';
-      window.alert(`Não foi possível salvar o template.${detalhe ? `\n\n${detalhe}` : '\n\nVerifique a conexão com o servidor.'}`);
+      toast.error(`Não foi possível salvar o template.${detalhe ? `\n\n${detalhe}` : '\n\nVerifique a conexão com o servidor.'}`);
     } finally {
       setPersistindoTemplate(false);
     }
@@ -363,7 +367,7 @@ export function PropostaView() {
   const excluirTemplate = async () => {
     const tpl = templatesProposta.find((t) => String(t.id) === String(templateSelecionado));
     if (!tpl) return;
-    if (!window.confirm(`Excluir o template "${tpl.nome}"? Essa ação não pode ser desfeita.`)) return;
+    if (!(await confirmDialog({ message: `Excluir o template "${tpl.nome}"? Essa ação não pode ser desfeita.`, danger: true, confirmText: 'Excluir' }))) return;
 
     setPersistindoTemplate(true);
     try {
@@ -372,7 +376,7 @@ export function PropostaView() {
       setTemplateSelecionado('');
     } catch (error) {
       console.error('Erro ao excluir template de proposta:', error);
-      window.alert('Não foi possível excluir o template. Verifique a conexão com o servidor.');
+      toast.error('Não foi possível excluir o template. Verifique a conexão com o servidor.');
     } finally {
       setPersistindoTemplate(false);
     }
@@ -1041,19 +1045,19 @@ export function PropostaView() {
   // Baixa o PDF usando os dados ATUAIS do formulário (sem precisar enviar/salvar).
   // Abre o PDF do orçamento do negócio (última versão) para consulta durante a proposta.
   const visualizarOrcamento = () => {
-    if (!selectedObra) return alert('Selecione uma obra primeiro.');
+    if (!selectedObra) return toast.error('Selecione uma obra primeiro.');
     const orc = Array.isArray(selectedObra.orcamentos) && selectedObra.orcamentos.length ? selectedObra.orcamentos[0] : null;
-    if (!orc) return alert('Nenhum orçamento encontrado para este negócio.');
+    if (!orc) return toast.error('Nenhum orçamento encontrado para este negócio.');
     try {
       handleDownloadOrcamentoPDF(orc, { razaoSocial: selectedObra.nomeCliente || '' }, selectedObra);
     } catch (e) {
       console.error('Falha ao gerar PDF do orçamento:', e);
-      alert('Não foi possível gerar o PDF do orçamento.');
+      toast.error('Não foi possível gerar o PDF do orçamento.');
     }
   };
 
   const handleBaixarPropostaPreview = () => {
-    if (!selectedObra) return alert('Selecione uma obra primeiro.');
+    if (!selectedObra) return toast.error('Selecione uma obra primeiro.');
     // O gerador do PDF lê `responsabilidadeContratante` (item C); no form esse campo é `escopoC`.
     const propostaParaPdf = {
       ...propostaForm,
@@ -1065,7 +1069,7 @@ export function PropostaView() {
 
   // Gera DOCX a partir de template .docx (deve existir em /public/templates/LINAVE.docx e SERVINAVE.docx)
   const gerarDocxTemplate = async () => {
-    if (!selectedObra) return alert('Selecione uma obra antes');
+    if (!selectedObra) return toast.error('Selecione uma obra antes');
     const rawEmpresa = (() => {
       const ep = selectedObra.empresaPrestadora || '';
       if (!ep) return '';
@@ -1077,7 +1081,7 @@ export function PropostaView() {
     try {
       const templateUrl = isLinave ? '/templates/LINAVE.docx' : '/templates/SERVINAVE.docx';
       const res = await fetch(templateUrl);
-      if (!res.ok) return alert(`Template ${isLinave ? 'LINAVE.docx' : 'SERVINAVE.docx'} não encontrado em /public/templates/`);
+      if (!res.ok) return toast.error(`Template ${isLinave ? 'LINAVE.docx' : 'SERVINAVE.docx'} não encontrado em /public/templates/`);
       const arrayBuffer = await res.arrayBuffer();
 
       const zip = new PizZip(arrayBuffer);
@@ -1113,7 +1117,7 @@ export function PropostaView() {
       console.error('Erro gerarDocxTemplate:', err);
       const msg = err?.message ? err.message : String(err);
       const details = err?.stack ? `\n\nStack:\n${err.stack}` : '';
-      alert(`Erro ao gerar DOCX: ${msg}${details}`);
+      toast.error(`Erro ao gerar DOCX: ${msg}${details}`);
     }
   };
 
@@ -1141,10 +1145,10 @@ export function PropostaView() {
         setSelectedObra(null);
         setViewMode('list');
       }
-      alert('Proposta aprovada pelo cliente! Negócio movido para Em Andamento.');
+      toast.success('Proposta aprovada pelo cliente! Negócio movido para Em Andamento.');
     } catch (err) {
       console.error('Erro ao aprovar proposta:', err);
-      alert('Erro ao processar aprovação.');
+      toast.error('Erro ao processar aprovação.');
     }
   };
 
@@ -1154,10 +1158,10 @@ export function PropostaView() {
     try {
       await atualizarProposta(ultimaProposta.id, { status: 'pendente' });
       await refreshNegocios();
-      alert('Proposta marcada como pendente.');
+      toast.success('Proposta marcada como pendente.');
     } catch (err) {
       console.error('Erro ao atualizar proposta:', err);
-      alert('Erro ao processar operação.');
+      toast.error('Erro ao processar operação.');
     }
   };
 
@@ -1231,7 +1235,7 @@ export function PropostaView() {
     const obra = recusaModal.obra;
     const motivoRecusa = recusaModal.motivo.trim();
     if (!obra) return;
-    if (!motivoRecusa) { alert('Informe o motivo da recusa.'); return; }
+    if (!motivoRecusa) { toast.error('Informe o motivo da recusa.'); return; }
 
     setRecusaModal(prev => ({ ...prev, submitting: true }));
     try {
@@ -1272,10 +1276,10 @@ export function PropostaView() {
         setViewMode('list');
       }
       setRecusaModal({ open: false, obra: null, motivo: '', submitting: false });
-      alert('Proposta recusada. Negócio retornou para Aguardando orçamento.');
+      toast.success('Proposta recusada. Negócio retornou para Aguardando orçamento.');
     } catch (err) {
       console.error('Erro ao recusar proposta:', err);
-      alert('Erro ao processar recusa.');
+      toast.error('Erro ao processar recusa.');
       setRecusaModal(prev => ({ ...prev, submitting: false }));
     }
   };
@@ -1285,7 +1289,7 @@ export function PropostaView() {
     const obra = recusaModal.obra;
     const motivoRecusa = recusaModal.motivo.trim();
     if (!obra) return;
-    if (!motivoRecusa) { alert('Informe o motivo da recusa.'); return; }
+    if (!motivoRecusa) { toast.error('Informe o motivo da recusa.'); return; }
 
     setRecusaModal(prev => ({ ...prev, submitting: true }));
     try {
@@ -1306,7 +1310,7 @@ export function PropostaView() {
       setViewMode('form');
     } catch (err) {
       console.error('Erro ao refazer proposta:', err);
-      alert('Erro ao processar recusa.');
+      toast.error('Erro ao processar recusa.');
       setRecusaModal(prev => ({ ...prev, submitting: false }));
     }
   };
@@ -2051,7 +2055,7 @@ export function PropostaView() {
 
             <button
               type="button"
-              onClick={() => { const exemplo = gerarEscopoBasicoConsolidado(propostaForm.escopoBasicoServicos); window.alert(exemplo || 'Sem conteúdo para visualizar'); }}
+              onClick={() => { const exemplo = gerarEscopoBasicoConsolidado(propostaForm.escopoBasicoServicos); toast.info(exemplo || 'Sem conteúdo para visualizar'); }}
               className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-black text-xs uppercase tracking-widest transition"
             >Visualização de Exemplo</button>
           </div>

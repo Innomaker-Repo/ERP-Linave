@@ -3,6 +3,7 @@ import { UserPlus, Save, X, Edit2, Trash2, Building2, User, MapPin, Phone, Calen
 import { useErp } from '../../../context/ErpContext';
 import { getClientes, createCliente, updateCliente, deleteCliente } from '../../../../services/clientes';
 import { toast } from 'sonner';
+import { confirmDialog } from '../../ui/feedback';
 import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
 import { formatDateBR } from '../../../utils/formatDate';
 import { NegocioDetalheModal } from '../Comercial/FinalizadosComercialView';

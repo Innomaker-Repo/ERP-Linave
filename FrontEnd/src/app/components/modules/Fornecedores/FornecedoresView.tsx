@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { Factory, Plus, Save, X, Edit2, Trash2, Phone, MapPin } from 'lucide-react';
+import { toast } from 'sonner';
 
 export function FornecedoresView({ searchQuery }: { searchQuery: string }) {
   const { fornecedores, saveFornecedor, userSession } = useErp();
@@ -66,7 +67,7 @@ export function FornecedoresView({ searchQuery }: { searchQuery: string }) {
 
   const salvar = async () => {
     const erro = validar();
-    if (erro) return window.alert(erro);
+    if (erro) return toast.error(erro);
 
     const novoRegistro = {
       ...fornecedor,
@@ -79,7 +80,7 @@ export function FornecedoresView({ searchQuery }: { searchQuery: string }) {
       setShowForm(false);
       setFornecedor({ razaoSocial: '', cnpj: '', contato: '', endereco: '', status: 'Ativo', tipo: 'Serviços', descricaoEstadual: '' });
     } catch {
-      window.alert('Erro ao salvar fornecedor. Verifique a conexão com o servidor e tente novamente.');
+      toast.error('Erro ao salvar fornecedor. Verifique a conexão com o servidor e tente novamente.');
     }
   };
 

@@ -3,6 +3,7 @@ import { useErp } from '../../../context/ErpContext';
 import { extrairIdProjetoDoNumero } from '../../../context/ErpContext';
 import { Plus, X, FileText, DollarSign, CheckCircle, Clock, ArrowRight, Edit2, ChevronDown, Zap, AlertCircle, Download, Eye, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
+import { confirmDialog } from '../../ui/feedback';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable'; // Importação nomeada do plugin
 import { handleDownloadMedicaoPDF } from './handleDownloadMedicaoPDF';
@@ -304,7 +305,7 @@ const initialServico: Servico = {
 
   const handleRemoveServico = (idx: number) => {
     if (formData.servicos.length === 1) {
-      return alert("Você precisa manter pelo menos um serviço.");
+      return toast.error("Você precisa manter pelo menos um serviço.");
     }
     setFormData(prev => ({
       ...prev,
@@ -866,7 +867,7 @@ const initialServico: Servico = {
 
     // 1. Verificação mais clara para a embarcação
     if (!documentoMediacaoForm.embarcacao || !documentoMediacaoForm.embarcacao.trim()) {
-      alert('⚠️ Por favor, preencha o campo "Embarcação" antes de gerar o documento.');
+      toast.error('⚠️ Por favor, preencha o campo "Embarcação" antes de gerar o documento.');
       toast.error('Preencha a embarcação para gerar o documento de medição.');
       return;
     }
@@ -925,7 +926,7 @@ const initialServico: Servico = {
       
     } catch (error: any) {
       console.error('Erro ao gerar documento de medição:', error);
-      alert('❌ Erro ao gerar o PDF: ' + (error.message || 'Verifique o console para mais detalhes.'));
+      toast.error('❌ Erro ao gerar o PDF: ' + (error.message || 'Verifique o console para mais detalhes.'));
       toast.error('Erro ao gerar o documento de medição.');
     }
   };
@@ -1211,7 +1212,7 @@ const initialServico: Servico = {
   };
 };
 
-  const aplicarAlteracaoDocumentosNoNegocio = (
+  const aplicarAlteracaoDocumentosNoNegocio = async (
     obra: any,
     documentosAtualizados: DocumentoNegocio[],
     documentosArquivadosNovos: any[] = []
@@ -1230,7 +1231,7 @@ const initialServico: Servico = {
       return;
     }
 
-    const fazerNovoOrcamento = window.confirm('Fazer novo orçamento?');
+    const fazerNovoOrcamento = await confirmDialog('Fazer novo orçamento?');
     if (!fazerNovoOrcamento) {
       persistirObraAtualizada(obraComDocumentos);
       toast.success('Arquivos atualizados sem alterar orçamento.');
@@ -1342,14 +1343,14 @@ const initialServico: Servico = {
       if (novosDocumentos.length === 0) return;
 
       const documentosAtuais = Array.isArray(obraAtual.documentosNegocio) ? obraAtual.documentosNegocio : [];
-      aplicarAlteracaoDocumentosNoNegocio(obraAtual, [...documentosAtuais, ...novosDocumentos]);
+      await aplicarAlteracaoDocumentosNoNegocio(obraAtual, [...documentosAtuais, ...novosDocumentos]);
       toast.success(`${novosDocumentos.length} documento(s) anexado(s) e salvo(s) no banco.`);
     } catch (error) {
       toast.error('Não foi possível anexar os documentos.');
     }
   };
 
-  const handleRemoverArquivoNoCard = (obra: any, docId: string) => {
+  const handleRemoverArquivoNoCard = async (obra: any, docId: string) => {
     const obraAtual = (obras || []).find((o: any) => o.id === obra.id) || obra;
     const documentosAtuais = Array.isArray(obraAtual.documentosNegocio) ? obraAtual.documentosNegocio : [];
     const documentosAtualizados = documentosAtuais.filter((doc: DocumentoNegocio) => doc.id !== docId);
@@ -1362,7 +1363,7 @@ const initialServico: Servico = {
     }));
 
     if (documentosAtualizados.length === documentosAtuais.length) return;
-    aplicarAlteracaoDocumentosNoNegocio(obraAtual, documentosAtualizados, documentosArquivados);
+    await aplicarAlteracaoDocumentosNoNegocio(obraAtual, documentosAtualizados, documentosArquivados);
   };
 
   const handleOpenArquivosModal = (obra: any) => {
@@ -1376,15 +1377,15 @@ const initialServico: Servico = {
     const incluiLocacao = temLocacao(formData.modalidade);
 
     if (!formData.nomeNegocio.trim() || !formData.clienteId || !formData.solicitante) {
-      return alert("Nome do Negócio, Cliente e Solicitante são obrigatórios.");
+      return toast.error("Nome do Negócio, Cliente e Solicitante são obrigatórios.");
     }
 
     if (incluiServico && (formData.servicos.length === 0 || !formData.servicos.some(s => s.descricao.trim()))) {
-      return alert("Adicione pelo menos um serviço com descrição na aba Serviços.");
+      return toast.error("Adicione pelo menos um serviço com descrição na aba Serviços.");
     }
 
     if (incluiLocacao && !(formData.itensAlocacao || []).some(it => it.equipamento.trim())) {
-      return alert("Adicione pelo menos um item de equipamento na aba Alocação.");
+      return toast.error("Adicione pelo menos um item de equipamento na aba Alocação.");
     }
 
     const prefixo = formData.empresaPrestadora === 'Linave' ? 'LN' : 'SN';
@@ -1498,7 +1499,7 @@ const initialServico: Servico = {
     const email = String(editingObra.email || '').trim() || 'comercial@linave.com.br';
 
     if (!nomeNegocio || !empresaPrestadora || !solicitante) {
-      return alert('Nome do Negócio, Empresa Prestadora e Solicitante são obrigatórios.');
+      return toast.error('Nome do Negócio, Empresa Prestadora e Solicitante são obrigatórios.');
     }
 
     const payloadUpdate = {
@@ -1513,13 +1514,13 @@ const initialServico: Servico = {
 
     // Chama a função da API e fecha o modal
     await persistirObraAtualizada(editingObra, false, payloadUpdate);
-    alert("Negócio atualizado com sucesso!");
+    toast.success("Negócio atualizado com sucesso!");
     setShowEditModal(false);
     setEditingObra(null);
   };
 
   const handleDeleteNegocio = async (idBackend: number) => {
-    const confirmacao = window.confirm("ATENÇÃO: Tem certeza que deseja excluir permanentemente este negócio? Esta ação não pode ser desfeita.");
+    const confirmacao = await confirmDialog({ title: 'Excluir negócio', message: 'ATENÇÃO: Tem certeza que deseja excluir permanentemente este negócio? Esta ação não pode ser desfeita.', danger: true, confirmText: 'Excluir' });
     if (!confirmacao) return;
 
     try {
@@ -1552,7 +1553,7 @@ const initialServico: Servico = {
       const propostaAceita = ultimaProposta?.status === 'aceita';
 
       if (!propostaAceita) {
-        return alert('Para iniciar o trabalho é obrigatório ter proposta aceita.');
+        return toast.error('Para iniciar o trabalho é obrigatório ter proposta aceita.');
       }
 
       proximaCategoria = 'Em Andamento';
@@ -1576,7 +1577,7 @@ const initialServico: Servico = {
     setNegociosBackend(prev => 
       prev.map(o => o.id === obraAtualizada.id ? obraAtualizada : o)
     );
-    alert(mensagem);
+    toast.success(mensagem);
     setShowDetalhesObraModal(false);
     setSelectedObraDetalhes(null);
   };
@@ -1584,7 +1585,7 @@ const initialServico: Servico = {
   const handleRecusarOrcamento = async () => {
     if (!selectedObraDetalhes) return;
 
-    const confirmacao = window.confirm("Tem certeza que deseja recusar este orçamento? O negócio voltará para Aguardando orçamento.");
+    const confirmacao = await confirmDialog({ title: 'Recusar orçamento', message: 'Tem certeza que deseja recusar este orçamento? O negócio voltará para Aguardando orçamento.', danger: true, confirmText: 'Recusar' });
     if (!confirmacao) return;
 
     const dataRecusa = new Date().toISOString().split('T')[0];
@@ -1619,7 +1620,7 @@ const initialServico: Servico = {
 
     // Usando await e fechando a função corretamente
     await persistirObraAtualizada(obraAtualizada, true);
-    alert("Orçamento recusado. Negócio retornou para Aguardando orçamento.");
+    toast.success("Orçamento recusado. Negócio retornou para Aguardando orçamento.");
     setShowDetalhesObraModal(false);
     setSelectedObraDetalhes(null);
   };
@@ -2255,7 +2256,7 @@ const initialServico: Servico = {
 
   const handleArquivarNegocio = async (obra: any, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!window.confirm(`Arquivar "${obra.nome}"?\n\nO negócio será removido do Kanban e listado em Negócios → Finalizados.`)) return;
+    if (!(await confirmDialog({ title: 'Arquivar negócio', message: `Arquivar "${obra.nome}"?\n\nO negócio será removido do Kanban e listado em Negócios → Finalizados.`, confirmText: 'Arquivar' }))) return;
     await persistirObraAtualizada({
       ...obra,
       categoria: 'Arquivado',

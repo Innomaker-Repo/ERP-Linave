@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { ensureWorkspaceShape, getActiveAdminEmail, loadWorkspace, saveWorkspace, setActiveAdminEmail } from "../services/workspaceStorage";
+import { toast } from 'sonner';
 
 export function RegisterUserView({ onFinish }: { onFinish: () => void }) {
   const [email, setEmail] = useState("");
@@ -18,7 +19,7 @@ export function RegisterUserView({ onFinish }: { onFinish: () => void }) {
     );
 
     if (!match) {
-      alert("Código inválido ou ainda não aprovado.");
+      toast.error("Código inválido ou ainda não aprovado.");
       return;
     }
 
