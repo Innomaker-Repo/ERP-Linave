@@ -597,7 +597,7 @@ class Migration(migrations.Migration):
                 ('contato', models.CharField(blank=True, max_length=255, null=True)),
                 ('endereco', models.TextField(blank=True, null=True)),
                 ('status', models.CharField(choices=[('Ativo', 'Ativo'), ('Inativo', 'Inativo')], default='Ativo', max_length=10)),
-                ('tipo', models.CharField(choices=[('Serviços', 'Serviços'), ('Empresas', 'Empresas')], default='Serviços', max_length=20)),
+                ('tipo', models.CharField(choices=[('Serviços', 'Serviços'), ('Itens', 'Itens'), ('Empresas', 'Empresas')], default='Serviços', max_length=20)),
                 ('descricao_estadual', models.CharField(blank=True, max_length=100, null=True)),
                 ('natureza_fornecimento', models.CharField(choices=[('ITEM', 'Item'), ('SERVICO', 'Serviço')], default='SERVICO', max_length=10)),
                 ('criado_por_nome', models.CharField(blank=True, max_length=150, null=True)),

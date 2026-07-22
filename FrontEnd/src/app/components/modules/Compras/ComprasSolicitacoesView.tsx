@@ -197,15 +197,18 @@ export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQ
                       <input className="input-table text-white/70" placeholder="Descrição do item" value={item.descricao} onChange={(event) => updateItem(item.id, 'descricao', event.target.value)} />
                     </td>
                     <td className="p-3">
-                      <select
-                        className={`input-table cursor-pointer appearance-none font-bold ${item.naturezaFornecimento === 'ITEM' ? 'text-emerald-300' : 'text-sky-300'}`}
-                        value={item.naturezaFornecimento}
-                        onChange={(event) => updateItemNatureza(item.id, event.target.value as 'ITEM' | 'SERVICO')}
-                        title="Define onde o custo entra no Custo por OS: Material → Materiais; Serviço → Serviços Terceirizados"
-                      >
-                        <option value="ITEM" className="text-white">Compra de material</option>
-                        <option value="SERVICO" className="text-white">Serviço</option>
-                      </select>
+                      <div className="relative">
+                        <select
+                          className={`w-full appearance-none cursor-pointer rounded-lg border border-white/10 bg-[#0b1220] py-2 pl-3 pr-8 text-sm font-bold outline-none focus:border-amber-500 transition-colors ${item.naturezaFornecimento === 'ITEM' ? 'text-emerald-300' : 'text-sky-300'}`}
+                          value={item.naturezaFornecimento}
+                          onChange={(event) => updateItemNatureza(item.id, event.target.value as 'ITEM' | 'SERVICO')}
+                          title="Define onde o custo entra no Custo por OS: Material → Materiais; Serviço → Serviços Terceirizados"
+                        >
+                          <option value="ITEM" className="bg-[#0b1220] text-white">Compra de material</option>
+                          <option value="SERVICO" className="bg-[#0b1220] text-white">Serviço</option>
+                        </select>
+                        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-white/30 text-[10px]">▼</span>
+                      </div>
                     </td>
                     <td className="p-3 text-center">
                       <input type="number" className="input-table text-center font-bold bg-white/5 rounded-lg" min="1" value={item.qtd} onChange={(event) => updateItem(item.id, 'qtd', Number(event.target.value))} />

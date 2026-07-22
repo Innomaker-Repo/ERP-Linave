@@ -34,7 +34,9 @@ class Fornecedor(models.Model):
     são traduzidos no serviço do frontend (fornecedoresService.ts).
     """
 
-    TIPO_CHOICES = [('Serviços', 'Serviços'), ('Empresas', 'Empresas')]
+    # O frontend manda 'Serviços' ou 'Itens' (dropdown de Fornecedores). 'Empresas' é legado
+    # (dados antigos) e continua aceito. A natureza real (ITEM/SERVICO) vem de natureza_fornecimento.
+    TIPO_CHOICES = [('Serviços', 'Serviços'), ('Itens', 'Itens'), ('Empresas', 'Empresas')]
     STATUS_CHOICES = [('Ativo', 'Ativo'), ('Inativo', 'Inativo')]
     NATUREZA_CHOICES = [('ITEM', 'Item'), ('SERVICO', 'Serviço')]
 

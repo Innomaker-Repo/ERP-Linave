@@ -114,6 +114,9 @@ export function CustoPorOsView() {
           const valor = num(d?.valorSelecionado);
           if (valor <= 0) return;
           const natureza = d?.naturezaFornecimento || it?.naturezaFornecimento || 'SERVICO';
+          // valorSelecionado é o total do item (a cotação é pela quantidade pedida). Discretiza
+          // em qtd/unidade/valor unitário para o custo ficar item a item, como a medição.
+          const qtd = num(it?.qtd);
           out.push({
             id: `cmp-${r.id}-${it.id}`,
             categoria: categoriaCompra(natureza),
@@ -121,6 +124,8 @@ export function CustoPorOsView() {
             valor,
             data: String(r?.updatedAt || r?.createdAt || '').slice(0, 10),
             origem: 'compra',
+            ...(qtd > 0 ? { quantidade: qtd, valorUnitario: round2(valor / qtd) } : {}),
+            ...(it?.un ? { unidade: String(it.un) } : {}),
           });
         });
       });
@@ -130,13 +135,17 @@ export function CustoPorOsView() {
       .filter((h: any) => daOs(h) && num(h?.valor) > 0)
       .forEach((h: any) => {
         const natureza = h?.naturezaFornecimento || 'SERVICO';
+        const valorH = num(h.valor);
+        const qtdH = num(h?.qtd);
         out.push({
           id: `cmph-${h.id}`,
           categoria: categoriaCompra(natureza),
           descricao: `Compra: ${h.itemDescricao || h.itemNome || 'item'}`,
-          valor: num(h.valor),
+          valor: valorH,
           data: String(h?.compradoEm || '').slice(0, 10),
           origem: 'compra',
+          ...(qtdH > 0 ? { quantidade: qtdH, valorUnitario: round2(valorH / qtdH) } : {}),
+          ...(h?.un ? { unidade: String(h.un) } : {}),
         });
       });
 
