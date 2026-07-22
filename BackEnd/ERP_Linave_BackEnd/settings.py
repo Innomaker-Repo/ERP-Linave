@@ -57,8 +57,11 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
+    # Padrão fechado: sem login, sem API. As rotas de login (/token/*) são públicas
+    # por conta própria (TokenViewBase define permission_classes = ()).
+    # A autorização POR MÓDULO fica em ComercialApp/permissions.py.
     'DEFAULT_PERMISSION_CLASSES': (
-        'rest_framework.permissions.AllowAny',
+        'rest_framework.permissions.IsAuthenticated',
     ),
 }
 

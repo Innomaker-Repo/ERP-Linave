@@ -645,6 +645,32 @@ class Migration(migrations.Migration):
             field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, to=settings.AUTH_USER_MODEL),
         ),
         migrations.CreateModel(
+            name='TemplateProposta',
+            fields=[
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('nome', models.CharField(max_length=120, unique=True)),
+                ('referencia', models.TextField(blank=True, default='')),
+                ('saudacao', models.TextField(blank=True, default='')),
+                ('assunto', models.TextField(blank=True, default='')),
+                ('texto_de_abertura', models.TextField(blank=True, default='')),
+                ('responsabilidade_contratada', models.TextField(blank=True, default='')),
+                ('responsabilidade_contratante', models.TextField(blank=True, default='')),
+                ('condicoes_gerais', models.TextField(blank=True, default='')),
+                ('prazo', models.TextField(blank=True, default='')),
+                ('efetivo_previsto', models.TextField(blank=True, default='')),
+                ('condicoes_pagamento', models.TextField(blank=True, default='')),
+                ('encerramento', models.TextField(blank=True, default='')),
+                ('criado_por', models.CharField(blank=True, default='', max_length=150)),
+                ('criado_em', models.DateTimeField(auto_now_add=True)),
+                ('atualizado_em', models.DateTimeField(auto_now=True)),
+            ],
+            options={
+                'verbose_name': 'Template de Proposta',
+                'verbose_name_plural': 'Templates de Proposta',
+                'ordering': ['nome'],
+            },
+        ),
+        migrations.CreateModel(
             name='LogAtividade',
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),

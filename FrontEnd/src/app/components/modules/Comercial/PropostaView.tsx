@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { extrairComponentesDoId, gerarIdProjeto, gerarIdProposta, gerarIdProjetoDeNegocio, useErp } from '../../../context/ErpContext';
 import { formatDateBR } from '../../../utils/formatDate';
-import { Plus, X, FileText, CheckCircle, XCircle, ArrowLeft, Save, Download, RefreshCw, DollarSign, AlertTriangle } from 'lucide-react';
+import { Plus, X, FileText, CheckCircle, XCircle, ArrowLeft, Save, Download, RefreshCw, DollarSign, AlertTriangle, Trash2 } from 'lucide-react';
 import { handleDownloadPropostaPDF } from '../CRM/handleDownloadPropostaPDF';
 import { handleDownloadOrcamentoPDF } from '../CRM/handleDownloadOrcamentoPDF';
 import { isEmpresaLinave, getLogoUrlForEmpresa } from '../../../utils/company';
@@ -10,6 +10,15 @@ import Docxtemplater from 'docxtemplater';
 import { saveAs } from 'file-saver';
 import { getNegocios } from '../../../../services/comercial';
 import { getClientes, criarProposta, atualizarProposta, atualizarNegocio } from '../../../../services/comercialService';
+import {
+  CAMPOS_TEMPLATE_PROPOSTA,
+  getPropostaTemplates,
+  createPropostaTemplate,
+  updatePropostaTemplate,
+  deletePropostaTemplate,
+  type CampoTemplateProposta,
+  type PropostaTemplate,
+} from '../../../../services/propostaTemplatesService';
 import { temServico, temLocacao } from '../../../utils/modalidade';
 import { boldOS } from '../../../utils/osHighlight';
 import { ObservacoesNegocio } from '../../ObservacoesNegocio';
@@ -52,6 +61,27 @@ interface PropostaFormData {
   efetivoPrevisto: string;
   encerramento: string;
 }
+
+// ---- Templates de proposta ------------------------------------------------
+// Os campos que um template preenche (CAMPOS_TEMPLATE_PROPOSTA) vivem no service,
+// junto do CRUD da tabela `comercialapp_templateproposta`. Ficam DE FORA, por serem
+// específicos de cada negócio:
+//   - preço  -> preco, precoItens, precoTextoLivre (vem do orçamento)
+//   - escopo -> escopoA, escopoBasicoServicos (levantado a bordo)
+//   - autopreenchidos -> dataProposta, numeroProposta, cliente, atribuidoA, cargoContato
+const ROTULOS_CAMPO_TEMPLATE: Record<CampoTemplateProposta, string> = {
+  referencia: 'Referência',
+  saudacao: 'Saudação',
+  assunto: 'Assunto',
+  textoAbertura: 'Texto de Abertura',
+  responsabilidadeContratada: 'B - Resp. da Contratada',
+  escopoC: 'C - Resp. da Contratante',
+  condicoesGerais: 'E - Condições Gerais',
+  prazo: 'F - Prazo',
+  efetivoPrevisto: 'G - Efetivo Previsto',
+  condicoesPagamento: 'H - Cond. de Pagamento',
+  encerramento: 'Encerramento',
+};
 
 const indexToVersaoAlfabetica = (index: number) => {
   if (index < 0) return 'A';
@@ -166,7 +196,7 @@ const parsePrecoParaDecimal = (preco: string): number => {
 };
 
 export function PropostaView() {
-  const { obras, os, saveEntity } = useErp() as any;
+  const { obras, os, saveEntity, userSession } = useErp() as any;
   const [listaNegocios, setListaNegocios] = useState<any[]>([]);
   const [filtroOs, setFiltroOs] = useState<string>('');
   const [listaClientesLocal, setListaClientesLocal] = useState<any[]>([]);
@@ -239,6 +269,116 @@ export function PropostaView() {
 
   const [propostaForm, setPropostaForm] = useState<PropostaFormData>(getInitialPropostaForm);
   const [novaColunaPorEscopo, setNovaColunaPorEscopo] = useState<Record<string, string>>({});
+
+  // ---- Templates de proposta ----------------------------------------------
+  // Tabela própria no SQL (`comercialapp_templateproposta`, via /comercial/templates-proposta/),
+  // então são compartilhados por todos os usuários.
+  const [templatesProposta, setTemplatesProposta] = useState<PropostaTemplate[]>([]);
+  const [templateSelecionado, setTemplateSelecionado] = useState<string>('');
+  const [nomeNovoTemplate, setNomeNovoTemplate] = useState<string>('');
+  const [salvandoTemplate, setSalvandoTemplate] = useState(false);
+  const [persistindoTemplate, setPersistindoTemplate] = useState(false);
+
+  const recarregarTemplates = async () => setTemplatesProposta(await getPropostaTemplates());
+
+  useEffect(() => { recarregarTemplates(); }, []);
+
+  const camposPreenchidosDoTemplate = (tpl: PropostaTemplate) =>
+    CAMPOS_TEMPLATE_PROPOSTA.filter((campo) => String(tpl.campos?.[campo] ?? '').trim());
+
+  // Preenche só os campos que o template tem conteúdo — assim um template parcial
+  // (ex.: só condições de pagamento) não apaga o resto do que já foi digitado.
+  const aplicarTemplate = (id: string) => {
+    setTemplateSelecionado(id);
+    if (!id) return;
+
+    const tpl = templatesProposta.find((t) => String(t.id) === String(id));
+    if (!tpl) return;
+
+    const camposDoTemplate = camposPreenchidosDoTemplate(tpl);
+    if (camposDoTemplate.length === 0) {
+      window.alert(`O template "${tpl.nome}" está vazio.`);
+      return;
+    }
+
+    const seraoSobrescritos = camposDoTemplate.filter((campo) =>
+      String((propostaForm as any)[campo] ?? '').trim(),
+    );
+    if (seraoSobrescritos.length > 0) {
+      const lista = seraoSobrescritos.map((campo) => `• ${ROTULOS_CAMPO_TEMPLATE[campo]}`).join('\n');
+      const ok = window.confirm(
+        `Aplicar o template "${tpl.nome}"?\n\nOs campos abaixo já têm conteúdo e serão substituídos:\n${lista}\n\nPreço e escopo não são alterados.`,
+      );
+      if (!ok) {
+        setTemplateSelecionado('');
+        return;
+      }
+    }
+
+    setPropostaForm((prev) => {
+      const next: any = { ...prev };
+      camposDoTemplate.forEach((campo) => { next[campo] = String(tpl.campos?.[campo] ?? ''); });
+      return next;
+    });
+  };
+
+  const salvarTemplate = async () => {
+    const nome = nomeNovoTemplate.trim();
+    if (!nome) { window.alert('Dê um nome ao template.'); return; }
+
+    const campos: Partial<Record<CampoTemplateProposta, string>> = {};
+    CAMPOS_TEMPLATE_PROPOSTA.forEach((campo) => {
+      const valor = String((propostaForm as any)[campo] ?? '');
+      if (valor.trim()) campos[campo] = valor;
+    });
+    if (Object.keys(campos).length === 0) {
+      window.alert('Preencha ao menos um campo (fora preço e escopo) antes de salvar o template.');
+      return;
+    }
+
+    // Nome é único na tabela — se já existe, o usuário decide se sobrescreve (PUT).
+    const existente = templatesProposta.find(
+      (t) => String(t.nome || '').trim().toLowerCase() === nome.toLowerCase(),
+    );
+    if (existente && !window.confirm(`Já existe um template "${existente.nome}". Substituir o conteúdo dele?`)) return;
+
+    const autor = userSession?.nome || userSession?.username || userSession?.email || '';
+    setPersistindoTemplate(true);
+    try {
+      const salvo = existente
+        ? await updatePropostaTemplate(existente.id, nome, campos, existente.criadoPor || autor)
+        : await createPropostaTemplate(nome, campos, autor);
+      await recarregarTemplates();
+      setTemplateSelecionado(String(salvo.id));
+      setNomeNovoTemplate('');
+      setSalvandoTemplate(false);
+      window.alert(`Template "${nome}" salvo com ${Object.keys(campos).length} campo(s).`);
+    } catch (error: any) {
+      console.error('Erro ao salvar template de proposta:', error);
+      const detalhe = error?.response?.data?.nome?.[0] || error?.response?.data?.detail || '';
+      window.alert(`Não foi possível salvar o template.${detalhe ? `\n\n${detalhe}` : '\n\nVerifique a conexão com o servidor.'}`);
+    } finally {
+      setPersistindoTemplate(false);
+    }
+  };
+
+  const excluirTemplate = async () => {
+    const tpl = templatesProposta.find((t) => String(t.id) === String(templateSelecionado));
+    if (!tpl) return;
+    if (!window.confirm(`Excluir o template "${tpl.nome}"? Essa ação não pode ser desfeita.`)) return;
+
+    setPersistindoTemplate(true);
+    try {
+      await deletePropostaTemplate(tpl.id);
+      await recarregarTemplates();
+      setTemplateSelecionado('');
+    } catch (error) {
+      console.error('Erro ao excluir template de proposta:', error);
+      window.alert('Não foi possível excluir o template. Verifique a conexão com o servidor.');
+    } finally {
+      setPersistindoTemplate(false);
+    }
+  };
 
   const formatarVersaoProposta = (proposta: any) => {
     if (!proposta) return 'Original';
@@ -1455,6 +1595,98 @@ export function PropostaView() {
       </div>
 
       <ObservacoesNegocio servicos={selectedObra?.servicos} />
+
+      {/* SEÇÃO 0: TEMPLATES — preenchem os textos padrão (nunca preço nem escopo) */}
+      <div className={sectionClass}>
+        <div className="flex items-center justify-between gap-4 mb-4">
+          <h3 className="text-base font-black text-white uppercase">Templates</h3>
+          <span className="text-[9px] text-white/40 font-black uppercase tracking-widest">
+            Não alteram preço nem escopo
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex-1 min-w-[240px] space-y-1.5">
+            <label className={labelClass}>Aplicar template salvo</label>
+            <select
+              className={inputClass}
+              value={templateSelecionado}
+              onChange={(e) => aplicarTemplate(e.target.value)}
+            >
+              <option value="">
+                {templatesProposta.length ? 'Selecione um template...' : 'Nenhum template salvo ainda'}
+              </option>
+              {templatesProposta.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.nome} ({camposPreenchidosDoTemplate(t).length} campos)
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => { setSalvandoTemplate(true); setNomeNovoTemplate(''); }}
+            disabled={persistindoTemplate}
+            className="px-4 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg font-black text-xs uppercase tracking-widest transition flex items-center gap-2"
+            title="Salva os textos atuais do formulário como um novo template"
+          >
+            <Save size={14} /> Salvar como template
+          </button>
+
+          {templateSelecionado && (
+            <button
+              type="button"
+              onClick={excluirTemplate}
+              disabled={persistindoTemplate}
+              className="px-4 py-3 bg-red-600/80 hover:bg-red-600 disabled:opacity-50 text-white rounded-lg font-black text-xs uppercase tracking-widest transition flex items-center gap-2"
+              title="Exclui o template selecionado"
+            >
+              <Trash2 size={14} /> Excluir
+            </button>
+          )}
+        </div>
+
+        {salvandoTemplate && (
+          <div className="mt-4 bg-[#0b1220] border border-emerald-500/30 rounded-xl p-4 space-y-3">
+            <div className="space-y-1.5">
+              <label className={labelClass}>Nome do template</label>
+              <input
+                type="text"
+                autoFocus
+                className={inputClass}
+                placeholder="Ex: Padrão docagem, Padrão serviço a bordo..."
+                value={nomeNovoTemplate}
+                onChange={(e) => setNomeNovoTemplate(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') salvarTemplate(); }}
+              />
+            </div>
+            <p className="text-white/40 text-[10px] leading-relaxed">
+              Serão salvos os campos preenchidos:{' '}
+              {CAMPOS_TEMPLATE_PROPOSTA.filter((c) => String((propostaForm as any)[c] ?? '').trim())
+                .map((c) => ROTULOS_CAMPO_TEMPLATE[c])
+                .join(' · ') || <span className="text-amber-400">nenhum campo preenchido no momento</span>}
+            </p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={salvarTemplate}
+                disabled={persistindoTemplate}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg font-black text-xs uppercase tracking-widest transition"
+              >
+                {persistindoTemplate ? 'Salvando...' : 'Salvar'}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setSalvandoTemplate(false); setNomeNovoTemplate(''); }}
+                className="px-4 py-2 bg-white/10 hover:bg-white/15 text-white rounded-lg font-black text-xs uppercase tracking-widest transition"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* SEÇÃO 1: DATA E NÚMERO (AUTOPREENCHIDOS) */}
       <div className={sectionClass}>
