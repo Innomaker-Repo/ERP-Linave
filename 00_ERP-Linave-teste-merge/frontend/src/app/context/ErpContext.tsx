@@ -1,0 +1,1309 @@
+import React, { createContext, useContext, useState, useEffect } from 'react';
+import { getClientes, createCliente, updateCliente, deleteCliente as deleteClienteApi, getNegocios, getOrdensServico } from '../../services/comercialService';
+import { mapNegociosToObras, mapOrdensToOs } from '../../services/obrasMapper';
+import { getFornecedores, createFornecedor, updateFornecedor, deleteFornecedor as deleteFornecedorApi } from '../../services/fornecedoresService';
+import { getFinanceiro, syncFinanceiro } from '../../services/financeiroService';
+import { getCompras, syncCompras, syncComprasHistorico } from '../../services/comprasService';
+import { getAlmoxarifado, syncAlmoxarifado } from '../../services/almoxarifadoService';
+import { getConfiguracoes, syncConfig, syncListas } from '../../services/configuracoesService';
+import { getMedicoes } from '../../services/medicoesService';
+import { getStoredSession as getAuthSession, getStoredTokens, storeSession, clearTokens, refreshAccessToken } from '../../services/authService';
+import { toast } from 'sonner';
+
+
+const cloneDeep = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+
+const buildTextDataUrl = (text: string) => `data:text/plain;charset=utf-8,${encodeURIComponent(text)}`;
+const buildHtmlDataUrl = (html: string) => `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+
+// --- FUNÇÕES PARA GERAÇÃO DE IDS PADRONIZADOS ---
+/**
+ * Gera o ID do projeto no formato: PREFIX-NUMERO/ANO
+ * Exemplo: PREFIX='LN', NUMERO='0731' → 'LN-0731/26'
+ */
+export const gerarIdProjeto = (prefixo: string, numeroSequencial: string): string => {
+  const anoAtual = new Date().getFullYear().toString().slice(-2);
+  return `${prefixo}-${numeroSequencial}/${anoAtual}`;
+};
+
+/**
+ * Gera o ID de proposta no formato: PREFIX-NUMERO/ANO ou PREFIX-NUMERO<VERSAO>/ANO.
+ * A primeira versão sai sem sufixo; revisões usam letras (A, B, C...).
+ */
+export const gerarIdProposta = (prefixo: string, numeroSequencial: string, versionLetra: string = ''): string => {
+  const anoAtual = new Date().getFullYear().toString().slice(-2);
+  const sufixoVersao = versionLetra ? versionLetra : '';
+  return `${prefixo}-${numeroSequencial}${sufixoVersao}/${anoAtual}`;
+};
+
+/**
+ * Gera o ID de orçamento no formato: PREFIX-NUMERO/ANO ou PREFIX-NUMERO<VERSAO>/ANO.
+ * A primeira versão sai sem sufixo; revisões usam letras (A, B, C...).
+ */
+export const gerarIdOrcamento = (prefixo: string, numeroSequencial: string, versionLetra?: string): string => {
+  const anoAtual = new Date().getFullYear().toString().slice(-2);
+  const versao = versionLetra ? versionLetra : '';
+  return `${prefixo}-${numeroSequencial}${versao}/${anoAtual}`;
+};
+
+/**
+ * Extrai prefixo, número de sequência, versão e ano do ID do projeto
+ * Exemplo: 'LN-0731A/26' → { prefixo: 'LN', numero: '0731', versao: 'A', ano: '26' }
+ */
+export const extrairComponentesDoId = (idProjeto: string): { prefixo: string; numero: string; versao: string; ano: string } | null => {
+  const match = idProjeto.match(/^(?:([A-Z]+)-)?(\d+)([A-Z]+)?\/(\d+)$/);
+  if (match) {
+    return {
+      prefixo: match[1] || '',
+      numero: match[2],
+      versao: match[3] || '',
+      ano: match[4]
+    };
+  }
+  return null;
+};
+
+/**
+ * Extrai o ID do projeto a partir do ID de proposta/orçamento
+ * Exemplo: 'LN-0731A/26' → 'LN-0731/26'
+ */
+export const extrairIdProjetoDoNumero = (numeroCompleto: string): string => {
+  // Remove a versão (letra) se existir
+  // Exemplo: "LN-0731A/26" → "LN-0731/26" e "0731A/26" → "0731/26"
+  const match = numeroCompleto.match(/^(?:([A-Z]+)-)?(\d+)([A-Z])?\/(\d+)$/);
+  if (match) {
+    const prefixo = match[1] ? `${match[1]}-` : '';
+    return `${prefixo}${match[2]}/${match[4]}`;
+  }
+  return numeroCompleto;
+};
+
+/**
+ * Converte o nome da empresa prestadora no prefixo do ID.
+ * Exemplo: 'Linave' → 'LN', 'Servinave' → 'VTS'
+ */
+export const getPrefixoEmpresa = (empresaPrestadora?: string): string => {
+  if (!empresaPrestadora) return 'LN';
+  return empresaPrestadora.toLowerCase().includes('servinave') ? 'VTS' : 'LN';
+};
+
+/**
+ * Deriva o ID base de um negócio (LN-0001/26 ou SN-0001/26) a partir do objeto
+ * do negócio, aceitando tanto o formato cru do backend quanto o `obra` mapeado.
+ * É a fonte única de verdade que orçamento, proposta e OS devem usar para herdar
+ * o mesmo ID base do negócio ao qual estão atrelados.
+ */
+export const gerarIdProjetoDeNegocio = (negocio: any): string => {
+  // Usa apenas o id sequencial numérico do backend. Ignora qualquer `id` que já
+  // venha formatado (ex.: "SN-0002/26") para não duplicar prefixo/ano numa obra
+  // já mapeada — nesse caso o número puro está em negocioBackendId/backendId.
+  const idNumerico = [negocio?.negocioBackendId, negocio?.backendId, negocio?.id]
+    .find((valor) => valor !== null && valor !== undefined && /^\d+$/.test(String(valor)));
+  const empresa = negocio?.empresa_prestadora ?? negocio?.empresaPrestadora;
+  return gerarIdProjeto(getPrefixoEmpresa(empresa), String(idNumerico ?? '').padStart(4, '0'));
+};
+// ------------------------------------------
+
+
+const SEVEN_OCEAN_MAO_DE_OBRA = [
+  { funcao: 'Encarregado', quantidade: '0,5', dias: '10', valorTotal: '1640.00' },
+  { funcao: 'Encanador', quantidade: '2', dias: '10', valorTotal: '5380.00' },
+  { funcao: 'Ajudante', quantidade: '2', dias: '10', valorTotal: '3440.00' },
+  { funcao: 'Soldador', quantidade: '2', dias: '10', valorTotal: '6456.00' }
+];
+
+const SEVEN_OCEAN_MATERIAIS = [
+  { descricao: 'Tubo diam. 2" a/c sch. 40 x 6000mm', unidade: 'metro', quantidade: '42', valorTotal: '10832.51' },
+  { descricao: 'curva diam. 2" sch 40', unidade: 'unid', quantidade: '30', valorTotal: '1287.00' },
+  { descricao: 'Flange diam. 2"', unidade: 'unid', quantidade: '33', valorTotal: '3775.20' },
+  { descricao: 'Luvas roscada 1"', unidade: 'und', quantidade: '4', valorTotal: '156.00' },
+  { descricao: 'bujão roscado 1"', unidade: 'unid', quantidade: '4', valorTotal: '156.00' },
+  { descricao: 'consumiveis de solda', unidade: 'kg', quantidade: '25.1784', valorTotal: '881.24400' },
+  { descricao: 'parafusos bi-cromotizado 5/8 x 65mm', unidade: 'unid', quantidade: '132', valorTotal: '1320.0000' },
+  { descricao: 'Acabamento - hard top xp n2677 std (11m2/litro)', unidade: 'gal', quantidade: '2', valorTotal: '1200.0000' },
+  { descricao: 'consumiveis de pintura', unidade: 'vb', quantidade: '1', valorTotal: '1000.00' },
+  { descricao: 'juntas', unidade: 'unid', quantidade: '66', valorTotal: '990.00' }
+];
+
+const SEVEN_OCEAN_TERCEIRIZADOS = [
+  { descricao: 'Jato granalha e pintura na cabine jato', unidade: 'kg', quantidade: '450', valorUnitario: '2,40', valorTotal: '1080.00' },
+  { descricao: 'Galvanização', unidade: 'kg', quantidade: '450', valorUnitario: '8,00', valorTotal: '3600.00' },
+  { descricao: 'Inspetor de pintura', unidade: 'Diaria', quantidade: '1', valorUnitario: '1.000,00', valorTotal: '1000.00' },
+  { descricao: 'Transporte para resendo Galvanização', unidade: 'frete', quantidade: '2', valorUnitario: '2.000,00', valorTotal: '4000.00' },
+  { descricao: 'transporte cabine jato', unidade: 'frete', quantidade: '2', valorUnitario: '800,00', valorTotal: '1600.00' }
+];
+
+const SEVEN_OCEAN_ORCAMENTO_PREVIEW = `ORCAMENTO LN-0731A/26
+Cliente: SUBSEA 7
+Projeto / Navio: SEVEN OCEAN
+Escopo: SUBSTITUICAO LINHA SEWAGE
+Solicitante: Subsea 7 / Seven Ocean - UBU
+Referencias: Request SOS26M0047 | Request SOS26M0046
+
+Totais
+- Mao de obra direta: R$ 16.916,00
+- Materiais e consumiveis: R$ 21.597,96
+- Terceirizacoes e fretes: R$ 11.280,00
+- Custo direto: R$ 49.793,96
+- O.H: R$ 2.489,70
+- Margem: R$ 17.427,89
+- PV s/ imposto: R$ 69.711,54
+- Imposto: R$ 11.502,40
+- PV FINAL: R$ 81.213,95
+- Valor total do servico: R$ 135.333,95
+
+Mao de obra
+${SEVEN_OCEAN_MAO_DE_OBRA.map((item) => `- ${item.funcao}: ${item.quantidade} x ${item.dias} dias = R$ ${item.valorTotal}`).join('\n')}
+
+Materiais
+${SEVEN_OCEAN_MATERIAIS.map((item) => `- ${item.descricao} (${item.quantidade} ${item.unidade}) = R$ ${item.valorTotal}`).join('\n')}
+
+Terceirizados
+${SEVEN_OCEAN_TERCEIRIZADOS.map((item) => `- ${item.descricao} (${item.quantidade} ${item.unidade}) = R$ ${item.valorTotal}`).join('\n')}`;
+
+const SEVEN_OCEAN_PROPOSTA_PREVIEW = `PROPOSTA LN-0731A/26
+Niteroi, 01 de fevereiro de 2026
+Ref.: Seven Ocean - UBU
+Solicitacoes: Request SOS26M0047 | Request SOS26M0046
+Assunto: Proposta tecnica-comercial para servico SEVEN OCEANS - fabricacao e substituicao das linhas de Sewage
+
+Escopo basico
+1- Fabricacao e fornecimento dos spools das linhas de Sewage de bordo, considerando todo fornecimento de todo material.
+a. Fabricacao dos spools em aco carbono ASTM A106 Gr. B Sch 40, da linha de sewage de bordo do Seven Ocean na Base de UBU.
+b. Providenciar transporte dos spools removidos de UBU-ES para base da Contratada em Niteroi - RJ.
+c. Fabricar novos spools usando como base os spools removidos de bordo.
+d. Apos fabricacao na oficina, efetuar a galvanizacao a quente dos spools para posterior entrega.
+e. Efetuar o transporte dos novos spools para base da Subsea na Ilha da Conceicao - Niteroi.
+
+Condicoes comerciais
+- Todos as taxas e impostos estao incluidos no preco.
+- Impostos e encargos: ISS, PIS, Confins.
+- Estamos considerando 100% mao de obra.
+- Local da obra: Base da Contratada.
+- Pagamento: 100% na conclusao da fabricacao e entrega na base do Cliente, com pagamento a 45 dias da emissao da NF.
+- Mobilizacao: 24hrs apos aprovacao da proposta.
+- Prazo previsto remocao: 01 dia de servico.
+- Prazo para fabricacao e galvanizacao: 22 dias.
+
+Assinatura
+- Nome: XXXX
+- Cargo: Diretoria Comercial`;
+
+// (HTML preview constants defined later) 
+
+const SEVEN_OCEAN_OS_PREVIEW = `OS 0731A
+Data emissao: 02/02/2026
+Cliente: SUBSEA7
+Projeto: SEVEN OCEAN
+CC: LN-0731A/26
+Data termino previsto: 24/02/2026
+HH total: 624
+
+Descricao geral do servico
+Fabricacao e fornecimento dos spools das linhas de Sewage de bordo, considerando todo fornecimento de todo material. Fabricacao dos spools em aco carbono ASTM A106 Gr. B Sch 40, da linha de sewage de bordo do Seven Ocean na Base de UBU.
+
+Inclui
+- certificadoGas
+- ventilacao
+- limpezaAntes
+- limpezaApos
+- apoioGuindastes
+- transporteExterno
+- testePressao
+- pintura
+- lpPm
+- inspecaoDimensional
+- visualSolda
+- soldadorCertificado
+- procedimentoSolda
+- certificacaoMaterial
+- vigiaFogo`;
+
+const SEVEN_OCEAN_SERVICOS = [
+  {
+    id: 'srv-001',
+    tipo: 'Fabricação e fornecimento',
+    categoria: 'Sewage',
+    embarcacao: 'Seven Ocean',
+    localExecucao: 'Base da Contratada',
+    porto: 'UBU-ES / Niterói-RJ',
+    prazoDes: '2026-02-24',
+    descricao: 'Fabricação e fornecimento dos spools das linhas de Sewage de bordo, considerando todo fornecimento de todo material.',
+    observacoes: 'Escopo técnico-comercial da proposta LN-0731A/26.'
+  },
+  {
+    id: 'srv-002',
+    tipo: 'Transporte',
+    categoria: 'Logistica',
+    embarcacao: 'Seven Ocean',
+    localExecucao: 'UBU-ES -> Base da Contratada',
+    porto: 'Niterói-RJ',
+    prazoDes: '2026-02-24',
+    descricao: 'Providenciar transporte dos spools removidos de UBU-ES para base da Contratada em Niterói – RJ.',
+    observacoes: 'Baseado no escopo da proposta.'
+  },
+  {
+    id: 'srv-003',
+    tipo: 'Galvanizacao e pintura',
+    categoria: 'Acabamento',
+    embarcacao: 'Seven Ocean',
+    localExecucao: 'Oficina',
+    porto: 'Niterói-RJ',
+    prazoDes: '2026-02-24',
+    descricao: 'Efetuar a galvanização a quente dos spools e a pintura com tinta PU na cor branca.',
+    observacoes: 'Inclui galvanização e pintura após a fabricação.'
+  },
+  {
+    id: 'srv-004',
+    tipo: 'Inspeção e documentação',
+    categoria: 'Qualidade',
+    embarcacao: 'Seven Ocean',
+    localExecucao: 'Base do cliente',
+    porto: 'Ilha da Conceição - Niterói',
+    prazoDes: '2026-02-24',
+    descricao: 'Enviar equipe técnica para levantamento das tubulações a serem fabricadas e realizar inspeções dimensionais, visuais e certificações de material.',
+    observacoes: 'Conforme proposta e OS.'
+  },
+  {
+    id: 'srv-005',
+    tipo: 'Entrega final',
+    categoria: 'Logistica',
+    embarcacao: 'Seven Ocean',
+    localExecucao: 'Subsea 7 / Ilha da Conceição',
+    porto: 'Niterói-RJ',
+    prazoDes: '2026-02-24',
+    descricao: 'Efetuar o transporte dos novos spools para base da Subsea na Ilha da Conceição – Niteroi.',
+    observacoes: 'Etapa de entrega final do projeto.'
+  }
+];
+
+// Versao HTML da proposta que inclui a logo no topo (usa /image2.jpg e /image1.png servidos a partir de /public)
+const SEVEN_OCEAN_PROPOSTA_PREVIEW_HTML = `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial,Helvetica,sans-serif;white-space:pre-wrap;margin:28px;} .logo{text-align:center;margin-bottom:12px;}</style></head><body><div class="logo"><img src="/image2.jpg" alt="logo" style="max-width:260px;height:auto;"/></div><div>${SEVEN_OCEAN_PROPOSTA_PREVIEW.replace(/</g,'&lt;')}</div></body></html>`;
+const SEVEN_OCEAN_PROPOSTA_PREVIEW_HTML_SERVINAVE = `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial,Helvetica,sans-serif;white-space:pre-wrap;margin:28px;} .logo{text-align:center;margin-bottom:12px;}</style></head><body><div class="logo"><img src="/image1.png" alt="logo" style="max-width:260px;height:auto;"/></div><div>${SEVEN_OCEAN_PROPOSTA_PREVIEW.replace(/</g,'&lt;')}</div></body></html>`;
+
+const isLinaveName = (s: string | undefined | null) => {
+  if (!s) return false;
+  try {
+    return String(s).toLowerCase().includes('linave');
+  } catch (e) {
+    return false;
+  }
+};
+
+const getProposalHtmlForCompany = (companyName: string | undefined | null) => isLinaveName(companyName)
+  ? SEVEN_OCEAN_PROPOSTA_PREVIEW_HTML
+  : SEVEN_OCEAN_PROPOSTA_PREVIEW_HTML_SERVINAVE;
+
+const buildOrcamentoValores = (precoFinal: number) => ({
+  totalMaoDeObra: 16916,
+  totalMateriais: 21597.96,
+  totalTerceirizados: 11280,
+  totalBruto: 49793.96,
+  totalSemImposto: 69711.54,
+  subtotal: 49793.96,
+  margem: 35,
+  oh: 5,
+  impostos: 16.5,
+  valorMargem: 17427.89,
+  valorOH: 2489.7,
+  valorImpostos: 11502.4,
+  precoFinal,
+  valorTotalServico: 135333.95
+});
+
+const buildOrcamentoData = (
+  numeroOrcamento: string,
+  solicitante: string,
+  responsavelComercial: string,
+  escopoOrcamento: string,
+  dadosServicos: any[],
+  precoFinal: number,
+  dataCriacao: string,
+) => ({
+  versao: 'A',
+  dataCriacao,
+  status: 'pendente',
+  numeroOrcamento,
+  data: {
+    numeroOrcamento,
+    solicitante,
+    responsavelComercial,
+    documentosReferencia: 'Request SOS26M0047 | Request SOS26M0046',
+    escopoOrcamento,
+    dadosServicos,
+    maoDeObra: cloneDeep(SEVEN_OCEAN_MAO_DE_OBRA),
+    atividades: [
+      { atividade: 'Levantamento tecnico e delineamento', dias: '1', observacao: 'Conforme proposta e OS.' },
+      { atividade: 'Fabricacao dos spools', dias: '22', observacao: 'Aco carbono ASTM A106 Gr. B Sch 40.' },
+      { atividade: 'Galvanizacao e pintura', dias: '22', observacao: 'Pintura PU branca apos galvanizacao.' },
+      { atividade: 'Transporte e entrega', dias: '1', observacao: 'Base do cliente na Ilha da Conceicao.' }
+    ],
+    materiais: cloneDeep(SEVEN_OCEAN_MATERIAIS),
+    terceirizados: cloneDeep(SEVEN_OCEAN_TERCEIRIZADOS),
+    observacoes: 'Projeto LN-0731A/26 com base nos documentos orçamento, proposta e OS.'
+  },
+  valores: buildOrcamentoValores(precoFinal)
+});
+
+const buildProposta = (
+  numeroProposta: string,
+  cliente: string,
+  atribuidoA: string,
+  cargoContato: string,
+  assunto: string,
+  preco: string,
+  status: 'pendente' | 'aceita' = 'pendente',
+) => ({
+  versao: 'A',
+  dataCriacao: '2026-02-01',
+  status,
+  numeroProposta,
+  dataProposta: '2026-02-01',
+  cliente,
+  atribuidoA,
+  cargoContato,
+  referencia: 'Seven Ocean - UBU',
+  saudacao: 'Prezado XXXXX,',
+  assunto,
+  textoAbertura: 'Vimos através desta apresentar nossa Proposta Técnica-Comercial revisada nº LN-0731A/26, para serviços de fabricação e fornecimento dos spools da linha de sewage do Seven Ocean, conforme escopo e delineamento realizado a bordo, conforme solicitado para vossa avaliação e aprovação.',
+  escopoA: 'A – ESCOPO BASICO DE SERVIÇOS',
+  escopoBasicoServicos: '1- Fabricação e fornecimento dos spools das linhas de Sewage de bordo, considerando todo fornecimento de todo material.\na. Fabricação dos spools em aço carbono ASTM A106 Gr. B Sch 40, da linha de sewage de bordo do Seven Ocean na Base de UBU.\nb. Providenciar transporte dos spools removidos de UBU-ES para base da Contratada em Niterói – RJ.\nc. Fabricar novos spools usando como base os spools removidos de bordo.\nd. Após fabricação na oficina, efetuar a galvanização a quente dos spools para posterior entrega.\ne. Efetuar o transporte dos novos spools para base da Subsea na Ilha da Conceição – Niteroi.',
+  responsabilidadeContratada: 'Fornecimento de toda mão de obra qualificada\nMobilização da equipe até a Base de UBU – ES para inspeção\nFornecimento de todo material, tubos, conexões\nDescarte da sucata metálica\nGalvanização a quente de todos os spools',
+  escopoC: 'Disponibilizar os spools removidos para recolhimento Cais na Base UBU-ES\nColeta dos spools fabricados na base da Subsea 7 (Ilha Conceição – Niteroi-RJ)\nRemoção e reinstalação dos spools a bordo',
+  referencias: 'Request SOS26M0047\nRequest SOS26M0046',
+  condicoesGerais: 'Todos as taxas e impostos estão incluídos no preço.\nImpostos: Os seguintes impostos e encargos estão inclusos: ISS, PIS, Confins.\nEstamos de acordo com as devidas retenções na fonte, inclusive do INSS, quando aplicável.\nEstamos considerando 100% mão de obra.\nLocal da obra – Base da Contratada',
+  condicoesPagamento: '100% na conclusão da fabricação e entrega na base do Cliente, com pagamento a 45 dias da emissão da NF.',
+  prazo: 'Mobilização: 24hrs após aprovação da proposta\nPrazo previsto remoção: 01 dia de serviço\nPrazo para fabricação e galvanização: 22 dias',
+  encerramento: 'Atenciosamente,',
+  assinaturaNome: 'XXXX',
+  assinaturaCargo: 'Diretoria Comercial',
+  preco
+});
+
+// (restaurado para comportamento antigo: usar SEVEN_OCEAN_PROPOSTA_PREVIEW)
+
+const buildDemoObra = (
+  id: string,
+  nome: string,
+  clienteId: string,
+  categoria: 'Planejamento' | 'Negociação' | 'Em Andamento' | 'Finalização',
+  tipo: string,
+  responsavelTecnico: string,
+  responsavelComercial: string,
+  solicitante: string,
+  telefone: string,
+  email: string,
+  dataSolicitacao: string,
+  dataPrevistaInicio: string,
+  dataPrevistaFinal: string,
+  servicos: any[],
+  orcamentoFinal: number,
+  numeroOrcamento: string,
+  numeroProposta: string,
+  propostaStatus: 'pendente' | 'aceita',
+  temOS: boolean,
+  osAprovada: boolean,
+) => ({
+  id,
+  nome,
+  clienteId,
+  status: categoria,
+  categoria,
+  tipo,
+  responsavelTecnico,
+  responsavelComercial,
+  solicitante,
+  telefone,
+  email,
+  dataCadastro: dataSolicitacao,
+  dataSolicitacao,
+  dataPrevistaInicio,
+  dataPrevistaFinal,
+  inicioPrevisto: dataPrevistaInicio,
+  fimPrevisto: dataPrevistaFinal,
+  origemOS: true,
+  orcamento: orcamentoFinal,
+  orcamentoRealizado: true,
+  orcamentoData: buildOrcamentoData(
+    numeroOrcamento,
+    solicitante,
+    responsavelComercial,
+    'Substituição da linha Sewage do Seven Ocean',
+    servicos,
+    orcamentoFinal,
+    dataSolicitacao,
+  ).data,
+  orcamentoValores: buildOrcamentoValores(orcamentoFinal),
+  orcamentos: [
+    {
+      versao: 'A',
+      dataCriacao: dataSolicitacao,
+      status: 'aceito',
+      numeroOrcamento,
+      data: buildOrcamentoData(
+        numeroOrcamento,
+        solicitante,
+        responsavelComercial,
+        'Substituição da linha Sewage do Seven Ocean',
+        servicos,
+        orcamentoFinal,
+        dataSolicitacao,
+      ).data,
+      valores: buildOrcamentoValores(orcamentoFinal)
+    }
+  ],
+  documentosNegocio: [
+    {
+      id: `${id}-doc-orcamento`,
+      nome: 'orçamento.pdf',
+      tipo: 'application/pdf',
+      tamanho: 512000,
+      dataUpload: `${dataSolicitacao}T09:00:00.000Z`,
+      conteudo: buildTextDataUrl(SEVEN_OCEAN_ORCAMENTO_PREVIEW)
+    },
+    ...(categoria === 'Negociação' || categoria === 'Em Andamento' || categoria === 'Finalização'
+      ? [
+          {
+            id: `${id}-doc-proposta`,
+            nome: 'proposta.pdf',
+            tipo: 'application/pdf',
+            tamanho: 640000,
+            dataUpload: '2026-02-01T09:00:00.000Z',
+            conteudo: buildTextDataUrl(SEVEN_OCEAN_PROPOSTA_PREVIEW)
+          }
+        ]
+      : []),
+    ...(temOS
+      ? [
+          {
+            id: `${id}-doc-os`,
+            nome: 'OS.pdf',
+            tipo: 'application/pdf',
+            tamanho: 720000,
+            dataUpload: '2026-02-02T09:00:00.000Z',
+            conteudo: buildTextDataUrl(SEVEN_OCEAN_OS_PREVIEW)
+          }
+        ]
+      : [])
+  ],
+  documentoClienteAssinado: categoria === 'Finalização'
+    ? {
+        id: `${id}-assinatura`,
+        nome: 'cliente-assinatura.pdf',
+        tipo: 'application/pdf',
+        tamanho: 120000,
+        dataUpload: '2026-02-24T12:00:00.000Z',
+        conteudo: buildTextDataUrl('Assinatura do cliente LN-0731A/26')
+      }
+    : null,
+  propostas: categoria === 'Planejamento' ? [] : [buildProposta(
+    numeroProposta,
+    'Subsea 7',
+    'XXXX',
+    'Diretoria Comercial',
+    'Proposta Técnica-comercial para serviço SEVEN OCEANS – Fabricação e substituição das linhas de Sewage',
+    'R$ 135.333,95',
+    propostaStatus,
+  )],
+  os: temOS ? [
+    {
+      id: `${id}-os-1`,
+      obraId: id,
+      clienteId: 'CLI-SEVEN-OCEAN',
+      cliente: 'SUBSEA7',
+      projeto: 'SEVEN OCEAN',
+      equipamento: 'Fabricação de spools linha de Sewage',
+      local: 'Base da Contratada',
+      dataEmissao: '2026-02-02',
+      cc: 'LN-0731A/26',
+      dataInicioPrevisto: '2026-02-02',
+      dataTerminoPrevisto: '2026-02-24',
+      ordemServicoNumero: '0731A',
+      supervisorEncarregado: 'Equipe Linave',
+      descricaoGeralServico: 'Fabricação e fornecimento dos spools das linhas de Sewage de bordo, considerando todo fornecimento de todo material. Fabricação dos spools em aço carbono ASTM A106 Gr. B Sch 40, da linha de sewage de bordo do Seven Ocean na Base de UBU.',
+      aSerIncluido: {
+        certificadoGas: true,
+        ventilacao: true,
+        limpezaAntes: true,
+        limpezaApos: true,
+        andaimes: false,
+        apoioGuindastes: true,
+        transporteExterno: true,
+        testePressao: true,
+        pintura: true,
+        lpPm: true,
+        testeUltrassom: false,
+        inspecaoDimensional: true,
+        visualSolda: true,
+        soldadorCertificado: true,
+        procedimentoSolda: true,
+        certificacaoMaterial: true,
+        vigiaFogo: true
+      },
+      maoObra: { estrutura: 0, tubulacao: 570, andaimes: 0, mecanica: 0, pintura: 36, eletrica: 0, cq: 9, sms: 9 },
+      horasTrabalhadasPorServico: [
+        { id: `${id}-hh-tub`, servico: 'Tubulação', hora: 570 },
+        { id: `${id}-hh-pint`, servico: 'Pintura', hora: 36 },
+        { id: `${id}-hh-cq`, servico: 'C.Q', hora: 9 },
+        { id: `${id}-hh-sms`, servico: 'SMS', hora: 9 }
+      ],
+      statusOs: osAprovada ? 'concluida' : 'emproducao',
+      tipoDocumento: 'consolidada',
+      statusEnvio: 'enviada',
+      statusAprovacao: osAprovada ? 'aprovada' : 'pendente',
+      dataAprovacao: osAprovada ? '2026-02-24' : undefined,
+      documentoAssinaturaAprovacao: osAprovada
+        ? {
+            id: `${id}-os-assinada`,
+            nome: 'OS_0731A_26_assinada.pdf',
+            tipo: 'application/pdf',
+            tamanho: 120000,
+            dataUpload: '2026-02-24T12:00:00.000Z',
+            conteudo: 'data:text/plain;charset=utf-8,OS%20assinada%20do%20projeto%20LN-0731A/26'
+          }
+        : null,
+      resumoConsolidado: 'OS do projeto Seven Ocean / LN-0731A/26'
+    }
+  ] : [],
+});
+
+const MOCK_OBRAS = [
+  buildDemoObra(
+    'SEVEN-OCEAN-PLANEJAMENTO',
+    'Seven Ocean - LN-0731A/26',
+    'CLI-SEVEN-OCEAN',
+    'Planejamento',
+    'Fabricação de tubulações Sewage',
+    'Linave Engenharia & Serv. Navais',
+    'Diretoria Comercial',
+    'Subsea 7',
+    '',
+    '',
+    '2026-01-29',
+    '2026-02-02',
+    '2026-02-24',
+    cloneDeep(SEVEN_OCEAN_SERVICOS),
+    81213.95,
+    'LN-0731A/26',
+    'LN-0731A/26',
+    'pendente',
+    false,
+    false
+  ),
+  buildDemoObra(
+    'SEVEN-OCEAN-NEGOCIACAO',
+    'Seven Ocean - LN-0731A/26',
+    'CLI-SEVEN-OCEAN',
+    'Negociação',
+    'Fabricação de tubulações Sewage',
+    'Linave Engenharia & Serv. Navais',
+    'Diretoria Comercial',
+    'Subsea 7',
+    '',
+    '',
+    '2026-02-01',
+    '2026-02-02',
+    '2026-02-24',
+    cloneDeep(SEVEN_OCEAN_SERVICOS),
+    81213.95,
+    'LN-0731A/26',
+    'LN-0731A/26',
+    'pendente',
+    false,
+    false
+  ),
+  buildDemoObra(
+    'SEVEN-OCEAN-ANDAMENTO',
+    'Seven Ocean - LN-0731A/26',
+    'CLI-SEVEN-OCEAN',
+    'Em Andamento',
+    'Fabricação de tubulações Sewage',
+    'Linave Engenharia & Serv. Navais',
+    'Diretoria Comercial',
+    'Subsea 7',
+    '',
+    '',
+    '2026-02-02',
+    '2026-02-02',
+    '2026-02-24',
+    cloneDeep(SEVEN_OCEAN_SERVICOS),
+    81213.95,
+    'LN-0731A/26',
+    'LN-0731A/26',
+    'aceita',
+    true,
+    false
+  ),
+  buildDemoObra(
+    'SEVEN-OCEAN-FINALIZACAO',
+    'Seven Ocean - LN-0731A/26',
+    'CLI-SEVEN-OCEAN',
+    'Finalização',
+    'Fabricação de tubulações Sewage',
+    'Linave Engenharia & Serv. Navais',
+    'Diretoria Comercial',
+    'Subsea 7',
+    '',
+    '',
+    '2026-02-24',
+    '2026-02-02',
+    '2026-02-24',
+    cloneDeep(SEVEN_OCEAN_SERVICOS),
+    81213.95,
+    'LN-0731A/26',
+    'LN-0731A/26',
+    'aceita',
+    true,
+    true
+  )
+];
+
+const SEVEN_OCEAN_OS_BASE = {
+  clienteId: 'CLI-SEVEN-OCEAN',
+  cliente: 'SUBSEA7',
+  projeto: 'SEVEN OCEAN',
+  tipo: 'Fabricação e fornecimento',
+  embarcacao: 'Seven Ocean',
+  equipamento: 'Fabricação de spools linha de Sewage',
+  local: 'Base da Contratada',
+  porto: 'Base UBU - ES / Ilha da Conceicao - Niteroi - RJ',
+  dataEmissao: '2026-02-02',
+  dataCriacao: '2026-02-02',
+  cc: 'LN-0731A/26',
+  dataInicioPrevisto: '2026-02-02',
+  dataTerminoPrevisto: '2026-02-24',
+  ordemServicoNumero: '0731A',
+  supervisorEncarregado: 'Equipe Linave',
+  solicitante: 'Subsea 7',
+  telefone: '-',
+  email: '-',
+  descricao: 'Fabricação e fornecimento dos spools das linhas de Sewage de bordo, considerando todo fornecimento de todo material. Fabricação dos spools em aço carbono ASTM A106 Gr. B Sch 40, da linha de sewage de bordo do Seven Ocean na Base de UBU.',
+  descricaoGeralServico: 'Fabricação e fornecimento dos spools das linhas de Sewage de bordo, considerando todo fornecimento de todo material. Fabricação dos spools em aço carbono ASTM A106 Gr. B Sch 40, da linha de sewage de bordo do Seven Ocean na Base de UBU.',
+  observacoes: 'Resumo da OS do projeto Seven Ocean / LN-0731A/26.',
+  aSerIncluido: {
+    certificadoGas: true,
+    ventilacao: true,
+    limpezaAntes: true,
+    limpezaApos: true,
+    andaimes: false,
+    apoioGuindastes: true,
+    transporteExterno: true,
+    testesPressao: true,
+    pintura: true,
+    lpPm: true,
+    testeUltrassom: false,
+    inspecaoDimensional: true,
+    visualSolda: true,
+    soldadorCertificado: true,
+    procedimentoSolda: true,
+    certificacaoMaterial: true,
+    vigiaFogo: true
+  },
+  maoObra: { estrutura: 0, tubulacao: 570, andaimes: 0, mecanica: 0, pintura: 36, eletrica: 0, cq: 9, sms: 9 },
+  horasTrabalhadasPorServico: [
+    { id: 'hh-tub', servico: 'Tubulação', hora: 570 },
+    { id: 'hh-pint', servico: 'Pintura', hora: 36 },
+    { id: 'hh-cq', servico: 'C.Q', hora: 9 },
+    { id: 'hh-sms', servico: 'SMS', hora: 9 }
+  ],
+  statusEnvio: 'enviada',
+  tipoDocumento: 'consolidada',
+  resumoConsolidado: 'OS do projeto Seven Ocean / LN-0731A/26'
+};
+
+const SEVEN_OCEAN_OS_ORCAMENTO = {
+  versao: 'A',
+  dataCriacao: '2026-01-29',
+  status: 'aceito',
+  numeroOrcamento: 'LN-0731A/26',
+  data: buildOrcamentoData(
+    'LN-0731A/26',
+    'Subsea 7',
+    'Diretoria Comercial',
+    'Substituição da linha Sewage do Seven Ocean',
+    cloneDeep(SEVEN_OCEAN_SERVICOS),
+    81213.95,
+    '2026-01-29',
+  ).data,
+  valores: buildOrcamentoValores(81213.95)
+};
+
+const SEVEN_OCEAN_OS_PROPOSTA = buildProposta(
+  'LN-0731A/26',
+  'Subsea 7',
+  'XXXX',
+  'Diretoria Comercial',
+  'Proposta Técnica-comercial para serviço SEVEN OCEANS – Fabricação e substituição das linhas de Sewage',
+  'R$ 135.333,95',
+  'aceita',
+);
+
+const buildSevenOceanOS = (id: string, obraId: string, statusOs: 'emproducao' | 'concluida', statusAprovacao: 'pendente' | 'aprovada', dataAprovacao?: string) => ({
+  id,
+  obraId,
+  ...SEVEN_OCEAN_OS_BASE,
+  orcamentoRealizado: true,
+  orcamentoData: SEVEN_OCEAN_OS_ORCAMENTO.data,
+  orcamentoValores: SEVEN_OCEAN_OS_ORCAMENTO.valores,
+  orcamentos: [SEVEN_OCEAN_OS_ORCAMENTO],
+  propostas: [SEVEN_OCEAN_OS_PROPOSTA],
+  documentosNegocio: [
+    {
+      id: `${id}-doc-orcamento`,
+      nome: 'orçamento.pdf',
+      tipo: 'application/pdf',
+      tamanho: 512000,
+      dataUpload: '2026-01-29T09:00:00.000Z',
+      conteudo: buildTextDataUrl(SEVEN_OCEAN_ORCAMENTO_PREVIEW)
+    },
+    {
+      id: `${id}-doc-proposta`,
+      nome: 'proposta.pdf',
+      tipo: 'application/pdf',
+      tamanho: 640000,
+      dataUpload: '2026-02-01T09:00:00.000Z',
+      conteudo: buildTextDataUrl(SEVEN_OCEAN_PROPOSTA_PREVIEW)
+    },
+    {
+      id: `${id}-doc-os`,
+      nome: 'OS.pdf',
+      tipo: 'application/pdf',
+      tamanho: 720000,
+      dataUpload: '2026-02-02T09:00:00.000Z',
+      conteudo: buildTextDataUrl(SEVEN_OCEAN_OS_PREVIEW)
+    }
+  ],
+  statusOs,
+  statusAprovacao,
+  dataAprovacao,
+  documentoAssinaturaAprovacao: statusAprovacao === 'aprovada'
+    ? {
+        id: `${id}-assinada`,
+        nome: 'OS_0731A_26_assinada.pdf',
+        tipo: 'application/pdf',
+        tamanho: 120000,
+        dataUpload: '2026-02-24T12:00:00.000Z',
+        conteudo: buildTextDataUrl('OS assinada do projeto LN-0731A/26')
+      }
+    : null
+});
+
+const MOCK_OS = [
+  buildSevenOceanOS('OS-SEVEN-OCEAN-ANDAMENTO', 'SEVEN-OCEAN-ANDAMENTO', 'emproducao', 'pendente'),
+  buildSevenOceanOS('OS-SEVEN-OCEAN-FINALIZACAO', 'SEVEN-OCEAN-FINALIZACAO', 'concluida', 'aprovada', '2026-02-24')
+];
+
+const createInitialData = (savedData: any) => {
+  const baseData = {
+    empresa: null,
+    users: [],
+    pendingUsers: [],
+    clientes: [],
+    funcionarios: [],
+    obras: [],
+    financeiro: [],
+    compras: [],
+    comprasHistorico: [],
+    os: [],
+    medicoes: [],
+    alocacoes: [],
+    registrosHoras: [],
+    folhaPagamento: [],
+    usuarios: [],
+    equipes: [],
+    fornecedores: [],
+    horas: [],
+    almoxerifado: null,
+    config: {
+      empresaNome: 'Linave ERP Demo',
+      empresasPrestadoras: [
+        {
+          id: 'EMP-LINAVE',
+          nome: 'Linave',
+          cnpj: '',
+          endereco: '',
+          contato: '',
+          email: '',
+          ativa: true
+        },
+        {
+          id: 'EMP-SERVINAVE',
+          nome: 'Servinave',
+          cnpj: '',
+          endereco: 'Rua Miguel de Lemos, 44 Fundos - Ponta D\'areia',
+          contato: '+55 (21) 2620-1850',
+          email: 'comercial@servinave.com.br',
+          ativa: true
+        }
+      ]
+    },
+    listas: { departamentos: [], categorias: [], prioridades: [] }
+  };
+
+  const isDemoRecord = (collection: string, item: any) => {
+    const id = item?.id || '';
+    const clienteId = item?.clienteId || '';
+    const obraId = item?.obraId || '';
+
+    switch (collection) {
+      case 'clientes':
+        return ['CLI-1', 'CLI-2', 'CLI-3', 'CLI-4', 'CLI-5', 'CLI-SEVEN-OCEAN'].includes(id);
+      case 'fornecedores':
+        return /^FOR-DEMO-/.test(id);
+      case 'funcionarios':
+        return /^FUN-DEMO-/.test(id);
+      case 'financeiro':
+        return /^FIN-SEVEN-/.test(id) || clienteId === 'CLI-SEVEN-OCEAN' || /SEVEN-OCEAN/.test(obraId);
+      case 'obras':
+        return /SEVEN-OCEAN/.test(id) || clienteId === 'CLI-SEVEN-OCEAN';
+      case 'os':
+        return /SEVEN-OCEAN/.test(id) || clienteId === 'CLI-SEVEN-OCEAN' || /SEVEN-OCEAN/.test(obraId);
+      default:
+        return false;
+    }
+  };
+
+  const hasStableOsNumber = (item: any) => Boolean(String(
+    item?.ordemServicoNumero ??
+    item?.ordem_servico_numero ??
+    item?.numero_os ??
+    item?.numeroOs ??
+    item?.cc ??
+    ''
+  ).trim());
+
+  const isLegacyOsRecord = (item: any) => /^(OS-(CONS|RASCUNHO)-)/i.test(String(item?.id || '')) || /^(OS-(CONS|RASCUNHO)-)/i.test(String(
+    item?.ordemServicoNumero ??
+    item?.ordem_servico_numero ??
+    item?.numero_os ??
+    item?.numeroOs ??
+    ''
+  ));
+
+  const sanitizeCollection = (collection: string, items: any[] = []) => {
+    if (!Array.isArray(items)) return [];
+    return items.filter((item) => {
+      if (isDemoRecord(collection, item)) return false;
+      if (collection === 'os' && isLegacyOsRecord(item) && !hasStableOsNumber(item)) return false;
+      return true;
+    });
+  };
+
+  if (!savedData) {
+    return baseData;
+  }
+
+  const sanitizedData = {
+    ...baseData,
+    clientes: [], // Commercial clients are sourced directly from backend SQL.
+    financeiro: [], // Financeiro agora vem do backend SQL (hidratado via getFinanceiro).
+    compras: [], // Compras agora vêm do backend SQL (hidratadas via getCompras).
+    comprasHistorico: [], // Histórico de compras também vem do backend SQL.
+    os: [], // OS agora vem do backend SQL (hidratada via getOrdensServico).
+    usuarios: Array.isArray(savedData.usuarios) ? savedData.usuarios : [],
+    equipes: Array.isArray(savedData.equipes) ? savedData.equipes : [],
+    fornecedores: [], // Fornecedores agora vêm do backend SQL (hidratados via getFornecedores).
+    horas: Array.isArray(savedData.horas) ? savedData.horas : [],
+    almoxerifado: savedData.almoxerifado && typeof savedData.almoxerifado === 'object'
+      ? {
+          version: Number(savedData.almoxerifado.version) >= 2 ? 2 : 1,
+          tables: Array.isArray(savedData.almoxerifado.tables) ? savedData.almoxerifado.tables : [],
+          gasTypes: Array.isArray(savedData.almoxerifado.gasTypes) ? savedData.almoxerifado.gasTypes : [],
+          allocations: Array.isArray(savedData.almoxerifado.allocations) ? savedData.almoxerifado.allocations : [],
+          baixasHistorico: Array.isArray(savedData.almoxerifado.baixasHistorico) ? savedData.almoxerifado.baixasHistorico : [],
+          alocacoesHistorico: Array.isArray(savedData.almoxerifado.alocacoesHistorico) ? savedData.almoxerifado.alocacoesHistorico : [],
+          romaneiosHistorico: Array.isArray(savedData.almoxerifado.romaneiosHistorico) ? savedData.almoxerifado.romaneiosHistorico : [],
+          selectedForRomaneio: Array.isArray(savedData.almoxerifado.selectedForRomaneio) ? savedData.almoxerifado.selectedForRomaneio : [],
+          itensParaAdicionar: Array.isArray(savedData.almoxerifado.itensParaAdicionar) ? savedData.almoxerifado.itensParaAdicionar : []
+        }
+      : baseData.almoxerifado,
+    config: savedData.config ? { ...baseData.config, ...savedData.config } : baseData.config,
+    listas: savedData.listas ? { ...baseData.listas, ...savedData.listas } : baseData.listas
+  };
+
+  const hasUserData = [
+    sanitizedData.clientes,
+    sanitizedData.funcionarios,
+    sanitizedData.obras,
+    sanitizedData.financeiro,
+    sanitizedData.compras,
+    sanitizedData.os,
+    sanitizedData.usuarios,
+    sanitizedData.equipes,
+    sanitizedData.fornecedores,
+    sanitizedData.horas
+  ].some((collection) => collection.length > 0);
+
+  const hasAlmoxerifadoData = Boolean(savedData?.almoxerifado && typeof savedData.almoxerifado === 'object');
+
+  if (!hasUserData && !hasAlmoxerifadoData && (!sanitizedData.config?.empresaNome || sanitizedData.config.empresaNome === 'Linave ERP' || sanitizedData.config.empresaNome === 'Nova Empresa')) {
+    return baseData;
+  }
+
+  return sanitizedData;
+};
+
+interface ErpContextData {
+  userSession: any;
+  setUserSession: (s: any) => void;
+  loading: boolean;
+  clientes: any[];
+  funcionarios: any[];
+  obras: any[];
+  financeiro: any[];
+  compras: any[];
+  comprasHistorico: any[];
+  os: any[];
+  usuarios: any[];
+  equipes: any[];
+  fornecedores: any[];
+  horas: any[];
+  almoxerifado: any;
+  config: any;
+  listas: any;
+  loginComGoogle: (token: string, email: string) => Promise<void>;
+  loginDireto: (user: any) => void;
+  logout: () => void;
+  saveEntity: (collection: string, data: any) => Promise<void>;
+  saveListas: (novasListas: any) => Promise<void>;
+  saveConfig: (novaConfig: any) => Promise<void>;
+  saveCliente: (cliente: any) => Promise<any>;
+  deleteCliente: (id: any) => Promise<void>;
+  saveFornecedor: (fornecedor: any) => Promise<any>;
+  deleteFornecedor: (id: any) => Promise<void>;
+  refreshMedicoes: () => Promise<any[]>;
+  uploadFileToDrive: (file: File) => Promise<string | null>;
+}
+
+const ErpContext = createContext<ErpContextData>({} as ErpContextData);
+
+// Usa chave fora do padrão /workspace|linave|comercial|crm|erp/i para não ser
+// apagada por clearLegacyCommercialLocalStorage() em cada carregamento da página.
+const getStoredSession = () => {
+  if (typeof window === 'undefined') return null;
+  return getAuthSession();
+};
+
+export function ErpProvider({ children }: { children: React.ReactNode }) {
+  const [userSession, setUserSession] = useState<any>(() => getStoredSession());
+  const [loading, setLoading] = useState(true);
+
+  const [data, setData] = useState<any>(() => createInitialData(null));
+
+  // Se há uma sessão salva mas o access token sumiu, tenta renová-lo via
+  // refresh token (válido por 30 dias). Só força logout se AMBOS falharem.
+  useEffect(() => {
+    const checkTokens = async () => {
+      const stored = getStoredSession();
+      if (!stored) return;
+
+      const { access } = getStoredTokens();
+      if (access) return; // Access token presente: tudo OK.
+
+      // Sem access token, tenta renovar.
+      const newAccess = await refreshAccessToken();
+      if (!newAccess) {
+        clearTokens();
+        setUserSession(null);
+      }
+    };
+    void checkTokens();
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const hydrateWorkspace = async () => {
+      // Todos os dados vêm do SQL (sem blob de workspace). O estado já inicia com os
+      // defaults (createInitialData(null)); aqui só hidratamos as coleções do backend.
+      try {
+        const [backendClientes, backendFornecedores, backendFinanceiro, backendCompras, backendAlmox, backendNegocios, backendOrdens, backendConfiguracoes, backendMedicoes] = await Promise.all([
+          getClientes(),
+          getFornecedores(),
+          getFinanceiro(),
+          getCompras(),
+          getAlmoxarifado(),
+          getNegocios(),
+          getOrdensServico(),
+          getConfiguracoes(),
+          getMedicoes(),
+        ]);
+        if (!mounted) return;
+        const clientesMapa: Record<string, string> = {};
+        (Array.isArray(backendClientes) ? backendClientes : []).forEach((c: any) => {
+          clientesMapa[String(c.id)] = c.razaoSocial || c.razao_social || '';
+        });
+        const obrasFromSql = mapNegociosToObras(backendNegocios, clientesMapa);
+        const osFromSql = mapOrdensToOs(backendOrdens);
+        setData((prevData: any) => ({
+          ...prevData,
+          clientes: backendClientes,
+          fornecedores: backendFornecedores,
+          financeiro: backendFinanceiro,
+          compras: backendCompras.compras,
+          comprasHistorico: backendCompras.comprasHistorico,
+          almoxerifado: backendAlmox ?? prevData.almoxerifado,
+          obras: obrasFromSql,
+          os: osFromSql,
+          medicoes: backendMedicoes,
+          // config/listas: usa o que vier do SQL; senão mantém os defaults já carregados.
+          config: backendConfiguracoes.config ?? prevData.config,
+          listas: backendConfiguracoes.listas ?? prevData.listas,
+        }));
+      } catch (error) {
+        console.error('Erro ao carregar dados SQL (clientes/fornecedores/financeiro/compras)', error);
+      } finally {
+        if (mounted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    // Só hidrata com sessão ativa. A API agora exige autenticação (antes respondia
+    // AllowAny), então hidratar deslogado dispararia 401 em todas as coleções e o
+    // interceptor do api.ts faria _forceLogout() -> redirect -> remount -> loop de
+    // recarregamento na própria tela de login.
+    if (!userSession) {
+      setLoading(false);
+      return () => { mounted = false; };
+    }
+
+    void hydrateWorkspace();
+
+    return () => {
+      mounted = false;
+    };
+  }, [userSession?.email]);
+
+  const showTestAlert = (operacao: string) => {
+    toast.info(`VERSÃO DE TESTE\n\nOperação "${operacao}" requer conexão com backend.\n\nEsta é uma versão demonstrativa apenas com frontend.`);
+  };
+
+  // Função simulada - não faz requisição real
+  const refreshData = async (session: any) => {
+    // Apenas mantém os dados padrão - sem requisição ao backend
+    console.log('refreshData chamado (sem backend)');
+  };
+
+  const saveCliente = async (cliente: any) => {
+    try {
+      const savedCliente = cliente?.id
+        ? await updateCliente(cliente.id, cliente)
+        : await createCliente(cliente);
+
+      setData((prevData: any) => {
+        const clientesAtuais = Array.isArray(prevData.clientes) ? prevData.clientes : [];
+        const atualizados = clientesAtuais.filter((item: any) => item.id !== savedCliente.id);
+        return { ...prevData, clientes: [...atualizados, savedCliente] };
+      });
+
+      return savedCliente;
+    } catch (error) {
+      console.error('Erro ao salvar cliente no backend', error);
+      throw error;
+    }
+  };
+
+  const deleteCliente = async (id: any) => {
+    try {
+      if (typeof id === 'number' || !Number.isNaN(Number(id))) {
+        await deleteClienteApi(id);
+      }
+    } catch (error) {
+      console.error('Erro ao excluir cliente no backend', error);
+      // Continue removendo localmente para evitar exibição de dados inconsistentes
+    } finally {
+      setData((prevData: any) => ({
+        ...prevData,
+        clientes: (prevData.clientes || []).filter((item: any) => item.id !== id),
+      }));
+    }
+  };
+
+  const saveFornecedor = async (fornecedor: any) => {
+    try {
+      // ids vindos do SQL são numéricos; ids legados do blob começam com "FOR-".
+      const idNumerico = typeof fornecedor?.id === 'number' || /^\d+$/.test(String(fornecedor?.id || ''));
+      const savedFornecedor = idNumerico
+        ? await updateFornecedor(fornecedor.id, fornecedor)
+        : await createFornecedor(fornecedor);
+
+      setData((prevData: any) => {
+        const atuais = Array.isArray(prevData.fornecedores) ? prevData.fornecedores : [];
+        const semItem = atuais.filter((item: any) => item.id !== savedFornecedor.id);
+        return { ...prevData, fornecedores: [...semItem, savedFornecedor] };
+      });
+
+      return savedFornecedor;
+    } catch (error) {
+      console.error('Erro ao salvar fornecedor no backend', error);
+      throw error;
+    }
+  };
+
+  const deleteFornecedor = async (id: any) => {
+    try {
+      if (typeof id === 'number' || /^\d+$/.test(String(id))) {
+        await deleteFornecedorApi(id);
+      }
+    } catch (error) {
+      console.error('Erro ao excluir fornecedor no backend', error);
+    } finally {
+      setData((prevData: any) => ({
+        ...prevData,
+        fornecedores: (prevData.fornecedores || []).filter((item: any) => item.id !== id),
+      }));
+    }
+  };
+
+  // Recarrega as medições do SQL para o estado global (chamado após criar/aprovar/recusar).
+  const refreshMedicoes = async (): Promise<any[]> => {
+    try {
+      const medicoes = await getMedicoes();
+      setData((prevData: any) => ({ ...prevData, medicoes }));
+      return medicoes;
+    } catch (error) {
+      console.error('Erro ao recarregar medições', error);
+      return [];
+    }
+  };
+
+  const loginComGoogle = async (_token: string, _email: string) => {
+    showTestAlert('Google Login');
+  };
+
+  // Persiste sessão após login (chamado pelo LoginPage via onLoginSuccess).
+  const loginDireto = (user: any) => {
+    const session = { ...user };
+    setUserSession(session);
+    storeSession(session);
+  };
+
+  // Atualiza o estado e persiste no SQL conforme a coleção. Não há mais blob de
+  // workspace: cada coleção tem seu próprio endpoint (ou é projeção do SQL).
+  const saveEntity = async (collection: string, newData: any): Promise<void> => {
+    if (collection === 'clientes') {
+      console.warn('saveEntity("clientes") is deprecated. Use saveCliente() to persist clients to backend SQL.');
+      setData((prevData: any) => ({ ...prevData, clientes: newData }));
+      return;
+    }
+
+    if (collection === 'fornecedores') {
+      console.warn('saveEntity("fornecedores") is deprecated. Use saveFornecedor() to persist to backend SQL.');
+      setData((prevData: any) => ({ ...prevData, fornecedores: newData }));
+      return;
+    }
+
+    if (collection === 'financeiro') {
+      // Financeiro é persistido no SQL via replace-all (preserva o shape FinRecord),
+      // então useFin e todas as telas do Financeiro seguem inalterados.
+      setData((prevData: any) => ({ ...prevData, financeiro: newData }));
+      try {
+        await syncFinanceiro(Array.isArray(newData) ? newData : []);
+      } catch (error) {
+        console.error('Erro ao sincronizar financeiro no backend', error);
+      }
+      return;
+    }
+
+    if (collection === 'compras') {
+      // Requisições de compra persistidas no SQL (replace-all), shape preservado.
+      setData((prevData: any) => ({ ...prevData, compras: newData }));
+      try {
+        await syncCompras(Array.isArray(newData) ? newData : []);
+      } catch (error) {
+        console.error('Erro ao sincronizar compras no backend', error);
+      }
+      return;
+    }
+
+    if (collection === 'comprasHistorico') {
+      setData((prevData: any) => ({ ...prevData, comprasHistorico: newData }));
+      try {
+        await syncComprasHistorico(Array.isArray(newData) ? newData : []);
+      } catch (error) {
+        console.error('Erro ao sincronizar histórico de compras no backend', error);
+      }
+      return;
+    }
+
+    if (collection === 'almoxerifado') {
+      // Estoque/almoxarifado é um objeto agregado; persistido no SQL via replace (singleton).
+      setData((prevData: any) => ({ ...prevData, almoxerifado: newData }));
+      try {
+        await syncAlmoxarifado(newData || {});
+      } catch (error) {
+        console.error('Erro ao sincronizar almoxarifado no backend', error);
+      }
+      return;
+    }
+
+    if (collection === 'obras') {
+      // `obras` é uma projeção dos Negócios SQL (com seus orçamentos/propostas/serviços).
+      // A persistência real já acontece via os endpoints comerciais (criarNegocio,
+      // createOrcamento, criarProposta, atualizarNegocio); aqui só atualizamos o estado
+      // otimisticamente. No reload, `obras` é re-hidratado do SQL. Sem blob.
+      setData((prevData: any) => ({ ...prevData, obras: newData }));
+      return;
+    }
+
+    if (collection === 'os') {
+      // `os` é projeção das Ordens de Serviço SQL. A persistência real acontece via
+      // criarOrdemServico / deleteOrdemServico / atualizarStatusOs (chamados nas telas);
+      // aqui só atualizamos o estado otimisticamente. No reload, re-hidrata do SQL. Sem blob.
+      setData((prevData: any) => ({ ...prevData, os: newData }));
+      return;
+    }
+
+    if (collection === 'config') {
+      // Configurações da empresa persistidas no SQL (linha singleton). Sem blob.
+      setData((prevData: any) => ({ ...prevData, config: newData }));
+      try {
+        await syncConfig(newData || {});
+      } catch (error) {
+        console.error('Erro ao sincronizar config no backend', error);
+      }
+      return;
+    }
+
+    if (collection === 'listas') {
+      // Listas auxiliares persistidas no SQL (linha singleton). Sem blob.
+      setData((prevData: any) => ({ ...prevData, listas: newData }));
+      try {
+        await syncListas(newData || {});
+      } catch (error) {
+        console.error('Erro ao sincronizar listas no backend', error);
+      }
+      return;
+    }
+
+    // Coleção sem destino relacional dedicado (ex.: RH ainda não migrado): atualiza
+    // apenas o estado em memória, sem blob.
+    console.warn(`saveEntity("${collection}") sem persistência SQL — atualizado só em memória.`);
+    setData((prevData: any) => ({ ...prevData, [collection]: newData }));
+  };
+
+  // Simula upload de arquivo - sem enviar para nenhum lugar
+  const uploadFileToDrive = async (file: File): Promise<string | null> => {
+    showTestAlert('Upload de Arquivo');
+    return null;
+  };
+
+  const saveListas = async (l: any): Promise<void> => saveEntity('listas', l);
+  const saveConfig = async (c: any): Promise<void> => saveEntity('config', { ...(data.config || {}), ...c });
+
+  const logout = () => {
+    clearTokens();
+    setUserSession(null);
+    window.location.href = '/';
+  };
+
+ 
+  return (
+    <ErpContext.Provider value={{ userSession, setUserSession, loading, loginComGoogle, loginDireto, logout, saveEntity, saveListas, saveConfig, saveCliente, deleteCliente, saveFornecedor, deleteFornecedor, refreshMedicoes, uploadFileToDrive, ...data }}>
+      {children}
+    </ErpContext.Provider>
+  );
+}
+
+export const useErp = () => useContext(ErpContext);

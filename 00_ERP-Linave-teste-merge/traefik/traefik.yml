@@ -1,0 +1,33 @@
+api:
+  dashboard: true # Desativa o painel do Traefik para produção
+  insecure: false # Libera o painel do Traefik na porta 8080 para desenvolvimento
+
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+          
+  websecure:
+    address: ":443"
+    http:
+      tls: {}
+
+
+certificatesResolvers:
+  meu-resolvedor:
+    acme:
+      email: "silvasilas@servinave.com.br" #email para receber notificações sobre o certificado SSL
+      storage: "acme.json"
+      tlsChallenge: {}
+      # httpChallenge:
+      #   entryPoint: web
+      #   httpRouter: true 
+
+providers:
+  docker:
+    exposedByDefault: false #só expõe containers que nós autorizarmos via labels

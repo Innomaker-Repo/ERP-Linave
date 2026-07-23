@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Previa - Atividades antes dos calculos</title>
+  <style>
+    :root {
+      --line: #111;
+      --red: #ff0000;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: #e9edf3;
+      font-family: Arial, Helvetica, sans-serif;
+      color: #111;
+      padding: 24px;
+    }
+
+    .preview-note {
+      width: 730px;
+      margin: 0 auto 14px;
+      background: #101f3d;
+      color: #fff;
+      border-radius: 8px;
+      padding: 12px 14px;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .preview-note strong {
+      color: #fbbf24;
+    }
+
+    .sheet {
+      width: 730px;
+      margin: 0 auto;
+      background: #fff;
+      box-shadow: 0 16px 35px rgba(15, 23, 42, 0.18);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      font-size: 10px;
+      line-height: 1.05;
+    }
+
+    td,
+    th {
+      border: 1px solid var(--line);
+      height: 18px;
+      padding: 2px 4px;
+      vertical-align: top;
+      text-align: left;
+      overflow-wrap: anywhere;
+    }
+
+    th,
+    .label {
+      font-weight: 700;
+    }
+
+    .section-letter {
+      width: 10%;
+      font-weight: 700;
+    }
+
+    .section-title {
+      color: var(--red);
+      font-weight: 700;
+      font-size: 12px;
+    }
+
+    .red {
+      color: var(--red);
+      font-weight: 700;
+    }
+
+    .spacer {
+      height: 6px;
+      border: 0;
+      background: transparent;
+    }
+
+    .header-cols col:nth-child(1) { width: 10%; }
+    .header-cols col:nth-child(2) { width: 30%; }
+    .header-cols col:nth-child(3) { width: 10%; }
+    .header-cols col:nth-child(4) { width: 50%; }
+
+    .labor-cols col:nth-child(1) { width: 10%; }
+    .labor-cols col:nth-child(2) { width: 27%; }
+    .labor-cols col:nth-child(3) { width: 10%; }
+    .labor-cols col:nth-child(4) { width: 10%; }
+    .labor-cols col:nth-child(5) { width: 14%; }
+    .labor-cols col:nth-child(6) { width: 16%; }
+    .labor-cols col:nth-child(7) { width: 13%; }
+
+    .materials-cols col:nth-child(1) { width: 10%; }
+    .materials-cols col:nth-child(2) { width: 33%; }
+    .materials-cols col:nth-child(3) { width: 8%; }
+    .materials-cols col:nth-child(4) { width: 9%; }
+    .materials-cols col:nth-child(5) { width: 13%; }
+    .materials-cols col:nth-child(6) { width: 14%; }
+    .materials-cols col:nth-child(7) { width: 13%; }
+
+    .activities-cols col:nth-child(1) { width: 10%; }
+    .activities-cols col:nth-child(2) { width: 30%; }
+    .activities-cols col:nth-child(3) { width: 10%; }
+    .activities-cols col:nth-child(4) { width: 50%; }
+
+    .calc-cols col:nth-child(1) { width: 10%; }
+    .calc-cols col:nth-child(2) { width: 77%; }
+    .calc-cols col:nth-child(3) { width: 13%; }
+
+    .summary-cols col:nth-child(1) { width: 50%; }
+    .summary-cols col:nth-child(2) { width: 50%; }
+  </style>
+</head>
+<body>
+  <div class="preview-note">
+    <strong>Previa sem alterar o codigo:</strong>
+    as colunas extras continuam removidas e a tabela <strong>ATIVIDADES PREVISTAS</strong>
+    agora aparece antes de <strong>Calculos Finais</strong>.
+  </div>
+
+  <main class="sheet">
+    <table>
+      <colgroup class="header-cols">
+        <col><col><col><col>
+      </colgroup>
+      <tr>
+        <td class="label">Cliente:</td>
+        <td>Porto Sul Logistica e Engenharia LTDA</td>
+        <td></td>
+        <td>Data: 30/04/2026</td>
+      </tr>
+      <tr>
+        <td class="label">Ship:</td>
+        <td colspan="3">ERP</td>
+      </tr>
+      <tr>
+        <td class="label">Escopo:</td>
+        <td colspan="3">Servicos conforme descrito abaixo</td>
+      </tr>
+    </table>
+
+    <div class="spacer"></div>
+
+    <table>
+      <colgroup class="labor-cols">
+        <col><col><col><col><col><col><col>
+      </colgroup>
+      <tr>
+        <td class="section-letter">A</td>
+        <td class="section-title" colspan="6">MAO DE OBRA</td>
+      </tr>
+      <tr>
+        <th>Item</th>
+        <th>Funcao</th>
+        <th>Qtd</th>
+        <th>Dias</th>
+        <th>Custo/Dia</th>
+        <th>Obs</th>
+        <th>Valor Total</th>
+      </tr>
+      <tr>
+        <td>1</td>
+        <td>Encarregado</td>
+        <td></td>
+        <td></td>
+        <td></td>
+        <td></td>
+        <td class="red">0.00</td>
+      </tr>
+      <tr>
+        <td class="red" colspan="6">Sub-total</td>
+        <td class="red">0.00</td>
+      </tr>
+    </table>
+
+    <div class="spacer"></div>
+
+    <table>
+      <colgroup class="materials-cols">
+        <col><col><col><col><col><col><col>
+      </colgroup>
+      <tr>
+        <td class="section-letter">B</td>
+        <td class="section-title" colspan="6">CONSUMIVEIS E MATERIAIS</td>
+      </tr>
+      <tr>
+        <th>Item</th>
+        <th>Descricao</th>
+        <th>Un</th>
+        <th>Qtd</th>
+        <th>Peso/Fat</th>
+        <th>Custo Un</th>
+        <th>Total</th>
+      </tr>
+      <tr>
+        <td>1</td>
+        <td>Consumivel ou material</td>
+        <td>un</td>
+        <td></td>
+        <td></td>
+        <td></td>
+        <td class="red">0.00</td>
+      </tr>
+      <tr>
+        <td class="red" colspan="6">Valor total</td>
+        <td class="red">0.00</td>
+      </tr>
+    </table>
+
+    <div class="spacer"></div>
+
+    <table>
+      <colgroup class="materials-cols">
+        <col><col><col><col><col><col><col>
+      </colgroup>
+      <tr>
+        <td class="section-letter">C</td>
+        <td class="section-title" colspan="6">SERVICOS TERCEIRIZADOS</td>
+      </tr>
+      <tr>
+        <th>Item</th>
+        <th>Descricao</th>
+        <th>Un</th>
+        <th>Qtd</th>
+        <th>Peso/Fat</th>
+        <th>Custo Un</th>
+        <th>Total</th>
+      </tr>
+      <tr>
+        <td>1</td>
+        <td>Jateamento / pintura terceirizada</td>
+        <td>serv</td>
+        <td></td>
+        <td>1</td>
+        <td></td>
+        <td class="red">0.00</td>
+      </tr>
+      <tr>
+        <td class="red" colspan="6">Sub-total</td>
+        <td class="red">0.00</td>
+      </tr>
+    </table>
+
+    <div class="spacer"></div>
+
+    <table>
+      <colgroup class="activities-cols">
+        <col><col><col><col>
+      </colgroup>
+      <tr>
+        <td class="section-letter">D</td>
+        <td class="section-title" colspan="3">ATIVIDADES PREVISTAS</td>
+      </tr>
+      <tr>
+        <th>Item</th>
+        <th>Atividade</th>
+        <th>Dias</th>
+        <th>Observacoes</th>
+      </tr>
+      <tr>
+        <td>1</td>
+        <td>Levantamento / inspecao</td>
+        <td></td>
+        <td></td>
+      </tr>
+      <tr>
+        <td class="red" colspan="2">Total dias</td>
+        <td class="red">0</td>
+        <td></td>
+      </tr>
+    </table>
+
+    <div class="spacer"></div>
+
+    <table>
+      <colgroup class="calc-cols">
+        <col><col><col>
+      </colgroup>
+      <tr>
+        <td class="section-letter">E</td>
+        <td class="label" colspan="2">Calculos Finais</td>
+      </tr>
+      <tr><td>1</td><td>Valor mao de obra</td><td>0.00</td></tr>
+      <tr><td>2</td><td>Valor consumivel e material</td><td>0.00</td></tr>
+      <tr><td>3</td><td>Valor terceirizados</td><td>0.00</td></tr>
+      <tr><td>4</td><td>Total</td><td>0.00</td></tr>
+      <tr><td>5</td><td>O.H (5%)</td><td>0.00</td></tr>
+      <tr><td>6</td><td>Margem (15%)</td><td>0.00</td></tr>
+      <tr><td>7</td><td>PV S/ imposto</td><td>0.00</td></tr>
+      <tr><td>8</td><td>Imposto S/ NF (18%)</td><td>0.00</td></tr>
+      <tr><td class="red">9</td><td class="red">PV FINAL R$</td><td class="red">0.00</td></tr>
+    </table>
+
+    <div class="spacer"></div>
+
+    <table>
+      <colgroup class="summary-cols">
+        <col><col>
+      </colgroup>
+      <tr><td class="label" colspan="2">RESUMO:</td></tr>
+      <tr><td>Qtd. de Itens:</td><td class="label">3</td></tr>
+      <tr><td>Preco por Item:</td><td class="label">R$ 0.00</td></tr>
+      <tr><td>Valor Total:</td><td class="red">R$ 0.00</td></tr>
+    </table>
+  </main>
+</body>
+</html>

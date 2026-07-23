@@ -1,0 +1,60 @@
+// Módulos de Abas
+export { GestaoModule } from './Gestao';
+export { ProducaoModule } from './Producao';
+export { ComercialModule } from './Comercial';
+export { FinanceiroModule } from './Financeiro';
+export { ComprasModule } from './Compras';
+export { AlmoxerifadoModule } from './Almoxerifado';
+export { ConfiguracoesModule } from './Configuracoes';
+
+// Componentes Compartilhados de UI (re-exports)
+export * from './shared/ui/accordion';
+export * from './shared/ui/alert';
+export * from './shared/ui/alert-dialog';
+export * from './shared/ui/aspect-ratio';
+export * from './shared/ui/avatar';
+export * from './shared/ui/badge';
+export * from './shared/ui/breadcrumb';
+export * from './shared/ui/button';
+export * from './shared/ui/calendar';
+export * from './shared/ui/card';
+export * from './shared/ui/carousel';
+export * from './shared/ui/chart';
+export * from './shared/ui/checkbox';
+export * from './shared/ui/collapsible';
+export * from './shared/ui/command';
+export * from './shared/ui/context-menu';
+export * from './shared/ui/dialog';
+export * from './shared/ui/drawer';
+export * from './shared/ui/dropdown-menu';
+export * from './shared/ui/form';
+export * from './shared/ui/hover-card';
+export * from './shared/ui/input';
+export * from './shared/ui/input-otp';
+export * from './shared/ui/label';
+export * from './shared/ui/menubar';
+export * from './shared/ui/navigation-menu';
+export * from './shared/ui/pagination';
+export * from './shared/ui/popover';
+export * from './shared/ui/progress';
+export * from './shared/ui/radio-group';
+export * from './shared/ui/resizable';
+export * from './shared/ui/scroll-area';
+export * from './shared/ui/select';
+export * from './shared/ui/separator';
+export * from './shared/ui/sheet';
+export * from './shared/ui/sidebar';
+export * from './shared/ui/skeleton';
+export * from './shared/ui/slider';
+export * from './shared/ui/sonner';
+export * from './shared/ui/switch';
+export * from './shared/ui/table';
+export * from './shared/ui/tabs';
+export * from './shared/ui/textarea';
+export * from './shared/ui/toggle';
+export * from './shared/ui/toggle-group';
+export * from './shared/ui/tooltip';
+export * from './shared/ui/utils';
+
+// Componentes Figma
+export * from './shared/figma/ImageWithFallback';
