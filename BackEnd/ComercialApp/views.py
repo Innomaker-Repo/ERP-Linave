@@ -599,6 +599,34 @@ def financeiro_data(request):
     return Response({'message': 'Financeiro sincronizado.', 'total': total, 'financeiro': read_all()}, status=status.HTTP_200_OK)
 
 
+@api_view(['POST'])
+def financeiro_solicitacao_criar(request):
+    """Cria UMA solicitação de pagamento (append-only, sem tocar no resto do estado).
+
+    Aberta a qualquer usuário autenticado DE PROPÓSITO (espelha compras_data): a tela
+    "Solicitação de Pagamento" é liberada a TODO colaborador na Sidebar/Home, mas o
+    replace-all de financeiro_data continua restrito ao módulo Financeiro. O `tipo`
+    é forçado para 'solicitacao', então por aqui não se cria/altera conta, banco,
+    NFe etc. — só entra a solicitação, que segue o fluxo normal de aprovação.
+    """
+    from .financeiro_sync import _build_instance, read_all
+    from .models import SolicitacaoPagamento
+
+    record = dict(request.data) if isinstance(request.data, dict) else {}
+    record['tipo'] = 'solicitacao'
+    rid = str(record.get('id') or '').strip()
+    if not rid:
+        return Response({'error': 'Campo "id" é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
+    if SolicitacaoPagamento.objects.filter(record_id=rid).exists():
+        return Response({'error': 'Já existe uma solicitação com este id.'}, status=status.HTTP_409_CONFLICT)
+    record.setdefault('status', 'Aguardando aprovação')
+
+    instance = _build_instance('solicitacao', record)
+    instance.save()
+    _registrar_log(request, 'criacao', 'Financeiro', f'Solicitação de pagamento {rid} criada.')
+    return Response({'message': 'Solicitação enviada.', 'financeiro': read_all()}, status=status.HTTP_201_CREATED)
+
+
 @api_view(['GET', 'POST', 'PUT'])
 def compras_data(request):
     """Estado de Compras (requisições do kanban + histórico de compras concluídas).

@@ -26,7 +26,7 @@ export function Header({ activeSection, searchQuery, setSearchQuery, onToggleSid
           </button>
         )}
         <h1 className="text-white font-black uppercase tracking-tighter text-xl">
-          {activeSection}
+          {activeSection === 'home' ? 'Início' : activeSection}
         </h1>
         
         <div className="relative w-full max-w-md">

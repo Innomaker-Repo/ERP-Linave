@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { getClientes, createCliente, updateCliente, deleteCliente as deleteClienteApi, getNegocios, getOrdensServico } from '../../services/comercialService';
 import { mapNegociosToObras, mapOrdensToOs } from '../../services/obrasMapper';
 import { getFornecedores, createFornecedor, updateFornecedor, deleteFornecedor as deleteFornecedorApi } from '../../services/fornecedoresService';
-import { getFinanceiro, syncFinanceiro } from '../../services/financeiroService';
+import { getFinanceiro, syncFinanceiro, criarSolicitacaoPagamento } from '../../services/financeiroService';
 import { getCompras, syncCompras, syncComprasHistorico } from '../../services/comprasService';
 import { getAlmoxarifado, syncAlmoxarifado } from '../../services/almoxarifadoService';
 import { getConfiguracoes, syncConfig, syncListas } from '../../services/configuracoesService';
@@ -965,6 +965,7 @@ interface ErpContextData {
   loginDireto: (user: any) => void;
   logout: () => void;
   saveEntity: (collection: string, data: any) => Promise<void>;
+  criarSolicitacaoFinanceiro: (record: any) => Promise<void>;
   saveListas: (novasListas: any) => Promise<void>;
   saveConfig: (novaConfig: any) => Promise<void>;
   saveCliente: (cliente: any) => Promise<any>;
@@ -1289,6 +1290,19 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     return null;
   };
 
+  // Solicitação de pagamento via endpoint append-only (aberto a todo usuário logado).
+  // Não usa saveEntity('financeiro'): o replace-all exige permissão do módulo Financeiro,
+  // que o colaborador comum não tem — e substituir a lista inteira também sofreria
+  // corrida entre dois usuários enviando ao mesmo tempo.
+  const criarSolicitacaoFinanceiro = async (record: any): Promise<void> => {
+    const novo = { ...record, createdAt: new Date().toISOString() };
+    const lista = await criarSolicitacaoPagamento(novo);
+    setData((prevData: any) => ({
+      ...prevData,
+      financeiro: lista.length ? lista : [novo, ...(Array.isArray(prevData.financeiro) ? prevData.financeiro : [])],
+    }));
+  };
+
   const saveListas = async (l: any): Promise<void> => saveEntity('listas', l);
   const saveConfig = async (c: any): Promise<void> => saveEntity('config', { ...(data.config || {}), ...c });
 
@@ -1300,7 +1314,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
 
  
   return (
-    <ErpContext.Provider value={{ userSession, setUserSession, loading, loginComGoogle, loginDireto, logout, saveEntity, saveListas, saveConfig, saveCliente, deleteCliente, saveFornecedor, deleteFornecedor, refreshMedicoes, uploadFileToDrive, ...data }}>
+    <ErpContext.Provider value={{ userSession, setUserSession, loading, loginComGoogle, loginDireto, logout, saveEntity, criarSolicitacaoFinanceiro, saveListas, saveConfig, saveCliente, deleteCliente, saveFornecedor, deleteFornecedor, refreshMedicoes, uploadFileToDrive, ...data }}>
       {children}
     </ErpContext.Provider>
   );

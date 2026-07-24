@@ -43,9 +43,10 @@ const PERMISSAO_GRUPOS = [
   {
     id: 'financeiro',
     label: 'Financeiro',
+    // "Solicitação de Pagamento" é liberada a todos os usuários (todo colaborador pode
+    // solicitar; a aprovação continua controlada), por isso não entra aqui.
     itens: [
       { id: 'finDashboard', label: 'Dashboard Financeiro' },
-      { id: 'finSolicitacao', label: 'Solicitação de Pagamento' },
       { id: 'finAprovacoes', label: 'Aprovações' },
       { id: 'finPagar', label: 'Contas a Pagar' },
       { id: 'finNfe', label: 'NFe' },

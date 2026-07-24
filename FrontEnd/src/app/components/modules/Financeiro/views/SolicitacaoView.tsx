@@ -10,7 +10,7 @@ const fornecedorNome = (f: any) =>
   f?.razaoSocial || f?.razao_social || f?.nomeFantasia || f?.nome_fantasia || f?.nome || '';
 
 export function SolicitacaoView() {
-  const { empresas, oss, fornecedores, addRecord } = useFin();
+  const { empresas, oss, fornecedores, addSolicitacao } = useFin();
   const vinculo = 'OS' as const;
   const [anexos, setAnexos] = useState<File[]>([]);
   const [salvando, setSalvando] = useState(false);
@@ -49,7 +49,7 @@ export function SolicitacaoView() {
         const falhas = resultados.length - anexosUrls.length;
         if (falhas > 0) toast.error(`${falhas} anexo(s) não puderam ser enviados.`);
       }
-      await addRecord({
+      await addSolicitacao({
         id,
         tipo: 'solicitacao',
         status: 'Aguardando aprovação',
