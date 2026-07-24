@@ -650,7 +650,7 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
             </div>
             <div className="text-xs text-white/35 uppercase tracking-widest flex items-center gap-2">
               <CircleDollarSign size={14} />
-              Abaixo de R$ {APPROVAL_LIMIT} vai para gerente comercial e a partir de R$ {APPROVAL_LIMIT} para diretor financeiro
+              Abaixo de R$ {APPROVAL_LIMIT} o setor de compras aprova; a partir de R$ {APPROVAL_LIMIT}, somente a gerência
             </div>
           </div>
 
@@ -702,8 +702,8 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
                             <span className="px-2 py-1 rounded-full bg-white/5 border border-white/10 text-white/35">Sem orçamento</span>
                           )}
                           {request.stage === 'APROVACAO' && (
-                            <span className={`px-2 py-1 rounded-full border ${request.approvalRoute === 'diretorFinanceiro' ? 'bg-blue-500/10 border-blue-500/20 text-blue-200' : 'bg-orange-500/10 border-orange-500/20 text-orange-200'}`}>
-                              {request.approvalRoute ? approvalRouteLabel[request.approvalRoute] : 'Sem rota'}
+                            <span className={`px-2 py-1 rounded-full border ${resolveApprovalRoute(request.budgetValue) === 'gerencia' ? 'bg-blue-500/10 border-blue-500/20 text-blue-200' : 'bg-orange-500/10 border-orange-500/20 text-orange-200'}`}>
+                              {approvalRouteLabel[resolveApprovalRoute(request.budgetValue)]}
                             </span>
                           )}
                           {request.stage === 'COMPRADOS' && (

@@ -1,13 +1,7 @@
 import React, { useState } from 'react';
 import { useErp } from '../context/ErpContext';
-import { boldOS } from '../utils/osHighlight';
-import {
-  House, Users, HardHat, Anchor, ClipboardList,
-  ShoppingCart, DollarSign, BarChart3, Settings, Factory,
-  HeartHandshake, List, Clock, ChevronDown, ChevronRight,
-  Briefcase, Wrench, Activity, FileText, Zap, CheckCircle2, Trash2, LayoutGrid, Package2, History,
-  FilePlus, Banknote, ScrollText, Wallet, TrendingUp, Landmark, Tags, Ruler, PanelLeftClose, UserCog, ShoppingBag
-} from 'lucide-react';
+import { DEPARTMENTS, hasAccess } from '../navigation';
+import { House, ChevronDown, ChevronRight, PanelLeftClose } from 'lucide-react';
 
 interface SidebarProps {
   activeSection: string;
@@ -31,133 +25,9 @@ export function Sidebar({ activeSection, setActiveSection, onClose }: SidebarPro
 
   const toggleGroup = (g: string) => setOpenGroups(p => ({ ...p, [g]: !p[g] }));
 
-  // Estrutura Completa de Departamentos
-  const departments = [
-    {
-      id: 'gestao',
-      title: 'Gestão & Estratégia',
-      icon: Briefcase,
-      items: [
-        { id: 'dashboard', label: 'Dashboard Geral', icon: House },
-        { id: 'relatorios', label: 'Relatórios BI', icon: BarChart3 },
-      ]
-    },
-    {
-      id: 'producao',
-      title: 'Produção',
-      icon: Anchor,
-      items: [
-        // Visão Macro do Projeto (USV Traveller)
-        { id: 'obras', label: 'Serviços (Produção)', icon: Anchor },
-      ]
-    },
-    {
-      id: 'comercial',
-      title: 'Comercial',
-      icon: Users,
-      items: [
-        // CRM - Gerenciamento de Negócios
-        { id: 'crm', label: 'Negócios (CRM)', icon: HeartHandshake },
-
-        { id: 'orcamentos', label: 'Orçar Negócios', icon: FileText },
-        
-        // Fazer Proposta
-        { id: 'proposta', label: 'Fazer Proposta', icon: FileText },
-        
-        // Fazer Ordem de Serviço
-        { id: 'fazerOs', label: boldOS('Fazer OS'), icon: Zap },
-
-        // Medição (por OS) — só aprovada libera finalização
-        { id: 'medicao', label: 'Medição', icon: Ruler },
-
-        // Histórico de negócios com medição aprovada/finalizada
-        { id: 'finalizadosComercial', label: 'Finalizados', icon: CheckCircle2 },
-        
-        // Base de Clientes
-        { id: 'clientes', label: 'Base de Clientes', icon: Users },
-      ]
-    },
-    {
-      id: 'financeiro',
-      title: 'Financeiro',
-      icon: DollarSign,
-      items: [
-        // Operação
-        { id: 'finDashboard', label: 'Dashboard Financeiro', icon: House },
-        { id: 'finSolicitacao', label: 'Solicitação de Pagamento', icon: FilePlus },
-        { id: 'finAprovacoes', label: 'Aprovações', icon: CheckCircle2 },
-        { id: 'finPagar', label: 'Contas a Pagar', icon: Banknote },
-        { id: 'finNfe', label: 'NFe', icon: ScrollText },
-        { id: 'finReceber', label: 'Contas a Receber', icon: Wallet },
-        { id: 'finPrevisao', label: 'Previsão de Receita', icon: TrendingUp },
-        // Gestão
-        { id: 'finBancos', label: 'Bancos', icon: Landmark },
-        { id: 'finHistorico', label: 'Histórico', icon: History },
-        { id: 'finCustoOs', label: boldOS('Custo por OS'), icon: ClipboardList },
-        { id: 'finReciboLocacao', label: 'Fazer Recibo de Locação', icon: ScrollText },
-      ]
-    },
-    {
-      id: 'compras',
-      title: 'Compras',
-      icon: ShoppingCart,
-      items: [
-        { id: 'compras', label: 'Compras / Requisições', icon: ShoppingCart },
-        { id: 'minhasCompras', label: 'Minhas Compras', icon: ShoppingBag },
-        { id: 'kanbanCompras', label: 'Kanban de Compras', icon: LayoutGrid },
-        { id: 'aprovacoesCompras', label: 'Aprovações', icon: Clock },
-        { id: 'historicoCompras', label: 'Histórico de Compras', icon: History },
-        { id: 'fornecedores', label: 'Fornecedores', icon: Factory },
-      ]
-    },
-    {
-      id: 'almoxerifado',
-      title: 'Suprimentos',
-      icon: ClipboardList,
-      items: [
-        { id: 'estoquePublico', label: 'Estoque View', icon: ClipboardList },
-        { id: 'estoque', label: 'Almoxarifado', icon: ClipboardList },
-        { id: 'itensAdicionar', label: 'Itens para adicionar', icon: Package2 },
-        { id: 'historicoBaixa', label: 'Histórico de Baixa', icon: Trash2 },
-        { id: 'historicoRomaneio', label: 'Histórico de Romaneio', icon: ClipboardList },
-        { id: 'alocadosPorOS', label: boldOS('Alocados por OS'), icon: ClipboardList },
-      ]
-    },
-    {
-      id: 'config',
-      title: 'Configurações',
-      icon: Settings,
-      items: [
-        { id: 'usuarios', label: 'Usuários & Acessos', icon: Users },
-        { id: 'logAtividades', label: 'Log de Atividades', icon: History },
-        { id: 'meuPerfil', label: 'Meu Perfil', icon: UserCog },
-      ]
-    }
-  ];
-
-  const hasAccess = (itemId: string) => {
-    if (!userSession) return false;
-    const role = userSession.role?.toUpperCase() || '';
-
-    // Admin: acesso total, exceto "Meu Perfil" (usa Usuários & Acessos)
-    if (role === 'ADMIN') {
-      return itemId !== 'meuPerfil';
-    }
-
-    // Gerente/Usuário: sem acesso a gerenciamento de usuários nem log de atividades
-    if (itemId === 'usuarios' || itemId === 'logAtividades') return false;
-
-    // Gerente: acesso a tudo mais; usa "Meu Perfil"
-    if (role === 'GERENTE') return true;
-
-    // Liberados a TODOS os usuários: solicitar compra e ver o próprio histórico de compras
-    // (o kanban e as demais telas de compras continuam controlados por permissão).
-    if (itemId === 'compras' || itemId === 'minhasCompras') return true;
-
-    // Usuário: apenas itens explicitamente liberados pelo admin + Meu Perfil
-    if (itemId === 'meuPerfil') return true;
-    return userSession.permissoes?.[itemId] === true;
-  };
+  // Departamentos/itens e regra de acesso vêm da fonte única (navigation.tsx),
+  // compartilhada com a página Home — evita as duas cópias divergirem.
+  const departments = DEPARTMENTS;
 
   return (
     <div className="w-64 bg-[#101f3d] border-r border-white/5 flex flex-col h-full z-30 transition-all duration-300">
@@ -193,9 +63,31 @@ export function Sidebar({ activeSection, setActiveSection, onClose }: SidebarPro
 
       {/* MENU DE NAVEGAÇÃO ACORDEÃO */}
       <nav className="flex-1 px-4 space-y-4 overflow-y-auto custom-scrollbar pb-10">
+
+        {/* INÍCIO — página inicial com os acessos do usuário (visível para todos) */}
+        <button
+          onClick={() => {
+            window.dispatchEvent(new CustomEvent('fecharOrcamentoSolicitado'));
+            setActiveSection('home');
+          }}
+          className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all relative overflow-hidden group
+            ${activeSection === 'home'
+              ? 'bg-amber-500/10 text-amber-500 font-bold shadow-[inset_4px_0_0_0_#d97706]'
+              : 'text-white/60 hover:bg-white/5 hover:text-white font-medium'}`}
+        >
+          <House
+            size={16}
+            className={`transition-transform duration-300 ${activeSection === 'home' ? 'text-amber-500 scale-110' : 'text-white/40 group-hover:text-white group-hover:scale-105'}`}
+          />
+          <span className="text-xs truncate tracking-wide font-bold uppercase">Início</span>
+          {activeSection === 'home' && (
+            <div className="absolute left-0 top-0 bottom-0 w-1 bg-amber-500 rounded-r-full"></div>
+          )}
+        </button>
+
         {departments.map((dept) => {
           // Verifica se há itens visíveis neste departamento para o utilizador atual
-          const visibleItems = dept.items.filter(item => hasAccess(item.id));
+          const visibleItems = dept.items.filter(item => hasAccess(userSession, item.id));
           
           // Se não houver itens visíveis (por permissão), esconde o grupo inteiro
           if (visibleItems.length === 0) return null;

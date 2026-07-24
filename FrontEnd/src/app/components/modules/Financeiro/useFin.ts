@@ -136,6 +136,13 @@ export function useFin() {
     await ctx.saveEntity('financeiro', next);
   };
 
+  // Solicitação de pagamento: usa o endpoint append-only, aberto a TODO usuário logado
+  // (o replace-all de addRecord exige permissão do módulo Financeiro e o colaborador
+  // comum levaria 403 ao enviar a solicitação).
+  const addSolicitacao = async (record: FinRecord) => {
+    await ctx.criarSolicitacaoFinanceiro(record);
+  };
+
   // Atualiza registros financeiros por função de mapeamento.
   const updateRecords = async (mapFn: (r: FinRecord) => FinRecord) => {
     const next = financeiro.map(mapFn);
@@ -310,7 +317,7 @@ export function useFin() {
     // leitura
     oss, empresas, departamentos, fornecedores, clientes, financeiro, records, nfeSolicitacoes,
     // escrita
-    addRecord, updateRecords, updateRecord, addDepartamento, approveSolicitacao, rejectSolicitacao, emitirNfe,
+    addRecord, addSolicitacao, updateRecords, updateRecord, addDepartamento, approveSolicitacao, rejectSolicitacao, emitirNfe,
     parcelarConta, pagarConta,
   };
 }

@@ -1291,6 +1291,63 @@ class FinanceiroCRUDTests(APITestCase):
         self.assertEqual(resp.status_code, 200)
 
 
+class FinanceiroSolicitacaoCriarTests(APITestCase):
+    """POST /comercial/financeiro/solicitacao/ — append-only, aberto a todo autenticado.
+
+    A tela "Solicitação de Pagamento" é liberada a TODO colaborador (Home/Sidebar),
+    então o endpoint não exige permissão de módulo; já o replace-all de /financeiro/
+    continua restrito ao módulo Financeiro.
+    """
+
+    def _logar(self, cpf, senha='Admin@teste1'):
+        resp = obter_token(self.client, cpf, senha)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {resp.data["access"]}')
+
+    def test_usuario_comum_sem_permissoes_cria_solicitacao(self):
+        criar_usuario('user-sol')
+        self._logar('user-sol')
+        payload = {'id': 'SP-TESTE1', 'solicitante': 'Usuario Teste', 'valor': 123.45}
+        resp = self.client.post(f'{BASE}/financeiro/solicitacao/', payload, format='json')
+        self.assertEqual(resp.status_code, 201)
+        criado = next((r for r in resp.data.get('financeiro', []) if r.get('id') == 'SP-TESTE1'), None)
+        self.assertIsNotNone(criado)
+        self.assertEqual(criado['tipo'], 'solicitacao')
+        self.assertEqual(criado['status'], 'Aguardando aprovação')
+
+    def test_tipo_eh_forcado_para_solicitacao(self):
+        from .models import SolicitacaoPagamento, ContaPagar
+        criar_usuario('user-sol')
+        self._logar('user-sol')
+        payload = {'id': 'CP-FALSO', 'tipo': 'contaPagar', 'valor': 999}
+        resp = self.client.post(f'{BASE}/financeiro/solicitacao/', payload, format='json')
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(ContaPagar.objects.count(), 0)
+        self.assertTrue(SolicitacaoPagamento.objects.filter(record_id='CP-FALSO').exists())
+
+    def test_sem_id_retorna_400(self):
+        criar_usuario('user-sol')
+        self._logar('user-sol')
+        resp = self.client.post(f'{BASE}/financeiro/solicitacao/', {'valor': 10}, format='json')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_id_duplicado_retorna_409(self):
+        criar_usuario('user-sol')
+        self._logar('user-sol')
+        payload = {'id': 'SP-DUP', 'valor': 10}
+        self.assertEqual(self.client.post(f'{BASE}/financeiro/solicitacao/', payload, format='json').status_code, 201)
+        self.assertEqual(self.client.post(f'{BASE}/financeiro/solicitacao/', payload, format='json').status_code, 409)
+
+    def test_replace_all_continua_bloqueado_para_usuario_comum(self):
+        criar_usuario('user-sol')
+        self._logar('user-sol')
+        resp = self.client.post(f'{BASE}/financeiro/', [], format='json')
+        self.assertEqual(resp.status_code, 403)
+
+    def test_anonimo_retorna_401(self):
+        resp = self.client.post(f'{BASE}/financeiro/solicitacao/', {'id': 'SP-X'}, format='json')
+        self.assertEqual(resp.status_code, 401)
+
+
 # =============================================================================
 # 20. CONFIGURAÇÕES — SINGLETON
 # =============================================================================

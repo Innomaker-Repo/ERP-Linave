@@ -7,7 +7,7 @@ from .views import (
     criar_orcamento,
     ordens_servico_por_cliente, ordens_servico_por_negocio, atualizar_status_os,
     atualizar_status_medicao,
-    financeiro_data, compras_data, almoxarifado_data, configuracoes_data,
+    financeiro_data, financeiro_solicitacao_criar, compras_data, almoxarifado_data, configuracoes_data,
     logs_atividade,
 )
 
@@ -26,6 +26,9 @@ router.register(r'usuarios', UserViewSet, basename='usuario')
 urlpatterns = [
     # Estado financeiro (lista unificada de FinRecord; GET lê, POST substitui tudo)
     path('financeiro/', financeiro_data, name='financeiro-data'),
+
+    # Solicitação de pagamento (append-only; aberta a todo autenticado — ver docstring)
+    path('financeiro/solicitacao/', financeiro_solicitacao_criar, name='financeiro-solicitacao-criar'),
 
     # Estado de compras (requisições do kanban + histórico; GET lê, POST substitui)
     path('compras/', compras_data, name='compras-data'),
