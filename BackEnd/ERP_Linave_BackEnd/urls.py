@@ -24,7 +24,7 @@ from ComercialApp.views import FlexTokenView
 
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
+    path('jamanta-fiscal/', admin.site.urls),
     path('', TemplateView.as_view(template_name='index.html'), name='home'),
     path('comercial/', include('ComercialApp.urls')),
     path('token/', FlexTokenView.as_view(), name='token_obtain_pair'),

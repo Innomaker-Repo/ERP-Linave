@@ -99,7 +99,7 @@ export function DashboardView() {
       <div>
         <div className="mb-6">
           <h1 className="text-3xl font-black text-white uppercase italic tracking-tighter flex items-center gap-3">
-            <Activity className="text-amber-500" size={32} /> Dashboard Linave
+            <Activity className="text-amber-500" size={32} /> Dashboard Linave/Servinave
           </h1>
           <p className="text-white/40 text-xs font-bold uppercase tracking-[0.2em] mt-2 ml-1">Central de Gestão - Serviços de Engenharia e Desenvolvimento</p>
         </div>

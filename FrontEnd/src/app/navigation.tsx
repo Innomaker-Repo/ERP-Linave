@@ -2,8 +2,8 @@ import type { ElementType, ReactNode } from 'react';
 import { boldOS } from './utils/osHighlight';
 import {
   House, Users, Anchor, ClipboardList,
-  ShoppingCart, DollarSign, BarChart3, Settings, Factory,
-  HeartHandshake, Clock, Briefcase, FileText, Zap, CheckCircle2, Trash2, LayoutGrid, Package2, History,
+  ShoppingCart, DollarSign, Settings, Factory,
+  HeartHandshake, Clock, FileText, Zap, CheckCircle2, Trash2, LayoutGrid, Package2, History,
   FilePlus, Banknote, ScrollText, Wallet, TrendingUp, Landmark, Ruler, UserCog, ShoppingBag
 } from 'lucide-react';
 
@@ -28,15 +28,6 @@ export interface NavDepartment {
 }
 
 export const DEPARTMENTS: NavDepartment[] = [
-  {
-    id: 'gestao',
-    title: 'Gestão & Estratégia',
-    icon: Briefcase,
-    items: [
-      { id: 'dashboard', label: 'Dashboard Geral', icon: House },
-      { id: 'relatorios', label: 'Relatórios BI', icon: BarChart3 },
-    ]
-  },
   {
     id: 'producao',
     title: 'Produção',

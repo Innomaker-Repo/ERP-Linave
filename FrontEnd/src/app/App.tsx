@@ -18,10 +18,6 @@ import { ConfiguracoesModule } from './modules/Configuracoes';
 // Função auxiliar para mapear qual aba cada item pertence
 function getAbaForSection(section: string): { aba: string; item: string } {
   const mapping: Record<string, { aba: string; item: string }> = {
-    // Gestão & Estratégia
-    'dashboard': { aba: 'gestao', item: 'dashboard' },
-    'relatorios': { aba: 'gestao', item: 'relatorios' },
-    
     // Produção
     'obras': { aba: 'producao', item: 'obras' },
     'servicos': { aba: 'producao', item: 'obras' },

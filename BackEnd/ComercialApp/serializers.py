@@ -1,5 +1,6 @@
 import re
 from decimal import Decimal
+from django.utils import timezone
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password as django_validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -734,4 +735,4 @@ class LogAtividadeSerializer(serializers.ModelSerializer):
                   'modulo', 'descricao', 'timestamp', 'timestamp_fmt']
 
     def get_timestamp_fmt(self, obj):
-        return obj.timestamp.strftime('%d/%m/%Y %H:%M:%S')
+        return timezone.localtime(obj.timestamp).strftime('%d/%m/%Y %H:%M:%S')

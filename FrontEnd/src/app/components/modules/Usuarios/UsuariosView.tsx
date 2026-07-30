@@ -13,14 +13,6 @@ import { confirmDialog } from '../../ui/feedback';
 // ─── Mapa de permissões por departamento ───────────────────────────────────
 const PERMISSAO_GRUPOS = [
   {
-    id: 'gestao',
-    label: 'Gestão & Estratégia',
-    itens: [
-      { id: 'dashboard', label: 'Dashboard Geral' },
-      { id: 'relatorios', label: 'Relatórios BI' },
-    ],
-  },
-  {
     id: 'producao',
     label: 'Produção',
     itens: [
