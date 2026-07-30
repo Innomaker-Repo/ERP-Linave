@@ -15,6 +15,13 @@ ADMIN_PASSWORD = 'Admin@linave'
 class Command(BaseCommand):
     help = 'Cria ou atualiza o workspace e o usuário admin padrão.'
 
+    def add_arguments(self, parser):
+        parser.add_argument(
+            '--if-missing',
+            action='store_true',
+            help='Cria o workspace e o usuário admin apenas se não existirem.',
+        )
+
     def handle(self, *args, **options):
         from ComercialApp.models import User, Workspace
 
@@ -29,6 +36,10 @@ class Command(BaseCommand):
             cpf=ADMIN_CPF,
             defaults={'nome': 'Administrador', 'cargo': 'Administrador do Sistema', 'departamento': 'TI'},
         )
+        if options['if_missing'] and not criado:
+            self.stdout.write("Usuário admin já existe; não será atualizado (opção --if-missing).")
+            return
+
         admin.email = ADMIN_EMAIL
         admin.role = 'admin'   # save() sincroniza is_superuser/is_staff automaticamente
         admin.is_active = True

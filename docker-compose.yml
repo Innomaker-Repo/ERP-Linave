@@ -1,0 +1,117 @@
+
+networks:
+  erp-network:
+    driver: bridge
+
+services:
+  # --- PORTEIRO E PROXY REVERSO: TRAEFIK ---
+  traefik:
+    image: traefik:v3.7
+    container_name: erp_traefik
+    ports:
+      - "80:80"       # Porta padrão web HTTP (Acesse http://localhost)
+      - "443:443"     # Porta padrão web HTTPS (Acesse https://localhost)
+      - "127.0.0.1:8080:8080"   # Painel visual do Traefik (Acesse http://localhost:8080)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik/acme.json:/acme.json
+    entrypoint:
+      - /usr/local/bin/traefik
+      - --configfile=/etc/traefik/traefik.yml
+    networks:
+      - erp-network
+
+  # --- BANCO DE DADOS: MYSQL ---
+  database:
+    image: mysql:8.0
+    container_name: erp_database
+    restart: always
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    #ports:
+    #  - "127.0.0.1:3306:3306" # Expõe o banco para inspeção apenas para acesso ssh ou direto da própria máquina
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p$$MYSQL_ROOT_PASSWORD"]
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - erp-network
+
+  # --- BACKEND: DJANGO ---
+  backend:
+    build: ./BackEnd  # Compila usando o Dockerfile do seu backend
+    container_name: erp_backend
+    restart: always
+    #volumes:
+    #  - ./BackEnd:/app # Volume ativo APENAS para ambiente Dev (Hot Reload)
+    command: sh -c "python manage.py collectstatic --noinput &&
+                    python manage.py migrate && 
+                    python manage.py setup_admin --if-missing &&
+                    gunicorn ERP_Linave_BackEnd.wsgi:application --bind 0.0.0.0:8000 --workers 3 --threads 2"
+    environment:
+      - DB_HOST=database
+      - DB_NAME=${MYSQL_DATABASE}
+      - DB_USER=${MYSQL_USER}
+      - DB_PASSWORD=${MYSQL_PASSWORD}
+      - DJANGO_DEBUG=${DJANGO_DEBUG}
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
+      - DJANGO_ALLOWED_HOSTS=${ALLOWED_HOSTS}
+      - DJANGO_CORS_ALLOWED_ORIGINS=${DJANGO_CORS_ALLOWED_ORIGINS}
+    depends_on:
+        database:
+          condition: service_healthy
+    networks:
+      - erp-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.backend.entrypoints=websecure"
+      - "traefik.http.routers.backend.rule=Host(`${DOMINIO_SISTEMA}`) && (PathPrefix(`/api`) || PathPrefix(`/comercial`) || PathPrefix(`/token`) || PathPrefix(`/media`) || PathPrefix(`/jamanta-fiscal`))" # Encaminha tudo que for /api para o Django
+      - "traefik.http.services.backend.loadbalancer.server.port=8000"
+      - "traefik.http.routers.backend.tls.certresolver=meu-resolvedor"
+
+      # Headers de segurança para o Backend
+      - "traefik.http.routers.backend.middlewares=backend-secure-headers"
+      - "traefik.http.middlewares.backend-secure-headers.headers.browserXssFilter=true"
+      - "traefik.http.middlewares.backend-secure-headers.headers.contentTypeNosniff=true"
+      - "traefik.http.middlewares.backend-secure-headers.headers.frameDeny=true"
+      - "traefik.http.middlewares.backend-secure-headers.headers.contentSecurityPolicy=default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self';"
+
+  # --- FRONTEND: REACT ---
+  frontend:
+    build: ./FrontEnd
+    container_name: erp_frontend
+    restart: always
+    #volumes:
+    #  - ./FrontEnd:/app # Volume ativo APENAS para ambiente Dev (Hot Reload)
+    depends_on:
+      - backend
+    networks:
+      - erp-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frontend.entrypoints=websecure"
+      - "traefik.http.routers.frontend.rule=Host(`${DOMINIO_SISTEMA}`)" # Todo o restante vai para o React
+      - "traefik.http.services.frontend.loadbalancer.server.port=80"
+      - "traefik.http.routers.frontend.tls.certresolver=meu-resolvedor"
+
+      # Fallback para Redirecionamento de HTTP para HTTPS
+      - "traefik.http.routers.frontend-web.middlewares=redirect-to-https"
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+
+      # Headers de segurança 
+      - "traefik.http.routers.frontend.middlewares=secure-headers"
+      - "traefik.http.middlewares.secure-headers.headers.browserXssFilter=true"
+      - "traefik.http.middlewares.secure-headers.headers.contentTypeNosniff=true"
+      - "traefik.http.middlewares.secure-headers.headers.frameDeny=true"
+      - "traefik.http.middlewares.secure-headers.headers.contentSecurityPolicy=default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self';"
+
+volumes:
+  mysql_data:

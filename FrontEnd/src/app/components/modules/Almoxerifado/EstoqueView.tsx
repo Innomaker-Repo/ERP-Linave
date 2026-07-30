@@ -501,7 +501,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   const [tables, setTables] = useState<StockTable[]>(() => STOCK_TABLES.map((table) => ({
     ...table,
     columns: [...table.columns],
-    rows: table.rows.map((row) => ({ ...row, values: normalizeRowValues(row.values) }))
+    rows: []
   })));
   
   const [selectedCategory, setSelectedCategory] = useState<'Materiais' | 'Equipamentos' | 'Alugados'>('Materiais');

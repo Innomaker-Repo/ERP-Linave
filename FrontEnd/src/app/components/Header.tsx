@@ -43,7 +43,7 @@ export function Header({ activeSection, searchQuery, setSearchQuery, onToggleSid
 
       <div className="flex items-center gap-6">
         <div className="text-right">
-          <p className="text-white font-black text-xs uppercase">{empresa?.nome || 'Linave'}</p>
+          <p className="text-white font-black text-xs uppercase">{empresa?.nome || 'Linave/Servinave'}</p>
           <p className="text-amber-500 font-bold text-[10px] uppercase tracking-widest">
             {userSession?.nome?.split(' ')[0] || 'Usuário'}
           </p>

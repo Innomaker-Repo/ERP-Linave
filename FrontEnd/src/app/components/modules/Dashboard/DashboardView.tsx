@@ -89,7 +89,7 @@ export function DashboardView() {
     <div className="p-10 space-y-8 animate-in fade-in duration-500">
       {/* Header com título */}
       <div>
-        <h1 className="text-3xl font-black text-white">Dashboard Linave</h1>
+        <h1 className="text-3xl font-black text-white">Dashboard Linave/Servinave</h1>
         <p className="text-white/40 text-sm mt-2">Bem-vindo ao painel de controle da sua empresa</p>
       </div>
 
