@@ -8,6 +8,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, Trash2, Save, Download, Lock, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { money, num, todayStr } from '../finData';
+import { MoneyInput } from '../finUi';
 import { isEmpresaLinave } from '../../../../utils/company';
 import { handleDownloadCustoHhPDF } from '../custoHhPdf';
 import { useErp } from '../../../../context/ErpContext';
@@ -365,7 +366,7 @@ export function AlocarHhView({ osNumero, selected, outrosCustos = [] }: { osNume
                 <tr key={c.cargo} className="text-white">
                   <td className="border border-white/10 px-3 py-2">{c.cargo}</td>
                   <td className="border border-white/10 px-3 py-2 text-center">
-                    <input type="number" min="0" step="0.01" value={rates[c.cargo] ?? ''} onChange={(e) => setRates((r) => ({ ...r, [c.cargo]: e.target.value }))} disabled={fechada} className={rateInput} placeholder="0,00" />
+                    <MoneyInput bare className={rateInput} value={rates[c.cargo] ?? ''} onChange={(v) => setRates((r) => ({ ...r, [c.cargo]: v }))} disabled={fechada} />
                   </td>
                   <td className="border border-white/10 px-3 py-2 text-right">{money(c.custoHN)}</td>
                   <td className="border border-white/10 px-3 py-2 text-right">{money(c.custoHE05)}</td>

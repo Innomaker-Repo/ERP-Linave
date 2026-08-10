@@ -3,7 +3,7 @@
  * Estado compartilhado entre a barra de filtros e as views. Filtragem frontend.
  * O período é uma FAIXA de datas (início → fim, com dia) aplicada a todas as telas.
  * =======================================================================================*/
-import React, { createContext, useContext, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Building2, Landmark, CalendarRange, ArrowRight, SlidersHorizontal, X } from 'lucide-react';
 import { Select } from './finUi';
 import { useFin } from './useFin';
@@ -43,8 +43,22 @@ const Ctx = createContext<FinFiltersCtx | null>(null);
 export const useFinFilters = (): FinFiltersCtx =>
   useContext(Ctx) || { filters: DEFAULTS, setFilters: () => {}, match: () => true };
 
-export function FinFiltersProvider({ children }: { children: React.ReactNode }) {
-  const [filters, setFilters] = useState<FinFilterState>(DEFAULTS);
+export function FinFiltersProvider({ view = '', children }: { view?: string; children: React.ReactNode }) {
+  const [filters, setFilters] = useState<FinFilterState>(() => {
+    const [ini, fim] = periodoPadraoDaView(view);
+    return { ...DEFAULTS, dataInicio: ini, dataFim: fim };
+  });
+
+  // Ao trocar de tela, o período volta para o padrão daquela tela (Contas a Receber abre
+  // em "de hoje em diante"; as demais, sem limite). Empresa e banco continuam grudados,
+  // porque são recorte de contexto e não de janela de tempo.
+  const viewAnterior = useRef(view);
+  useEffect(() => {
+    if (viewAnterior.current === view) return;
+    viewAnterior.current = view;
+    const [ini, fim] = periodoPadraoDaView(view);
+    setFilters((f) => ({ ...f, dataInicio: ini, dataFim: fim }));
+  }, [view]);
 
   const match = (rec: any): boolean => {
     const empresa = rec?.empresa;
@@ -78,7 +92,10 @@ const ultimoDoMes = (d: string) => {
 };
 const ano = todayStr.slice(0, 4);
 
-const PRESETS: { id: string; label: string; range: [string, string] }[] = [
+type Preset = { id: string; label: string; range: [string, string] };
+
+// Telas de histórico (o que já aconteceu): contas a pagar, aprovações, histórico...
+const PRESETS_PASSADO: Preset[] = [
   { id: 'tudo', label: 'Tudo', range: ['', ''] },
   { id: 'hoje', label: 'Hoje', range: [todayStr, todayStr] },
   { id: '7d', label: '7 dias', range: [days(todayStr, -6), todayStr] },
@@ -86,6 +103,25 @@ const PRESETS: { id: string; label: string; range: [string, string] }[] = [
   { id: 'mes', label: 'Este mês', range: [primeiroDoMes(todayStr), ultimoDoMes(todayStr)] },
   { id: 'ano', label: 'Este ano', range: [`${ano}-01-01`, `${ano}-12-31`] },
 ];
+
+// Telas de previsão (o que ainda vai vencer): Contas a Receber. Aqui olhar para trás não
+// ajuda — o que importa é o que está por receber de hoje em diante.
+const PRESETS_FUTURO: Preset[] = [
+  { id: 'tudo', label: 'Tudo', range: ['', ''] },
+  { id: 'aPartirDeHoje', label: 'De hoje em diante', range: [todayStr, ''] },
+  { id: 'hoje', label: 'Hoje', range: [todayStr, todayStr] },
+  { id: 'prox7d', label: 'Próximos 7 dias', range: [todayStr, days(todayStr, 6)] },
+  { id: 'prox30d', label: 'Próximos 30 dias', range: [todayStr, days(todayStr, 29)] },
+  { id: 'mes', label: 'Este mês', range: [primeiroDoMes(todayStr), ultimoDoMes(todayStr)] },
+  { id: 'ano', label: 'Este ano', range: [`${ano}-01-01`, `${ano}-12-31`] },
+];
+
+// Telas que olham para frente e o período padrão que cada uma assume ao ser aberta.
+const VIEWS_FUTURO = new Set(['receber', 'previsao']);
+export const presetsDaView = (view: string): Preset[] =>
+  VIEWS_FUTURO.has(view) ? PRESETS_FUTURO : PRESETS_PASSADO;
+export const periodoPadraoDaView = (view: string): [string, string] =>
+  VIEWS_FUTURO.has(view) ? [todayStr, ''] : ['', ''];
 
 /* ---------------------------------------------------------------------------------------
  * Primitivos visuais da barra.
@@ -127,10 +163,11 @@ function PresetChip({ label, active, onClick }: { label: string; active: boolean
   );
 }
 
-export function FinFiltersBar() {
+export function FinFiltersBar({ view = '' }: { view?: string }) {
   const { filters, setFilters } = useFinFilters();
   const { empresas, records } = useFin();
   const bancos = records('banco').map((b) => b.nome).filter(Boolean) as string[];
+  const presets = presetsDaView(view);
 
   const ativos =
     (filters.empresa !== 'Todas' ? 1 : 0) +
@@ -144,8 +181,8 @@ export function FinFiltersBar() {
     setFilters((f) => ({ ...f, dataFim: v, dataInicio: f.dataInicio && v && f.dataInicio > v ? v : f.dataInicio }));
 
   const presetAtivo = useMemo(
-    () => PRESETS.find((p) => p.range[0] === filters.dataInicio && p.range[1] === filters.dataFim)?.id,
-    [filters.dataInicio, filters.dataFim],
+    () => presets.find((p) => p.range[0] === filters.dataInicio && p.range[1] === filters.dataFim)?.id,
+    [presets, filters.dataInicio, filters.dataFim],
   );
 
   return (
@@ -193,7 +230,10 @@ export function FinFiltersBar() {
 
         {/* Período (faixa de datas) */}
         <div className="min-w-[300px] flex-[2]">
-          <span className={grpLabel}><CalendarRange size={12} /> Período (início → fim)</span>
+          <span className={grpLabel}>
+            <CalendarRange size={12} /> Período (início → fim)
+            {periodoPadraoDaView(view)[0] && <span className="text-amber-300/60">· a partir de hoje</span>}
+          </span>
           <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-[#0b1220] px-2 py-1 transition-colors focus-within:border-amber-500/60">
             <DateField tag="De" value={filters.dataInicio} onChange={setInicio} max={filters.dataFim} />
             <ArrowRight size={15} className="flex-shrink-0 text-white/30" />
@@ -205,7 +245,7 @@ export function FinFiltersBar() {
       {/* Atalhos de período */}
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
         <span className="mr-0.5 text-[10px] font-black uppercase tracking-widest text-white/30">Atalhos</span>
-        {PRESETS.map((p) => (
+        {presets.map((p) => (
           <PresetChip
             key={p.id}
             label={p.label}
