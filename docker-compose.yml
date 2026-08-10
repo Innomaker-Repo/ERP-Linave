@@ -50,7 +50,10 @@ services:
     build: ./BackEnd  # Compila usando o Dockerfile do seu backend
     container_name: erp_backend
     restart: always
-    #volumes:
+    volumes:
+      # Documentos enviados pelos usuários (MEDIA_ROOT). SEM este volume os anexos
+      # ficam na camada gravável do container e somem a cada `up --build`.
+      - media_data:/app/media
     #  - ./BackEnd:/app # Volume ativo APENAS para ambiente Dev (Hot Reload)
     command: sh -c "python manage.py collectstatic --noinput &&
                     python manage.py migrate && 
@@ -73,7 +76,9 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.backend.entrypoints=websecure"
-      - "traefik.http.routers.backend.rule=Host(`${DOMINIO_SISTEMA}`) && (PathPrefix(`/api`) || PathPrefix(`/comercial`) || PathPrefix(`/token`) || PathPrefix(`/media`) || PathPrefix(`/jamanta-fiscal`))" # Encaminha tudo que for /api para o Django
+      # /media NÃO entra aqui: o Django não serve MEDIA com DEBUG=False. Quem serve os
+      # arquivos é o nginx do frontend, que monta o mesmo volume media_data.
+      - "traefik.http.routers.backend.rule=Host(`${DOMINIO_SISTEMA}`) && (PathPrefix(`/api`) || PathPrefix(`/comercial`) || PathPrefix(`/token`) || PathPrefix(`/jamanta-fiscal`))" # Encaminha tudo que for /api para o Django
       - "traefik.http.services.backend.loadbalancer.server.port=8000"
       - "traefik.http.routers.backend.tls.certresolver=meu-resolvedor"
 
@@ -89,7 +94,9 @@ services:
     build: ./FrontEnd
     container_name: erp_frontend
     restart: always
-    #volumes:
+    volumes:
+      # Mesmo volume do backend, somente leitura: o nginx serve /media/ direto do disco.
+      - media_data:/usr/share/nginx/media:ro
     #  - ./FrontEnd:/app # Volume ativo APENAS para ambiente Dev (Hot Reload)
     depends_on:
       - backend
@@ -115,3 +122,4 @@ services:
 
 volumes:
   mysql_data:
+  media_data:   # Anexos/documentos enviados pelos usuários (MEDIA_ROOT do Django)

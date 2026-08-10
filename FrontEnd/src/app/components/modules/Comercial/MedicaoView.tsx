@@ -489,7 +489,10 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
         forma: nfeForm.forma,
         dataEmitir: nfeForm.dataEmitir,
         tipoNfe: nfeForm.tipoNfe,
-        anexos: [...(nfeForm.docsCliente || []), ...(nfeForm.docsNf || [])].map((d: any) => d?.nome).filter(Boolean),
+        // Guarda a URL (/media/...), não o nome: as telas do Financeiro só transformam o
+        // anexo em link quando o valor casa com /^(https?:|\/media\/)/. Com o nome puro o
+        // documento aparecia como texto morto, sem como baixar.
+        anexos: [...(nfeForm.docsCliente || []), ...(nfeForm.docsNf || [])].map((d: any) => d?.url || d?.nome).filter(Boolean),
         documentosCliente: nfeForm.docsCliente || [],   // Item 5
         notasFiscaisEmitidas: nfeForm.docsNf || [],      // Item 7
         contrato: nfeForm.os,
