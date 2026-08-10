@@ -165,3 +165,10 @@ STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
+# Em produção quem serve /media é o nginx do container frontend (volume media_data
+# montado read-only), rodando com outro usuário que não o do Django. Fixamos as
+# permissões para não depender do umask do container: sem isso um upload pode nascer
+# ilegível para o nginx e virar 403/404 na hora do download.
+FILE_UPLOAD_PERMISSIONS = 0o644
+FILE_UPLOAD_DIRECTORY_PERMISSIONS = 0o755
+

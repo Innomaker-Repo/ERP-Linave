@@ -177,6 +177,12 @@ export function useFin() {
       banco: '',
       forma: sol.forma,
       status: 'Aberto',
+      // Os anexos da solicitação (URLs /media/... dos documentos já persistidos) precisam
+      // seguir para a Conta a Pagar: é o mesmo documento que o solicitante enviou e que
+      // quem paga precisa consultar. Sem isso a conta nasce sem anexo e `contaTemDocumento`
+      // retorna false, afetando o status e a liberação no estoque.
+      anexos: Array.isArray(sol.anexos) ? sol.anexos : [],
+      descricao: sol.descricao || '',
       valorPago: 0,
       jurosPago: 0,
       comprovantes: [],
