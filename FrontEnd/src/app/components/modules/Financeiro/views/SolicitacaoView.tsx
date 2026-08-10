@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Send, CheckCircle2 } from 'lucide-react';
-import { FinCard, Toolbar, Field, Input, Select, Textarea, FileInput, Btn, boldOS } from '../finUi';
+import { FinCard, Toolbar, Field, Input, MoneyInput, Select, Textarea, FileInput, Btn, boldOS } from '../finUi';
 import { todayStr, genFinId, num, FORMAS_PAGAMENTO, TIPOS_REEMBOLSO } from '../finData';
 import { useFin } from '../useFin';
 import { uploadDocumento } from '../../../../../services/documentosService';
@@ -112,7 +112,7 @@ export function SolicitacaoView() {
         </Field>
         <Field label="Documento" span={3}><Input value={form.documento} onChange={(e) => set('documento', e.target.value)} placeholder="NF / cupom" /></Field>
 
-        <Field label="Valor" span={3}><Input type="number" step="0.01" value={form.valor} onChange={(e) => set('valor', e.target.value)} placeholder="0,00" /></Field>
+        <Field label="Valor" span={3}><MoneyInput value={form.valor} onChange={(v) => set('valor', v)} /></Field>
         <Field label="Data compra" span={3}><Input type="date" value={form.compra} onChange={(e) => set('compra', e.target.value)} /></Field>
         <Field label="Vencimento" span={3}><Input type="date" value={form.vencimento} onChange={(e) => set('vencimento', e.target.value)} /></Field>
         <Field label="Forma solicitada" span={3}>

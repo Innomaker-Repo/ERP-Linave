@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { FinCard, Toolbar, DataTable, Th, Td, Btn, StatusTag, CompanyTag, Pill, EmptyRow, FinModal, Kpi } from '../finUi';
+import { FinCard, Toolbar, DataTable, Th, Td, Btn, StatusTag, CompanyTag, Pill, EmptyRow, FinModal, Kpi, DeleteBtn } from '../finUi';
 import { br, money, num } from '../finData';
 import { useFin, type FinRecord } from '../useFin';
 import { useFinFilters } from '../finFilters';
@@ -7,7 +7,7 @@ import { useFinFilters } from '../finFilters';
 // Leitura real: solicitações guardadas na coleção `financeiro` (tipo 'solicitacao').
 // Aprovar transforma a solicitação em Conta a Pagar (escrita via saveEntity).
 export function AprovacoesView() {
-  const { records, approveSolicitacao, rejectSolicitacao } = useFin();
+  const { records, approveSolicitacao, rejectSolicitacao, deleteRecord } = useFin();
   const { match } = useFinFilters();
   const rows = records('solicitacao').filter(match);
   const [busy, setBusy] = useState('');
@@ -49,6 +49,16 @@ export function AprovacoesView() {
                     <Btn small variant="red" disabled={busy === r.id} onClick={() => run(r.id, rejectSolicitacao)}>Reprovar</Btn>
                   </>
                 )}
+                <DeleteBtn
+                  titulo="Excluir solicitação de pagamento"
+                  descricao={
+                    `${r.id} — ${r.solicitante || 'sem solicitante'} — ${r.fornecedor || 'sem fornecedor'} — ${money(num(r.valor))}`
+                    + (r.status === 'Aprovado'
+                      ? '\n\nATENÇÃO: esta solicitação já foi APROVADA. A Conta a Pagar gerada por ela NÃO é excluída junto — remova-a na tela de Contas a Pagar, se for o caso.'
+                      : '\n\nOs documentos anexados continuam guardados, mas deixam de ser acessíveis por esta solicitação.')
+                  }
+                  onConfirm={() => deleteRecord(r.id)}
+                />
               </div>
             </Td>
           </tr>

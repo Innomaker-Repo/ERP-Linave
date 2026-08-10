@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Trash2, ClipboardList, CalendarClock, Lock, Plus, Save, Download } from 'lucide-react';
-import { FinCard, Toolbar, Kpi, DataTable, Th, Td, EmptyRow, boldOS, Input, Select, Btn } from '../finUi';
+import { FinCard, Toolbar, Kpi, DataTable, Th, Td, EmptyRow, boldOS, Input, MoneyInput, Select, Btn } from '../finUi';
 import { money, br, num, download } from '../finData';
 import { useErp } from '../../../../context/ErpContext';
 import { findObraDaOs, formatOsLabel, getEmbarcacaoDaOs, getOsNumero } from '../../../../../services/ordensServico';
@@ -658,12 +658,12 @@ export function CustoPorOsView() {
                     </Td>
                     <Td>
                       <div className="w-28">
-                        <Input type="number" step="0.01" value={l.valorUnitario != null ? String(l.valorUnitario) : ''} onChange={(e) => setLinha(l.id, 'valorUnitario', e.target.value)} disabled={fechada} placeholder="—" />
+                        <MoneyInput value={l.valorUnitario != null ? String(l.valorUnitario) : ''} onChange={(v) => setLinha(l.id, 'valorUnitario', v)} disabled={fechada} />
                       </div>
                     </Td>
                     <Td>
                       <div className="w-32">
-                        <Input type="number" step="0.01" value={String(l.valor ?? '')} onChange={(e) => setLinha(l.id, 'valor', e.target.value)} disabled={fechada} />
+                        <MoneyInput value={String(l.valor ?? '')} onChange={(v) => setLinha(l.id, 'valor', v)} disabled={fechada} />
                       </div>
                     </Td>
                     <Td>{origemTag(l.origem)}</Td>

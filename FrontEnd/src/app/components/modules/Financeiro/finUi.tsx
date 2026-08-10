@@ -2,8 +2,11 @@
  * FINANCEIRO — Primitivos de UI (tema escuro do ERP)
  * Tags, cartões, métricas, campos de formulário e tabela reutilizados pelas views.
  * =======================================================================================*/
-import React, { useState } from 'react';
-import { SEED_BANKS } from './finData';
+import React, { useEffect, useState } from 'react';
+import { Info, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
+import { confirmDialog } from '../../ui/feedback';
+import { SEED_BANKS, IMPOSTOS_NFE, IMPOSTO_LABEL, brl, money, num, type ImpostosNfe } from './finData';
 
 // Realce do acrônimo "OS" (amarelo do tema) — fonte única em utils/osHighlight, re-exportado aqui
 // para as telas do Financeiro que já importam de '../finUi'.
@@ -146,6 +149,68 @@ export const Input = (props: React.InputHTMLAttributes<HTMLInputElement>) => (
 export const Textarea = (props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) => (
   <textarea {...props} className={`${inputCls} min-h-[88px] resize-y ${props.className || ''}`} />
 );
+
+// ---------- Campo de dinheiro (máscara BRL enquanto digita) ----------
+// O usuário digita só os dígitos e o campo vai preenchendo da direita para a esquerda,
+// como numa maquininha: 1 → R$ 0,01 · 12 → R$ 0,12 · 120000 → R$ 1.200,00.
+//
+// Para fora, o componente sempre entrega o número em formato "cru" com ponto decimal
+// ("1200.00"). Isso é essencial: o resto do Financeiro passa esses valores por `num()`,
+// que quebraria se recebesse "1.200,00" (viraria NaN e o valor seria salvo como zero).
+const centavosDoValor = (v: string | number | undefined | null): number | null => {
+  if (v === '' || v === null || v === undefined) return null;
+  const n = Number(String(v).replace(',', '.'));
+  if (!Number.isFinite(n)) return null;
+  return Math.round(n * 100);
+};
+
+export function MoneyInput({
+  value, onChange, disabled, placeholder = 'R$ 0,00', className = '', autoFocus, bare,
+}: {
+  value: string | number | undefined | null;
+  onChange: (valorCru: string) => void;
+  disabled?: boolean;
+  placeholder?: string;
+  className?: string;
+  autoFocus?: boolean;
+  // `bare` descarta o estilo padrão de campo — para células de tabela, que têm o seu.
+  bare?: boolean;
+}) {
+  const externo = centavosDoValor(value);
+  const [centavos, setCentavos] = useState<string>(externo === null ? '' : String(externo));
+
+  // Ressincroniza quando o valor muda POR FORA (abrir o modal de edição, preenchimento
+  // automático). Compara em centavos para não brigar com o que o usuário está digitando.
+  useEffect(() => {
+    const atual = centavos === '' ? null : Number(centavos);
+    if (externo !== atual) setCentavos(externo === null ? '' : String(externo));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [externo]);
+
+  const exibicao = centavos === '' ? '' : brl.format(Number(centavos) / 100);
+
+  const aoDigitar = (e: React.ChangeEvent<HTMLInputElement>) => {
+    // 13 dígitos = até 99 bilhões em centavos; passa longe de qualquer valor real e
+    // mantém a conta dentro do inteiro seguro do JS.
+    const digitos = e.target.value.replace(/\D/g, '').replace(/^0+(?=\d)/, '').slice(0, 13);
+    setCentavos(digitos);
+    onChange(digitos === '' ? '' : (Number(digitos) / 100).toFixed(2));
+  };
+
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      value={exibicao}
+      onChange={aoDigitar}
+      disabled={disabled}
+      placeholder={placeholder}
+      autoFocus={autoFocus}
+      // Alinhado à direita e tabular: os valores de uma coluna ficam alinhados na vírgula.
+      className={`${bare ? '' : `${inputCls} font-bold`} text-right tabular-nums ${className}`}
+    />
+  );
+}
 
 export function Select({ children, ...rest }: React.SelectHTMLAttributes<HTMLSelectElement>) {
   return (
@@ -304,5 +369,115 @@ export function AlertBar({ children }: { children: React.ReactNode }) {
     <div className="mb-4 rounded-2xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
       {children}
     </div>
+  );
+}
+
+// Faixa informativa (orientação de fluxo, não erro) — tom âmbar, para não competir
+// visualmente com o AlertBar vermelho de vencidos.
+export function InfoBar({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mb-4 flex items-start gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+      <Info size={17} className="mt-0.5 flex-shrink-0 text-amber-300" />
+      <div>{children}</div>
+    </div>
+  );
+}
+
+// ---------- Impostos retidos (somente leitura) ----------
+// Mostra o detalhamento que veio da NFe. Usado na edição e nos detalhes da Conta a
+// Receber; a tela de emissão da NFe tem o seu próprio bloco, porque lá as alíquotas
+// ainda são editáveis e recalculam ao vivo.
+export function ImpostosPanel({ impostos, valorOriginal, valorLiquido }: {
+  impostos: ImpostosNfe | null;
+  valorOriginal?: number;
+  valorLiquido?: number;
+}) {
+  if (!impostos || !impostos.total) {
+    return (
+      <div className="rounded-xl border border-white/10 bg-[#0b1220] p-4 text-sm text-white/40">
+        Sem impostos registrados. Recebíveis criados antes desta versão, ou lançados fora do
+        fluxo de NFe, não têm o detalhamento da retenção.
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-xl border border-white/10 bg-[#0b1220] p-4">
+      <p className="mb-3 text-xs font-black uppercase tracking-widest text-amber-300">Impostos retidos na NFe</p>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+        {IMPOSTOS_NFE.map((chave) => (
+          <div key={chave} className="rounded-lg border border-white/5 bg-[#101f3d] p-3">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-black uppercase tracking-wider text-white/60">{IMPOSTO_LABEL[chave]}</span>
+              {impostos.percentuais?.[chave] != null && (
+                <span className="text-[10px] text-white/30">{impostos.percentuais[chave]}%</span>
+              )}
+            </div>
+            <p className="mt-1 font-bold text-white">{money(num(impostos.valores?.[chave]))}</p>
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {valorOriginal != null && (
+          <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+            <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Valor original</p>
+            <p className="text-lg font-black text-white">{money(num(valorOriginal))}</p>
+          </div>
+        )}
+        <div className="rounded-lg border border-red-500/20 bg-red-500/[0.06] p-3">
+          <p className="text-[10px] font-black uppercase tracking-widest text-red-300/70">Total de impostos</p>
+          <p className="text-lg font-black text-red-300">{money(impostos.total)}</p>
+        </div>
+        {valorLiquido != null && (
+          <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/[0.06] p-3">
+            <p className="text-[10px] font-black uppercase tracking-widest text-emerald-300/70">Líquido a receber</p>
+            <p className="text-lg font-black text-emerald-300">{money(num(valorLiquido))}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Exclusão de registro ----------
+// Botão padrão de excluir do Financeiro. A confirmação é obrigatória e vem embutida:
+// nenhuma tela deve chamar a exclusão direto, porque o estado financeiro é persistido
+// por replace-all — o registro removido some do banco na mesma escrita, sem lixeira.
+export function DeleteBtn({
+  onConfirm, titulo, descricao, confirmarTexto = 'Excluir definitivamente', small = true, disabled,
+}: {
+  onConfirm: () => void | Promise<void>;
+  titulo: string;
+  descricao: string;
+  confirmarTexto?: string;
+  small?: boolean;
+  disabled?: boolean;
+}) {
+  const [excluindo, setExcluindo] = useState(false);
+
+  const clicar = async () => {
+    const ok = await confirmDialog({
+      title: titulo,
+      message: `${descricao}\n\nEsta ação não pode ser desfeita.`,
+      confirmText: confirmarTexto,
+      cancelText: 'Manter',
+      danger: true,
+    });
+    if (!ok) return;
+    setExcluindo(true);
+    try {
+      await onConfirm();
+      toast.success('Registro excluído.');
+    } catch (erro) {
+      console.error('Erro ao excluir registro financeiro:', erro);
+      toast.error('Não foi possível excluir. Nada foi alterado.');
+    } finally {
+      setExcluindo(false);
+    }
+  };
+
+  return (
+    <Btn small={small} variant="red" onClick={clicar} disabled={disabled || excluindo} title="Excluir registro">
+      <Trash2 size={small ? 13 : 15} /> {excluindo ? 'Excluindo...' : 'Excluir'}
+    </Btn>
   );
 }

@@ -1,5 +1,6 @@
 import React from 'react';
 import { FinFiltersProvider, FinFiltersBar } from '../../components/modules/Financeiro/finFilters';
+import { FinNavProvider } from '../../components/modules/Financeiro/finNav';
 import { DashboardView } from '../../components/modules/Financeiro/views/DashboardView';
 import { SolicitacaoView } from '../../components/modules/Financeiro/views/SolicitacaoView';
 import { AprovacoesView } from '../../components/modules/Financeiro/views/AprovacoesView';
@@ -15,6 +16,9 @@ import { ReciboLocacaoView } from '../../components/modules/Financeiro/views/Rec
 interface FinanceiroModuleProps {
   activeItem: string;
   searchQuery: string;
+  // Navegação entre seções do ERP (setActiveSection do App). Permite que uma view do
+  // Financeiro mande o usuário para outra — ex.: Contas a Receber → Solicitar NFe.
+  onNavigate?: (section: string) => void;
 }
 
 // Cada item do sidebar do ERP (grupo Financeiro) cai aqui e renderiza sua própria view.
@@ -32,14 +36,16 @@ const VIEWS: Record<string, React.ComponentType> = {
   reciboLocacao: ReciboLocacaoView,
 };
 
-export function FinanceiroModule({ activeItem }: FinanceiroModuleProps) {
+export function FinanceiroModule({ activeItem, onNavigate }: FinanceiroModuleProps) {
   const Active = VIEWS[activeItem] || DashboardView;
   return (
-    <FinFiltersProvider>
-      <div className="space-y-5">
-        <FinFiltersBar />
-        <Active />
-      </div>
-    </FinFiltersProvider>
+    <FinNavProvider onNavigate={onNavigate}>
+      <FinFiltersProvider view={activeItem}>
+        <div className="space-y-5">
+          <FinFiltersBar view={activeItem} />
+          <Active />
+        </div>
+      </FinFiltersProvider>
+    </FinNavProvider>
   );
 }

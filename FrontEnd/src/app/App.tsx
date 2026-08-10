@@ -146,7 +146,7 @@ export default function App() {
               case 'comercial':
                 return <ComercialModule activeItem={item} searchQuery={searchQuery} />;
               case 'financeiro':
-                return <FinanceiroModule activeItem={item} searchQuery={searchQuery} />;
+                return <FinanceiroModule activeItem={item} searchQuery={searchQuery} onNavigate={setActiveSection} />;
               case 'compras':
                 return <ComprasModule activeItem={item} searchQuery={searchQuery} />;
               case 'almoxerifado':
