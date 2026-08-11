@@ -227,6 +227,7 @@ class PropostaComercialResumoSerializer(serializers.ModelSerializer):
     escopoA = serializers.SerializerMethodField()
     escopoBasicoServicos = serializers.SerializerMethodField()
     precoItens = serializers.SerializerMethodField()
+    precoColunasOcultas = serializers.SerializerMethodField()
     referencias = serializers.CharField(source='referencia', read_only=True)
     responsabilidadeContratada = serializers.CharField(source='responsabilidade_contratada', read_only=True)
     responsabilidadeContratante = serializers.CharField(source='responsabilidade_contratante', read_only=True)
@@ -241,7 +242,7 @@ class PropostaComercialResumoSerializer(serializers.ModelSerializer):
             'cliente', 'negocio', 'referencias', 'saudacao', 'assunto', 'textoAbertura',
             'responsabilidadeContratada', 'responsabilidadeContratante', 'preco',
             'condicoesGerais', 'condicoesPagamento', 'prazo', 'encerramento',
-            'escopoA', 'escopoBasicoServicos', 'precoItens', 'versao'
+            'escopoA', 'escopoBasicoServicos', 'precoItens', 'precoColunasOcultas', 'versao'
         ]
 
     def get_versao(self, obj):
@@ -276,6 +277,9 @@ class PropostaComercialResumoSerializer(serializers.ModelSerializer):
     def get_precoItens(self, obj):
         return obj.preco_itens if isinstance(obj.preco_itens, list) else []
 
+    def get_precoColunasOcultas(self, obj):
+        return obj.preco_colunas_ocultas if isinstance(obj.preco_colunas_ocultas, list) else []
+
 class PropostaComercialSerializer(serializers.ModelSerializer):
     cliente_detalhes = ClienteSerializer(source='cliente', read_only=True)
     negocio_detalhes = NegocioResumoSerializer(source='negocio', read_only=True)
@@ -299,6 +303,7 @@ class PropostaComercialSerializer(serializers.ModelSerializer):
     # Estrutura rica (round-trip fiel via JSON)
     escopoBasicoServicos = serializers.JSONField(source='escopos_estruturado', required=False)
     precoItens = serializers.JSONField(source='preco_itens', required=False)
+    precoColunasOcultas = serializers.JSONField(source='preco_colunas_ocultas', required=False)
 
     class Meta:
         model = PropostaComercial
@@ -308,7 +313,7 @@ class PropostaComercialSerializer(serializers.ModelSerializer):
             'referencias', 'saudacao', 'assunto', 'textoAbertura',
             'responsabilidadeContratada', 'responsabilidadeContratante', 'preco',
             'condicoesGerais', 'condicoesPagamento', 'prazo', 'efetivoPrevisto', 'encerramento',
-            'escopoBasicoServicos', 'precoItens',
+            'escopoBasicoServicos', 'precoItens', 'precoColunasOcultas',
             'proposta_escopo', 'proposta_escopo_input'
         ]
 

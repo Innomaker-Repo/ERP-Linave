@@ -588,6 +588,10 @@ class PropostaComercial(models.Model):
     # Substitui a antiga consolidação-em-texto (que jogava o escopo no texto_de_abertura).
     escopos_estruturado = models.JSONField(default=list, blank=True)
     preco_itens = models.JSONField(default=list, blank=True)
+    # Colunas da tabela D que o usuário removeu ao montar esta proposta (ex.: ["dias"]).
+    # Guardado por proposta, e não em configuração global, porque cada proposta tem a sua
+    # forma: a reimpressão precisa sair idêntica ao que foi enviado ao cliente.
+    preco_colunas_ocultas = models.JSONField(default=list, blank=True)
 
     def __str__(self):
         return f"Proposta Comercial {self.id} - {self.cliente.razao_social} - Valor: {self.preco}"

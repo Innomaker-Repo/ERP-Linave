@@ -55,6 +55,9 @@ interface PropostaFormData {
   escopoC: string;
   preco: string;
   precoItens?: Array<{ id: string; descricao: string; quantidade: number; unidade: string; valorUnitario: number; dias: number; total: number; categoria?: 'servico' | 'locacao' }>;
+  // Colunas da tabela D que o usuário escondeu (ex.: ['dias']). Persiste na proposta para
+  // o PDF sair igual ao que foi montado na tela.
+  precoColunasOcultas?: string[];
   precoTextoLivre: string;
   condicoesGerais: string;
   condicoesPagamento: string;
@@ -180,6 +183,7 @@ const mapNegocioToObra = (n: any): any => ({
     escopoA: p.escopoA || '',
     escopoBasicoServicos: p.escopoBasicoServicos || [],
     precoItens: p.precoItens || [],                                   // tabela D (PDF)
+    precoColunasOcultas: p.precoColunasOcultas || [],                 // colunas escondidas da tabela D
   })),
   orcamentoRealizado: n.orcamento_realizado,
   orcamentoValores: n.orcamentos?.[0]?.valores || null,
@@ -255,6 +259,7 @@ export function PropostaView() {
     escopoA: '',
     escopoBasicoServicos: [],
     precoItens: [],
+    precoColunasOcultas: [],
     precoTextoLivre: '',
     responsabilidadeContratada: '',
     escopoC: '',
@@ -388,8 +393,39 @@ export function PropostaView() {
     return versao || 'Original';
   };
 
+  // ---- Colunas removíveis da tabela D ----
+  // Nem toda proposta tem as mesmas dimensões: um serviço fechado não tem "dias", uma
+  // locação não tem "unidade". Estas três podem ser escondidas; Descrição, Vl. Unit. e
+  // Valor total ficam sempre, porque sem elas a tabela deixa de ser uma tabela de preço.
+  //
+  // Esconder uma coluna MULTIPLICATIVA (quantidade, dias) tira o fator da conta — ela passa
+  // a valer 1. Sem isso, remover "Dias" deixaria os totais inflados por um número invisível.
+  const COLUNAS_PRECO_REMOVIVEIS = [
+    { id: 'quantidade', label: 'Quant.', multiplicativa: true },
+    { id: 'unidade', label: 'Unit.', multiplicativa: false },
+    { id: 'dias', label: 'Dias', multiplicativa: true },
+  ] as const;
+
+  const colunasOcultas: string[] = propostaForm.precoColunasOcultas || [];
+  const colunaVisivel = (id: string) => !colunasOcultas.includes(id);
+
+  const totalDaLinha = (it: any, ocultas: string[]) => {
+    const fator = (campo: string) => (ocultas.includes(campo) ? 1 : (Number(it?.[campo]) || 0));
+    return fator('quantidade') * (Number(it?.valorUnitario) || 0) * fator('dias');
+  };
+
+  // Ao esconder/mostrar uma coluna multiplicativa, todos os totais são refeitos na hora.
+  const alternarColunaPreco = (id: string) => {
+    setPropostaForm((prev) => {
+      const atuais = prev.precoColunasOcultas || [];
+      const ocultas = atuais.includes(id) ? atuais.filter((c) => c !== id) : [...atuais, id];
+      const itens = (prev.precoItens || []).map((it) => ({ ...it, total: totalDaLinha(it, ocultas) }));
+      return { ...prev, precoColunasOcultas: ocultas, precoItens: itens };
+    });
+  };
+
   // Preço (item D) - tabela macro editável: descrição, quantidade, unidade, valor unit., dias, total.
-  // Total da linha = quantidade × valor unitário × dias.
+  // Total da linha = quantidade × valor unitário × dias (fatores de colunas ocultas valem 1).
   const criarPrecoItem = (override?: Partial<{ id: string; descricao: string; quantidade: number; unidade: string; valorUnitario: number; dias: number; total: number; categoria: 'servico' | 'locacao' }>) => {
     const quantidade = override?.quantidade ?? 1;
     const valorUnitario = override?.valorUnitario ?? 0;
@@ -434,7 +470,7 @@ export function PropostaView() {
           const cleaned = String(valor).replace(/[^0-9.,]/g, '').replace(',', '.');
           updated.valorUnitario = parseFloat(cleaned) || 0;
         }
-        updated.total = (Number(updated.quantidade) || 0) * (Number(updated.valorUnitario) || 0) * (Number(updated.dias) || 0);
+        updated.total = totalDaLinha(updated, prev.precoColunasOcultas || []);
         return updated;
       });
       return { ...prev, precoItens: itens };
@@ -459,32 +495,57 @@ export function PropostaView() {
             <Plus size={12} className="inline mr-1" /> Adicionar Item
           </button>
         </div>
+
+        {/* Colunas da tabela: desmarcar esconde na tela E no PDF. */}
+        <div className="flex flex-wrap items-center gap-2 mb-2">
+          <span className="text-[10px] font-black uppercase tracking-widest text-white/40">Colunas</span>
+          {COLUNAS_PRECO_REMOVIVEIS.map((col) => {
+            const visivel = colunaVisivel(col.id);
+            return (
+              <button
+                key={col.id}
+                type="button"
+                onClick={() => alternarColunaPreco(col.id)}
+                title={visivel
+                  ? `Remover a coluna ${col.label}${col.multiplicativa ? ' (sai do cálculo do total)' : ''}`
+                  : `Mostrar a coluna ${col.label} de novo`}
+                className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-bold transition-all active:scale-95 ${
+                  visivel
+                    ? 'border-blue-400/50 bg-blue-500/20 text-blue-200 hover:bg-blue-500/30'
+                    : 'border-white/10 bg-white/5 text-white/40 hover:text-white/70'
+                }`}
+              >
+                {visivel ? <X size={11} /> : <Plus size={11} />} {col.label}
+              </button>
+            );
+          })}
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-xs border border-white/10 rounded-lg overflow-hidden">
             <thead>
               <tr className="bg-white/5 border-b border-white/10">
                 <th className="px-3 py-2 text-left text-white font-black w-12">Item</th>
                 <th className="px-3 py-2 text-left text-white font-black">Descrição</th>
-                <th className="px-3 py-2 text-left text-white font-black w-20">Quant.</th>
-                <th className="px-3 py-2 text-left text-white font-black w-20">Unit.</th>
+                {colunaVisivel('quantidade') && <th className="px-3 py-2 text-left text-white font-black w-20">Quant.</th>}
+                {colunaVisivel('unidade') && <th className="px-3 py-2 text-left text-white font-black w-20">Unit.</th>}
                 <th className="px-3 py-2 text-left text-white font-black w-32">Vl. Unit. R$</th>
-                <th className="px-3 py-2 text-left text-white font-black w-16">Dias</th>
+                {colunaVisivel('dias') && <th className="px-3 py-2 text-left text-white font-black w-16">Dias</th>}
                 <th className="px-3 py-2 text-left text-white font-black w-36">Valor total R$</th>
                 <th className="px-3 py-2 text-center text-white font-black w-12"> </th>
               </tr>
             </thead>
             <tbody>
               {itens.length === 0 && (
-                <tr><td colSpan={8} className="px-3 py-3 text-white/40">Nenhum item. Clique em "Adicionar Item".</td></tr>
+                <tr><td colSpan={5 + COLUNAS_PRECO_REMOVIVEIS.filter((c) => colunaVisivel(c.id)).length} className="px-3 py-3 text-white/40">Nenhum item. Clique em "Adicionar Item".</td></tr>
               )}
               {itens.map((it, idx) => (
                 <tr key={it.id} className="border-b border-white/5">
                   <td className="px-3 py-2 text-white/60 font-bold text-center">{idx + 1}</td>
                   <td className="px-3 py-2 min-w-[200px]"><input type="text" className={cellInput} value={it.descricao || ''} onChange={(e) => atualizarPrecoItem(it.id, 'descricao', e.target.value)} placeholder="Descrição" /></td>
-                  <td className="px-3 py-2"><input type="number" min="0" className={cellInput} value={String(it.quantidade ?? '')} onChange={(e) => atualizarPrecoItem(it.id, 'quantidade', e.target.value)} /></td>
-                  <td className="px-3 py-2"><input type="text" className={cellInput} value={it.unidade || ''} onChange={(e) => atualizarPrecoItem(it.id, 'unidade', e.target.value)} placeholder="serv." /></td>
+                  {colunaVisivel('quantidade') && <td className="px-3 py-2"><input type="number" min="0" className={cellInput} value={String(it.quantidade ?? '')} onChange={(e) => atualizarPrecoItem(it.id, 'quantidade', e.target.value)} /></td>}
+                  {colunaVisivel('unidade') && <td className="px-3 py-2"><input type="text" className={cellInput} value={it.unidade || ''} onChange={(e) => atualizarPrecoItem(it.id, 'unidade', e.target.value)} placeholder="serv." /></td>}
                   <td className="px-3 py-2"><input type="text" className={cellInput} value={String(it.valorUnitario ?? '')} onChange={(e) => atualizarPrecoItem(it.id, 'valorUnitario', e.target.value)} placeholder="0,00" /></td>
-                  <td className="px-3 py-2"><input type="number" min="0" className={cellInput} value={String(it.dias ?? '')} onChange={(e) => atualizarPrecoItem(it.id, 'dias', e.target.value)} /></td>
+                  {colunaVisivel('dias') && <td className="px-3 py-2"><input type="number" min="0" className={cellInput} value={String(it.dias ?? '')} onChange={(e) => atualizarPrecoItem(it.id, 'dias', e.target.value)} /></td>}
                   <td className="px-3 py-2 text-white font-black whitespace-nowrap">R$ {(Number(it.total) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                   <td className="px-3 py-2 text-center"><button type="button" onClick={() => removerPrecoItem(it.id)} className="text-red-300 p-1"><X size={14} /></button></td>
                 </tr>
@@ -1214,6 +1275,9 @@ export function PropostaView() {
       responsabilidadeContratada: propostaAntiga?.responsabilidadeContratada || '',
       escopoC: propostaAntiga?.escopoC || propostaAntiga?.responsabilidadeContratante || '',
       precoItens,
+      // Sem isto, reimprimir uma proposta antiga traria de volta as colunas que tinham
+      // sido removidas quando ela foi montada.
+      precoColunasOcultas: Array.isArray(propostaAntiga?.precoColunasOcultas) ? propostaAntiga.precoColunasOcultas : [],
       condicoesGerais: propostaAntiga?.condicoesGerais || '',
       condicoesPagamento: propostaAntiga?.condicoesPagamento || '',
       prazo: propostaAntiga?.prazo || '',
@@ -1366,13 +1430,42 @@ export function PropostaView() {
                           <span className="text-white font-black">R$ {Number(obra.orcamentoValores.subtotal || 0).toFixed(2)}</span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="text-white/70">Margem:</span>
-                          <span className="text-white font-black">R$ {((Number(obra.orcamentoValores.subtotal || 0) * Number(obra.orcamentoValores.margem || 0)) / 100).toFixed(2)}</span>
+                          <span className="text-white/70">Margem{Number(obra.orcamentoValores.margem) ? ` (${Number(obra.orcamentoValores.margem)}%)` : ''}:</span>
+                          <span className="text-white font-black">
+                            R$ {Number(obra.orcamentoValores.valorMargem ?? ((Number(obra.orcamentoValores.subtotal || 0) * Number(obra.orcamentoValores.margem || 0)) / 100)).toFixed(2)}
+                          </span>
                         </div>
-                        <div className="flex justify-between text-blue-300 font-black">
+                        {/* O.H entra aqui porque sem ele a soma não fecha: o imposto incide
+                            sobre subtotal + margem + O.H, e não sobre o subtotal puro. */}
+                        {Number(obra.orcamentoValores.valorOH ?? 0) > 0 && (
+                          <div className="flex justify-between">
+                            <span className="text-white/70">O.H{Number(obra.orcamentoValores.oh) ? ` (${Number(obra.orcamentoValores.oh)}%)` : ''}:</span>
+                            <span className="text-white font-black">R$ {Number(obra.orcamentoValores.valorOH || 0).toFixed(2)}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between">
+                          <span className="text-amber-300/80">Imposto{Number(obra.orcamentoValores.impostos) ? ` (${Number(obra.orcamentoValores.impostos)}%)` : ''}:</span>
+                          <span className="text-amber-300 font-black">
+                            R$ {Number(obra.orcamentoValores.valorImpostos ?? 0).toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-blue-300 font-black border-t border-white/10 pt-2">
                           <span>Preço Final:</span>
                           <span>R$ {Number(obra.orcamentoValores.precoFinal || 0).toFixed(2)}</span>
                         </div>
+                        {/* Locação é orçada à parte, com imposto próprio — só aparece quando existe. */}
+                        {Number(obra.orcamentoValores.subtotalLocacao ?? 0) > 0 && (
+                          <>
+                            <div className="flex justify-between pt-1">
+                              <span className="text-white/70">Locação{Number(obra.orcamentoValores.impostosLocacao) ? ` (c/ ${Number(obra.orcamentoValores.impostosLocacao)}% imposto)` : ''}:</span>
+                              <span className="text-white font-black">R$ {Number(obra.orcamentoValores.subtotalLocacao || 0).toFixed(2)}</span>
+                            </div>
+                            <div className="flex justify-between text-emerald-300 font-black border-t border-white/10 pt-2">
+                              <span>Total Geral:</span>
+                              <span>R$ {Number(obra.orcamentoValores.totalGeral ?? 0).toFixed(2)}</span>
+                            </div>
+                          </>
+                        )}
                       </div>
                     )}
 
