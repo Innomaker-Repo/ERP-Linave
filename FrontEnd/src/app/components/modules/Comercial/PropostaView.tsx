@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
-import { useErp, extrairComponentesDoId, gerarIdProposta } from '../../../context/ErpContext';
-import { Plus, X, FileText, CheckCircle, XCircle, ArrowLeft, Save, Download } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { extrairComponentesDoId, gerarIdProjeto, gerarIdProposta, gerarIdProjetoDeNegocio, useErp } from '../../../context/ErpContext';
+import { formatDateBR } from '../../../utils/formatDate';
+import { Plus, X, FileText, CheckCircle, XCircle, ArrowLeft, Save, Download, RefreshCw, DollarSign, AlertTriangle, Trash2 } from 'lucide-react';
 import { handleDownloadPropostaPDF } from '../CRM/handleDownloadPropostaPDF';
 import { handleDownloadOrcamentoPDF } from '../CRM/handleDownloadOrcamentoPDF';
 import { isEmpresaLinave, getLogoUrlForEmpresa } from '../../../utils/company';
@@ -201,8 +202,10 @@ const parsePrecoParaDecimal = (preco: string): number => {
 };
 
 export function PropostaView() {
-  const { obras, clientes, saveEntity, saveDraft, loadDraft, clearDraft } = useErp();
-  const listaClientes = Array.isArray(clientes) ? clientes : [];
+  const { obras, os, saveEntity, userSession } = useErp() as any;
+  const [listaNegocios, setListaNegocios] = useState<any[]>([]);
+  const [filtroOs, setFiltroOs] = useState<string>('');
+  const [listaClientesLocal, setListaClientesLocal] = useState<any[]>([]);
   const [viewMode, setViewMode] = useState<'list' | 'form' | 'historico'>('list');
   const [selectedObra, setSelectedObra] = useState<any>(null);
   const [selectedPropostaVersion, setSelectedPropostaVersion] = useState<number | null>(null);
@@ -899,68 +902,46 @@ export function PropostaView() {
 
   const handleSelectObra = (obra: any) => {
     setSelectedObra(obra);
-         
-    // Pré-preencher dados
-    const cliente = listaClientes.find(c => c.id === obra.clienteId);
-    
-    // Descobrir a versão alfabética: primeira emissão fica sem sufixo.
-    const indexVersao = obra.propostas?.length || 0;
-    const proximaVersaoLetra = indexVersao === 0 ? '' : indexToVersaoAlfabetica(indexVersao - 1);
+
+    const cliente = findClienteById(listaClientesLocal, obra.clienteId);
+
+    const proximaVersaoLetra = getVersaoInicialProposta(obra.propostas);
 
     const componentesId = extrairComponentesDoId(obra.id);
     const numeroSequencial = componentesId?.numero || '0001';
-    const anoAtual = new Date().getFullYear().toString().slice(-2);
-         
-    const key = `proposta:${obra.id}`;
-    const draft = loadDraft(key);
 
-    setPropostaForm(prev => ({
+    const base: PropostaFormData = {
       ...getInitialPropostaForm(),
       dataProposta: new Date().toISOString().split('T')[0],
       cliente: cliente?.razaoSocial || cliente?.razao_social || cliente?.nomeFantasia || cliente?.nome_fantasia || '',
       atribuidoA: obra.responsavelComercial || '',
-      cargoContato: obra.tipo || '',
-      // Gera ID no formato: LN-0731/26 na primeira emissão e LN-0731A/26 nas seguintes.
+      cargoContato: obra.cargo || '',
       numeroProposta: gerarIdProposta(componentesId?.prefixo || 'LN', numeroSequencial, proximaVersaoLetra),
       // Abertura já com o ID do negócio atual logo após "Proposta Técnica-Comercial".
       textoAbertura: `Vimos através desta apresentar nossa Proposta Técnica-Comercial ${obra.id || ''}, para serviços, conforme escopo e delineamento realizado a bordo, conforme solicitado para vossa avaliação e aprovação.\n\n\nEstamos à disposição para quaisquer esclarecimentos que se façam necessários.\n\n\nAtenciosamente,\n\n\nDiretoria Comercial`,
       escopoBasicoServicos: criarEscopoBasicoServicos(obra)
-    }));
+    };
 
-<<<<<<< HEAD
-    if (draft) {
-      setPropostaForm((prev) => ({ ...prev, ...draft }));
-=======
-    // Inicializa a tabela de preço (D): serviços (do orçamento) + locação (dos itens alocados).
+    // Item D (Preço): tabela macro das atividades orçadas, vinda do ORÇAMENTO. Editável aqui
+    // (a proposta pode exigir mais atividades). Total da linha = quantidade × valor unit. × dias.
     try {
-      const precoItens: Array<{ id: string; nome?: string; quantidade: number; precoUnitario: number; total: number }> = [];
-      const incluiServico = temServico(obra?.modalidade);
-      const incluiLocacao = temLocacao(obra?.modalidade);
-
-      // Linha de serviços a partir do orçamento (quando houver)
-      const orc = obra.orcamentoValores || null;
-      if (incluiServico && orc) {
-        const precoFinal = Number(orc.precoFinal ?? orc.valorTotalServico ?? 0) || 0;
-        if (precoFinal > 0) {
-          const qnt = Number(orc.quantidadeItensProduzidos ?? orc.qnt ?? orc.quantidade ?? 1) || 1;
-          const unit = Number(orc.valorPorUnidade ?? (qnt > 0 ? precoFinal / qnt : precoFinal)) || 0;
-          precoItens.push({ id: `preco-orcamento-${Date.now()}`, nome: 'Orçamento (Serviços)', quantidade: qnt, precoUnitario: unit, total: precoFinal });
-        }
-      }
-
-      // Linhas de locação: uma por item alocado. O preço unitário já vem COM o imposto
-      // de locação do orçamento (calculado à parte), pra a proposta bater com o totalGeral.
-      if (incluiLocacao && Array.isArray(obra.itensAlocacao)) {
-        const impLocPct = Number(orc?.impostosLocacao ?? 0) || 0;
-        const fatorImposto = 1 + impLocPct / 100;
-        obra.itensAlocacao.filter((it: any) => it.equipamento).forEach((it: any, i: number) => {
-          const q = Number(it.quantidade) || 0;
-          const unit = (Number(it.valorLocacao) || 0) * fatorImposto; // valor de locação + imposto
-          precoItens.push({ id: `preco-loc-${it.id || i}`, nome: it.equipamento, quantidade: q, precoUnitario: unit, total: q * unit });
+      const macro = getAtividadesMacro(obra);
+      if (macro.length > 0) {
+        const precoItens = macro.map((it: any, i: number) => {
+          const quantidade = Number(it.quantidade) || 0;
+          const valorUnitario = Number(it.valorUnitario) || 0;
+          const dias = Number(it.dias) || 0;
+          return {
+            id: `preco-macro-${i}-${Date.now()}`,
+            descricao: String(it.descricao || ''),
+            quantidade,
+            unidade: String(it.unidade || 'serv.'),
+            valorUnitario,
+            dias,
+            total: quantidade * valorUnitario * dias,
+            categoria: (it.categoria === 'locacao' ? 'locacao' : 'servico') as 'servico' | 'locacao',
+          };
         });
-      }
-
-      if (precoItens.length > 0) {
         base.precoItens = precoItens;
         const totalProposta = precoItens.reduce((s: number, p: any) => s + (Number(p.total) || 0), 0);
         base.preco = `R$ ${totalProposta.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -980,7 +961,6 @@ export function PropostaView() {
       }
     } catch {
       setPropostaForm(base);
->>>>>>> fccd5af (ultimas alterações)
     }
     setNovaColunaPorEscopo({});
     setViewMode('form');
@@ -988,27 +968,13 @@ export function PropostaView() {
 
   const handleSaveProposta = async () => {
     if (!selectedObra) return;
-    
-    // A primeira versão fica sem sufixo; as próximas entram como A, B, C...
-    const indexVersao = selectedObra.propostas?.length || 0;
-    const proximaVersaoLetra = indexVersao === 0 ? '' : indexToVersaoAlfabetica(indexVersao - 1);
+
+    const proximaVersaoLetra = getVersaoInicialProposta(selectedObra.propostas);
 
     const componentesId = extrairComponentesDoId(selectedObra.id);
     const numeroSequencial = componentesId?.numero || String(selectedObra.backendId).padStart(4, '0');
     const numeroProposta = gerarIdProposta(componentesId?.prefixo || 'LN', numeroSequencial, proximaVersaoLetra);
 
-<<<<<<< HEAD
-    const escopoAConsolidado = propostaForm.escopoBasicoServicos.length > 0
-      ? gerarEscopoBasicoConsolidado(propostaForm.escopoBasicoServicos)
-      : propostaForm.escopoA;
-           
-    const novaProposta = {
-      versao: proximaVersaoLetra,
-      dataCriacao: new Date().toISOString().split('T')[0],
-      status: 'pendente' as const,
-      ...propostaForm,
-      escopoA: escopoAConsolidado
-=======
     // As chaves devem bater com os nomes dos campos do PropostaComercialSerializer (camelCase)
     const payload = {
       cliente: selectedObra.clienteBackendId,
@@ -1031,78 +997,38 @@ export function PropostaView() {
       // Estrutura rica persistida FIELMENTE: escopo A (tabelas) + tabela D de preço.
       escopoBasicoServicos: propostaForm.escopoBasicoServicos || [],
       precoItens: propostaForm.precoItens || [],
->>>>>>> fccd5af (ultimas alterações)
+      precoColunasOcultas: propostaForm.precoColunasOcultas || [],
     };
 
-    const obraAtualizada = {
-      ...selectedObra,
-      propostas: [...(selectedObra.propostas || []), novaProposta],
-      propostaPendenteNovaVersao: false,
-      motivoRecusaProposta: '',
-      houveAlteracaoDocumentosRecusa: false,
-      dataRecusaProposta: '',
-      categoria: 'Negociação',
-      status: 'Aguardando proposta'
-    };
-
-    const obrasAtualizadas = obras?.map((o: any) => o.id === selectedObra.id ? obraAtualizada : o) || [];
-    saveEntity('obras', obrasAtualizadas);
-
-    alert('Proposta criada com sucesso!');
-    setViewMode('list');
-    setSelectedObra(null);
-    setPropostaForm(getInitialPropostaForm());
-    setNovaColunaPorEscopo({});
-    // limpar rascunho
-    void clearDraft(`proposta:${selectedObra.id}`);
+    try {
+      await criarProposta(payload);
+      localStorage.removeItem(getRascunhoKey(selectedObra.backendId));
+      await refreshNegocios();
+      toast.success('Proposta criada com sucesso!');
+      setViewMode('list');
+      setSelectedObra(null);
+      setPropostaForm(getInitialPropostaForm());
+      setNovaColunaPorEscopo({});
+    } catch (err: any) {
+      console.error('Erro ao salvar proposta:', err?.response?.data || err);
+      const data = err?.response?.data;
+      const detalhe = data
+        ? (typeof data === 'string' ? data : JSON.stringify(data))
+        : (err?.message || '');
+      toast.error(`Erro ao salvar proposta. Verifique os dados e tente novamente.${detalhe ? `\n\nDetalhe: ${detalhe}` : ''}`);
+    }
   };
 
   const handleSalvarRascunho = () => {
     if (!selectedObra) return;
-
-    // Não criar nova versão ao salvar rascunho: armazenar rascunho separado
-    const escopoAConsolidado = propostaForm.escopoBasicoServicos.length > 0
-      ? gerarEscopoBasicoConsolidado(propostaForm.escopoBasicoServicos)
-      : propostaForm.escopoA;
-
-    const novaPropostaRascunho = {
-      dataCriacao: new Date().toISOString().split('T')[0],
-      status: 'rascunho',
-      ...propostaForm,
-      escopoA: escopoAConsolidado
-    };
-
-    const obraAtualizada = {
-      ...selectedObra,
-      propostaRascunho: novaPropostaRascunho // salva rascunho sem alterar lista de propostas/versionamento
-    };
-
-    const obrasAtualizadas = obras?.map((o: any) => o.id === selectedObra.id ? obraAtualizada : o) || [];
-    saveEntity('obras', obrasAtualizadas);
-
-    // Mantém o usuário na mesma tela para continuar edição
-    setSelectedObra(obraAtualizada);
-    alert('Proposta salva como rascunho. (Não alterou versão)');
-    // limpar rascunho salvo automatico
-    void clearDraft(`proposta:${selectedObra.id}`);
+    try {
+      localStorage.setItem(getRascunhoKey(selectedObra.backendId), JSON.stringify(propostaForm));
+      toast.success('Rascunho salvo! Você pode sair e retornar que os dados estarão aqui.');
+    } catch {
+      toast.error('Erro ao salvar rascunho.');
+    }
   };
 
-<<<<<<< HEAD
-  // Auto-save draft when editing
-  useEffect(() => {
-    if (viewMode !== 'form' || !selectedObra) return;
-    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
-    autoSaveTimer.current = setTimeout(() => {
-      try {
-        saveDraft(`proposta:${selectedObra.id}`, propostaForm);
-      } catch (err) {
-        console.warn('Falha ao salvar rascunho da proposta', err);
-      }
-    }, 1000);
-
-    return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
-  }, [propostaForm, viewMode, selectedObra?.id]);
-=======
   // Baixa o PDF usando os dados ATUAIS do formulário (sem precisar enviar/salvar).
   // Abre o PDF do orçamento do negócio (última versão) para consulta durante a proposta.
   const visualizarOrcamento = () => {
@@ -1126,7 +1052,6 @@ export function PropostaView() {
     };
     handleDownloadPropostaPDFWithLogo(propostaParaPdf, selectedObra);
   };
->>>>>>> fccd5af (ultimas alterações)
 
   // Gera DOCX a partir de template .docx (deve existir em /public/templates/LINAVE.docx e SERVINAVE.docx)
   const gerarDocxTemplate = async () => {

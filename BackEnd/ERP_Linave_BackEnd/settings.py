@@ -116,19 +116,10 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'linave_db',
-        'USER': 'root',
-<<<<<<< HEAD
-<<<<<<< HEAD
-        #'PASSWORD': 'Kamilinha1-',
-        'PASSWORD': 'password@123',
-=======
-        'PASSWORD': 'Kamilinha1-',
->>>>>>> 9f29e86 (feat: tentativa-merge)
-=======
-        'PASSWORD': 'password@123',
->>>>>>> 3c3ffb4 (falha integração)
-        'HOST': 'localhost',
+        'NAME': os.environ.get('DB_NAME'),      # Captura o ${MYSQL_DATABASE} enviado pelo compose
+        'USER': os.environ.get('DB_USER'),      # Captura o ${MYSQL_USER} enviado pelo compose
+        'PASSWORD': os.environ.get('DB_PASSWORD'),  # Captura o ${MYSQL_PASSWORD} enviado pelo compose
+        'HOST': os.environ.get('DB_HOST'),      # Captura o 'database' enviado pelo compose
         'PORT': '3306',
     }
 }

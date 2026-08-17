@@ -27,17 +27,18 @@ export const gerarIdProjeto = (prefixo: string, numeroSequencial: string): strin
 };
 
 /**
- * Gera o ID de proposta no formato: PREFIX-NUMERO+VERSAO/ANO
- * Exemplo: PREFIX='LN', NUMERO='0731', VERSAO='' → 'LN-0731/26'
+ * Gera o ID de proposta no formato: PREFIX-NUMERO/ANO ou PREFIX-NUMERO<VERSAO>/ANO.
+ * A primeira versão sai sem sufixo; revisões usam letras (A, B, C...).
  */
 export const gerarIdProposta = (prefixo: string, numeroSequencial: string, versionLetra: string = ''): string => {
   const anoAtual = new Date().getFullYear().toString().slice(-2);
-  return `${prefixo}-${numeroSequencial}${versionLetra || ''}/${anoAtual}`;
+  const sufixoVersao = versionLetra ? versionLetra : '';
+  return `${prefixo}-${numeroSequencial}${sufixoVersao}/${anoAtual}`;
 };
 
 /**
- * Gera o ID de orçamento no formato: PREFIX-NUMERO+VERSAO/ANO
- * Exemplo: PREFIX='LN', NUMERO='0731', VERSAO='' → 'LN-0731/26'
+ * Gera o ID de orçamento no formato: PREFIX-NUMERO/ANO ou PREFIX-NUMERO<VERSAO>/ANO.
+ * A primeira versão sai sem sufixo; revisões usam letras (A, B, C...).
  */
 export const gerarIdOrcamento = (prefixo: string, numeroSequencial: string, versionLetra?: string): string => {
   const anoAtual = new Date().getFullYear().toString().slice(-2);
@@ -46,42 +47,8 @@ export const gerarIdOrcamento = (prefixo: string, numeroSequencial: string, vers
 };
 
 /**
- * Converte a posição sequencial da versão para o sufixo exibido.
- * 0 => '' (primeira versão), 1 => 'A', 2 => 'B'
- */
-export const sequenciaParaSufixoVersao = (indice: number): string => {
-  if (indice <= 0) return '';
-
-  let value = indice - 1;
-  let output = '';
-
-  while (value >= 0) {
-    output = String.fromCharCode((value % 26) + 65) + output;
-    value = Math.floor(value / 26) - 1;
-  }
-
-  return output;
-};
-
-/**
- * Converte um sufixo de versão para a posição sequencial.
- * '' => 0, 'A' => 1, 'B' => 2
- */
-export const sufixoVersaoParaSequencia = (versao: string): number => {
-  const cleaned = String(versao || '').trim().toUpperCase().replace(/[^A-Z]/g, '');
-  if (!cleaned) return 0;
-
-  let index = 0;
-  for (let i = 0; i < cleaned.length; i += 1) {
-    index = (index * 26) + (cleaned.charCodeAt(i) - 64);
-  }
-
-  return index;
-};
-
-/**
- * Extrai prefixo, número de sequência e ano do ID do projeto
- * Exemplo: 'LN-0731/26' → { prefixo: 'LN', numero: '0731', ano: '26' }
+ * Extrai prefixo, número de sequência, versão e ano do ID do projeto
+ * Exemplo: 'LN-0731A/26' → { prefixo: 'LN', numero: '0731', versao: 'A', ano: '26' }
  */
 export const extrairComponentesDoId = (idProjeto: string): { prefixo: string; numero: string; versao: string; ano: string } | null => {
   const match = idProjeto.match(/^(?:([A-Z]+)-)?(\d+)([A-Z]+)?\/(\d+)$/);
@@ -101,9 +68,12 @@ export const extrairComponentesDoId = (idProjeto: string): { prefixo: string; nu
  * Exemplo: 'LN-0731A/26' → 'LN-0731A/26'
  */
 export const extrairIdProjetoDoNumero = (numeroCompleto: string): string => {
-  const match = numeroCompleto.match(/^([A-Z]+)-(\d+)([A-Z]?)\/(\d+)$/);
+  // Remove a versão (letra) se existir
+  // Exemplo: "LN-0731A/26" → "LN-0731/26" e "0731A/26" → "0731/26"
+  const match = numeroCompleto.match(/^(?:([A-Z]+)-)?(\d+)([A-Z])?\/(\d+)$/);
   if (match) {
-    return `${match[1]}-${match[2]}${match[3] || ''}/${match[4]}`;
+    const prefixo = match[1] ? `${match[1]}-` : '';
+    return `${prefixo}${match[2]}/${match[4]}`;
   }
   return numeroCompleto;
 };
@@ -1214,35 +1184,108 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     storeSession(session);
   };
 
-  // Persiste localmente no workspace em browser storage
-  const saveEntity = async (collection: string, newData: any) => {
-    const adminEmail = userSession?.email || 'admin@modo-teste.com';
-    setActiveAdminEmail(adminEmail);
-
+  // Atualiza o estado e persiste no SQL conforme a coleção. Não há mais blob de
+  // workspace: cada coleção tem seu próprio endpoint (ou é projeção do SQL).
+  const saveEntity = async (collection: string, newData: any): Promise<void> => {
     if (collection === 'clientes') {
       console.warn('saveEntity("clientes") is deprecated. Use saveCliente() to persist clients to backend SQL.');
       setData((prevData: any) => ({ ...prevData, clientes: newData }));
       return;
     }
 
-    const executeSave = async () => {
-      const currentWorkspace = getCachedWorkspace(adminEmail);
-      const nextWorkspace = { ...currentWorkspace, [collection]: newData };
+    if (collection === 'fornecedores') {
+      console.warn('saveEntity("fornecedores") is deprecated. Use saveFornecedor() to persist to backend SQL.');
+      setData((prevData: any) => ({ ...prevData, fornecedores: newData }));
+      return;
+    }
 
-      setCachedWorkspace(adminEmail, nextWorkspace);
-      setData(nextWorkspace);
+    if (collection === 'financeiro') {
+      // Financeiro é persistido no SQL via replace-all (preserva o shape FinRecord),
+      // então useFin e todas as telas do Financeiro seguem inalterados.
+      setData((prevData: any) => ({ ...prevData, financeiro: newData }));
+      try {
+        await syncFinanceiro(Array.isArray(newData) ? newData : []);
+      } catch (error) {
+        console.error('Erro ao sincronizar financeiro no backend', error);
+      }
+      return;
+    }
 
-      const savedWorkspace = await saveWorkspace(adminEmail, nextWorkspace);
-      setData(savedWorkspace);
-      return savedWorkspace;
-    };
+    if (collection === 'compras') {
+      // Requisições de compra persistidas no SQL (replace-all), shape preservado.
+      setData((prevData: any) => ({ ...prevData, compras: newData }));
+      try {
+        await syncCompras(Array.isArray(newData) ? newData : []);
+      } catch (error) {
+        console.error('Erro ao sincronizar compras no backend', error);
+      }
+      return;
+    }
 
-    const queuedSave = saveQueueRef.current.then(executeSave, executeSave);
-    saveQueueRef.current = queuedSave.then(() => undefined, () => undefined);
+    if (collection === 'comprasHistorico') {
+      setData((prevData: any) => ({ ...prevData, comprasHistorico: newData }));
+      try {
+        await syncComprasHistorico(Array.isArray(newData) ? newData : []);
+      } catch (error) {
+        console.error('Erro ao sincronizar histórico de compras no backend', error);
+      }
+      return;
+    }
 
-    await queuedSave;
-    console.log(`${collection} atualizado:`, Array.isArray(newData) ? newData.length : Object.keys(newData || {}).length, 'itens');
-    return result;
+    if (collection === 'almoxerifado') {
+      // Estoque/almoxarifado é um objeto agregado; persistido no SQL via replace (singleton).
+      setData((prevData: any) => ({ ...prevData, almoxerifado: newData }));
+      try {
+        await syncAlmoxarifado(newData || {});
+      } catch (error) {
+        console.error('Erro ao sincronizar almoxarifado no backend', error);
+      }
+      return;
+    }
+
+    if (collection === 'obras') {
+      // `obras` é uma projeção dos Negócios SQL (com seus orçamentos/propostas/serviços).
+      // A persistência real já acontece via os endpoints comerciais (criarNegocio,
+      // createOrcamento, criarProposta, atualizarNegocio); aqui só atualizamos o estado
+      // otimisticamente. No reload, `obras` é re-hidratado do SQL. Sem blob.
+      setData((prevData: any) => ({ ...prevData, obras: newData }));
+      return;
+    }
+
+    if (collection === 'os') {
+      // `os` é projeção das Ordens de Serviço SQL. A persistência real acontece via
+      // criarOrdemServico / deleteOrdemServico / atualizarStatusOs (chamados nas telas);
+      // aqui só atualizamos o estado otimisticamente. No reload, re-hidrata do SQL. Sem blob.
+      setData((prevData: any) => ({ ...prevData, os: newData }));
+      return;
+    }
+
+    if (collection === 'config') {
+      // Configurações da empresa persistidas no SQL (linha singleton). Sem blob.
+      setData((prevData: any) => ({ ...prevData, config: newData }));
+      try {
+        await syncConfig(newData || {});
+      } catch (error) {
+        console.error('Erro ao sincronizar config no backend', error);
+      }
+      return;
+    }
+
+    if (collection === 'listas') {
+      // Listas auxiliares persistidas no SQL (linha singleton). Sem blob.
+      setData((prevData: any) => ({ ...prevData, listas: newData }));
+      try {
+        await syncListas(newData || {});
+      } catch (error) {
+        console.error('Erro ao sincronizar listas no backend', error);
+      }
+      return;
+    }
+
+    // Coleção sem destino relacional dedicado (ex.: RH ainda não migrado): atualiza
+    // apenas o estado em memória, sem blob.
+    console.warn(`saveEntity("${collection}") sem persistência SQL — atualizado só em memória.`);
+    setData((prevData: any) => ({ ...prevData, [collection]: newData }));
   };
 
   // Drafts: salvar/ler rascunhos por chave dentro do workspace (campo _drafts)
@@ -1322,7 +1365,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
 
  
   return (
-    <ErpContext.Provider value={{ userSession, setUserSession, loading, loginComGoogle, loginDireto, logout, saveEntity, saveListas, saveConfig, uploadFileToDrive, saveDraft, loadDraft, clearDraft, ...data }}>
+    <ErpContext.Provider value={{ userSession, setUserSession, loading, loginComGoogle, loginDireto, logout, saveEntity, criarSolicitacaoFinanceiro, saveListas, saveConfig, saveCliente, deleteCliente, saveFornecedor, deleteFornecedor, refreshMedicoes, uploadFileToDrive, ...data }}>
       {children}
     </ErpContext.Provider>
   );

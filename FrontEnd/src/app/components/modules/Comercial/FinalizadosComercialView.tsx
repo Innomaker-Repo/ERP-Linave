@@ -486,15 +486,60 @@ export function NegocioDetalheModal({
                         <span className="text-white/40 ml-2 text-xs">{srv.local_execucao}</span>
                       )}
                     </div>
-                    <p className="text-white/70 text-xs">Versão: {ultimoOrcamento?.versao || '-'}</p>
-                    <p className="text-emerald-200 font-black text-sm">R$ {valorOrcamento.toFixed(2)}</p>
-                    <button
-                      onClick={() => handleDownloadDocumento(docOrcamento, obra.id, `orcamento-${obra.id}.pdf`)}
-                      disabled={!isDocumentoValido(docOrcamento)}
-                      className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition ${isDocumentoValido(docOrcamento) ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-white/10 text-white/40 cursor-not-allowed'}`}
-                    >
-                      <Download size={12} /> Download
-                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </Section>
+
+          {/* ORÇAMENTO */}
+          <Section title="Orçamento" color="emerald">
+            {ultimoOrcamento ? (
+              <>
+                <div className="grid grid-cols-2 gap-4">
+                  <Field label="Número" value={ultimoOrcamento.numeroOrcamento || ultimoOrcamento.numero_orcamento || ultimoOrcamento?.data?.numeroOrcamento} />
+                  <Field label="Versão" value={ultimoOrcamento.versao || ultimoOrcamento?.data?.versao} />
+                  <Field label="Status" value={ultimoOrcamento.status} />
+                  <Field label="Data Criação" value={formatDate(ultimoOrcamento.dataCriacao)} />
+                  <div className="col-span-2">
+                    <p className="text-white/40 text-[10px] uppercase tracking-widest mb-0.5">Valor Total</p>
+                    <p className="text-emerald-300 text-xl font-black">
+                      R$ {valorOrcamento.toFixed(2)}
+                    </p>
+                  </div>
+                </div>
+                {ultimoOrcamento?.data?.observacoes && (
+                  <div className="bg-white/5 border border-white/10 rounded-lg p-3 text-sm text-white/70 whitespace-pre-wrap mt-2">
+                    {ultimoOrcamento.data.observacoes}
+                  </div>
+                )}
+                <button
+                  onClick={gerarPDFOrcamento}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black uppercase tracking-wider transition bg-blue-600 hover:bg-blue-700 text-white"
+                >
+                  <Download size={13} /> Download Orçamento
+                </button>
+              </>
+            ) : (
+              <p className="text-white/40 text-sm">Sem orçamento registrado</p>
+            )}
+          </Section>
+
+          {/* PROPOSTA */}
+          <Section title="Proposta Comercial" color="cyan">
+            {ultimaProposta ? (
+              <>
+                <div className="grid grid-cols-2 gap-4">
+                  <Field label="Número" value={ultimaProposta.numeroProposta} />
+                  <Field label="Versão" value={ultimaProposta.versao} />
+                  <Field label="Status" value={ultimaProposta.status} />
+                  <Field label="Data Criação" value={formatDate(ultimaProposta.dataCriacao)} />
+                  <Field label="Assunto" value={ultimaProposta.assunto} />
+                  <Field label="Prazo" value={ultimaProposta.prazo} />
+                </div>
+                {ultimaProposta.textoAbertura && (
+                  <div className="bg-white/5 border border-white/10 rounded-lg p-3 text-sm text-white/70 whitespace-pre-wrap mt-2">
+                    {ultimaProposta.textoAbertura}
                   </div>
                 )}
                 {ultimaProposta.escopoA && (
@@ -503,15 +548,6 @@ export function NegocioDetalheModal({
                     <div className="bg-white/5 border border-white/10 rounded-lg p-3 text-sm text-white/70 whitespace-pre-wrap">
                       {ultimaProposta.escopoA}
                     </div>
-                    <p className="text-white/70 text-xs">Status: {ultimaProposta?.status || '-'}</p>
-                    <p className="text-white/70 text-xs">Versão: {ultimaProposta?.versao || '-'}</p>
-                    <button
-                      onClick={() => handleDownloadDocumento(docProposta, obra.id, `proposta-${obra.id}.pdf`)}
-                      disabled={!isDocumentoValido(docProposta)}
-                      className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition ${isDocumentoValido(docProposta) ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-white/10 text-white/40 cursor-not-allowed'}`}
-                    >
-                      <Download size={12} /> Download
-                    </button>
                   </div>
                 )}
                 <button

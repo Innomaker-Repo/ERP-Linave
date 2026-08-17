@@ -8,9 +8,53 @@ import { downloadDocument, getDocumentHref } from '../../../utils/documentDownlo
 import { formatDateBR } from '../../../utils/formatDate';
 import { NegocioDetalheModal } from '../Comercial/FinalizadosComercialView';
 
-  export function ClientesView({ searchQuery }: { searchQuery: string }) {
-  const { clientes, obras, saveCliente, deleteCliente, userSession, saveEntity } = useErp();
-  const listaClientes = Array.isArray(clientes) ? clientes : [];
+export function ClientesView({ searchQuery }: { searchQuery: string }) {
+  const { obras, os, userSession, medicoes, config } = useErp() as any;
+  const [negocioDetalhe, setNegocioDetalhe] = useState<any>(null);
+
+  // Helpers compartilhados com o modal de detalhes do negócio
+  const safeNumber = (value: any) => {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  const formatDate = (value: any) => {
+    if (!value) return '-';
+    return formatDateBR(value) || '-';
+  };
+
+  const isDocumentoValido = (doc: any) => Boolean(getDocumentHref(doc));
+
+  const handleDownloadDocumento = (doc: any, obraId: string, fallbackName: string) => {
+    downloadDocument(doc, {
+      fallbackName,
+      onInvalid: () => toast.error(`Documento inválido para o negócio ${obraId}. Gere novamente.`),
+    });
+  };
+
+  const obterDocumentos = (obra: any) =>
+    Array.isArray(obra?.documentosNegocio) ? obra.documentosNegocio : [];
+
+  const encontrarDocumento = (obra: any, palavras: string[]) => {
+    const docs = obterDocumentos(obra);
+    return docs
+      .filter((doc: any) => {
+        const id = String(doc?.id || '').toLowerCase();
+        const nome = String(doc?.nome || '').toLowerCase();
+        return palavras.some((p) => id.includes(p) || nome.includes(p));
+      })
+      .sort((a: any, b: any) =>
+        new Date(b?.dataUpload || 0).getTime() - new Date(a?.dataUpload || 0).getTime()
+      )[0] || null;
+  };
+
+  const obterDocsMediacao = (obra: any) =>
+    obterDocumentos(obra).filter((doc: any) => {
+      const id = String(doc?.id || '').toLowerCase();
+      const nome = String(doc?.nome || '').toLowerCase();
+      return id.includes('mediacao') || nome.includes('medi') || nome.includes('medição');
+    });
+  const [listaClientes, setListaClientes] = useState<any[]>([]);
   
  //variáveis que controlam os modais e carregamentos
   const [showForm, setShowForm] = useState(false);
@@ -69,22 +113,70 @@ import { NegocioDetalheModal } from '../Comercial/FinalizadosComercialView';
   };
 
   const handleSave = async () => {
+    // Validação de campos obrigatórios
+    if (!currentCliente.razaoSocial?.trim()) {
+      toast.error('Preencha a Razão Social do cliente.');
+      return;
+    }
+
+    const cpfCnpjTrimmed = currentCliente.cpfCnpj?.trim();
+    if (!cpfCnpjTrimmed) {
+      toast.error('Preencha o CPF/CNPJ do cliente.');
+      return;
+    }
+
+    if (!currentCliente.contato?.trim()) {
+      toast.error('Preencha o contato (telefone ou e-mail) do cliente.');
+      return;
+    }
+
+    if (!currentCliente.endereco?.trim()) {
+      toast.error('Preencha o endereço completo do cliente.');
+      return;
+    }
+
+    setSaving(true);
     try {
-      const clienteParaSalvar = { ...currentCliente };
-      const saved = await saveCliente(clienteParaSalvar);
-      if (saved) {
-        setCurrentCliente(saved);
+      let clienteAtualizado;
+      
+      if (editMode && currentCliente.id && !isNaN(Number(currentCliente.id))) {
+        // Atualizar cliente existente no backend
+        clienteAtualizado = await updateCliente(String(currentCliente.id), currentCliente);
+        setListaClientes((prev) =>
+          prev.map((c) => c.id === currentCliente.id ? clienteAtualizado : c)
+        );
+      } else {
+        // Criar novo cliente no backend
+        clienteAtualizado = await createCliente(currentCliente);
+        setListaClientes((prev) => [...prev, clienteAtualizado]);
       }
+
+      toast.success(`Cliente ${editMode ? 'atualizado' : 'cadastrado'} com sucesso!`);
       setShowForm(false);
-    } catch (error) {
-      console.error('Erro ao salvar cliente:', error);
-      alert('Falha ao salvar o cliente. Veja o console para mais detalhes.');
+      setCurrentCliente(initialClienteState);
+    } catch (error: any) {
+      console.error(error);
+      toast.error(`Erro ao salvar cliente: ${error?.response?.data?.detail || error?.message || 'Falha desconhecida'}`);
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handleDelete = async (id: any) => {
-    if (confirm("Tem certeza que deseja excluir este cliente?")) {
+  const handleDelete = async (id: string) => {
+    if (!(await confirmDialog({ message: 'Tem certeza que deseja excluir este cliente?', danger: true, confirmText: 'Excluir' }))) {
+      return;
+    }
+
+    setSaving(true);
+    try {
       await deleteCliente(id);
+      setListaClientes((prev: any[]) => prev.filter((c: any) => c.id !== id));
+      toast.success('Cliente excluído com sucesso!');
+    } catch (error: any) {
+      console.error(error);
+      toast.error(`Erro ao deletar cliente: ${error?.response?.data?.detail || error?.message || 'Falha desconhecida'}`);
+    } finally {
+      setSaving(false);
     }
   };
 

@@ -1,10 +1,16 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { formatDateBR } from '../../../utils/formatDate';
 import { boldOS } from '../../../utils/osHighlight';
 import { gerarIdOrcamento, gerarIdProjeto, extrairIdProjetoDoNumero, extrairComponentesDoId, gerarIdProjetoDeNegocio } from '../../../context/ErpContext';
 import { Plus, X, DollarSign, FileText, Trash2, Lock, Eye, Download, RefreshCw } from 'lucide-react';
 import jsPDF from 'jspdf';
+import {
+  buildOrcamentoPayload,
+  createOrcamento
+} from '../../../../services/comercial';
+
+import { getNegocios, getClientes, getOrdensPorNegocio, atualizarNegocio } from '../../../../services/comercialService';
 import { getBackendUrl } from '../../../../services/network';
 import { mapDocsApiToFront } from '../../../../services/documentosService';
 import { temServico, temLocacao } from '../../../utils/modalidade';
@@ -116,12 +122,10 @@ const findClienteById = (clientes: any[], clienteId: any) =>
 
 
 export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
-<<<<<<< HEAD
-  const { obras, clientes, saveEntity, saveDraft, loadDraft, clearDraft } = useErp();
-=======
-  const { obras, clientes, saveEntity, saveCliente } = useErp() as any;
->>>>>>> 3c3ffb4 (falha integração)
-  const listaClientes = Array.isArray(clientes) ? clientes : [];
+  const { obras, os, saveEntity } = useErp() as any;
+
+  const [listaClientesOrc, setListaClientesOrc] = useState<any[]>([]);
+  const [filtroOs, setFiltroOs] = useState<string>('');
   const [showForm, setShowForm] = useState(false);
   const [selectedObra, setSelectedObra] = useState<any>(null);
   const [loadingData, setLoadingData] = useState(false);
@@ -233,24 +237,35 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   };
 
   const formatarVersaoOrcamento = (versao: any) => {
-    if (typeof versao === 'string') {
-      const cleaned = versao.trim().toUpperCase();
-      if (!cleaned) return '';
-      if (/^[A-Z]+$/.test(cleaned)) {
-        return cleaned;
-      }
+    if (versao === null || versao === undefined) return '';
+
+    const texto = String(versao).trim();
+    if (!texto) return '';
+    if (/^[A-Za-z]+$/.test(texto)) {
+      return texto.toUpperCase();
     }
 
     const versaoNumero = Number(texto);
     if (Number.isFinite(versaoNumero) && versaoNumero > 0) {
-      return indexToVersaoAlfabetica(Math.floor(versaoNumero));
+      return String(Math.floor(versaoNumero));
     }
 
-    return '';
+    return texto;
+  };
+
+  const labelVersaoOrcamento = (versao: any) => {
+    const versaoNormalizada = formatarVersaoOrcamento(versao);
+    return versaoNormalizada ? `v${versaoNormalizada}` : 'Original';
   };
 
   const proximaVersaoOrcamento = (orcamentos: any[] = []) => {
-    if (orcamentos.length === 0) return '';
+    const versoesAlfabeticas = orcamentos
+      .map((orcamento) => formatarVersaoOrcamento(orcamento?.versao))
+      .filter((versao) => /^[A-Z]+$/.test(versao));
+
+    if (versoesAlfabeticas.length === 0) {
+      return orcamentos.length > 0 ? 'A' : '';
+    }
 
     const ultimoIndice = versoesAlfabeticas.reduce((maior, versao) => {
       const indice = versaoAlfabeticaToIndex(versao);
@@ -552,12 +567,76 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       equipamento: ordem?.equipamento || obra.equipamento || baseData.equipamento || '',
       supervisor: ordem?.supervisor_encarregado || ordem?.supervisor || obra.supervisor || baseData.supervisor || '',
       centroCusto: ordem?.cc || ordem?.centro_custo || obra.centroCusto || baseData.centroCusto || '',
-      dadosServicos
-    });
-    
-    const draft = loadDraft(`orcamento:${obra.id}`);
-    if (draft) setOrcamentoData(prev => ({ ...prev, ...draft }));
+      dadosServicos,
+      // Itens de locação vêm do Negócio (já com qualquer precificação anterior). O Orçamento
+      // permite editar/precificar (valor de indenização e de locação) e adicionar/remover.
+      itensAlocacao: (Array.isArray(obra.itensAlocacao) && obra.itensAlocacao.length)
+        ? obra.itensAlocacao.map((it: any) => {
+            const margem = it.margem != null && it.margem !== '' ? String(it.margem) : '0';
+            const oh = it.oh != null && it.oh !== '' ? String(it.oh) : '0';
+            const base = (Number(it.quantidade) || 0) * (Number(it.valorLocacao) || 0);
+            const fator = 1 + ((Number(margem) || 0) + (Number(oh) || 0)) / 100;
+            return {
+              id: String(it.id || Date.now() + Math.random()),
+              equipamento: it.equipamento || '',
+              estoqueRef: it.estoqueRef || it.equipamento || '',
+              unidade: it.unidade || 'un',
+              quantidade: String(it.quantidade ?? ''),
+              valorIndenizacao: it.valorIndenizacao ? String(it.valorIndenizacao) : '',
+              valorLocacao: it.valorLocacao ? String(it.valorLocacao) : '',
+              margem,
+              oh,
+              valorTotal: toMoneyString(base * fator),
+              observacao: it.observacao || '',
+            };
+          })
+        : ((baseData as any).itensAlocacao || []),
+      // Tabela macro das atividades orçadas (item D da proposta) — vem do resumo do orçamento.
+      atividadesMacro: (Array.isArray((baseData as any).atividadesMacro) ? (baseData as any).atividadesMacro : [])
+        .map((it: any) => ({
+          id: String(it.id || Date.now() + Math.random()),
+          descricao: String(it.descricao || ''),
+          quantidade: it.quantidade != null && it.quantidade !== '' ? String(it.quantidade) : '',
+          unidade: String(it.unidade || ''),
+          valorUnitario: it.valorUnitario != null && it.valorUnitario !== '' ? String(it.valorUnitario) : '',
+          dias: it.dias != null && it.dias !== '' ? String(it.dias) : '',
+          categoria: (it.categoria === 'locacao' ? 'locacao' : 'servico') as 'servico' | 'locacao',
+        })),
+    };
 
+    try {
+      const salvo = localStorage.getItem(getRascunhoKey(obra.id));
+      if (salvo) {
+        const rascunho = JSON.parse(salvo);
+        setOrcamentoData({
+          ...formularioBase,
+          ...rascunho,
+          // Sempre usa o numero/versão calculada, nunca o do rascunho
+          numeroOrcamento: formularioBase.numeroOrcamento,
+          dadosServicos: Array.isArray(rascunho?.dadosServicos) && rascunho.dadosServicos.length > 0
+            ? rascunho.dadosServicos
+            : formularioBase.dadosServicos,
+        });
+      } else {
+        setOrcamentoData(formularioBase);
+      }
+    } catch {
+      setOrcamentoData(formularioBase);
+    }
+    // Preencher valores financeiros caso exista último orçamento
+    if (ultimoOrcamento?.valores) {
+      setOrcamentoData(prev => ({
+        ...prev,
+        margem: String(ultimoOrcamento.valores.margem ?? prev.margem),
+        oh: String(ultimoOrcamento.valores.oh ?? prev.oh),
+        impostos: String(ultimoOrcamento.valores.impostos ?? prev.impostos),
+        impostosLocacao: String(ultimoOrcamento.valores.impostosLocacao ?? prev.impostosLocacao),
+        // Mantém o que já está no formulário (em branco para orçamento novo / valor do
+        // rascunho do próprio usuário) — não puxa a qnt de itens de outro orçamento.
+        quantidadeItensProduzidos: prev.quantidadeItensProduzidos
+      }));
+    }
+    
     setShowForm(true);
   };
 
@@ -785,28 +864,35 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
         // ignore
       }
 
-    alert("Orçamento salvo com sucesso! Projeto mantido em Planejamento.");
-    setShowForm(false);
-    setSelectedObra(null);
-    setOrcamentoData(getInitialOrcamentoData());
-    void clearDraft(`orcamento:${selectedObra.id}`);
+      toast.success("Orçamento enviado para aprovação!");
+      fecharOrcamentoComoX();
+      setOrcamentoData(getInitialOrcamentoData());
+    } catch (error: any) {
+      console.error("Erro ao concluir orçamento:", error);
+      toast.error(`Erro ao concluir orçamento: ${formatApiErrorMessage(error)}`);
+    } finally {
+      setSaving(false);
+    }
   };
 
-  // Auto-save drafts
-  const autoSaveTimer = useRef<any>(null);
-  useEffect(() => {
-    if (!showForm || !selectedObra) return;
-    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
-    autoSaveTimer.current = setTimeout(() => {
-      try {
-        saveDraft(`orcamento:${selectedObra.id}`, orcamentoData);
-      } catch (err) {
-        console.warn('Erro ao salvar rascunho de orçamento', err);
-      }
-    }, 1000);
-
-    return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
-  }, [orcamentoData, showForm, selectedObra?.id]);
+  const handleAprovarOrcamento = async (obra: any) => {
+    if (!(await confirmDialog({ title: 'Aprovar orçamento', message: `Confirma a APROVAÇÃO do orçamento de "${obra.nome}"?\n\nApós aprovado, o negócio avançará para Proposta.`, confirmText: 'Aprovar' }))) return;
+    const orcamentosExistentes = normalizarOrcamentos(obra);
+    const ultimoOrcamento = orcamentosExistentes[orcamentosExistentes.length - 1];
+    if (!ultimoOrcamento) return;
+    const orcamentoAtualizado = { ...ultimoOrcamento, status: 'aprovado' };
+    const novosOrcamentos = [...orcamentosExistentes.slice(0, -1), orcamentoAtualizado];
+    const obraAtualizada = { ...obra, categoria: 'Negociação', status: 'Negociação', orcamentos: novosOrcamentos };
+    try {
+      const negocioId = obra.negocioBackendId || extrairIdProjetoDoNumero(obra.id);
+      if (negocioId) await atualizarNegocio(negocioId, { categoria: 'Negociação', status: 'Negociação' });
+    } catch (err) {
+      console.error("Erro ao atualizar negócio no backend:", err);
+    }
+    const obrasAtualizadas = (obras || []).map((o: any) => o.id === obra.id ? obraAtualizada : o);
+    saveEntity('obras', obrasAtualizadas);
+    toast.success("Orçamento aprovado! Negócio avançado para Proposta.");
+  };
 
   const handleRecusarOrcamento = async (obra: any) => {
     const motivo = await promptDialog({ title: 'Recusar orçamento', message: 'Informe o motivo da recusa do orçamento:', placeholder: 'Motivo da recusa' });
@@ -1494,12 +1580,8 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       doc.rect(x, y, baseColWidth * 5, cellHeight);
 
       // Download
-<<<<<<< HEAD
-      doc.save(`Orcamento_${orcamento.numeroOrcamento.replace(/[/\\]/g, '-')}.pdf`);
-=======
       const versaoArquivo = formatarVersaoOrcamento(orcamento.versao);
       doc.save(`Orcamento_${String(orcamento.numeroOrcamento || '001').replace(/[\\/]/g, '-')}${versaoArquivo ? `_v${versaoArquivo}` : ''}.pdf`);
->>>>>>> fccd5af (ultimas alterações)
     } catch (error) {
       console.error('Erro ao gerar PDF:', error);
       toast.error('Erro ao gerar PDF do orçamento');

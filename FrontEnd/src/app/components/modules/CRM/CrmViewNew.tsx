@@ -11,8 +11,7 @@ import { handleDownloadPropostaPDF } from './handleDownloadPropostaPDF';
 import { handleDownloadOrcamentoPDF as gerarOrcamentoPDF } from './handleDownloadOrcamentoPDF';
 import { handleDownloadOSPDF as gerarOSPDF } from './handleDownloadOSPDF';
 import { getCachedWorkspace } from '../../../services/workspaceStorage';
-import { getClientes } from '../../../services/clientes';
-import { getNegocios } from '../../../services/negocios';
+import { boldOS } from '../../../utils/osHighlight';
 import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
 import { formatDateBR } from '../../../utils/formatDate';
 import { isEmpresaLinave, getLogoUrlForEmpresa } from '../../../utils/company';
@@ -140,14 +139,12 @@ export const indexToVersaoAlfabetica = (index: number) => {
 };
 
 export function CrmViewNew({ searchQuery }: CrmViewProps) {
-<<<<<<< HEAD
-  const { obras, os, clientes, saveEntity, userSession, config, saveDraft, loadDraft, clearDraft } = useErp();
-=======
-  const { os, clientes, saveEntity, userSession, config, obras, saveCliente } = useErp() as any;// Estado local que morre ao fechar a página ou dar F5
+  const { os, saveEntity, userSession, config, obras, medicoes } = useErp() as any;
+
+  const [listaClientesCRM, setListaClientesCRM] = useState<any[]>([]);
   const [negociosBackend, setNegociosBackend] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [clientesLoading, setClientesLoading] = useState(false);
->>>>>>> 3c3ffb4 (falha integração)
   const [showFormNovoNegocio, setShowFormNovoNegocio] = useState(false);
   const [novoNegocioTab, setNovoNegocioTab] = useState<'dados' | 'servicos' | 'alocacao' | 'documentos'>('dados');
   const [selectedObraDetalhes, setSelectedObraDetalhes] = useState<any>(null);
@@ -461,20 +458,6 @@ const initialServico: Servico = {
     }) || Boolean(obra?.finalizadoComMediacao);
   };
 
-
-  const indexToVersaoAlfabetica = (index: number) => {
-    if (index <= 0) return '';
-    let value = index - 1;
-    let output = '';
-
-    while (value >= 0) {
-      output = String.fromCharCode((value % 26) + 65) + output;
-      value = Math.floor(value / 26) - 1;
-    }
-
-    return output;
-  };
-
   const versaoAlfabeticaToIndex = (versao: string) => {
     const cleaned = versao.toUpperCase().replace(/[^A-Z]/g, '');
     if (!cleaned) return 0;
@@ -497,10 +480,10 @@ const initialServico: Servico = {
 
     const versaoNumero = Number(versao);
     if (Number.isFinite(versaoNumero) && versaoNumero > 0) {
-      return indexToVersaoAlfabetica(Math.floor(versaoNumero));
+      return String(Math.floor(versaoNumero));
     }
 
-    return '';
+    return '1';
   };
 
   const formatarEscopoBasicoParaTexto = (escopo: any) => {
@@ -739,21 +722,10 @@ const initialServico: Servico = {
 
   const handleAbrirDocumentoMediacao = (obra: any) => {
     const obraAtual = (negociosBackend || []).find((item: any) => item.id === obra.id) || obra;
-    const cliente = (clientes || []).find((item: any) => item.id === obraAtual.clienteId);
-    const ultimaProposta = Array.isArray(obraAtual.propostas) && obraAtual.propostas.length > 0
-      ? obraAtual.propostas[obraAtual.propostas.length - 1]
-      : null;
-    const ultimoOrcamento = Array.isArray(obraAtual.orcamentos) && obraAtual.orcamentos.length > 0
-      ? obraAtual.orcamentos[obraAtual.orcamentos.length - 1]
-      : null;
+    const cliente = listaClientesCRM.find((item: any) => item.id === obraAtual.clienteId);
 
-    // Preferir o número mais recente do fluxo para carregar a medição com a mesma versão do negócio.
-    const idProjetoFormatado = extrairIdProjetoDoNumero(
-      ultimaProposta?.numeroProposta
-      || ultimoOrcamento?.numeroOrcamento
-      || obraAtual.id
-      || 'LN-0001/26'
-    );
+    // Usar o ID do projeto diretamente (já tem formato correto: LN-0731/26)
+    const idProjetoFormatado = obraAtual.id || '';
 
     setSelectedObraDetalhes(obraAtual);
     const initial = {
@@ -769,11 +741,20 @@ const initialServico: Servico = {
       representanteLinave: 'Linave',
       tabelaItens: [novaLinhaTabelaMediacao()],
       tabelaRecursos: [novaLinhaTabelaRecursosMediacao()]
-    } as DocumentoMediacaoForm;
-    const draft = loadDraft(`medicao:${obraAtual.id}`);
+    });
+    setShowDocumentoMediacaoModal(true);
+  };
 
-    setDocumentoMediacaoForm(draft ? { ...initial, ...draft } : initial);
-    
+  const handleEditarMediacao = (obra: any, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const obraAtual = (negociosBackend || []).find((item: any) => item.id === obra.id) || obra;
+    setSelectedObraDetalhes(obraAtual);
+    if (obraAtual.dadosMediacao) {
+      setDocumentoMediacaoForm(obraAtual.dadosMediacao);
+    } else {
+      handleAbrirDocumentoMediacao(obra);
+      return;
+    }
     setShowDocumentoMediacaoModal(true);
   };
 
@@ -1388,59 +1369,37 @@ const initialServico: Servico = {
       return toast.error("Adicione pelo menos um item de equipamento na aba Alocação.");
     }
 
-    const prefixo = formData.empresaPrestadora === 'Linave' ? 'LN' : 'SN';
-    const anoAtual = new Date().getFullYear().toString().slice(-2); // Ex: '24' ou '26'
-    
-    // Procura todos os negócios deste ano e prefixo para pegar o maior número
-    const obrasDoAno = (obras || []).filter((o: any) => o.id?.startsWith(`${prefixo}-`) && o.id?.endsWith(`/${anoAtual}`));
-    let maiorNumero = 0;
-    
-    obrasDoAno.forEach((o: any) => {
-      // Extrai os 4 dígitos do ID. Ex: de "LN-0731/26", pega "0731"
-      const match = o.id.match(/-(\d+)\//);
-      if (match) {
-        const numero = parseInt(match[1], 10);
-        if (numero > maiorNumero) maiorNumero = numero;
-      }
-    });
-    
-    // Incrementa 1 e formata com zeros à esquerda (Ex: 1 vira "0001", 731 vira "0731")
-    const proximoNumero = (maiorNumero + 1).toString().padStart(4, '0');
-    
-    // NASCE O ID DEFINITIVO DO PROJETO! Ex: LN-0731/26 ou SN-0001/26
-    const novoProjetoId = `${prefixo}-${proximoNumero}/${anoAtual}`;
-    // ====================================================================
+    // 1. Mapeamento para o formato exato que o NegocioSerializer (Django) exige
+    // Não enviamos o 'id', deixamos o MySQL gerar o ID numérico (AUTO_INCREMENT)
+   const incluiServicoPayload = temServico(formData.modalidade);
+   const incluiLocacaoPayload = temLocacao(formData.modalidade);
+   const servicosPayload = incluiServicoPayload
+     ? formData.servicos.filter(s => s.descricao.trim() || s.tipo.trim())
+     : [];
+   const itensAlocacaoPayload = incluiLocacaoPayload
+     ? (formData.itensAlocacao || [])
+         .filter(it => it.equipamento.trim())
+         .map(it => ({
+           equipamento: it.equipamento.trim(),
+           estoque_ref: it.estoqueRef || it.equipamento.trim(),
+           unidade: it.unidade || 'un',
+           quantidade: parseFloat(String(it.quantidade).replace(',', '.')) || 0,
+           observacao: it.observacao || '',
+         }))
+     : [];
 
-    const nomeObra = formData.nomeNegocio.trim();
-    const primeiroServico = formData.servicos[0];
-
-    const novaObra = {
-      id: novoProjetoId, // O id agora já é o correto
-      nome: nomeObra,
-      empresaPrestadora: formData.empresaPrestadora,
-      clienteId: formData.clienteId,
-      status: 'Planejamento',
-      categoria: 'Planejamento' as CategoriaObra,
-      tipo: primeiroServico.tipo || 'Serviço',
-      responsavelTecnico: formData.solicitante,
-      responsavelComercial: formData.solicitante,
+   const payloadDjango = {
+      nome_negocio: formData.nomeNegocio.trim(),
+      cliente: parseInt(formData.clienteId, 10),
+      empresa_prestadora: formData.empresaPrestadora,
+      categoria: 'Planejamento',
+      status: 'Aguardando orçamento', //  FORÇA O STATUS INICIAL PARA A TELA DE ORÇAMENTOS
+      modalidade: formData.modalidade,
       solicitante: formData.solicitante,
+
+      cargo: formData.cargo,
       telefone: formData.telefone,
       email: formData.email,
-<<<<<<< HEAD
-      dataCadastro: new Date().toISOString().split('T')[0],
-      dataSolicitacao: formData.dataSolicitacao,
-      dataPrevistaInicio: formData.dataPrevistaInicio,
-      dataPrevistaFinal: formData.dataPrevistaFinal,
-      inicioPrevisto: formData.dataPrevistaInicio,
-      fimPrevisto: formData.dataPrevistaFinal,
-      origemOS: true,
-      orcamento: 0,
-      orcamentos: [],
-      propostas: [],
-      documentosNegocio: formData.documentosNegocio,
-      servicos: formData.servicos
-=======
       data_solicitacao: formData.dataSolicitacao || null,
 
       //  ADICIONADO: O campo exato que o Django exigiu!
@@ -1460,21 +1419,103 @@ const initialServico: Servico = {
       })),
 
       itens_alocacao: itensAlocacaoPayload
->>>>>>> fccd5af (ultimas alterações)
     };
 
-    const workspaceAtual = getCachedWorkspace(userSession?.email || 'admin@modo-teste.com');
-    const obrasAtuais = Array.isArray(workspaceAtual.obras) ? workspaceAtual.obras : [];
+    try {
+          // 2. Dispara a requisição HTTP POST para a API do Django
+          const respostaBackend = await criarNegocio(payloadDjango);
 
-    saveEntity('obras', [...obrasAtuais, novaObra]).then(() => {
-      alert('Negócio criado com sucesso. As OS deverão ser criadas manualmente na aba de OS.');
-      setShowFormNovoNegocio(false);
-      setNovoNegocioTab('dados');
-      setFormData(initialForm);
-    }).catch((error) => {
-      console.error('Erro ao criar negócio:', error);
-      alert('Erro ao salvar negócio. Tente novamente.');
-    });
+          // BLINDAGEM: O Django pode devolver o objeto de duas formas. Isso garante que o React não quebre lendo 'undefined'
+          const dadosNegocio = respostaBackend.negocio || respostaBackend;
+          const dadosServicos = respostaBackend.servicos || servicosPayload;
+
+          // Itens de alocação em camelCase para o restante do funil (Orçamento/Proposta/OS/Medição).
+          const itensAlocacaoFormatados = Array.isArray(dadosNegocio.itens_alocacao)
+            ? dadosNegocio.itens_alocacao.map((it: any) => ({
+                id: String(it.id ?? `aloc-${Math.random().toString(36).slice(2, 8)}`),
+                equipamento: it.equipamento || '',
+                estoqueRef: it.estoque_ref || '',
+                unidade: it.unidade || 'un',
+                quantidade: Number(it.quantidade) || 0,
+                observacao: it.observacao || '',
+                valorIndenizacao: Number(it.valor_indenizacao) || 0,
+                valorLocacao: Number(it.valor_locacao) || 0,
+                valorTotal: Number(it.valor_total) || 0,
+              }))
+            : itensAlocacaoPayload.map((it, i) => ({
+                id: `aloc-${Date.now()}-${i}`,
+                equipamento: it.equipamento,
+                estoqueRef: it.estoque_ref,
+                unidade: it.unidade,
+                quantidade: it.quantidade,
+                observacao: it.observacao,
+                valorIndenizacao: 0,
+                valorLocacao: 0,
+                valorTotal: 0,
+              }));
+
+          // Agora que o negócio existe no banco, sobe os documentos anexados no form
+          // (guardados como File) para a tabela Documento, vinculados ao id do negócio.
+          let documentosPersistidos: any[] = [];
+          if (dadosNegocio.id) {
+            const arquivosParaSubir = formData.documentosNegocio.filter((d) => d.file instanceof File);
+            const resultados = await Promise.allSettled(
+              arquivosParaSubir.map((d) =>
+                uploadDocumento(d.file as File, {
+                  vinculoTipo: 'negocio',
+                  vinculoId: dadosNegocio.id,
+                  categoria: 'negocio',
+                })
+              )
+            );
+            documentosPersistidos = resultados
+              .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
+              .map((r) => r.value);
+            const falhas = resultados.length - documentosPersistidos.length;
+            if (falhas > 0) toast.error(`${falhas} documento(s) não puderam ser enviados.`);
+          }
+
+          // 3. Monta o objeto de forma totalmente segura ANTES de fechar a tela
+          const negocioFormatado = {
+            id: `${getPrefixoEmpresa(dadosNegocio.empresa_prestadora || formData.empresaPrestadora)}-${String(dadosNegocio.id || Date.now()).padStart(4, '0')}/${String(new Date().getFullYear()).slice(-2)}`, 
+            nome: dadosNegocio.nome_negocio || formData.nomeNegocio,
+            clienteId: String(dadosNegocio.cliente || formData.clienteId), 
+            nomeClienteResolvido: listaClientesCRM.find((c: any) => String(c.id) === String(dadosNegocio.cliente || formData.clienteId))?.razaoSocial || 'Cliente Identificado',
+            empresaPrestadora: dadosNegocio.empresa_prestadora || formData.empresaPrestadora,
+            categoria: dadosNegocio.categoria || 'Planejamento',
+            status: 'Aguardando orçamento', 
+            requerReorcamento: true,        
+            orcamentoRealizado: false,      
+            solicitante: dadosNegocio.solicitante || formData.solicitante,
+            modalidade: dadosNegocio.modalidade || formData.modalidade,
+            servicos: dadosServicos || [],
+            itensAlocacao: itensAlocacaoFormatados,
+            negocioBackendId: dadosNegocio.id || Date.now(),
+            versaoNegocio: 'A',
+            tipo: dadosNegocio.tipo_servico || (dadosServicos?.[0]?.tipo) || '',
+            responsavelTecnico: dadosNegocio.solicitante || formData.solicitante || '',
+            dataSolicitacao: dadosNegocio.data_solicitacao || formData.dataSolicitacao || new Date().toISOString().split('T')[0],
+            orcamentos: [],
+            propostas: [],
+            documentosNegocio: documentosPersistidos
+          };
+
+          toast.success(`${formData.servicos.length} Serviço(s) criado(s) com sucesso no Banco de Dados!`);
+          
+          setShowFormNovoNegocio(false);
+          setNovoNegocioTab('dados');
+          setFormData(initialForm);
+
+          // Atualiza o Kanban imediatamente
+          setNegociosBackend(prev => [...prev, negocioFormatado]);
+
+          // Atualiza a memória global para a tela de Orçamentos enxergar!
+          saveEntity('obras', [...(obras || []), negocioFormatado]);
+
+        } catch (error: any) {
+      console.error('Erro detalhado do Backend:', error);
+      toast.error('Erro ao salvar novo serviço! Verifique os dados e tente novamente.');
+    }
   };
 
   const handleShowDetalhes = (obra: any) => {
@@ -1691,472 +1732,8 @@ const initialServico: Servico = {
     const cliente = listaClientesCRM.find(c => c.id === selectedObraDetalhes.clienteId);
 
     try {
-      const doc = new jsPDF('p', 'mm', 'a4');
-      const pageWidth = doc.internal.pageSize.getWidth();
-      const pageHeight = doc.internal.pageSize.getHeight();
-      const lineHeight = 5;
-      const cellHeight = lineHeight;
-      let y = 10;
-      const margin = 8;
-      const baseColWidth = (pageWidth - margin * 2) / 10;
-      const laborColWidths = [
-        baseColWidth,
-        baseColWidth * 2.7,
-        baseColWidth,
-        baseColWidth,
-        baseColWidth * 1.4,
-        baseColWidth * 1.6,
-        baseColWidth * 1.3
-      ];
-      const materialsColWidths = [
-        baseColWidth,
-        baseColWidth * 3.3,
-        baseColWidth * 0.8,
-        baseColWidth * 0.9,
-        baseColWidth * 1.3,
-        baseColWidth * 1.4,
-        baseColWidth * 1.3
-      ];
-      const activitiesColWidths = [
-        baseColWidth,
-        baseColWidth * 3,
-        baseColWidth,
-        baseColWidth * 5
-      ];
-      const sumWidths = (widths: number[]) => widths.reduce((sum, width) => sum + width, 0);
-
-      const drawCellWithAutoWrap = (x: number, y: number, width: number, height: number, text: string, bold = false, red = false) => {
-        doc.setFont('Arial', bold ? 'bold' : 'normal');
-
-        if (red) {
-          doc.setTextColor(255, 0, 0);
-        } else {
-          doc.setTextColor(0, 0, 0);
-        }
-
-        const lines = doc.splitTextToSize(text || '', width - 2);
-
-        let fontSize = 8;
-        let displayLines = lines.slice(0, 2);
-
-        if (lines.length > 2) {
-          fontSize = 6;
-          doc.setFontSize(fontSize);
-          const newLines = doc.splitTextToSize(text || '', width - 2);
-          displayLines = newLines.slice(0, 3);
-        } else {
-          doc.setFontSize(fontSize);
-        }
-
-        doc.rect(x, y, width, height);
-
-        const lineHeightText = fontSize * 0.35;
-        const totalTextHeight = displayLines.length * lineHeightText;
-        let textY = y + (height - totalTextHeight) / 2 + lineHeightText * 0.7;
-
-        displayLines.forEach((line: string) => {
-          doc.text(line, x + 1, textY, { maxWidth: width - 2 });
-          textY += lineHeightText;
-        });
-
-        doc.setTextColor(0, 0, 0);
-      };
-
-      const drawCell = (x: number, y: number, width: number, height: number, text: string, bold = false, red = false) => {
-        doc.rect(x, y, width, height);
-        doc.setFont('Arial', bold ? 'bold' : 'normal');
-        doc.setFontSize(9);
-        if (red) {
-          doc.setTextColor(255, 0, 0);
-        } else {
-          doc.setTextColor(0, 0, 0);
-        }
-        const maxChars = Math.floor(width / 1.5);
-        const wrappedText = text.length > maxChars ? text.substring(0, maxChars - 3) + '...' : text;
-        doc.text(wrappedText, x + 1, y + 3.5, { maxWidth: width - 2 });
-        doc.setTextColor(0, 0, 0);
-      };
-
-      let x = margin;
-      drawCell(x, y, baseColWidth, cellHeight, 'Cliente:', true);
-      x += baseColWidth;
-      drawCell(x, y, baseColWidth * 3, cellHeight, cliente?.razaoSocial || '');
-      x += baseColWidth * 3;
-      drawCell(x, y, baseColWidth, cellHeight, '');
-      x += baseColWidth;
-      drawCell(x, y, baseColWidth * 5, cellHeight, `Data: ${new Date().toLocaleDateString('pt-BR')}`);
-      y += cellHeight;
-
-      x = margin;
-      drawCell(x, y, baseColWidth, cellHeight, 'Ship:', true);
-      x += baseColWidth;
-      drawCell(x, y, baseColWidth * 9, cellHeight, obraParam?.nome || '');
-      y += cellHeight;
-
-      x = margin;
-      drawCell(x, y, baseColWidth, cellHeight, 'Escopo:', true);
-      x += baseColWidth;
-      drawCell(x, y, baseColWidth * 9, cellHeight, 'Serviços conforme descrito abaixo');
-      y += cellHeight + 2;
-
-      const base = safeNumber(ultimoOrcamento.valores.totalBruto ?? ultimoOrcamento.valores.subtotal);
-      const margemPercent = safeNumber(ultimoOrcamento.valores.margem);
-      const ohPercent = safeNumber(ultimoOrcamento.valores.oh);
-      const impostosPercent = safeNumber(ultimoOrcamento.valores.impostos);
-      const valorMargem = safeNumber(ultimoOrcamento.valores.valorMargem ?? ((base * margemPercent) / 100));
-      const valorOH = safeNumber(ultimoOrcamento.valores.valorOH ?? ((base * ohPercent) / 100));
-      const semImposto = safeNumber(ultimoOrcamento.valores.totalSemImposto ?? (base + valorMargem + valorOH));
-      const valorImposto = safeNumber(ultimoOrcamento.valores.valorImpostos ?? ((semImposto * impostosPercent) / 100));
-      const precoFinal = safeNumber(ultimoOrcamento.valores.precoFinal);
-
-      const maoDeObraData = (ultimoOrcamento.data.maoDeObra || []).filter((item: any) => item.funcao);
-      const totalMaoDeObra = maoDeObraData.reduce((sum: number, item: any) => sum + parseDecimal(item.valorTotal || '0'), 0);
-      const materiaisData = (ultimoOrcamento.data.materiais || []).filter((item: any) => item.descricao);
-      const totalMateriais = materiaisData.reduce((sum: number, item: any) => sum + parseDecimal(item.valorTotal || '0'), 0);
-      const terceirizadosData = (ultimoOrcamento.data.terceirizados || []).filter((item: any) => item.descricao);
-      const totalTerceiros = terceirizadosData.reduce((sum: number, item: any) => sum + parseDecimal(item.valorTotal || '0'), 0);
-      const atividadesData = (ultimoOrcamento.data.atividades || []).filter((item: any) => item.atividade);
-      const totalDias = atividadesData.reduce((sum: number, item: any) => sum + parseDecimal(item.dias || '0'), 0);
-
-      const totalItens = maoDeObraData.length + materiaisData.length + terceirizadosData.length;
-      const precoPorItem = totalItens > 0 ? precoFinal / totalItens : 0;
-
-      x = margin;
-      doc.setFont('Arial', 'bold');
-      doc.setFontSize(9);
-      doc.text('A', x + 2, y + 3);
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-      doc.setTextColor(255, 0, 0);
-      doc.text('MÃO DE OBRA', x + 2, y + 3);
-      doc.rect(x, y, baseColWidth * 9, cellHeight);
-      doc.setTextColor(0, 0, 0);
-      y += cellHeight;
-
-      x = margin;
-      const headersMaoDeObra = ['Item', 'Função', 'Qtd', 'Dias', 'Custo/Dia', 'Obs', 'Valor Total'];
-      headersMaoDeObra.forEach((h, index) => {
-        const colWidth = laborColWidths[index];
-        doc.setFont('Arial', 'bold');
-        doc.setFontSize(7);
-        doc.text(h, x + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
-        doc.rect(x, y, colWidth, cellHeight);
-        x += colWidth;
-      });
-      y += cellHeight;
-
-      maoDeObraData.forEach((item: any, idx: number) => {
-        x = margin;
-        doc.setFont('Arial', 'normal');
-        doc.setFontSize(7);
-
-        doc.text(String(idx + 1), x + 0.5, y + 2.5);
-        doc.rect(x, y, laborColWidths[0], cellHeight);
-        x += laborColWidths[0];
-
-        drawCellWithAutoWrap(x, y, laborColWidths[1], cellHeight, item.funcao || '');
-        x += laborColWidths[1];
-
-        doc.text(String(item.quantidade || ''), x + 0.5, y + 2.5);
-        doc.rect(x, y, laborColWidths[2], cellHeight);
-        x += laborColWidths[2];
-
-        doc.text(String(item.dias || ''), x + 0.5, y + 2.5);
-        doc.rect(x, y, laborColWidths[3], cellHeight);
-        x += laborColWidths[3];
-
-        doc.text(String(item.custoUnitDia ? parseFloat(item.custoUnitDia).toFixed(2) : ''), x + 0.5, y + 2.5);
-        doc.rect(x, y, laborColWidths[4], cellHeight);
-        x += laborColWidths[4];
-
-        drawCellWithAutoWrap(x, y, laborColWidths[5], cellHeight, item.observacoes || '');
-        x += laborColWidths[5];
-
-        doc.setFont('Arial', 'bold');
-        doc.setTextColor(255, 0, 0);
-        doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
-        doc.setTextColor(0, 0, 0);
-        doc.setFont('Arial', 'normal');
-        doc.rect(x, y, laborColWidths[6], cellHeight);
-        x += laborColWidths[6];
-
-        y += cellHeight;
-      });
-
-      x = margin;
-      doc.setFont('Arial', 'bold');
-      doc.setFontSize(8);
-      doc.setTextColor(255, 0, 0);
-      doc.text('Sub-total', x + 0.5, y + 2.5);
-      doc.setTextColor(0, 0, 0);
-      doc.rect(x, y, sumWidths(laborColWidths.slice(0, -1)), cellHeight);
-      x += sumWidths(laborColWidths.slice(0, -1));
-      doc.setTextColor(255, 0, 0);
-      doc.text(totalMaoDeObra.toFixed(2), x + 0.5, y + 2.5);
-      doc.setTextColor(0, 0, 0);
-      doc.rect(x, y, laborColWidths[6], cellHeight);
-      y += cellHeight + 2;
-
-      if (materiaisData && materiaisData.length > 0) {
-        const headersMateriais = ['Item', 'Descrição', 'Un', 'Qtd', 'Peso/Fat', 'Custo Un', 'Total'];
-
-        x = margin;
-        doc.setFont('Arial', 'bold');
-        doc.setFontSize(9);
-        doc.text('B', x + 2, y + 3);
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
-        doc.setTextColor(255, 0, 0);
-        doc.text('CONSUMÍVEIS E MATERIAIS', x + 2, y + 3);
-        doc.rect(x, y, baseColWidth * 9, cellHeight);
-        doc.setTextColor(0, 0, 0);
-        y += cellHeight;
-
-        x = margin;
-        headersMateriais.forEach((h, index) => {
-          const colWidth = materialsColWidths[index];
-          doc.setFont('Arial', 'bold');
-          doc.setFontSize(7);
-          doc.text(h, x + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
-          doc.rect(x, y, colWidth, cellHeight);
-          x += colWidth;
-        });
-        y += cellHeight;
-
-        materiaisData.forEach((item: any, idx: number) => {
-          x = margin;
-          doc.setFont('Arial', 'normal');
-          doc.setFontSize(7);
-
-          doc.text(String(idx + 1), x + 0.5, y + 2.5);
-          doc.rect(x, y, materialsColWidths[0], cellHeight);
-          x += materialsColWidths[0];
-
-          drawCellWithAutoWrap(x, y, materialsColWidths[1], cellHeight, item.descricao || '');
-          x += materialsColWidths[1];
-
-          doc.text(item.unidade || '', x + 0.5, y + 2.5);
-          doc.rect(x, y, materialsColWidths[2], cellHeight);
-          x += materialsColWidths[2];
-
-          doc.text(String(item.quantidade || ''), x + 0.5, y + 2.5);
-          doc.rect(x, y, materialsColWidths[3], cellHeight);
-          x += materialsColWidths[3];
-
-          doc.text(String(item.pesoFator || ''), x + 0.5, y + 2.5);
-          doc.rect(x, y, materialsColWidths[4], cellHeight);
-          x += materialsColWidths[4];
-
-          doc.text(String(item.custoUnit ? parseFloat(item.custoUnit).toFixed(2) : ''), x + 0.5, y + 2.5);
-          doc.rect(x, y, materialsColWidths[5], cellHeight);
-          x += materialsColWidths[5];
-
-          doc.setFont('Arial', 'bold');
-          doc.setTextColor(255, 0, 0);
-          doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
-          doc.setTextColor(0, 0, 0);
-          doc.setFont('Arial', 'normal');
-          doc.rect(x, y, materialsColWidths[6], cellHeight);
-          x += materialsColWidths[6];
-
-          y += cellHeight;
-        });
-
-        x = margin;
-        doc.setFont('Arial', 'bold');
-        doc.setFontSize(8);
-        doc.setTextColor(255, 0, 0);
-        doc.text('Valor total', x + 0.5, y + 2.5);
-        doc.setTextColor(0, 0, 0);
-        doc.rect(x, y, sumWidths(materialsColWidths.slice(0, -1)), cellHeight);
-        x += sumWidths(materialsColWidths.slice(0, -1));
-        doc.setTextColor(255, 0, 0);
-        doc.text(totalMateriais.toFixed(2), x + 0.5, y + 2.5);
-        doc.setTextColor(0, 0, 0);
-        doc.rect(x, y, materialsColWidths[6], cellHeight);
-        y += cellHeight + 2;
-      }
-
-      if (terceirizadosData && terceirizadosData.length > 0) {
-        const headersTerceiros = ['Item', 'Descrição', 'Un', 'Qtd', 'Peso/Fat', 'Custo Un', 'Total'];
-
-        x = margin;
-        doc.setFont('Arial', 'bold');
-        doc.setFontSize(9);
-        doc.text('C', x + 2, y + 3);
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
-        doc.setTextColor(255, 0, 0);
-        doc.text('SERVIÇOS TERCEIRIZADOS', x + 2, y + 3);
-        doc.rect(x, y, baseColWidth * 9, cellHeight);
-        doc.setTextColor(0, 0, 0);
-        y += cellHeight;
-
-        x = margin;
-        headersTerceiros.forEach((h, index) => {
-          const colWidth = materialsColWidths[index];
-          doc.setFont('Arial', 'bold');
-          doc.setFontSize(7);
-          doc.text(h, x + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
-          doc.rect(x, y, colWidth, cellHeight);
-          x += colWidth;
-        });
-        y += cellHeight;
-
-        terceirizadosData.forEach((item: any, idx: number) => {
-          x = margin;
-          doc.setFont('Arial', 'normal');
-          doc.setFontSize(7);
-
-          doc.text(String(idx + 1), x + 0.5, y + 2.5);
-          doc.rect(x, y, materialsColWidths[0], cellHeight);
-          x += materialsColWidths[0];
-
-          drawCellWithAutoWrap(x, y, materialsColWidths[1], cellHeight, item.descricao || '');
-          x += materialsColWidths[1];
-
-          doc.text(item.unidade || '', x + 0.5, y + 2.5);
-          doc.rect(x, y, materialsColWidths[2], cellHeight);
-          x += materialsColWidths[2];
-
-          doc.text(String(item.quantidade || ''), x + 0.5, y + 2.5);
-          doc.rect(x, y, materialsColWidths[3], cellHeight);
-          x += materialsColWidths[3];
-
-          doc.text(String(item.pesoFator || ''), x + 0.5, y + 2.5);
-          doc.rect(x, y, materialsColWidths[4], cellHeight);
-          x += materialsColWidths[4];
-
-          doc.text(String(item.custoUnit ? parseFloat(item.custoUnit).toFixed(2) : ''), x + 0.5, y + 2.5);
-          doc.rect(x, y, materialsColWidths[5], cellHeight);
-          x += materialsColWidths[5];
-
-          doc.setFont('Arial', 'bold');
-          doc.setTextColor(255, 0, 0);
-          doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
-          doc.setTextColor(0, 0, 0);
-          doc.setFont('Arial', 'normal');
-          doc.rect(x, y, materialsColWidths[6], cellHeight);
-          x += materialsColWidths[6];
-
-          y += cellHeight;
-        });
-
-        x = margin;
-        doc.setFont('Arial', 'bold');
-        doc.setFontSize(8);
-        doc.setTextColor(255, 0, 0);
-        doc.text('Sub-total', x + 0.5, y + 2.5);
-        doc.setTextColor(0, 0, 0);
-        doc.rect(x, y, sumWidths(materialsColWidths.slice(0, -1)), cellHeight);
-        x += sumWidths(materialsColWidths.slice(0, -1));
-        doc.setTextColor(255, 0, 0);
-        doc.text(totalTerceiros.toFixed(2), x + 0.5, y + 2.5);
-        doc.setTextColor(0, 0, 0);
-        doc.rect(x, y, materialsColWidths[6], cellHeight);
-        y += cellHeight + 2;
-      }
-
-      x = margin;
-      doc.setFont('Arial', 'bold');
-      doc.setFontSize(9);
-      doc.text('E', x + 2, y + 3);
-      doc.rect(x, y, baseColWidth, cellHeight);
-      x += baseColWidth;
-      doc.text('Cálculos Finais', x + 2, y + 3);
-      doc.rect(x, y, baseColWidth * 9, cellHeight);
-      y += cellHeight;
-
-      const calculos = [
-        ['1', 'Valor mão de obra', totalMaoDeObra.toFixed(2)],
-        ['2', 'Valor consumível e material', totalMateriais.toFixed(2)],
-        ['3', 'Valor terceirizados', totalTerceiros.toFixed(2)],
-        ['4', 'Total', base.toFixed(2)],
-        ['5', `O.H (${ohPercent}%)`, valorOH.toFixed(2)],
-        ['6', `Margem (${margemPercent}%)`, valorMargem.toFixed(2)],
-        ['7', 'PV S/ imposto', semImposto.toFixed(2)],
-        ['8', `Imposto S/ NF (${impostosPercent}%)`, valorImposto.toFixed(2)],
-        ['9', 'PV FINAL R$', precoFinal.toFixed(2)]
-      ];
-
-      calculos.forEach((row, idx) => {
-        const isLastRow = idx === calculos.length - 1;
-        x = margin;
-        doc.setFont('Arial', 'normal');
-        doc.setFontSize(8);
-
-        if (isLastRow) {
-          doc.setFont('Arial', 'bold');
-          doc.setTextColor(255, 0, 0);
-        }
-
-        doc.text(row[0], x + 0.5, y + 2.5);
-        doc.rect(x, y, baseColWidth, cellHeight);
-        x += baseColWidth;
-
-        doc.text(row[1], x + 0.5, y + 2.5, { maxWidth: baseColWidth * 8 - 2 });
-        doc.rect(x, y, baseColWidth * 8, cellHeight);
-        x += baseColWidth * 8;
-
-        doc.text(row[2], x + 0.5, y + 2.5);
-        doc.rect(x, y, baseColWidth, cellHeight);
-
-        if (isLastRow) {
-          doc.setTextColor(0, 0, 0);
-        }
-        y += cellHeight;
-      });
-
-      x = margin;
-      doc.setFont('Arial', 'bold');
-      doc.setFontSize(8);
-      doc.text('RESUMO:', x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth * 10, cellHeight);
-      y += cellHeight;
-
-      x = margin;
-      doc.setFont('Arial', 'normal');
-      doc.setFontSize(8);
-      doc.text('Qtd. de Itens:', x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth * 5, cellHeight);
-      x += baseColWidth * 5;
-      doc.setFont('Arial', 'bold');
-      doc.text(String(totalItens), x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth * 5, cellHeight);
-      y += cellHeight;
-
-      x = margin;
-      doc.setFont('Arial', 'normal');
-      doc.setFontSize(8);
-      doc.text('Preço por Item:', x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth * 5, cellHeight);
-      x += baseColWidth * 5;
-      doc.setFont('Arial', 'bold');
-      doc.text(`R$ ${precoPorItem.toFixed(2)}`, x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth * 5, cellHeight);
-      y += cellHeight;
-
-      x = margin;
-      doc.setFont('Arial', 'normal');
-      doc.setFontSize(8);
-      doc.text('Valor Total:', x + 0.5, y + 2.5);
-      doc.rect(x, y, baseColWidth * 5, cellHeight);
-      x += baseColWidth * 5;
-      doc.setFont('Arial', 'bold');
-      doc.setTextColor(255, 0, 0);
-      doc.text(`R$ ${precoFinal.toFixed(2)}`, x + 0.5, y + 2.5);
-      doc.setTextColor(0, 0, 0);
-      doc.rect(x, y, baseColWidth * 5, cellHeight);
-
-      const numeroOrcamentoSanitizado = String(ultimoOrcamento.numeroOrcamento || 'orcamento').replace(/[/\\]/g, '-');
-      const versaoOrcamento = formatarVersaoOrcamento(ultimoOrcamento.versao);
-      const nomeArquivo = versaoOrcamento
-        ? `Orcamento_${numeroOrcamentoSanitizado}_v${versaoOrcamento}.pdf`
-        : `Orcamento_${numeroOrcamentoSanitizado}.pdf`;
-      const conteudoDataUrl = doc.output('datauristring');
-      doc.save(nomeArquivo);
-
-      if (selectedObraDetalhes && conteudoDataUrl) {
+      const resultado = gerarOrcamentoPDF(ultimoOrcamento, cliente, selectedObraDetalhes);
+      if (selectedObraDetalhes && resultado?.conteudoDataUrl) {
         const documentosAtuais = Array.isArray(selectedObraDetalhes.documentosNegocio)
           ? selectedObraDetalhes.documentosNegocio
           : [];
