@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { extrairComponentesDoId, gerarIdProjeto, gerarIdProposta, gerarIdProjetoDeNegocio, useErp } from '../../../context/ErpContext';
 import { formatDateBR } from '../../../utils/formatDate';
-import { Plus, X, FileText, CheckCircle, XCircle, ArrowLeft, Save, Download, RefreshCw, DollarSign, AlertTriangle } from 'lucide-react';
+import { Plus, X, FileText, CheckCircle, XCircle, ArrowLeft, Save, Download, RefreshCw, DollarSign, AlertTriangle, Trash2 } from 'lucide-react';
 import { handleDownloadPropostaPDF } from '../CRM/handleDownloadPropostaPDF';
 import { handleDownloadOrcamentoPDF } from '../CRM/handleDownloadOrcamentoPDF';
 import { isEmpresaLinave, getLogoUrlForEmpresa } from '../../../utils/company';
@@ -10,9 +10,20 @@ import Docxtemplater from 'docxtemplater';
 import { saveAs } from 'file-saver';
 import { getNegocios } from '../../../../services/comercial';
 import { getClientes, criarProposta, atualizarProposta, atualizarNegocio } from '../../../../services/comercialService';
+import {
+  CAMPOS_TEMPLATE_PROPOSTA,
+  getPropostaTemplates,
+  createPropostaTemplate,
+  updatePropostaTemplate,
+  deletePropostaTemplate,
+  type CampoTemplateProposta,
+  type PropostaTemplate,
+} from '../../../../services/propostaTemplatesService';
 import { temServico, temLocacao } from '../../../utils/modalidade';
 import { boldOS } from '../../../utils/osHighlight';
 import { ObservacoesNegocio } from '../../ObservacoesNegocio';
+import { toast } from 'sonner';
+import { confirmDialog } from '../../ui/feedback';
 
 interface EscopoLinha {
   id: string;
@@ -45,6 +56,9 @@ interface PropostaFormData {
   escopoC: string;
   preco: string;
   precoItens?: Array<{ id: string; descricao: string; quantidade: number; unidade: string; valorUnitario: number; dias: number; total: number; categoria?: 'servico' | 'locacao' }>;
+  // Colunas da tabela D que o usuário escondeu (ex.: ['dias']). Persiste na proposta para
+  // o PDF sair igual ao que foi montado na tela.
+  precoColunasOcultas?: string[];
   precoTextoLivre: string;
   condicoesGerais: string;
   condicoesPagamento: string;
@@ -52,6 +66,27 @@ interface PropostaFormData {
   efetivoPrevisto: string;
   encerramento: string;
 }
+
+// ---- Templates de proposta ------------------------------------------------
+// Os campos que um template preenche (CAMPOS_TEMPLATE_PROPOSTA) vivem no service,
+// junto do CRUD da tabela `comercialapp_templateproposta`. Ficam DE FORA, por serem
+// específicos de cada negócio:
+//   - preço  -> preco, precoItens, precoTextoLivre (vem do orçamento)
+//   - escopo -> escopoA, escopoBasicoServicos (levantado a bordo)
+//   - autopreenchidos -> dataProposta, numeroProposta, cliente, atribuidoA, cargoContato
+const ROTULOS_CAMPO_TEMPLATE: Record<CampoTemplateProposta, string> = {
+  referencia: 'Referência',
+  saudacao: 'Saudação',
+  assunto: 'Assunto',
+  textoAbertura: 'Texto de Abertura',
+  responsabilidadeContratada: 'B - Resp. da Contratada',
+  escopoC: 'C - Resp. da Contratante',
+  condicoesGerais: 'E - Condições Gerais',
+  prazo: 'F - Prazo',
+  efetivoPrevisto: 'G - Efetivo Previsto',
+  condicoesPagamento: 'H - Cond. de Pagamento',
+  encerramento: 'Encerramento',
+};
 
 const indexToVersaoAlfabetica = (index: number) => {
   if (index < 0) return 'A';
@@ -149,6 +184,7 @@ const mapNegocioToObra = (n: any): any => ({
     escopoA: p.escopoA || '',
     escopoBasicoServicos: p.escopoBasicoServicos || [],
     precoItens: p.precoItens || [],                                   // tabela D (PDF)
+    precoColunasOcultas: p.precoColunasOcultas || [],                 // colunas escondidas da tabela D
   })),
   orcamentoRealizado: n.orcamento_realizado,
   orcamentoValores: n.orcamentos?.[0]?.valores || null,
@@ -166,7 +202,7 @@ const parsePrecoParaDecimal = (preco: string): number => {
 };
 
 export function PropostaView() {
-  const { obras, os, saveEntity } = useErp() as any;
+  const { obras, os, saveEntity, userSession } = useErp() as any;
   const [listaNegocios, setListaNegocios] = useState<any[]>([]);
   const [filtroOs, setFiltroOs] = useState<string>('');
   const [listaClientesLocal, setListaClientesLocal] = useState<any[]>([]);
@@ -226,6 +262,7 @@ export function PropostaView() {
     escopoA: '',
     escopoBasicoServicos: [],
     precoItens: [],
+    precoColunasOcultas: [],
     precoTextoLivre: '',
     responsabilidadeContratada: '',
     escopoC: '',
@@ -240,14 +277,157 @@ export function PropostaView() {
   const [propostaForm, setPropostaForm] = useState<PropostaFormData>(getInitialPropostaForm);
   const [novaColunaPorEscopo, setNovaColunaPorEscopo] = useState<Record<string, string>>({});
 
+  // ---- Templates de proposta ----------------------------------------------
+  // Tabela própria no SQL (`comercialapp_templateproposta`, via /comercial/templates-proposta/),
+  // então são compartilhados por todos os usuários.
+  const [templatesProposta, setTemplatesProposta] = useState<PropostaTemplate[]>([]);
+  const [templateSelecionado, setTemplateSelecionado] = useState<string>('');
+  const [nomeNovoTemplate, setNomeNovoTemplate] = useState<string>('');
+  const [salvandoTemplate, setSalvandoTemplate] = useState(false);
+  const [persistindoTemplate, setPersistindoTemplate] = useState(false);
+
+  const recarregarTemplates = async () => setTemplatesProposta(await getPropostaTemplates());
+
+  useEffect(() => { recarregarTemplates(); }, []);
+
+  const camposPreenchidosDoTemplate = (tpl: PropostaTemplate) =>
+    CAMPOS_TEMPLATE_PROPOSTA.filter((campo) => String(tpl.campos?.[campo] ?? '').trim());
+
+  // Preenche só os campos que o template tem conteúdo — assim um template parcial
+  // (ex.: só condições de pagamento) não apaga o resto do que já foi digitado.
+  const aplicarTemplate = async (id: string) => {
+    setTemplateSelecionado(id);
+    if (!id) return;
+
+    const tpl = templatesProposta.find((t) => String(t.id) === String(id));
+    if (!tpl) return;
+
+    const camposDoTemplate = camposPreenchidosDoTemplate(tpl);
+    if (camposDoTemplate.length === 0) {
+      toast.error(`O template "${tpl.nome}" está vazio.`);
+      return;
+    }
+
+    const seraoSobrescritos = camposDoTemplate.filter((campo) =>
+      String((propostaForm as any)[campo] ?? '').trim(),
+    );
+    if (seraoSobrescritos.length > 0) {
+      const lista = seraoSobrescritos.map((campo) => `• ${ROTULOS_CAMPO_TEMPLATE[campo]}`).join('\n');
+      const ok = await confirmDialog({
+        title: 'Aplicar template',
+        message: `Aplicar o template "${tpl.nome}"?\n\nOs campos abaixo já têm conteúdo e serão substituídos:\n${lista}\n\nPreço e escopo não são alterados.`,
+        confirmText: 'Aplicar',
+      });
+      if (!ok) {
+        setTemplateSelecionado('');
+        return;
+      }
+    }
+
+    setPropostaForm((prev) => {
+      const next: any = { ...prev };
+      camposDoTemplate.forEach((campo) => { next[campo] = String(tpl.campos?.[campo] ?? ''); });
+      return next;
+    });
+  };
+
+  const salvarTemplate = async () => {
+    const nome = nomeNovoTemplate.trim();
+    if (!nome) { toast.error('Dê um nome ao template.'); return; }
+
+    const campos: Partial<Record<CampoTemplateProposta, string>> = {};
+    CAMPOS_TEMPLATE_PROPOSTA.forEach((campo) => {
+      const valor = String((propostaForm as any)[campo] ?? '');
+      if (valor.trim()) campos[campo] = valor;
+    });
+    if (Object.keys(campos).length === 0) {
+      toast.error('Preencha ao menos um campo (fora preço e escopo) antes de salvar o template.');
+      return;
+    }
+
+    // Nome é único na tabela — se já existe, o usuário decide se sobrescreve (PUT).
+    const existente = templatesProposta.find(
+      (t) => String(t.nome || '').trim().toLowerCase() === nome.toLowerCase(),
+    );
+    if (existente && !(await confirmDialog(`Já existe um template "${existente.nome}". Substituir o conteúdo dele?`))) return;
+
+    const autor = userSession?.nome || userSession?.username || userSession?.email || '';
+    setPersistindoTemplate(true);
+    try {
+      const salvo = existente
+        ? await updatePropostaTemplate(existente.id, nome, campos, existente.criadoPor || autor)
+        : await createPropostaTemplate(nome, campos, autor);
+      await recarregarTemplates();
+      setTemplateSelecionado(String(salvo.id));
+      setNomeNovoTemplate('');
+      setSalvandoTemplate(false);
+      toast.success(`Template "${nome}" salvo com ${Object.keys(campos).length} campo(s).`);
+    } catch (error: any) {
+      console.error('Erro ao salvar template de proposta:', error);
+      const detalhe = error?.response?.data?.nome?.[0] || error?.response?.data?.detail || '';
+      toast.error(`Não foi possível salvar o template.${detalhe ? `\n\n${detalhe}` : '\n\nVerifique a conexão com o servidor.'}`);
+    } finally {
+      setPersistindoTemplate(false);
+    }
+  };
+
+  const excluirTemplate = async () => {
+    const tpl = templatesProposta.find((t) => String(t.id) === String(templateSelecionado));
+    if (!tpl) return;
+    if (!(await confirmDialog({ message: `Excluir o template "${tpl.nome}"? Essa ação não pode ser desfeita.`, danger: true, confirmText: 'Excluir' }))) return;
+
+    setPersistindoTemplate(true);
+    try {
+      await deletePropostaTemplate(tpl.id);
+      await recarregarTemplates();
+      setTemplateSelecionado('');
+    } catch (error) {
+      console.error('Erro ao excluir template de proposta:', error);
+      toast.error('Não foi possível excluir o template. Verifique a conexão com o servidor.');
+    } finally {
+      setPersistindoTemplate(false);
+    }
+  };
+
   const formatarVersaoProposta = (proposta: any) => {
     if (!proposta) return 'Original';
     const versao = String(proposta.versao || proposta.numeroProposta?.match(/[A-Z]+$/)?.[0] || '').trim().toUpperCase();
     return versao || 'Original';
   };
 
+  // ---- Colunas removíveis da tabela D ----
+  // Nem toda proposta tem as mesmas dimensões: um serviço fechado não tem "dias", uma
+  // locação não tem "unidade". Estas três podem ser escondidas; Descrição, Vl. Unit. e
+  // Valor total ficam sempre, porque sem elas a tabela deixa de ser uma tabela de preço.
+  //
+  // Esconder uma coluna MULTIPLICATIVA (quantidade, dias) tira o fator da conta — ela passa
+  // a valer 1. Sem isso, remover "Dias" deixaria os totais inflados por um número invisível.
+  const COLUNAS_PRECO_REMOVIVEIS = [
+    { id: 'quantidade', label: 'Quant.', multiplicativa: true },
+    { id: 'unidade', label: 'Unit.', multiplicativa: false },
+    { id: 'dias', label: 'Dias', multiplicativa: true },
+  ] as const;
+
+  const colunasOcultas: string[] = propostaForm.precoColunasOcultas || [];
+  const colunaVisivel = (id: string) => !colunasOcultas.includes(id);
+
+  const totalDaLinha = (it: any, ocultas: string[]) => {
+    const fator = (campo: string) => (ocultas.includes(campo) ? 1 : (Number(it?.[campo]) || 0));
+    return fator('quantidade') * (Number(it?.valorUnitario) || 0) * fator('dias');
+  };
+
+  // Ao esconder/mostrar uma coluna multiplicativa, todos os totais são refeitos na hora.
+  const alternarColunaPreco = (id: string) => {
+    setPropostaForm((prev) => {
+      const atuais = prev.precoColunasOcultas || [];
+      const ocultas = atuais.includes(id) ? atuais.filter((c) => c !== id) : [...atuais, id];
+      const itens = (prev.precoItens || []).map((it) => ({ ...it, total: totalDaLinha(it, ocultas) }));
+      return { ...prev, precoColunasOcultas: ocultas, precoItens: itens };
+    });
+  };
+
   // Preço (item D) - tabela macro editável: descrição, quantidade, unidade, valor unit., dias, total.
-  // Total da linha = quantidade × valor unitário × dias.
+  // Total da linha = quantidade × valor unitário × dias (fatores de colunas ocultas valem 1).
   const criarPrecoItem = (override?: Partial<{ id: string; descricao: string; quantidade: number; unidade: string; valorUnitario: number; dias: number; total: number; categoria: 'servico' | 'locacao' }>) => {
     const quantidade = override?.quantidade ?? 1;
     const valorUnitario = override?.valorUnitario ?? 0;
@@ -292,7 +472,7 @@ export function PropostaView() {
           const cleaned = String(valor).replace(/[^0-9.,]/g, '').replace(',', '.');
           updated.valorUnitario = parseFloat(cleaned) || 0;
         }
-        updated.total = (Number(updated.quantidade) || 0) * (Number(updated.valorUnitario) || 0) * (Number(updated.dias) || 0);
+        updated.total = totalDaLinha(updated, prev.precoColunasOcultas || []);
         return updated;
       });
       return { ...prev, precoItens: itens };
@@ -317,32 +497,57 @@ export function PropostaView() {
             <Plus size={12} className="inline mr-1" /> Adicionar Item
           </button>
         </div>
+
+        {/* Colunas da tabela: desmarcar esconde na tela E no PDF. */}
+        <div className="flex flex-wrap items-center gap-2 mb-2">
+          <span className="text-[10px] font-black uppercase tracking-widest text-white/40">Colunas</span>
+          {COLUNAS_PRECO_REMOVIVEIS.map((col) => {
+            const visivel = colunaVisivel(col.id);
+            return (
+              <button
+                key={col.id}
+                type="button"
+                onClick={() => alternarColunaPreco(col.id)}
+                title={visivel
+                  ? `Remover a coluna ${col.label}${col.multiplicativa ? ' (sai do cálculo do total)' : ''}`
+                  : `Mostrar a coluna ${col.label} de novo`}
+                className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-bold transition-all active:scale-95 ${
+                  visivel
+                    ? 'border-blue-400/50 bg-blue-500/20 text-blue-200 hover:bg-blue-500/30'
+                    : 'border-white/10 bg-white/5 text-white/40 hover:text-white/70'
+                }`}
+              >
+                {visivel ? <X size={11} /> : <Plus size={11} />} {col.label}
+              </button>
+            );
+          })}
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-xs border border-white/10 rounded-lg overflow-hidden">
             <thead>
               <tr className="bg-white/5 border-b border-white/10">
                 <th className="px-3 py-2 text-left text-white font-black w-12">Item</th>
                 <th className="px-3 py-2 text-left text-white font-black">Descrição</th>
-                <th className="px-3 py-2 text-left text-white font-black w-20">Quant.</th>
-                <th className="px-3 py-2 text-left text-white font-black w-20">Unit.</th>
+                {colunaVisivel('quantidade') && <th className="px-3 py-2 text-left text-white font-black w-20">Quant.</th>}
+                {colunaVisivel('unidade') && <th className="px-3 py-2 text-left text-white font-black w-20">Unit.</th>}
                 <th className="px-3 py-2 text-left text-white font-black w-32">Vl. Unit. R$</th>
-                <th className="px-3 py-2 text-left text-white font-black w-16">Dias</th>
+                {colunaVisivel('dias') && <th className="px-3 py-2 text-left text-white font-black w-16">Dias</th>}
                 <th className="px-3 py-2 text-left text-white font-black w-36">Valor total R$</th>
                 <th className="px-3 py-2 text-center text-white font-black w-12"> </th>
               </tr>
             </thead>
             <tbody>
               {itens.length === 0 && (
-                <tr><td colSpan={8} className="px-3 py-3 text-white/40">Nenhum item. Clique em "Adicionar Item".</td></tr>
+                <tr><td colSpan={5 + COLUNAS_PRECO_REMOVIVEIS.filter((c) => colunaVisivel(c.id)).length} className="px-3 py-3 text-white/40">Nenhum item. Clique em "Adicionar Item".</td></tr>
               )}
               {itens.map((it, idx) => (
                 <tr key={it.id} className="border-b border-white/5">
                   <td className="px-3 py-2 text-white/60 font-bold text-center">{idx + 1}</td>
                   <td className="px-3 py-2 min-w-[200px]"><input type="text" className={cellInput} value={it.descricao || ''} onChange={(e) => atualizarPrecoItem(it.id, 'descricao', e.target.value)} placeholder="Descrição" /></td>
-                  <td className="px-3 py-2"><input type="number" min="0" className={cellInput} value={String(it.quantidade ?? '')} onChange={(e) => atualizarPrecoItem(it.id, 'quantidade', e.target.value)} /></td>
-                  <td className="px-3 py-2"><input type="text" className={cellInput} value={it.unidade || ''} onChange={(e) => atualizarPrecoItem(it.id, 'unidade', e.target.value)} placeholder="serv." /></td>
+                  {colunaVisivel('quantidade') && <td className="px-3 py-2"><input type="number" min="0" className={cellInput} value={String(it.quantidade ?? '')} onChange={(e) => atualizarPrecoItem(it.id, 'quantidade', e.target.value)} /></td>}
+                  {colunaVisivel('unidade') && <td className="px-3 py-2"><input type="text" className={cellInput} value={it.unidade || ''} onChange={(e) => atualizarPrecoItem(it.id, 'unidade', e.target.value)} placeholder="serv." /></td>}
                   <td className="px-3 py-2"><input type="text" className={cellInput} value={String(it.valorUnitario ?? '')} onChange={(e) => atualizarPrecoItem(it.id, 'valorUnitario', e.target.value)} placeholder="0,00" /></td>
-                  <td className="px-3 py-2"><input type="number" min="0" className={cellInput} value={String(it.dias ?? '')} onChange={(e) => atualizarPrecoItem(it.id, 'dias', e.target.value)} /></td>
+                  {colunaVisivel('dias') && <td className="px-3 py-2"><input type="number" min="0" className={cellInput} value={String(it.dias ?? '')} onChange={(e) => atualizarPrecoItem(it.id, 'dias', e.target.value)} /></td>}
                   <td className="px-3 py-2 text-white font-black whitespace-nowrap">R$ {(Number(it.total) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                   <td className="px-3 py-2 text-center"><button type="button" onClick={() => removerPrecoItem(it.id)} className="text-red-300 p-1"><X size={14} /></button></td>
                 </tr>
@@ -791,13 +996,14 @@ export function PropostaView() {
       // Estrutura rica persistida FIELMENTE: escopo A (tabelas) + tabela D de preço.
       escopoBasicoServicos: propostaForm.escopoBasicoServicos || [],
       precoItens: propostaForm.precoItens || [],
+      precoColunasOcultas: propostaForm.precoColunasOcultas || [],
     };
 
     try {
       await criarProposta(payload);
       localStorage.removeItem(getRascunhoKey(selectedObra.backendId));
       await refreshNegocios();
-      alert('Proposta criada com sucesso!');
+      toast.success('Proposta criada com sucesso!');
       setViewMode('list');
       setSelectedObra(null);
       setPropostaForm(getInitialPropostaForm());
@@ -808,7 +1014,7 @@ export function PropostaView() {
       const detalhe = data
         ? (typeof data === 'string' ? data : JSON.stringify(data))
         : (err?.message || '');
-      alert(`Erro ao salvar proposta. Verifique os dados e tente novamente.${detalhe ? `\n\nDetalhe: ${detalhe}` : ''}`);
+      toast.error(`Erro ao salvar proposta. Verifique os dados e tente novamente.${detalhe ? `\n\nDetalhe: ${detalhe}` : ''}`);
     }
   };
 
@@ -816,28 +1022,28 @@ export function PropostaView() {
     if (!selectedObra) return;
     try {
       localStorage.setItem(getRascunhoKey(selectedObra.backendId), JSON.stringify(propostaForm));
-      alert('Rascunho salvo! Você pode sair e retornar que os dados estarão aqui.');
+      toast.success('Rascunho salvo! Você pode sair e retornar que os dados estarão aqui.');
     } catch {
-      alert('Erro ao salvar rascunho.');
+      toast.error('Erro ao salvar rascunho.');
     }
   };
 
   // Baixa o PDF usando os dados ATUAIS do formulário (sem precisar enviar/salvar).
   // Abre o PDF do orçamento do negócio (última versão) para consulta durante a proposta.
   const visualizarOrcamento = () => {
-    if (!selectedObra) return alert('Selecione uma obra primeiro.');
+    if (!selectedObra) return toast.error('Selecione uma obra primeiro.');
     const orc = Array.isArray(selectedObra.orcamentos) && selectedObra.orcamentos.length ? selectedObra.orcamentos[0] : null;
-    if (!orc) return alert('Nenhum orçamento encontrado para este negócio.');
+    if (!orc) return toast.error('Nenhum orçamento encontrado para este negócio.');
     try {
       handleDownloadOrcamentoPDF(orc, { razaoSocial: selectedObra.nomeCliente || '' }, selectedObra);
     } catch (e) {
       console.error('Falha ao gerar PDF do orçamento:', e);
-      alert('Não foi possível gerar o PDF do orçamento.');
+      toast.error('Não foi possível gerar o PDF do orçamento.');
     }
   };
 
   const handleBaixarPropostaPreview = () => {
-    if (!selectedObra) return alert('Selecione uma obra primeiro.');
+    if (!selectedObra) return toast.error('Selecione uma obra primeiro.');
     // O gerador do PDF lê `responsabilidadeContratante` (item C); no form esse campo é `escopoC`.
     const propostaParaPdf = {
       ...propostaForm,
@@ -848,7 +1054,7 @@ export function PropostaView() {
 
   // Gera DOCX a partir de template .docx (deve existir em /public/templates/LINAVE.docx e SERVINAVE.docx)
   const gerarDocxTemplate = async () => {
-    if (!selectedObra) return alert('Selecione uma obra antes');
+    if (!selectedObra) return toast.error('Selecione uma obra antes');
     const rawEmpresa = (() => {
       const ep = selectedObra.empresaPrestadora || '';
       if (!ep) return '';
@@ -860,7 +1066,7 @@ export function PropostaView() {
     try {
       const templateUrl = isLinave ? '/templates/LINAVE.docx' : '/templates/SERVINAVE.docx';
       const res = await fetch(templateUrl);
-      if (!res.ok) return alert(`Template ${isLinave ? 'LINAVE.docx' : 'SERVINAVE.docx'} não encontrado em /public/templates/`);
+      if (!res.ok) return toast.error(`Template ${isLinave ? 'LINAVE.docx' : 'SERVINAVE.docx'} não encontrado em /public/templates/`);
       const arrayBuffer = await res.arrayBuffer();
 
       const zip = new PizZip(arrayBuffer);
@@ -896,7 +1102,7 @@ export function PropostaView() {
       console.error('Erro gerarDocxTemplate:', err);
       const msg = err?.message ? err.message : String(err);
       const details = err?.stack ? `\n\nStack:\n${err.stack}` : '';
-      alert(`Erro ao gerar DOCX: ${msg}${details}`);
+      toast.error(`Erro ao gerar DOCX: ${msg}${details}`);
     }
   };
 
@@ -924,10 +1130,10 @@ export function PropostaView() {
         setSelectedObra(null);
         setViewMode('list');
       }
-      alert('Proposta aprovada pelo cliente! Negócio movido para Em Andamento.');
+      toast.success('Proposta aprovada pelo cliente! Negócio movido para Em Andamento.');
     } catch (err) {
       console.error('Erro ao aprovar proposta:', err);
-      alert('Erro ao processar aprovação.');
+      toast.error('Erro ao processar aprovação.');
     }
   };
 
@@ -937,10 +1143,10 @@ export function PropostaView() {
     try {
       await atualizarProposta(ultimaProposta.id, { status: 'pendente' });
       await refreshNegocios();
-      alert('Proposta marcada como pendente.');
+      toast.success('Proposta marcada como pendente.');
     } catch (err) {
       console.error('Erro ao atualizar proposta:', err);
-      alert('Erro ao processar operação.');
+      toast.error('Erro ao processar operação.');
     }
   };
 
@@ -993,6 +1199,9 @@ export function PropostaView() {
       responsabilidadeContratada: propostaAntiga?.responsabilidadeContratada || '',
       escopoC: propostaAntiga?.escopoC || propostaAntiga?.responsabilidadeContratante || '',
       precoItens,
+      // Sem isto, reimprimir uma proposta antiga traria de volta as colunas que tinham
+      // sido removidas quando ela foi montada.
+      precoColunasOcultas: Array.isArray(propostaAntiga?.precoColunasOcultas) ? propostaAntiga.precoColunasOcultas : [],
       condicoesGerais: propostaAntiga?.condicoesGerais || '',
       condicoesPagamento: propostaAntiga?.condicoesPagamento || '',
       prazo: propostaAntiga?.prazo || '',
@@ -1014,7 +1223,7 @@ export function PropostaView() {
     const obra = recusaModal.obra;
     const motivoRecusa = recusaModal.motivo.trim();
     if (!obra) return;
-    if (!motivoRecusa) { alert('Informe o motivo da recusa.'); return; }
+    if (!motivoRecusa) { toast.error('Informe o motivo da recusa.'); return; }
 
     setRecusaModal(prev => ({ ...prev, submitting: true }));
     try {
@@ -1055,10 +1264,10 @@ export function PropostaView() {
         setViewMode('list');
       }
       setRecusaModal({ open: false, obra: null, motivo: '', submitting: false });
-      alert('Proposta recusada. Negócio retornou para Aguardando orçamento.');
+      toast.success('Proposta recusada. Negócio retornou para Aguardando orçamento.');
     } catch (err) {
       console.error('Erro ao recusar proposta:', err);
-      alert('Erro ao processar recusa.');
+      toast.error('Erro ao processar recusa.');
       setRecusaModal(prev => ({ ...prev, submitting: false }));
     }
   };
@@ -1068,7 +1277,7 @@ export function PropostaView() {
     const obra = recusaModal.obra;
     const motivoRecusa = recusaModal.motivo.trim();
     if (!obra) return;
-    if (!motivoRecusa) { alert('Informe o motivo da recusa.'); return; }
+    if (!motivoRecusa) { toast.error('Informe o motivo da recusa.'); return; }
 
     setRecusaModal(prev => ({ ...prev, submitting: true }));
     try {
@@ -1089,7 +1298,7 @@ export function PropostaView() {
       setViewMode('form');
     } catch (err) {
       console.error('Erro ao refazer proposta:', err);
-      alert('Erro ao processar recusa.');
+      toast.error('Erro ao processar recusa.');
       setRecusaModal(prev => ({ ...prev, submitting: false }));
     }
   };
@@ -1145,13 +1354,42 @@ export function PropostaView() {
                           <span className="text-white font-black">R$ {Number(obra.orcamentoValores.subtotal || 0).toFixed(2)}</span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="text-white/70">Margem:</span>
-                          <span className="text-white font-black">R$ {((Number(obra.orcamentoValores.subtotal || 0) * Number(obra.orcamentoValores.margem || 0)) / 100).toFixed(2)}</span>
+                          <span className="text-white/70">Margem{Number(obra.orcamentoValores.margem) ? ` (${Number(obra.orcamentoValores.margem)}%)` : ''}:</span>
+                          <span className="text-white font-black">
+                            R$ {Number(obra.orcamentoValores.valorMargem ?? ((Number(obra.orcamentoValores.subtotal || 0) * Number(obra.orcamentoValores.margem || 0)) / 100)).toFixed(2)}
+                          </span>
                         </div>
-                        <div className="flex justify-between text-blue-300 font-black">
+                        {/* O.H entra aqui porque sem ele a soma não fecha: o imposto incide
+                            sobre subtotal + margem + O.H, e não sobre o subtotal puro. */}
+                        {Number(obra.orcamentoValores.valorOH ?? 0) > 0 && (
+                          <div className="flex justify-between">
+                            <span className="text-white/70">O.H{Number(obra.orcamentoValores.oh) ? ` (${Number(obra.orcamentoValores.oh)}%)` : ''}:</span>
+                            <span className="text-white font-black">R$ {Number(obra.orcamentoValores.valorOH || 0).toFixed(2)}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between">
+                          <span className="text-amber-300/80">Imposto{Number(obra.orcamentoValores.impostos) ? ` (${Number(obra.orcamentoValores.impostos)}%)` : ''}:</span>
+                          <span className="text-amber-300 font-black">
+                            R$ {Number(obra.orcamentoValores.valorImpostos ?? 0).toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-blue-300 font-black border-t border-white/10 pt-2">
                           <span>Preço Final:</span>
                           <span>R$ {Number(obra.orcamentoValores.precoFinal || 0).toFixed(2)}</span>
                         </div>
+                        {/* Locação é orçada à parte, com imposto próprio — só aparece quando existe. */}
+                        {Number(obra.orcamentoValores.subtotalLocacao ?? 0) > 0 && (
+                          <>
+                            <div className="flex justify-between pt-1">
+                              <span className="text-white/70">Locação{Number(obra.orcamentoValores.impostosLocacao) ? ` (c/ ${Number(obra.orcamentoValores.impostosLocacao)}% imposto)` : ''}:</span>
+                              <span className="text-white font-black">R$ {Number(obra.orcamentoValores.subtotalLocacao || 0).toFixed(2)}</span>
+                            </div>
+                            <div className="flex justify-between text-emerald-300 font-black border-t border-white/10 pt-2">
+                              <span>Total Geral:</span>
+                              <span>R$ {Number(obra.orcamentoValores.totalGeral ?? 0).toFixed(2)}</span>
+                            </div>
+                          </>
+                        )}
                       </div>
                     )}
 
@@ -1456,6 +1694,98 @@ export function PropostaView() {
 
       <ObservacoesNegocio servicos={selectedObra?.servicos} />
 
+      {/* SEÇÃO 0: TEMPLATES — preenchem os textos padrão (nunca preço nem escopo) */}
+      <div className={sectionClass}>
+        <div className="flex items-center justify-between gap-4 mb-4">
+          <h3 className="text-base font-black text-white uppercase">Templates</h3>
+          <span className="text-[9px] text-white/40 font-black uppercase tracking-widest">
+            Não alteram preço nem escopo
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex-1 min-w-[240px] space-y-1.5">
+            <label className={labelClass}>Aplicar template salvo</label>
+            <select
+              className={inputClass}
+              value={templateSelecionado}
+              onChange={(e) => aplicarTemplate(e.target.value)}
+            >
+              <option value="">
+                {templatesProposta.length ? 'Selecione um template...' : 'Nenhum template salvo ainda'}
+              </option>
+              {templatesProposta.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.nome} ({camposPreenchidosDoTemplate(t).length} campos)
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => { setSalvandoTemplate(true); setNomeNovoTemplate(''); }}
+            disabled={persistindoTemplate}
+            className="px-4 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg font-black text-xs uppercase tracking-widest transition flex items-center gap-2"
+            title="Salva os textos atuais do formulário como um novo template"
+          >
+            <Save size={14} /> Salvar como template
+          </button>
+
+          {templateSelecionado && (
+            <button
+              type="button"
+              onClick={excluirTemplate}
+              disabled={persistindoTemplate}
+              className="px-4 py-3 bg-red-600/80 hover:bg-red-600 disabled:opacity-50 text-white rounded-lg font-black text-xs uppercase tracking-widest transition flex items-center gap-2"
+              title="Exclui o template selecionado"
+            >
+              <Trash2 size={14} /> Excluir
+            </button>
+          )}
+        </div>
+
+        {salvandoTemplate && (
+          <div className="mt-4 bg-[#0b1220] border border-emerald-500/30 rounded-xl p-4 space-y-3">
+            <div className="space-y-1.5">
+              <label className={labelClass}>Nome do template</label>
+              <input
+                type="text"
+                autoFocus
+                className={inputClass}
+                placeholder="Ex: Padrão docagem, Padrão serviço a bordo..."
+                value={nomeNovoTemplate}
+                onChange={(e) => setNomeNovoTemplate(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') salvarTemplate(); }}
+              />
+            </div>
+            <p className="text-white/40 text-[10px] leading-relaxed">
+              Serão salvos os campos preenchidos:{' '}
+              {CAMPOS_TEMPLATE_PROPOSTA.filter((c) => String((propostaForm as any)[c] ?? '').trim())
+                .map((c) => ROTULOS_CAMPO_TEMPLATE[c])
+                .join(' · ') || <span className="text-amber-400">nenhum campo preenchido no momento</span>}
+            </p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={salvarTemplate}
+                disabled={persistindoTemplate}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg font-black text-xs uppercase tracking-widest transition"
+              >
+                {persistindoTemplate ? 'Salvando...' : 'Salvar'}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setSalvandoTemplate(false); setNomeNovoTemplate(''); }}
+                className="px-4 py-2 bg-white/10 hover:bg-white/15 text-white rounded-lg font-black text-xs uppercase tracking-widest transition"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* SEÇÃO 1: DATA E NÚMERO (AUTOPREENCHIDOS) */}
       <div className={sectionClass}>
         <h3 className="text-base font-black text-white uppercase mb-4">Data</h3>
@@ -1742,7 +2072,7 @@ export function PropostaView() {
 
             <button
               type="button"
-              onClick={() => { const exemplo = gerarEscopoBasicoConsolidado(propostaForm.escopoBasicoServicos); window.alert(exemplo || 'Sem conteúdo para visualizar'); }}
+              onClick={() => { const exemplo = gerarEscopoBasicoConsolidado(propostaForm.escopoBasicoServicos); toast.info(exemplo || 'Sem conteúdo para visualizar'); }}
               className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-black text-xs uppercase tracking-widest transition"
             >Visualização de Exemplo</button>
           </div>

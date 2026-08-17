@@ -160,7 +160,7 @@ export const handleDownloadPropostaPDF = (
         doc.setFontSize(9);
       } else {
         // Cabeçalho padrão para Servinave
-        const nomeEmpresa = propostaForm.empresaNome || 'Servinave Engenharia e Reparos Navais';
+        const nomeEmpresa = propostaForm.empresaNome || 'Servinave Reparos Navais';
         doc.text(nomeEmpresa, margin, currentY);
 
         doc.setFont('Arial', 'normal');
@@ -300,21 +300,36 @@ export const handleDownloadPropostaPDF = (
           { titulo: 'Serviços', itens: itensPreco.filter((it: any) => (it.categoria || 'servico') !== 'locacao') },
           { titulo: 'Locação', itens: itensPreco.filter((it: any) => (it.categoria || 'servico') === 'locacao') },
         ].filter((g) => g.itens.length > 0);
-        const head = [['Item', 'Descrição', 'Quant.', 'Unit.', 'Vl. Unit. R$', 'Dias', 'Valor total R$']];
+        // As colunas que o usuário removeu na tela também não saem no PDF — a proposta
+        // impressa tem que ser exatamente a tabela que ele montou.
+        const ocultas: string[] = Array.isArray(propostaForm.precoColunasOcultas) ? propostaForm.precoColunasOcultas : [];
+        const colunas = [
+          { id: 'item', titulo: 'Item', largura: 11, valor: (_it: any, idx: number) => String(idx + 1) },
+          { id: 'descricao', titulo: 'Descrição', largura: undefined, valor: (it: any) => it.descricao || it.nome || '' },
+          { id: 'quantidade', titulo: 'Quant.', largura: 16, valor: (it: any) => String(it.quantidade ?? '') },
+          { id: 'unidade', titulo: 'Unit.', largura: 16, valor: (it: any) => it.unidade || '' },
+          { id: 'valorUnitario', titulo: 'Vl. Unit. R$', largura: 26, valor: (it: any) => (Number(it.valorUnitario ?? it.precoUnitario) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) },
+          { id: 'dias', titulo: 'Dias', largura: 13, valor: (it: any) => String(it.dias ?? '') },
+          { id: 'total', titulo: 'Valor total R$', largura: 28, valor: (it: any) => (Number(it.total) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) },
+        ].filter((c) => !ocultas.includes(c.id));
+
+        const head = [colunas.map((c) => c.titulo)];
+        const columnStyles: Record<number, any> = {};
+        colunas.forEach((c, i) => { if (c.largura) columnStyles[i] = { cellWidth: c.largura }; });
+        const idxDescricao = colunas.findIndex((c) => c.id === 'descricao');
+        const idxTotal = colunas.findIndex((c) => c.id === 'total');
+
         grupos.forEach((grupo) => {
           ensureSpace(24);
           if (grupos.length > 1) writeText(grupo.titulo, 10, true, 'left', 5, 2);
-          const body = grupo.itens.map((it: any, idx: number) => [
-            String(idx + 1),
-            it.descricao || it.nome || '',
-            String(it.quantidade ?? ''),
-            it.unidade || '',
-            (Number(it.valorUnitario ?? it.precoUnitario) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-            String(it.dias ?? ''),
-            (Number(it.total) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-          ]);
+          const body = grupo.itens.map((it: any, idx: number) => colunas.map((c) => c.valor(it, idx)));
           const subtotal = grupo.itens.reduce((s: number, it: any) => s + (Number(it.total) || 0), 0);
-          body.push(['', `Subtotal ${grupo.titulo}`, '', '', '', '', subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })]);
+          const linhaSubtotal = colunas.map((_c, i) => {
+            if (i === idxDescricao) return `Subtotal ${grupo.titulo}`;
+            if (i === idxTotal) return subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            return '';
+          });
+          body.push(linhaSubtotal);
           autoTable(doc, {
             startY: y,
             head,
@@ -323,7 +338,7 @@ export const handleDownloadPropostaPDF = (
             margin: { left: margin + 5, right: margin, top: headerBottom, bottom: footerReserve },
             headStyles: { fillColor: [230, 230, 230], textColor: [0, 0, 0], fontStyle: 'bold', fontSize: 9 },
             styles: { fontSize: 9, cellPadding: 2, textColor: [0, 0, 0] },
-            columnStyles: { 0: { cellWidth: 11 }, 2: { cellWidth: 16 }, 3: { cellWidth: 16 }, 4: { cellWidth: 26 }, 5: { cellWidth: 13 }, 6: { cellWidth: 28 } },
+            columnStyles,
           });
           y = (doc as any).lastAutoTable.finalY + 4;
         });
@@ -366,7 +381,7 @@ export const handleDownloadPropostaPDF = (
     }
 
     writeText(propostaForm.encerramento || 'Atenciosamente,', 11, false, 'left', 0, 6);
-    const assinaturaPadrao = propostaForm.assinaturaNome || propostaForm.empresaNome || (isLinave ? 'Linave' : 'Servinave Engenharia e Reparos Navais');
+    const assinaturaPadrao = propostaForm.assinaturaNome || propostaForm.empresaNome || (isLinave ? 'Linave' : 'Servinave Reparos Navais');
     writeText(assinaturaPadrao, 11, true, 'left', 0, 1);
     writeText(propostaForm.assinaturaCargo || 'Setor Comercial', 11, false, 'left', 0, 10);
 

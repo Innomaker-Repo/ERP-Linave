@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { FileText, Plus, Save, Trash2, Link as LinkIcon, ExternalLink, Settings, FolderOpen } from 'lucide-react';
+import { toast } from 'sonner';
+import { confirmDialog } from '../../ui/feedback';
 
 export function TemplatesView() {
   const { templates, saveTemplates } = useErp();
@@ -27,7 +29,7 @@ export function TemplatesView() {
   ];
 
   const handleAdd = () => {
-    if (!novo.nome || !novo.link) return alert("Por favor, preencha o nome e o link do documento.");
+    if (!novo.nome || !novo.link) return toast.error("Por favor, preencha o nome e o link do documento.");
     
     // Garante que templates é um array
     const listaAtual = Array.isArray(templates) ? templates : [];
@@ -37,11 +39,11 @@ export function TemplatesView() {
     
     // Limpa o formulário
     setNovo({ nome: '', fase: 'Engenharia', link: '' });
-    alert("Template adicionado com sucesso!");
+    toast.success("Template adicionado com sucesso!");
   };
 
-  const handleRemove = (id: string) => {
-    if (confirm("Tem a certeza que deseja remover este template?")) {
+  const handleRemove = async (id: string) => {
+    if (await confirmDialog({ message: 'Tem a certeza que deseja remover este template?', danger: true, confirmText: 'Remover' })) {
       const listaAtual = Array.isArray(templates) ? templates : [];
       saveTemplates(listaAtual.filter((t: any) => t.id !== id));
     }

@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
 import { Plus } from 'lucide-react';
-import { FinCard, Toolbar, Field, Input, Select, Btn, DataTable, Th, Td, CompanyTag, EmptyRow } from '../finUi';
+import { FinCard, Toolbar, Field, Input, Select, Btn, DataTable, Th, Td, CompanyTag, EmptyRow, DeleteBtn } from '../finUi';
 import { genFinId } from '../finData';
 import { useFin } from '../useFin';
 
 // Leitura/escrita reais: bancos guardados em `financeiro` (tipo 'banco'); empresas vêm
 // das empresas prestadoras configuradas no ERP.
 export function BancosView() {
-  const { empresas, records, addRecord } = useFin();
+  const { empresas, records, addRecord, deleteRecord } = useFin();
   const bancos = records('banco');
   const [form, setForm] = useState({ nome: '', empresa: empresas[0] || 'Linave', tipo: 'Conta corrente', pix: '' });
   const [salvando, setSalvando] = useState(false);
@@ -54,15 +54,22 @@ export function BancosView() {
 
       <FinCard>
         <Toolbar title="Bancos cadastrados" />
-        <DataTable head={<><Th>Banco</Th><Th>Empresa</Th><Th>Tipo</Th><Th>PIX</Th></>}>
+        <DataTable head={<><Th>Banco</Th><Th>Empresa</Th><Th>Tipo</Th><Th>PIX</Th><Th>Ação</Th></>}>
           {bancos.length === 0 ? (
-            <EmptyRow cols={4} text="Nenhum banco cadastrado" />
+            <EmptyRow cols={5} text="Nenhum banco cadastrado" />
           ) : bancos.map((b) => (
             <tr key={b.id} className="transition-colors hover:bg-white/5">
               <Td className="font-bold text-white">{b.nome}</Td>
               <Td><CompanyTag empresa={String(b.empresa)} /></Td>
               <Td className="text-white/70">{b.tipoConta}</Td>
               <Td className="text-white/60">{b.pix || '-'}</Td>
+              <Td>
+                <DeleteBtn
+                  titulo="Excluir banco"
+                  descricao={`${b.nome} (${b.empresa})\n\nContas já pagas ou recebidas por este banco mantêm o nome registrado no histórico, mas ele deixa de aparecer para novas movimentações.`}
+                  onConfirm={() => deleteRecord(b.id)}
+                />
+              </Td>
             </tr>
           ))}
         </DataTable>

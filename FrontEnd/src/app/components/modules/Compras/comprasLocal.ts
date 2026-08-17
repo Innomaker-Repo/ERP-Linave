@@ -2,7 +2,10 @@ import type { ElementType } from 'react';
 import { CheckCircle2, ClipboardList, Clock3, Users } from 'lucide-react';
 
 export type BoardStage = 'SOLICITACOES' | 'SELECAO_GERENTE' | 'APROVACAO' | 'COMPRADOS';
-export type ApprovalRoute = 'gerenteComercial' | 'diretorFinanceiro' | null;
+// Rota de aprovação decidida pelo VALOR do orçamento:
+//   'setorCompras' (< R$ 500)  -> qualquer usuário com acesso à aba Aprovações aprova;
+//   'gerencia'     (>= R$ 500) -> somente perfis Gerente/Admin veem e aprovam.
+export type ApprovalRoute = 'gerencia' | 'setorCompras' | null;
 // Itens (produtos) iniciam em 'comprar' e avançam para comprado/entregue/estoque.
 // Serviços iniciam em 'aContratar' e avançam para contratado.
 export type PurchaseState = 'comprar' | 'comprado' | 'entregue' | 'estoque' | 'aContratar' | 'contratado';
@@ -32,12 +35,12 @@ export const podeSelecionarFornecedorGerente = (email?: string | null, role?: st
 };
 
 export const approvalRouteLabel: Record<Exclude<ApprovalRoute, null>, string> = {
-  gerenteComercial: 'Gerente Comercial',
-  diretorFinanceiro: 'Diretor Financeiro',
+  gerencia: 'Gerência',
+  setorCompras: 'Setor de Compras',
 };
 
 export const resolveApprovalRoute = (budgetValue: number | null | undefined): Exclude<ApprovalRoute, null> =>
-  (budgetValue || 0) >= APPROVAL_LIMIT ? 'diretorFinanceiro' : 'gerenteComercial';
+  (budgetValue || 0) >= APPROVAL_LIMIT ? 'gerencia' : 'setorCompras';
 
 export interface QuoteFornecedor {
   fornecedor: string;
@@ -119,7 +122,7 @@ export const BOARD_COLUMNS: Array<{ id: BoardStage; title: string; subtitle: str
   {
     id: 'APROVACAO',
     title: 'Aprovações',
-    subtitle: 'Até R$ 499 com gerente comercial, a partir de R$ 500 com diretor financeiro',
+    subtitle: 'Até R$ 499 o setor de compras aprova; a partir de R$ 500, somente a gerência',
     icon: Clock3,
     accent: 'from-sky-500/20 to-sky-500/5 border-sky-500/20 text-sky-300',
   },
@@ -160,9 +163,17 @@ export const createEmptyItem = (): ItemCompra => ({
   un: 'un',
   link: '',
   fornecedor: '',
-  naturezaFornecimento: 'SERVICO',
-  purchaseState: 'aContratar',
+  // A natureza (Material/Serviço) agora é ESCOLHIDA pelo solicitante na tela de compras,
+  // item a item — não é mais herdada do fornecedor. Como é o módulo de Compras, o padrão
+  // é Material (ITEM); o usuário troca para Serviço quando for o caso.
+  naturezaFornecimento: 'ITEM',
+  purchaseState: 'comprar',
 });
+
+// Estado inicial do item ao entrar em "Comprados", conforme a natureza escolhida:
+// Material → "Comprar"; Serviço → "À contratar". Fonte única usada aqui e nas Aprovações.
+export const initialPurchaseStateFor = (natureza: 'ITEM' | 'SERVICO'): PurchaseState =>
+  natureza === 'ITEM' ? 'comprar' : 'aContratar';
 
 export const createDefaultRequest = (solicitante = '', departamento = '', centroCusto = ''): FormState => ({
   solicitante,
@@ -210,12 +221,13 @@ export const normalizeRequests = (value: unknown): RequisicaoCompra[] => {
   };
 
   const normalizeApprovalRoute = (route: any, budgetValue: number | null): ApprovalRoute => {
-    if (route === 'gerenteComercial' || route === 'diretorFinanceiro') {
+    if (route === 'gerencia' || route === 'setorCompras') {
       return route;
     }
 
-    // Backward compatibility with older route names.
-    if (route === 'gerente' || route === 'direta') {
+    // Compat: nomes antigos de rota ('gerenteComercial'/'diretorFinanceiro'/'gerente'/'direta')
+    // são recalculados pelo valor — a regra atual depende só do orçamento.
+    if (route === 'gerenteComercial' || route === 'diretorFinanceiro' || route === 'gerente' || route === 'direta') {
       return resolveApprovalRoute(budgetValue);
     }
 

@@ -7,17 +7,11 @@ import { useErp } from '../../../context/ErpContext';
 import { fetchUsuarios, createUsuario, updateUsuario, deleteUsuario } from '../../../../services/authService';
 import { PasswordStrength, senhaValida } from '../../PasswordStrength';
 import { boldOS } from '../../../utils/osHighlight';
+import { toast } from 'sonner';
+import { confirmDialog } from '../../ui/feedback';
 
 // ─── Mapa de permissões por departamento ───────────────────────────────────
 const PERMISSAO_GRUPOS = [
-  {
-    id: 'gestao',
-    label: 'Gestão & Estratégia',
-    itens: [
-      { id: 'dashboard', label: 'Dashboard Geral' },
-      { id: 'relatorios', label: 'Relatórios BI' },
-    ],
-  },
   {
     id: 'producao',
     label: 'Produção',
@@ -41,9 +35,10 @@ const PERMISSAO_GRUPOS = [
   {
     id: 'financeiro',
     label: 'Financeiro',
+    // "Solicitação de Pagamento" é liberada a todos os usuários (todo colaborador pode
+    // solicitar; a aprovação continua controlada), por isso não entra aqui.
     itens: [
       { id: 'finDashboard', label: 'Dashboard Financeiro' },
-      { id: 'finSolicitacao', label: 'Solicitação de Pagamento' },
       { id: 'finAprovacoes', label: 'Aprovações' },
       { id: 'finPagar', label: 'Contas a Pagar' },
       { id: 'finNfe', label: 'NFe' },
@@ -307,15 +302,15 @@ export function UsuariosView() {
 
   const handleExcluir = async (u: Usuario) => {
     if (u.role === 'admin' || u.is_superuser) {
-      alert('Não é possível excluir o administrador.');
+      toast.error('Não é possível excluir o administrador.');
       return;
     }
-    if (!confirm(`Excluir usuário "${u.nome}" (${u.cpf})?`)) return;
+    if (!(await confirmDialog({ message: `Excluir usuário "${u.nome}" (${u.cpf})?`, danger: true, confirmText: 'Excluir' }))) return;
     try {
       await deleteUsuario(u.cpf);
       setUsuarios((prev) => prev.filter((x) => x.cpf !== u.cpf));
     } catch {
-      alert('Erro ao excluir usuário.');
+      toast.error('Erro ao excluir usuário.');
     }
   };
 

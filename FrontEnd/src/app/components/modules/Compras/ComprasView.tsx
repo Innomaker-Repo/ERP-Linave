@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
+import { toast } from 'sonner';
+import { confirmDialog } from '../../ui/feedback';
 import {
   ArrowRight,
   CheckCircle2,
@@ -185,8 +187,8 @@ export function ComprasView({ searchQuery }: { searchQuery: string }) {
     setItens((current) => (current.length > 1 ? current.filter((item) => item.id !== id) : current));
   };
 
-  const handleResetForm = () => {
-    if (!window.confirm('Deseja limpar todo o formulário?')) return;
+  const handleResetForm = async () => {
+    if (!(await confirmDialog('Deseja limpar todo o formulário?'))) return;
 
     setFormData(createDefaultRequest(userSession?.nome || userSession?.email || '', '', ''));
     setItens([createEmptyItem()]);
@@ -194,12 +196,12 @@ export function ComprasView({ searchQuery }: { searchQuery: string }) {
 
   const handleCreateRequest = () => {
     if (!formData.solicitante || !formData.centroCusto) {
-      return window.alert('Por favor, preencha todos os campos obrigatórios (*).');
+      return toast.error('Por favor, preencha todos os campos obrigatórios (*).');
     }
 
     const itensValidos = itens.filter((item) => item.nome.trim() !== '');
     if (itensValidos.length === 0) {
-      return window.alert('Preencha ao menos um item na tabela.');
+      return toast.error('Preencha ao menos um item na tabela.');
     }
 
     const novaRequisicao: RequisicaoCompra = {
@@ -219,7 +221,7 @@ export function ComprasView({ searchQuery }: { searchQuery: string }) {
     setRequests((current) => [novaRequisicao, ...current]);
     setBudgetDrafts((current) => ({ ...current, [novaRequisicao.id]: '' }));
     setItens([createEmptyItem()]);
-    window.alert('Solicitação enviada para o kanban.');
+    toast.success('Solicitação enviada para o kanban.');
   };
 
   const patchRequest = (requestId: string, updater: (request: RequisicaoCompra) => RequisicaoCompra) => {
@@ -231,7 +233,7 @@ export function ComprasView({ searchQuery }: { searchQuery: string }) {
     const budgetValue = Number(draft);
 
     if (!Number.isFinite(budgetValue) || budgetValue <= 0) {
-      return window.alert('Informe um orçamento válido antes de enviar para aprovação.');
+      return toast.error('Informe um orçamento válido antes de enviar para aprovação.');
     }
 
     patchRequest(requestId, (request) => ({

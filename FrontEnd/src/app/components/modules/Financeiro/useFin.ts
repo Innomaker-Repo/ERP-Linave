@@ -10,8 +10,8 @@ import { useMemo } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import {
   mapOsToFinanceiro, obraFinalizada, docsMediacao, negocioValor, empresaFromCC, todayStr, days, num,
-  upsertContaReceberPorMedicao,
-  type OS, type Empresa, type FinTipo, type NfeSolicitacao,
+  upsertContaReceberPorMedicao, garantirOcorrenciasContasFixas, proximaOcorrenciaAposPagamento, CP_STATUS,
+  type OS, type Empresa, type FinTipo, type NfeSolicitacao, type ImpostosNfe,
 } from './finData';
 
 export interface FinRecord {
@@ -82,6 +82,13 @@ export function useFin() {
     const emitidasSources = new Set(
       financeiro.filter((r) => r.tipo === 'nfe').map((r) => r.sourceId).filter(Boolean),
     );
+    // Anexos da NOTA emitida, por solicitação de origem. Depois que a NFe é arquivada é
+    // este arquivo (o PDF/XML da nota) que interessa na linha — sem isso a coluna Anexos
+    // continuava mostrando só o documento da medição, e a nota emitida ficava invisível.
+    const anexosEmitidos = new Map<string, string[]>();
+    financeiro
+      .filter((r) => r.tipo === 'nfe' && r.sourceId)
+      .forEach((r) => anexosEmitidos.set(String(r.sourceId), Array.isArray(r.anexos) ? r.anexos : []));
 
     // A medição aprovada NÃO gera mais solicitação de NFe automaticamente — a solicitação é
     // feita manualmente no popup da Medição (evita a duplicidade "automática + manual").
@@ -101,7 +108,11 @@ export function useFin() {
         dataEmitir: String(obra?.dataArquivamento || '').slice(0, 10) || todayStr,
         tipoNfe: 'NFe Serviço',
         status: emitidasSources.has(id) ? 'Emitida e arquivada' : 'Aguardando emissão',
-        anexos: docsMediacao(obra).map((d: any) => d?.nome).filter(Boolean),
+        // URL do documento (não o nome): é o que torna o anexo clicável/baixável na tela.
+        anexos: [
+          ...docsMediacao(obra).map((d: any) => d?.url || d?.conteudo || d?.nome).filter(Boolean),
+          ...(anexosEmitidos.get(id) || []),
+        ],
         contrato: numeroOs,
         derived: true,
       };
@@ -119,7 +130,7 @@ export function useFin() {
         dataEmitir: r.dataEmitir || todayStr,
         tipoNfe: r.tipoNfe || 'NFe Serviço',
         status: emitidasSources.has(r.id) ? 'Emitida e arquivada' : (r.status || 'Aguardando emissão'),
-        anexos: r.anexos || [],
+        anexos: [...(r.anexos || []), ...(anexosEmitidos.get(r.id) || [])],
         contrato: r.contrato || r.os || '',
         derived: false,
         medicaoId: r.medicaoId || '',
@@ -136,6 +147,13 @@ export function useFin() {
     await ctx.saveEntity('financeiro', next);
   };
 
+  // Solicitação de pagamento: usa o endpoint append-only, aberto a TODO usuário logado
+  // (o replace-all de addRecord exige permissão do módulo Financeiro e o colaborador
+  // comum levaria 403 ao enviar a solicitação).
+  const addSolicitacao = async (record: FinRecord) => {
+    await ctx.criarSolicitacaoFinanceiro(record);
+  };
+
   // Atualiza registros financeiros por função de mapeamento.
   const updateRecords = async (mapFn: (r: FinRecord) => FinRecord) => {
     const next = financeiro.map(mapFn);
@@ -145,6 +163,24 @@ export function useFin() {
   // Atualiza um registro específico por id (merge de campos).
   const updateRecord = async (id: string, patch: Partial<FinRecord>) => {
     await updateRecords((r) => (r.id === id ? { ...r, ...patch } : r));
+  };
+
+  // Exclui um registro financeiro. Só remove o que foi pedido: a checagem por `parentId`
+  // existe porque apagar uma conta mãe sem as filhas deixaria parcelas órfãs, invisíveis
+  // na tela e ainda somando no total. A confirmação é responsabilidade de quem chama
+  // (todas as telas usam confirmDialog antes).
+  const deleteRecord = async (id: string) => {
+    const alvo = financeiro.find((r) => r.id === id);
+    if (!alvo) return;
+    const next = financeiro.filter((r) => r.id !== id && !(alvo.type === 'parent' && r.parentId === id));
+    await ctx.saveEntity('financeiro', next);
+  };
+
+  // Quantas linhas somem junto com o registro (mãe leva as parcelas filhas).
+  const contarDependentes = (id: string): number => {
+    const alvo = financeiro.find((r) => r.id === id);
+    if (!alvo || alvo.type !== 'parent') return 0;
+    return financeiro.filter((r) => r.parentId === id).length;
   };
 
   // Aprova uma solicitação: marca como aprovada e cria a Conta a Pagar correspondente
@@ -170,6 +206,12 @@ export function useFin() {
       banco: '',
       forma: sol.forma,
       status: 'Aberto',
+      // Os anexos da solicitação (URLs /media/... dos documentos já persistidos) precisam
+      // seguir para a Conta a Pagar: é o mesmo documento que o solicitante enviou e que
+      // quem paga precisa consultar. Sem isso a conta nasce sem anexo e `contaTemDocumento`
+      // retorna false, afetando o status e a liberação no estoque.
+      anexos: Array.isArray(sol.anexos) ? sol.anexos : [],
+      descricao: sol.descricao || '',
       valorPago: 0,
       jurosPago: 0,
       comprovantes: [],
@@ -183,10 +225,46 @@ export function useFin() {
     await updateRecords((r) => (r.id === id ? { ...r, status: 'Reprovado' } : r));
   };
 
+  // Rótulo do recebível gerado pela nota. O número é opcional na emissão (nem sempre já
+  // saiu do emissor), então a referência precisa continuar legível sem ele.
+  const referenciaNfe = (numero?: string) => {
+    const n = String(numero || '').trim();
+    return n ? `NF ${n}` : 'NF sem número';
+  };
+
+  // Preenche/corrige o número (e a data) de uma NFe já emitida. Atualiza junto a
+  // referência da Conta a Receber que ela gerou — sem isso o recebível ficaria marcado
+  // como "NF sem número" para sempre, mesmo depois de o número ser informado.
+  const atualizarNfeEmitida = async (nfeId: string, patch: { numero?: string; emissao?: string }) => {
+    const numero = String(patch.numero ?? '').trim();
+    const referencia = referenciaNfe(numero);
+    const next = financeiro.map((r) => {
+      if (r.id === nfeId && r.tipo === 'nfe') {
+        return { ...r, numero, ...(patch.emissao ? { emissao: patch.emissao } : {}) };
+      }
+      // O recebível guarda uma "fonte" por origem (NF de serviço, recibo de locação);
+      // só a fonte desta nota muda, e a referência do topo é recomposta a partir delas.
+      if (r.tipo === 'contaReceber' && Array.isArray(r.fontes) && r.fontes.some((f: any) => f?.id === nfeId)) {
+        const fontes = r.fontes.map((f: any) => (f?.id === nfeId ? { ...f, referencia } : f));
+        return {
+          ...r,
+          fontes,
+          referencia: fontes.map((f: any) => f.referencia).filter(Boolean).join(' · '),
+        };
+      }
+      return r;
+    });
+    await ctx.saveEntity('financeiro', next);
+  };
+
   // Emite e arquiva a NFe: registra a NFe e cria a Conta a Receber (uma única escrita).
   const emitirNfe = async (
     sol: NfeSolicitacao,
-    payload: { numero: string; emissao: string; original: number; liquido: number; baixado: number; vencimento: string; contrato: string; cliente: string; anexos?: string[] },
+    payload: {
+      numero: string; emissao: string; original: number; liquido: number; baixado: number;
+      vencimento: string; contrato: string; cliente: string; anexos?: string[];
+      impostos?: ImpostosNfe;
+    },
   ) => {
     const ts = Date.now().toString(36).toUpperCase();
     const now = new Date().toISOString();
@@ -203,6 +281,8 @@ export function useFin() {
       vencimento: payload.vencimento,
       contrato: payload.contrato,
       anexos: payload.anexos || [],
+      // Detalhamento do que foi retido nesta nota (alíquota + valor por imposto).
+      impostos: payload.impostos || null,
       createdAt: now,
     };
     // A conta a receber da parte de SERVIÇO é mesclada por medição: se o recibo de locação da
@@ -218,8 +298,9 @@ export function useFin() {
       valorOriginal: payload.original,
       valorLiquido: payload.liquido,
       vencimento: payload.vencimento,
-      referencia: `NF ${payload.numero}`,
+      referencia: referenciaNfe(payload.numero),
       baixado: payload.baixado,
+      impostos: payload.impostos,
     });
     await ctx.saveEntity('financeiro', next);
   };
@@ -296,8 +377,79 @@ export function useFin() {
         };
       });
     }
+
+    // Conta fixa: quitar a competência atual é o que faz nascer a próxima. É assim que a
+    // lista vira o histórico progressivo — uma linha paga por mês/semana/dia, em sequência,
+    // e sempre uma única conta em aberto à frente.
+    const paga = next.find((r) => r.id === id);
+    const proximas = paga ? proximaOcorrenciaAposPagamento(next, paga) : [];
+
+    await ctx.saveEntity('financeiro', [...proximas, ...next]);
+    return proximas[0] || null;
+  };
+
+  // ----- Contas fixas (recorrentes) -----
+  // Garante que cada regra ativa tenha UMA conta em aberto. Não adianta competências
+  // futuras: quem cria a próxima é o pagamento da atual. Serve para a regra recém-criada
+  // e para retomar o encadeamento quando a última ocorrência sumiu (pausa, exclusão).
+  // Só escreve quando há algo novo — chamada na abertura da tela de Contas a Pagar.
+  const sincronizarContasFixas = async (): Promise<number> => {
+    const novas = garantirOcorrenciasContasFixas(financeiro);
+    if (novas.length === 0) return 0;
+    await ctx.saveEntity('financeiro', [...novas, ...financeiro]);
+    return novas.length;
+  };
+
+  // Cria ou atualiza a REGRA. Ao editar, os dados são propagados para as ocorrências
+  // futuras ainda não pagas (mudou o valor da luz? o mês que vem já sai corrigido), mas
+  // nunca para as pagas nem para as vencidas — isso reescreveria histórico financeiro.
+  const salvarContaFixa = async (regra: FinRecord) => {
+    const existe = financeiro.some((r) => r.id === regra.id);
+    const base = existe
+      ? financeiro.map((r) => (r.id === regra.id ? { ...r, ...regra } : r))
+      : [{ ...regra, createdAt: new Date().toISOString() }, ...financeiro];
+
+    const next = base.map((r) => {
+      const alvo = r.tipo === 'contaPagar'
+        && r.contaFixaId === regra.id
+        && r.status !== CP_STATUS.pago
+        && String(r.vencimento || '') >= todayStr;
+      if (!alvo) return r;
+      return {
+        ...r,
+        empresa: regra.empresa,
+        fornecedor: regra.fornecedor || regra.descricao,
+        tipoPagamento: regra.categoria,
+        contaFixaCategoria: regra.categoria,
+        contaFixaPeriodicidade: regra.periodicidade,
+        contaFixaDescricao: regra.descricao,
+        natureza: regra.natureza || '',
+        valor: num(regra.valor),
+        forma: regra.forma || '',
+        banco: regra.banco || '',
+      };
+    });
     await ctx.saveEntity('financeiro', next);
   };
+
+  // Exclui a regra e as ocorrências futuras não pagas que ela havia gerado. As ocorrências
+  // já pagas (e as vencidas) permanecem: são histórico financeiro, não configuração.
+  const excluirContaFixa = async (id: string) => {
+    const next = financeiro.filter((r) => {
+      if (r.id === id) return false;
+      const futuraNaoPaga = r.tipo === 'contaPagar'
+        && r.contaFixaId === id
+        && r.status !== CP_STATUS.pago
+        && String(r.vencimento || '') >= todayStr;
+      return !futuraNaoPaga;
+    });
+    await ctx.saveEntity('financeiro', next);
+  };
+
+  // Quantas ocorrências futuras não pagas somem junto com a regra (para a confirmação).
+  const ocorrenciasFuturasDaFixa = (id: string): number =>
+    financeiro.filter((r) => r.tipo === 'contaPagar' && r.contaFixaId === id
+      && r.status !== CP_STATUS.pago && String(r.vencimento || '') >= todayStr).length;
 
   // Cadastra um departamento (lista real usada também em Usuários & Acessos).
   const addDepartamento = async (nome: string) => {
@@ -310,7 +462,10 @@ export function useFin() {
     // leitura
     oss, empresas, departamentos, fornecedores, clientes, financeiro, records, nfeSolicitacoes,
     // escrita
-    addRecord, updateRecords, updateRecord, addDepartamento, approveSolicitacao, rejectSolicitacao, emitirNfe,
+    addRecord, addSolicitacao, updateRecords, updateRecord, deleteRecord, contarDependentes,
+    addDepartamento, approveSolicitacao, rejectSolicitacao, emitirNfe, atualizarNfeEmitida,
     parcelarConta, pagarConta,
+    // contas fixas (recorrentes)
+    sincronizarContasFixas, salvarContaFixa, excluirContaFixa, ocorrenciasFuturasDaFixa,
   };
 }

@@ -372,6 +372,67 @@ export const calcNfeLiquido = (original: number, taxes: Record<string, number>):
   return Math.max(0, num(original) - totalImpostos);
 };
 
+// ---------- Impostos retidos da NFe ----------
+// Ordem fixa: é a mesma do formulário de emissão, das colunas do CSV e dos cartões na
+// tela de Contas a Receber — assim os três não saem de sincronia.
+export const IMPOSTOS_NFE = ['cofins', 'csll', 'inss', 'ir', 'pis', 'iss'] as const;
+export type ImpostoNfe = typeof IMPOSTOS_NFE[number];
+export const IMPOSTO_LABEL: Record<ImpostoNfe, string> = {
+  cofins: 'COFINS', csll: 'CSLL', inss: 'INSS', ir: 'IR', pis: 'PIS', iss: 'ISS',
+};
+
+// Detalhamento dos impostos de uma NFe: guarda a alíquota E o valor em reais de cada um.
+// Guardar o valor (e não só o %) é proposital: a alíquota padrão pode mudar depois, e o
+// recebível tem que continuar refletindo o que foi retido na nota daquela época.
+export interface ImpostosNfe {
+  percentuais: Record<string, number>;
+  valores: Record<string, number>;
+  total: number;
+}
+
+export const calcImpostosNfe = (original: number, percentuais: Record<string, number>): ImpostosNfe => {
+  const base = num(original);
+  const pcts: Record<string, number> = {};
+  const valores: Record<string, number> = {};
+  let total = 0;
+  IMPOSTOS_NFE.forEach((k) => {
+    const pct = num(percentuais?.[k]);
+    const valor = tax(base, pct);
+    pcts[k] = pct;
+    valores[k] = valor;
+    total += valor;
+  });
+  return { percentuais: pcts, valores, total: Math.round(total * 100) / 100 };
+};
+
+// Soma o detalhamento de várias fontes (uma conta a receber pode mesclar NF + recibo).
+// Os percentuais só fazem sentido quando há uma única fonte; com mais de uma ficam o da
+// primeira que informou, e o que vale para conferência é o valor somado.
+export const somarImpostos = (lista: (ImpostosNfe | undefined | null)[]): ImpostosNfe => {
+  const validas = lista.filter(Boolean) as ImpostosNfe[];
+  if (validas.length === 0) return { percentuais: {}, valores: {}, total: 0 };
+  const valores: Record<string, number> = {};
+  IMPOSTOS_NFE.forEach((k) => {
+    valores[k] = validas.reduce((s, imp) => s + num(imp.valores?.[k]), 0);
+  });
+  const total = Object.values(valores).reduce((s, v) => s + v, 0);
+  return {
+    percentuais: validas[0].percentuais || {},
+    valores,
+    total: Math.round(total * 100) / 100,
+  };
+};
+
+// Impostos de um registro (conta a receber ou NFe), tolerante a registro antigo sem o campo.
+export const impostosDoRegistro = (rec: any): ImpostosNfe | null => {
+  const imp = rec?.impostos;
+  if (!imp || typeof imp !== 'object') return null;
+  const valores = (imp.valores && typeof imp.valores === 'object') ? imp.valores : {};
+  const total = num(imp.total) || Object.values(valores).reduce((s: number, v: any) => s + num(v), 0);
+  if (!total) return null;
+  return { percentuais: imp.percentuais || {}, valores, total };
+};
+
 export interface NfeSolicitacao {
   id: string;
   os: string;
@@ -390,7 +451,7 @@ export interface NfeSolicitacao {
 }
 
 // Discriminador dos registros financeiros guardados na coleção `financeiro` do workspace.
-export type FinTipo = 'solicitacao' | 'contaPagar' | 'contaReceber' | 'nfeReq' | 'nfe' | 'banco' | 'locEstudo' | 'custoOsHH' | 'reciboLocacao';
+export type FinTipo = 'solicitacao' | 'contaPagar' | 'contaReceber' | 'nfeReq' | 'nfe' | 'banco' | 'locEstudo' | 'custoOsHH' | 'reciboLocacao' | 'contaFixa';
 
 export const genFinId = (prefix: string) => `${prefix}-${Date.now().toString(36).toUpperCase()}`;
 
@@ -490,6 +551,7 @@ export interface AporteReceber {
   vencimento?: string;
   referencia?: string;
   baixado?: number;          // valor já recebido na emissão (NFe); semeia o recebimento na criação
+  impostos?: ImpostosNfe;    // detalhamento retido na NF que originou este aporte
 }
 
 const _maxData = (a?: string, b?: string): string => {
@@ -509,6 +571,7 @@ export const upsertContaReceberPorMedicao = (financeiro: any[], aporte: AporteRe
     valorLiquido: num(aporte.valorLiquido),
     vencimento: aporte.vencimento || '',
     referencia: aporte.referencia || '',
+    impostos: aporte.impostos || null,
   };
 
   // Reconstrói o recebível a partir das suas fontes (soma valores, vencimento = o mais distante).
@@ -524,6 +587,9 @@ export const upsertContaReceberPorMedicao = (financeiro: any[], aporte: AporteRe
       referencia: fontes.map((f) => f.referencia).filter(Boolean).join(' · '),
       valorOriginal: fontes.reduce((s, f) => s + num(f.valorOriginal), 0),
       valorLiquido,
+      // Impostos retidos, somados entre as fontes (NF de serviço + recibo de locação).
+      // Fica no recebível para a tela e o CSV não precisarem voltar na NFe de origem.
+      impostos: somarImpostos(fontes.map((f) => f.impostos)),
       vencimentoRecebimento: fontes.reduce((v, f) => _maxData(v, f.vencimento), ''),
       // Recebível já existia → preserva o recebimento (manual ou anterior). Novo → semeia do `baixado`.
       recebido: base ? (base.recebido ?? false) : (baixado > 0 && baixado >= valorLiquido),
@@ -738,4 +804,243 @@ export const buildContasPagar = (
   });
 
   return [mae, ...filhas];
+};
+
+/* =========================================================================================
+ * CONTAS FIXAS (recorrentes) — luz, água, internet, aluguel...
+ *
+ * Modelo em duas camadas, de propósito:
+ *   1. `contaFixa`  = a REGRA de recorrência (categoria, periodicidade, dia de vencimento).
+ *                     Fica guardada no sistema e nunca é paga diretamente.
+ *   2. `contaPagar` = as OCORRÊNCIAS geradas por essa regra, uma por competência, com
+ *                     `contaFixaId` apontando de volta. São contas normais: entram nos
+ *                     mesmos filtros, relatórios, parcelamento e fluxo de pagamento.
+ *
+ * Separar as duas evita o erro clássico de "editar a conta de luz de agosto" e alterar
+ * junto o histórico de julho — e mantém a regra viva mesmo depois de todas as ocorrências
+ * já terem sido pagas.
+ * =======================================================================================*/
+
+export type Periodicidade = 'mensal' | 'semanal' | 'diaria';
+
+export const PERIODICIDADES: { id: Periodicidade; label: string; descricao: string }[] = [
+  { id: 'mensal', label: 'Mensal', descricao: 'Todo mês, no dia escolhido' },
+  { id: 'semanal', label: 'Semanal', descricao: 'A cada 7 dias, a partir do início' },
+  { id: 'diaria', label: 'Diária', descricao: 'Todos os dias, a partir do início' },
+];
+
+export const CATEGORIAS_CONTA_FIXA = [
+  'Luz', 'Água', 'Internet', 'Telefone', 'Aluguel', 'Condomínio', 'Gás',
+  'Seguro', 'Software / Licenças', 'Contabilidade', 'Limpeza', 'Segurança', 'Outro',
+];
+
+const ultimoDiaDoMes = (ano: number, mes: number) => new Date(ano, mes + 1, 0).getDate();
+
+// Um período à frente, a partir de uma data. É o passo do encadeamento.
+// No mensal a base é SEMPRE o `diaVencimento` da regra, nunca o dia da ocorrência anterior:
+// sem isso, uma conta do dia 31 que caiu em 28/02 seguiria presa no dia 28 para sempre.
+export const proximoVencimento = (fixa: any, vencimentoAtual: string): string => {
+  const atual = String(vencimentoAtual || '').slice(0, 10);
+  const periodicidade: Periodicidade = fixa?.periodicidade || 'mensal';
+  if (periodicidade === 'semanal') return days(atual, 7);
+  if (periodicidade === 'diaria') return days(atual, 1);
+
+  const dia = Math.min(31, Math.max(1, Number(fixa?.diaVencimento) || Number(atual.slice(8, 10)) || 1));
+  const [ano, mes] = atual.split('-').map(Number);
+  const idx = ano * 12 + (mes - 1) + 1;
+  const a = Math.floor(idx / 12);
+  const m = idx % 12;
+  const d = String(Math.min(dia, ultimoDiaDoMes(a, m))).padStart(2, '0');
+  return `${a}-${String(m + 1).padStart(2, '0')}-${d}`;
+};
+
+// Primeiro vencimento de uma regra recém-criada: a primeira data válida a partir do início.
+export const primeiroVencimento = (fixa: any): string => {
+  const inicio = String(fixa?.inicio || todayStr).slice(0, 10);
+  const periodicidade: Periodicidade = fixa?.periodicidade || 'mensal';
+  if (periodicidade !== 'mensal') return inicio;
+
+  const dia = Math.min(31, Math.max(1, Number(fixa?.diaVencimento) || Number(inicio.slice(8, 10)) || 1));
+  const [ano, mes] = inicio.split('-').map(Number);
+  const base = ano * 12 + (mes - 1);
+  for (let i = 0; i < 24; i += 1) {
+    const a = Math.floor((base + i) / 12);
+    const m = (base + i) % 12;
+    const d = String(Math.min(dia, ultimoDiaDoMes(a, m))).padStart(2, '0');
+    const data = `${a}-${String(m + 1).padStart(2, '0')}-${d}`;
+    if (data >= inicio) return data;
+  }
+  return inicio;
+};
+
+// Id determinístico da ocorrência: regra + data. Torna a criação idempotente — se dois
+// caminhos tentarem gerar a mesma competência, produzem o MESMO id e o replace-all do
+// backend descarta a repetição em vez de duplicar a conta.
+export const idOcorrenciaFixa = (fixaId: string, vencimento: string) =>
+  `${fixaId}-${String(vencimento).replace(/-/g, '')}`;
+
+// Campos que a ocorrência herda da REGRA (usado na primeira, quando não há anterior).
+const montarOcorrenciaDaRegra = (fixa: any, vencimento: string) => ({
+  id: idOcorrenciaFixa(fixa.id, vencimento),
+  tipo: 'contaPagar' as FinTipo,
+  type: 'single',
+  parentId: null,
+  parcela: '-',
+  contaFixaId: fixa.id,
+  contaFixaCategoria: fixa.categoria || 'Outro',
+  contaFixaPeriodicidade: fixa.periodicidade || 'mensal',
+  contaFixaDescricao: fixa.descricao || fixa.categoria || 'Conta fixa',
+  empresa: fixa.empresa,
+  vinculoTipo: 'Departamento',
+  vinculoValor: fixa.departamento || fixa.categoria || '',
+  fornecedor: fixa.fornecedor || fixa.descricao || 'Conta fixa',
+  tipoPagamento: fixa.categoria || 'Outro',
+  natureza: fixa.natureza || '',
+  documento: '',
+  valor: num(fixa.valor),
+  vencimento,
+  banco: fixa.banco || '',
+  forma: fixa.forma || '',
+  status: CP_STATUS.aberto,
+  valorPago: 0,
+  jurosPago: 0,
+  comprovantes: [],
+  anexos: [],
+  obs: fixa.obs || '',
+  createdAt: new Date().toISOString(),
+});
+
+// Cópia da ocorrência PAGA para a competência seguinte. Copia o que é da conta (valor,
+// fornecedor, natureza, banco, forma — inclusive ajustes que o usuário fez naquele mês) e
+// zera o que pertence só àquele pagamento: documento, anexo, comprovante, juros e datas.
+const copiarOcorrencia = (base: any, fixa: any, vencimento: string) => ({
+  ...base,
+  id: idOcorrenciaFixa(fixa.id, vencimento),
+  vencimento,
+  status: CP_STATUS.aberto,
+  // Nasce sempre como conta única: se a anterior tinha sido parcelada, a nova não herda
+  // o vínculo de mãe/filha, que pertencia àquela competência.
+  type: 'single',
+  parentId: null,
+  parcela: '-',
+  totalParcelas: 1,
+  documento: '',
+  anexos: [],
+  comprovantes: [],
+  valorPago: 0,
+  dataPagamento: '',
+  jurosPago: 0,
+  houveJuros: false,
+  motivoJuros: '',
+  createdAt: new Date().toISOString(),
+});
+
+const regraGeraMais = (fixa: any, vencimento: string): boolean => {
+  if (!fixa || fixa.ativa === false) return false;
+  const fim = String(fixa.fim || '').slice(0, 10);
+  return !(fim && vencimento > fim);
+};
+
+/**
+ * Próxima ocorrência a criar quando uma conta fixa é PAGA. É o coração do encadeamento:
+ * a conta seguinte só nasce quando a atual é quitada, o que faz a lista virar o histórico
+ * progressivo de pagamentos (uma linha paga por competência, em sequência).
+ *
+ * Devolve [] quando a regra foi pausada, chegou ao fim, ou a competência seguinte já existe.
+ */
+export const proximaOcorrenciaAposPagamento = (financeiro: any[], contaPaga: any): any[] => {
+  const lista = Array.isArray(financeiro) ? financeiro : [];
+  if (!contaPaga?.contaFixaId) return [];
+  const fixa = lista.find((r: any) => r?.tipo === 'contaFixa' && r?.id === contaPaga.contaFixaId);
+  if (!fixa) return [];
+
+  const vencimento = proximoVencimento(fixa, contaPaga.vencimento);
+  if (!regraGeraMais(fixa, vencimento)) return [];
+  if (lista.some((r: any) => String(r?.id) === idOcorrenciaFixa(fixa.id, vencimento))) return [];
+
+  return [copiarOcorrencia(contaPaga, fixa, vencimento)];
+};
+
+/**
+ * Garante que toda regra ativa tenha UMA conta em aberto — nem mais, nem menos.
+ *
+ * Não adianta competências futuras de propósito: quem cria a próxima é o pagamento da
+ * atual. Esta função existe para os dois casos em que o encadeamento não tem de onde
+ * partir: a regra acabou de ser criada, ou a última ocorrência foi paga/excluída sem
+ * gerar a seguinte (regra que ficou pausada e voltou, conta apagada por engano).
+ */
+export const garantirOcorrenciasContasFixas = (financeiro: any[]): any[] => {
+  const lista = Array.isArray(financeiro) ? financeiro : [];
+  const fixas = lista.filter((r: any) => r?.tipo === 'contaFixa' && r?.ativa !== false);
+  if (fixas.length === 0) return [];
+
+  const ids = new Set(lista.map((r: any) => String(r?.id)));
+  const novas: any[] = [];
+
+  fixas.forEach((fixa: any) => {
+    const ocorrencias = lista.filter((r: any) => r?.tipo === 'contaPagar' && r?.contaFixaId === fixa.id);
+    // Já existe conta em aberto para esta regra: nada a fazer.
+    if (ocorrencias.some((r: any) => String(r.status || '') !== CP_STATUS.pago)) return;
+
+    if (ocorrencias.length === 0) {
+      const vencimento = primeiroVencimento(fixa);
+      if (!regraGeraMais(fixa, vencimento) || ids.has(idOcorrenciaFixa(fixa.id, vencimento))) return;
+      ids.add(idOcorrenciaFixa(fixa.id, vencimento));
+      novas.push(montarOcorrenciaDaRegra(fixa, vencimento));
+      return;
+    }
+
+    // Todas pagas: retoma a partir da última competência quitada.
+    const ultima = ocorrencias.reduce((a: any, b: any) =>
+      (String(a.vencimento || '') >= String(b.vencimento || '') ? a : b));
+    const vencimento = proximoVencimento(fixa, ultima.vencimento);
+    if (!regraGeraMais(fixa, vencimento) || ids.has(idOcorrenciaFixa(fixa.id, vencimento))) return;
+    ids.add(idOcorrenciaFixa(fixa.id, vencimento));
+    novas.push(copiarOcorrencia(ultima, fixa, vencimento));
+  });
+
+  return novas;
+};
+
+
+// Uma conta a pagar está vencida quando passou do vencimento e não foi paga.
+export const contaVencida = (conta: any): boolean =>
+  String(conta?.status || '') !== CP_STATUS.pago && isOld(conta?.vencimento);
+
+export const contaPaga = (conta: any): boolean => String(conta?.status || '') === CP_STATUS.pago;
+
+// Dias até o vencimento (negativo = já venceu).
+export const diasAteVencimento = (vencimento: any, hoje: string = todayStr): number => {
+  const alvo = d0(vencimento);
+  const base = d0(hoje);
+  if (!alvo || !base) return 0;
+  return Math.round((alvo.getTime() - base.getTime()) / 86400000);
+};
+
+export interface AvisoContaFixa {
+  conta: any;
+  dias: number;         // negativo = vencida há N dias
+  vencida: boolean;
+}
+
+/**
+ * Ocorrências de conta fixa que merecem aviso ao abrir a tela de Contas a Pagar:
+ * já vencidas e não pagas, ou vencendo dentro da antecedência configurada na regra.
+ * Ordena o mais urgente primeiro.
+ */
+export const avisosContasFixas = (financeiro: any[], hoje: string = todayStr): AvisoContaFixa[] => {
+  const lista = Array.isArray(financeiro) ? financeiro : [];
+  const antecedenciaPorRegra = new Map<string, number>();
+  lista
+    .filter((r: any) => r?.tipo === 'contaFixa')
+    .forEach((r: any) => antecedenciaPorRegra.set(String(r.id), Number(r.antecedenciaAviso) || 5));
+
+  return lista
+    .filter((r: any) => r?.tipo === 'contaPagar' && r?.contaFixaId && !contaPaga(r))
+    .map((conta: any) => {
+      const dias = diasAteVencimento(conta.vencimento, hoje);
+      return { conta, dias, vencida: dias < 0 };
+    })
+    .filter(({ conta, dias }) => dias <= (antecedenciaPorRegra.get(String(conta.contaFixaId)) ?? 5))
+    .sort((a, b) => a.dias - b.dias);
 };

@@ -9,6 +9,8 @@ import { boldOS } from '../../../utils/osHighlight';
 import { getOrdensServico, getOsOptionLabel, getOsOptionValue, getOsStableValue, type OrdemServicoResumo, isOsAprovada, formatOsLabel } from '../../../../services/ordensServico';
 import api from '../../../../services/api';
 import { gerarRomaneioPdf, loadRomaneioLogoBase64 } from './romaneioPdf';
+import { toast } from 'sonner';
+import { confirmDialog } from '../../ui/feedback';
 
 interface StockColumn {
   key: string;
@@ -499,7 +501,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   const [tables, setTables] = useState<StockTable[]>(() => STOCK_TABLES.map((table) => ({
     ...table,
     columns: [...table.columns],
-    rows: table.rows.map((row) => ({ ...row, values: normalizeRowValues(row.values) }))
+    rows: []
   })));
   
   const [selectedCategory, setSelectedCategory] = useState<'Materiais' | 'Equipamentos' | 'Alugados'>('Materiais');
@@ -1033,7 +1035,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     const dataBaixa = cleanValue(baixaForm.dataBaixa);
 
     if (!osId || !dataBaixa || !motivo) {
-      alert('Preencha OS, data e motivo para registrar a baixa.');
+      toast.error('Preencha OS, data e motivo para registrar a baixa.');
       return;
     }
 
@@ -1174,7 +1176,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       .filter((column) => !cleanValue(registerValues[column.key]));
 
     if (missingRequiredFields.length > 0) {
-      alert(`Preencha todos os campos obrigatórios antes de salvar:\n\n${missingRequiredFields.map((column) => `- ${column.label}`).join('\n')}`);
+      toast.error(`Preencha todos os campos obrigatórios antes de salvar:\n\n${missingRequiredFields.map((column) => `- ${column.label}`).join('\n')}`);
       return;
     }
 
@@ -1219,7 +1221,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     const { supplierRowId, gasName, quantity, local, serviceOS } = allocateForm;
 
     if (!supplierRowId || !gasName || !quantity || !local || !serviceOS) {
-      alert('Por favor, preencha todos os campos da alocação e selecione uma OS.');
+      toast.error('Por favor, preencha todos os campos da alocação e selecione uma OS.');
       return;
     }
 
@@ -1242,7 +1244,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     const requestedQuantity = Number(quantity);
 
     if (requestedQuantity > availableNow) {
-      alert(
+      toast.error(
         `Erro: Saldo insuficiente! \n\n` +
         `Você tentou alocar ${requestedQuantity} unidade(s) de ${gasName}, ` +
         `mas existem apenas ${availableNow} disponível(eis) no estoque deste fornecedor.`
@@ -1281,8 +1283,8 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     setExpandedGasRows(prev => new Set(prev).add(supplierRowId));
   };
 
-  const handleRemoveAllocation = (allocationId: string, supplierRowId: string) => {
-    const confirmRemoval = window.confirm('Deseja desalocar este serviço?');
+  const handleRemoveAllocation = async (allocationId: string, supplierRowId: string) => {
+    const confirmRemoval = await confirmDialog({ message: 'Deseja desalocar este serviço?', danger: true, confirmText: 'Desalocar' });
     if (!confirmRemoval) return;
 
     const allocationToRemove = allocations.find((allocation) => allocation.id === allocationId);
@@ -1308,8 +1310,8 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     setExpandedGasRows((prev) => new Set(prev).add(supplierRowId));
   };
 
-  const handleDisallocateRow = (row: StockRow) => {
-    const confirmRemoval = window.confirm('Deseja desalocar este item?');
+  const handleDisallocateRow = async (row: StockRow) => {
+    const confirmRemoval = await confirmDialog({ message: 'Deseja desalocar este item?', danger: true, confirmText: 'Desalocar' });
     if (!confirmRemoval) return;
 
     setTables((prevTables) =>
@@ -1355,7 +1357,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
 
   const handleSaveEquipAllocation = () => {
     if (!equipAllocateForm.local || !equipAllocateForm.osId) {
-      alert('Por favor, preencha o local e selecione a OS.');
+      toast.error('Por favor, preencha o local e selecione a OS.');
       return;
     }
 
@@ -1446,12 +1448,12 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   const handleConfirmRomaneio = async () => {
     const selectedRows = getSelectedRows();
     if (selectedRows.length === 0) {
-      alert('Selecione ao menos um item para gerar o romaneio.');
+      toast.error('Selecione ao menos um item para gerar o romaneio.');
       return;
     }
 
     if (!romaneioOsId) {
-      alert('Selecione uma OS para executar a alocação.');
+      toast.error('Selecione uma OS para executar a alocação.');
       return;
     }
 
@@ -1481,11 +1483,11 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       const qty = parseEstoqueQty(romaneioQuantities[key] ?? '');
       const nome = row.values.material || row.values.equipamento || row.values.item || row.id;
       if (qty <= 0) {
-        alert(`Informe a quantidade para "${nome}".`);
+        toast.error(`Informe a quantidade para "${nome}".`);
         return;
       }
       if (qty > estoque) {
-        alert(`A quantidade (${qty}) de "${nome}" excede o estoque disponível (${estoque}).`);
+        toast.error(`A quantidade (${qty}) de "${nome}" excede o estoque disponível (${estoque}).`);
         return;
       }
     }

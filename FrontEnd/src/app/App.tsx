@@ -4,6 +4,7 @@ import { Header } from './components/Header';
 import { CadastroCompletoView } from './components/modules/Configuracoes/CadastroCompletoView';
 import { useErp } from './context/ErpContext';
 import { LoginPage } from './pages/Login';
+import { HomePage } from './pages/Home';
 
 // Importação dos Módulos de Abas
 import { GestaoModule } from './modules/Gestao';
@@ -17,10 +18,6 @@ import { ConfiguracoesModule } from './modules/Configuracoes';
 // Função auxiliar para mapear qual aba cada item pertence
 function getAbaForSection(section: string): { aba: string; item: string } {
   const mapping: Record<string, { aba: string; item: string }> = {
-    // Gestão & Estratégia
-    'dashboard': { aba: 'gestao', item: 'dashboard' },
-    'relatorios': { aba: 'gestao', item: 'relatorios' },
-    
     // Produção
     'obras': { aba: 'producao', item: 'obras' },
     'servicos': { aba: 'producao', item: 'obras' },
@@ -74,7 +71,8 @@ function getAbaForSection(section: string): { aba: string; item: string } {
 
 export default function App() {
   const { userSession, setUserSession, config, loading } = useErp();
-  const [activeSection, setActiveSection] = useState('dashboard');
+  // Todos os usuários entram pela Home (página inicial com os acessos de cada um).
+  const [activeSection, setActiveSection] = useState('home');
   const [searchQuery, setSearchQuery] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
@@ -96,7 +94,14 @@ export default function App() {
   }
 
   if (!userSession) {
-    return <LoginPage onLoginSuccess={(user) => setUserSession(user)} />;
+    return (
+      <LoginPage
+        onLoginSuccess={(user) => {
+          setUserSession(user);
+          setActiveSection('home'); // login (ou troca de usuário) sempre aterrissa na Home
+        }}
+      />
+    );
   }
 
   // FLUXO DE ONBOARDING (CADASTRO DA EMPRESA)
@@ -126,8 +131,13 @@ export default function App() {
         
         <section className="flex-1 animate-in fade-in slide-in-from-bottom-2 duration-500 relative p-6">
           {(() => {
+            // Home é a tela inicial de todos os usuários — fora dos módulos por aba.
+            if (activeSection === 'home') {
+              return <HomePage onNavigate={setActiveSection} />;
+            }
+
             const { aba, item } = getAbaForSection(activeSection);
-            
+
             switch (aba) {
               case 'gestao':
                 return <GestaoModule activeItem={item} searchQuery={searchQuery} />;
@@ -136,7 +146,7 @@ export default function App() {
               case 'comercial':
                 return <ComercialModule activeItem={item} searchQuery={searchQuery} />;
               case 'financeiro':
-                return <FinanceiroModule activeItem={item} searchQuery={searchQuery} />;
+                return <FinanceiroModule activeItem={item} searchQuery={searchQuery} onNavigate={setActiveSection} />;
               case 'compras':
                 return <ComprasModule activeItem={item} searchQuery={searchQuery} />;
               case 'almoxerifado':

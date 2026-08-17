@@ -4,6 +4,7 @@ import { Plus, X, Check, Clock, Zap, Download, Eye, FileText, Pencil } from 'luc
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { toast } from 'sonner';
+import { confirmDialog } from '../../ui/feedback';
 import { criarOrdemServico, atualizarOrdemServico, deleteOrdemServico } from '../../../../services/comercialService';
 import { getLogoUrlForEmpresa } from '../../../utils/company';
 import { formatDateBR } from '../../../utils/formatDate';
@@ -642,7 +643,7 @@ export function OsView({ searchQuery }: OSViewProps) {
   };
 
   const handleSaveRascunhoOS = () => {
-    if (!formData.obraId) return alert('Selecione uma obra para salvar o rascunho.');
+    if (!formData.obraId) return toast.error('Selecione uma obra para salvar o rascunho.');
     const semRascunhoAnterior = listaOS.filter((item) => !(item.obraId === formData.obraId && item.statusOs === 'rascunho'));
     const rascunho: OsFormData = {
       ...formData,
@@ -772,11 +773,11 @@ export function OsView({ searchQuery }: OSViewProps) {
 
   const handleSaveOS = async () => {
     if (!formData.obraId) {
-      return alert('Selecione uma obra para criar a OS.');
+      return toast.error('Selecione uma obra para criar a OS.');
     }
 
     if (!formData.dataInicioPrevisto) {
-      return alert('Defina a data inicial prevista da OS.');
+      return toast.error('Defina a data inicial prevista da OS.');
     }
 
     const editando = editandoOsBackendId != null;
@@ -787,14 +788,14 @@ export function OsView({ searchQuery }: OSViewProps) {
       ? calcularDataTerminoPrevisto(formData.dataInicioPrevisto, totalDiasOrcamento, tipoDias)
       : formData.dataTerminoPrevisto;
     if (!dataTerminoPrevisto) {
-      return alert('Não foi possível calcular a data final da OS. Verifique a data inicial e os dias previstos.');
+      return toast.error('Não foi possível calcular a data final da OS. Verifique a data inicial e os dias previstos.');
     }
 
     // Só bloqueia duplicidade ao CRIAR; ao editar, a OS já existe e deve ser atualizada.
     if (!editando) {
       const jaExisteConsolidada = osEmProducao.some((item) => item.obraId === formData.obraId);
       if (jaExisteConsolidada) {
-        return alert('Já existe uma OS consolidada para este negócio. Use "Editar" para alterá-la.');
+        return toast.error('Já existe uma OS consolidada para este negócio. Use "Editar" para alterá-la.');
       }
     }
 
@@ -812,7 +813,7 @@ export function OsView({ searchQuery }: OSViewProps) {
     );
 
     if (hhTotal === 0) {
-      return alert('Adicione pelo menos um valor em MÃO OBRA (H/H) antes de criar a OS.');
+      return toast.error('Adicione pelo menos um valor em MÃO OBRA (H/H) antes de criar a OS.');
     }
 
     const horasTrabalhadasPorServico = [
@@ -876,7 +877,7 @@ export function OsView({ searchQuery }: OSViewProps) {
         }
       } catch (err: any) {
         const detail = err?.response?.data ? JSON.stringify(err.response.data) : String(err);
-        alert(`Erro ao salvar OS no banco de dados: ${detail}`);
+        toast.error(`Erro ao salvar OS no banco de dados: ${detail}`);
         return;
       }
     }
@@ -893,7 +894,7 @@ export function OsView({ searchQuery }: OSViewProps) {
   };
 
   const handleDeleteOS = async (osId: string) => {
-    if (!window.confirm('Tem certeza que deseja deletar esta OS consolidada?')) return;
+    if (!(await confirmDialog({ message: 'Tem certeza que deseja deletar esta OS consolidada?', danger: true, confirmText: 'Deletar' }))) return;
     // Exclui no SQL usando o id numérico (backendId); o id da UI é o numero_os (LN-0001/26).
     const osItem = (Array.isArray(os) ? os : []).find((o: any) => String(o.id) === String(osId));
     const backendId = (osItem as any)?.backendId;
@@ -901,7 +902,7 @@ export function OsView({ searchQuery }: OSViewProps) {
       try {
         await deleteOrdemServico(backendId);
       } catch {
-        alert('Erro ao excluir a OS no banco de dados.');
+        toast.error('Erro ao excluir a OS no banco de dados.');
         return;
       }
     }
@@ -912,7 +913,7 @@ export function OsView({ searchQuery }: OSViewProps) {
     setSelectedOS(osParam);
     setShowDetalhesOS(true);
     setTimeout(() => {
-      alert('A OS foi aberta. Clique em "Download PDF" para fazer o download.');
+      toast.info('A OS foi aberta. Clique em "Download PDF" para fazer o download.');
     }, 500);
   };
 

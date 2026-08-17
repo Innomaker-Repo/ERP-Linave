@@ -1,8 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { Eraser, Lock, Plus, Send, ShoppingCart, Trash2, UserCircle } from 'lucide-react';
-import { createDefaultRequest, createEmptyItem, createId, type ItemCompra } from './comprasLocal';
+import { createDefaultRequest, createEmptyItem, createId, initialPurchaseStateFor, type ItemCompra } from './comprasLocal';
 import { formatOsLabel, getOsNumero, podeComprarNaOs } from '../../../../services/ordensServico';
+import { toast } from 'sonner';
+import { confirmDialog } from '../../ui/feedback';
 
 export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQuery: string }) {
   const { obras, os, userSession } = useErp();
@@ -35,6 +37,15 @@ export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQ
     setItens((current) => current.map((item) => (item.id === id ? { ...item, [field]: value } : item)));
   };
 
+  // Troca a natureza (Material/Serviço) do item e já ajusta o estado inicial de compra coerente.
+  const updateItemNatureza = (id: string, natureza: 'ITEM' | 'SERVICO') => {
+    setItens((current) => current.map((item) => (
+      item.id === id
+        ? { ...item, naturezaFornecimento: natureza, purchaseState: initialPurchaseStateFor(natureza) }
+        : item
+    )));
+  };
+
   const handleAddItem = () => {
     setItens((current) => [...current, createEmptyItem()]);
   };
@@ -43,8 +54,8 @@ export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQ
     setItens((current) => (current.length > 1 ? current.filter((item) => item.id !== id) : current));
   };
 
-  const handleResetForm = () => {
-    if (!window.confirm('Deseja limpar todo o formulário?')) return;
+  const handleResetForm = async () => {
+    if (!(await confirmDialog('Deseja limpar todo o formulário?'))) return;
 
     setFormData(createDefaultRequest(userSession?.nome || userSession?.email || '', '', ''));
     setItens([createEmptyItem()]);
@@ -52,10 +63,10 @@ export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQ
 
   const handleCreateRequest = () => {
     if (!solicitanteNome) {
-      return window.alert('Não foi possível identificar seu usuário. Faça login novamente.');
+      return toast.error('Não foi possível identificar seu usuário. Faça login novamente.');
     }
     if (!formData.centroCusto) {
-      return window.alert('Selecione a Ordem de Serviço.');
+      return toast.error('Selecione a Ordem de Serviço.');
     }
 
     const itensValidos = itens
@@ -65,7 +76,7 @@ export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQ
         nome: item.descricao.trim(),
       }));
     if (itensValidos.length === 0) {
-      return window.alert('Preencha ao menos uma descrição na tabela.');
+      return toast.error('Preencha ao menos uma descrição na tabela.');
     }
 
     const novaRequisicao = {
@@ -90,7 +101,7 @@ export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQ
     const existing = Array.isArray(compras) ? compras : [];
     void saveEntity?.('compras', [novaRequisicao, ...existing]);
     setItens([createEmptyItem()]);
-    window.alert('Solicitação criada e disponível para o kanban de compras.');
+    toast.success('Solicitação criada e disponível para o kanban de compras.');
   };
 
   return (
@@ -163,11 +174,12 @@ export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQ
 
         <div className="bg-[#101f3d] border border-white/10 rounded-3xl overflow-hidden shadow-2xl">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[560px]">
+            <table className="w-full min-w-[720px]">
               <thead>
                 <tr className="bg-[#0b1220] text-xs font-bold text-white/40 uppercase tracking-wider text-left border-b border-white/10">
                   <th className="p-4 w-24 pl-6">Item</th>
                   <th className="p-4 w-48">Descrição / Detalhes</th>
+                  <th className="p-4 w-40">Tipo</th>
                   <th className="p-4 w-20 text-center">Qtd</th>
                   <th className="p-4 w-20 text-center">Un</th>
                   <th className="p-4 w-16 text-center pr-6"></th>
@@ -183,6 +195,20 @@ export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQ
                     </td>
                     <td className="p-3">
                       <input className="input-table text-white/70" placeholder="Descrição do item" value={item.descricao} onChange={(event) => updateItem(item.id, 'descricao', event.target.value)} />
+                    </td>
+                    <td className="p-3">
+                      <div className="relative">
+                        <select
+                          className={`w-full appearance-none cursor-pointer rounded-lg border border-white/10 bg-[#0b1220] py-2 pl-3 pr-8 text-sm font-bold outline-none focus:border-amber-500 transition-colors ${item.naturezaFornecimento === 'ITEM' ? 'text-emerald-300' : 'text-sky-300'}`}
+                          value={item.naturezaFornecimento}
+                          onChange={(event) => updateItemNatureza(item.id, event.target.value as 'ITEM' | 'SERVICO')}
+                          title="Define onde o custo entra no Custo por OS: Material → Materiais; Serviço → Serviços Terceirizados"
+                        >
+                          <option value="ITEM" className="bg-[#0b1220] text-white">Compra de material</option>
+                          <option value="SERVICO" className="bg-[#0b1220] text-white">Serviço</option>
+                        </select>
+                        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-white/30 text-[10px]">▼</span>
+                      </div>
                     </td>
                     <td className="p-3 text-center">
                       <input type="number" className="input-table text-center font-bold bg-white/5 rounded-lg" min="1" value={item.qtd} onChange={(event) => updateItem(item.id, 'qtd', Number(event.target.value))} />

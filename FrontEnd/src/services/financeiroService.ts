@@ -24,3 +24,13 @@ export const syncFinanceiro = async (records: any[]): Promise<any[]> => {
   const response = await api.post('financeiro/', records);
   return Array.isArray(response.data?.financeiro) ? response.data.financeiro : records;
 };
+
+/**
+ * Cria UMA solicitação de pagamento (append-only). O endpoint é aberto a todo
+ * usuário autenticado — diferente do replace-all acima, que exige permissão do
+ * módulo Financeiro. Retorna a lista completa atualizada de FinRecord.
+ */
+export const criarSolicitacaoPagamento = async (record: any): Promise<any[]> => {
+  const response = await api.post('financeiro/solicitacao/', record);
+  return Array.isArray(response.data?.financeiro) ? response.data.financeiro : [];
+};

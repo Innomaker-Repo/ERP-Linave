@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { Factory, Plus, Save, X, Edit2, Trash2, Phone, MapPin } from 'lucide-react';
+import { toast } from 'sonner';
 
 export function FornecedoresView({ searchQuery }: { searchQuery: string }) {
   const { fornecedores, saveFornecedor, userSession } = useErp();
@@ -16,9 +17,42 @@ export function FornecedoresView({ searchQuery }: { searchQuery: string }) {
     descricaoEstadual: '',
   });
 
+  // CNPJ: só dígitos, formatado como 00.000.000/0000-00 (14 dígitos).
+  const formatarCnpj = (valor: string) => {
+    const digitos = valor.replace(/\D/g, '').slice(0, 14);
+    return digitos
+      .replace(/^(\d{2})(\d)/, '$1.$2')
+      .replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3')
+      .replace(/\.(\d{3})(\d)/, '.$1/$2')
+      .replace(/(\d{4})(\d)/, '$1-$2');
+  };
+
+  // Valida os dois dígitos verificadores; rejeita sequências repetidas (00.000.000/0000-00 etc.).
+  const cnpjValido = (valor: string) => {
+    const d = valor.replace(/\D/g, '');
+    if (d.length !== 14 || /^(\d)\1{13}$/.test(d)) return false;
+    const verificador = (base: string) => {
+      let peso = base.length - 7;
+      let soma = 0;
+      for (let i = 0; i < base.length; i++) {
+        soma += Number(base[i]) * peso--;
+        if (peso < 2) peso = 9;
+      }
+      const resto = soma % 11;
+      return resto < 2 ? 0 : 11 - resto;
+    };
+    return verificador(d.slice(0, 12)) === Number(d[12]) && verificador(d.slice(0, 13)) === Number(d[13]);
+  };
+
+  const cnpjDigitos = fornecedor.cnpj.replace(/\D/g, '');
+  const cnpjIncompleto = cnpjDigitos.length > 0 && cnpjDigitos.length < 14;
+  const cnpjInvalido = cnpjDigitos.length === 14 && !cnpjValido(fornecedor.cnpj);
+
   const validar = () => {
     if (!fornecedor.razaoSocial.trim()) return 'Razão Social é obrigatória.';
     if (!fornecedor.cnpj.trim()) return 'CNPJ é obrigatório.';
+    if (cnpjDigitos.length !== 14) return 'CNPJ incompleto. Informe os 14 dígitos (00.000.000/0000-00).';
+    if (!cnpjValido(fornecedor.cnpj)) return 'CNPJ inválido. Confira os dígitos digitados.';
     if (!fornecedor.contato.trim()) return 'Contato é obrigatório.';
     if (!fornecedor.endereco.trim()) return 'Endereço é obrigatório.';
     if (!fornecedor.status.trim()) return 'Status é obrigatório.';
@@ -33,7 +67,7 @@ export function FornecedoresView({ searchQuery }: { searchQuery: string }) {
 
   const salvar = async () => {
     const erro = validar();
-    if (erro) return window.alert(erro);
+    if (erro) return toast.error(erro);
 
     const novoRegistro = {
       ...fornecedor,
@@ -46,7 +80,7 @@ export function FornecedoresView({ searchQuery }: { searchQuery: string }) {
       setShowForm(false);
       setFornecedor({ razaoSocial: '', cnpj: '', contato: '', endereco: '', status: 'Ativo', tipo: 'Serviços', descricaoEstadual: '' });
     } catch {
-      window.alert('Erro ao salvar fornecedor. Verifique a conexão com o servidor e tente novamente.');
+      toast.error('Erro ao salvar fornecedor. Verifique a conexão com o servidor e tente novamente.');
     }
   };
 
@@ -62,7 +96,18 @@ export function FornecedoresView({ searchQuery }: { searchQuery: string }) {
       {showForm && (
         <div className="bg-[#101f3d] p-8 rounded-[32px] border border-amber-500/30 grid grid-cols-2 gap-6 shadow-2xl">
           <input placeholder="Razão Social *" value={fornecedor.razaoSocial} className="bg-[#0b1220] p-4 rounded-xl text-white text-sm border border-white/10 focus:border-amber-500 outline-none" onChange={e => setFornecedor({...fornecedor, razaoSocial: e.target.value})} />
-          <input placeholder="CNPJ *" value={fornecedor.cnpj} className="bg-[#0b1220] p-4 rounded-xl text-white text-sm border border-white/10 focus:border-amber-500 outline-none" onChange={e => setFornecedor({...fornecedor, cnpj: e.target.value})} />
+          <div className="flex flex-col gap-1">
+            <input
+              placeholder="CNPJ * (00.000.000/0000-00)"
+              value={fornecedor.cnpj}
+              inputMode="numeric"
+              maxLength={18}
+              className={`bg-[#0b1220] p-4 rounded-xl text-white text-sm border outline-none ${cnpjIncompleto || cnpjInvalido ? 'border-red-500/60 focus:border-red-500' : 'border-white/10 focus:border-amber-500'}`}
+              onChange={e => setFornecedor({...fornecedor, cnpj: formatarCnpj(e.target.value)})}
+            />
+            {cnpjIncompleto && <p className="text-red-400 text-[10px] font-bold uppercase tracking-widest ml-1">CNPJ incompleto — {cnpjDigitos.length}/14 dígitos</p>}
+            {cnpjInvalido && <p className="text-red-400 text-[10px] font-bold uppercase tracking-widest ml-1">CNPJ inválido — confira os dígitos</p>}
+          </div>
           <input placeholder="Contato (Tel/Email) *" value={fornecedor.contato} className="bg-[#0b1220] p-4 rounded-xl text-white text-sm border border-white/10 focus:border-amber-500 outline-none" onChange={e => setFornecedor({...fornecedor, contato: e.target.value})} />
           <input placeholder="Endereço *" value={fornecedor.endereco} className="bg-[#0b1220] p-4 rounded-xl text-white text-sm border border-white/10 focus:border-amber-500 outline-none" onChange={e => setFornecedor({...fornecedor, endereco: e.target.value})} />
           <select value={fornecedor.tipo} onChange={e => setFornecedor({...fornecedor, tipo: e.target.value})} className="bg-[#0b1220] p-4 rounded-xl text-white text-sm border border-white/10 focus:border-amber-500 outline-none">

@@ -55,10 +55,8 @@ export function LoginPage({ onLoginSuccess }: { onLoginSuccess: (user: any) => v
         <div className="md:w-5/12 p-12 bg-gradient-to-br from-[#0b1220]/90 to-[#101f3d]/90 flex flex-col justify-between border-r border-white/5 relative">
           <div className="relative z-10">
             <div className="flex items-center gap-3 mb-8">
-              <div className="w-10 h-10 bg-amber-500 rounded-xl flex items-center justify-center font-black text-[#0b1220] text-xl shadow-lg shadow-amber-500/20">
-                IN
-              </div>
-              <span className="text-white font-black uppercase tracking-tighter text-2xl italic">Linave</span>
+              <img src="/logo-sl.svg" alt="Linave & Servinave" className="h-16 w-16" />
+              <span className="text-white font-black uppercase tracking-tighter text-2xl italic">Linave & Servinave</span>
             </div>
             <h2 className="text-3xl md:text-4xl font-bold text-white leading-tight mb-4">
               Gestão <br />

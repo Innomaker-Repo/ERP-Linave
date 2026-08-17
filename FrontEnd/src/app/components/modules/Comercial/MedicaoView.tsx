@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { Ruler, Plus, X, Save, Download, Check, Ban, Filter, Clock, CheckCircle2, Copy, FilePlus, Send, FileText, Lock, Unlock, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
+import { confirmDialog, promptDialog } from '../../ui/feedback';
 import { isOsAprovada, formatOsLabel } from '../../../../services/ordensServico';
 import { criarMedicao, atualizarStatusMedicao } from '../../../../services/medicoesService';
 import { uploadDocumento } from '../../../../services/documentosService';
@@ -178,9 +179,9 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
       .forEach((l: any) => Object.keys(l.extras || {}).forEach((k) => set.add(k)));
     return Array.from(set);
   };
-  const addColuna = (categoria: 'servico' | 'locacao') => {
-    const nome = (typeof window !== 'undefined' ? window.prompt('Nome da nova coluna (informativa):') : '') || '';
-    const limpo = nome.trim();
+  const addColuna = async (categoria: 'servico' | 'locacao') => {
+    const nome = await promptDialog({ title: 'Nova coluna', message: 'Nome da nova coluna (informativa):', placeholder: 'Ex.: Observação' });
+    const limpo = (nome || '').trim();
     if (!limpo) return;
     setForm((f: any) => ({ ...f, itens: f.itens.map((l: any) => (l.categoria || 'servico') === categoria ? { ...l, extras: { ...(l.extras || {}), [limpo]: l.extras?.[limpo] ?? '' } } : l) }));
   };
@@ -408,7 +409,7 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
   };
 
   const handleStatus = async (medicao: any, status: 'aprovada' | 'recusada') => {
-    if (status === 'recusada' && !window.confirm('Recusar esta medição?')) return;
+    if (status === 'recusada' && !(await confirmDialog({ message: 'Recusar esta medição?', danger: true, confirmText: 'Recusar' }))) return;
     try {
       const atualizada = await atualizarStatusMedicao(medicao.id, status);
       await refreshMedicoes();
@@ -488,7 +489,10 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
         forma: nfeForm.forma,
         dataEmitir: nfeForm.dataEmitir,
         tipoNfe: nfeForm.tipoNfe,
-        anexos: [...(nfeForm.docsCliente || []), ...(nfeForm.docsNf || [])].map((d: any) => d?.nome).filter(Boolean),
+        // Guarda a URL (/media/...), não o nome: as telas do Financeiro só transformam o
+        // anexo em link quando o valor casa com /^(https?:|\/media\/)/. Com o nome puro o
+        // documento aparecia como texto morto, sem como baixar.
+        anexos: [...(nfeForm.docsCliente || []), ...(nfeForm.docsNf || [])].map((d: any) => d?.url || d?.nome).filter(Boolean),
         documentosCliente: nfeForm.docsCliente || [],   // Item 5
         notasFiscaisEmitidas: nfeForm.docsNf || [],      // Item 7
         contrato: nfeForm.os,

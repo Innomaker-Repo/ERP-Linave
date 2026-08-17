@@ -1,5 +1,6 @@
 import re
 from decimal import Decimal
+from django.utils import timezone
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password as django_validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -8,7 +9,7 @@ from .models import (
     Levantamento, MDO, Ativ_prevista, Material,
     Servico_terceirizado, Orcamento, Resumo_orcamento,
     OrdemServico,
-    Escopo, PropostaComercial, Fornecedor,
+    Escopo, PropostaComercial, TemplateProposta, Fornecedor,
     Medicao, MedicaoItem, Documento, LogAtividade
 )
 
@@ -226,6 +227,7 @@ class PropostaComercialResumoSerializer(serializers.ModelSerializer):
     escopoA = serializers.SerializerMethodField()
     escopoBasicoServicos = serializers.SerializerMethodField()
     precoItens = serializers.SerializerMethodField()
+    precoColunasOcultas = serializers.SerializerMethodField()
     referencias = serializers.CharField(source='referencia', read_only=True)
     responsabilidadeContratada = serializers.CharField(source='responsabilidade_contratada', read_only=True)
     responsabilidadeContratante = serializers.CharField(source='responsabilidade_contratante', read_only=True)
@@ -240,7 +242,7 @@ class PropostaComercialResumoSerializer(serializers.ModelSerializer):
             'cliente', 'negocio', 'referencias', 'saudacao', 'assunto', 'textoAbertura',
             'responsabilidadeContratada', 'responsabilidadeContratante', 'preco',
             'condicoesGerais', 'condicoesPagamento', 'prazo', 'encerramento',
-            'escopoA', 'escopoBasicoServicos', 'precoItens', 'versao'
+            'escopoA', 'escopoBasicoServicos', 'precoItens', 'precoColunasOcultas', 'versao'
         ]
 
     def get_versao(self, obj):
@@ -275,6 +277,9 @@ class PropostaComercialResumoSerializer(serializers.ModelSerializer):
     def get_precoItens(self, obj):
         return obj.preco_itens if isinstance(obj.preco_itens, list) else []
 
+    def get_precoColunasOcultas(self, obj):
+        return obj.preco_colunas_ocultas if isinstance(obj.preco_colunas_ocultas, list) else []
+
 class PropostaComercialSerializer(serializers.ModelSerializer):
     cliente_detalhes = ClienteSerializer(source='cliente', read_only=True)
     negocio_detalhes = NegocioResumoSerializer(source='negocio', read_only=True)
@@ -298,6 +303,7 @@ class PropostaComercialSerializer(serializers.ModelSerializer):
     # Estrutura rica (round-trip fiel via JSON)
     escopoBasicoServicos = serializers.JSONField(source='escopos_estruturado', required=False)
     precoItens = serializers.JSONField(source='preco_itens', required=False)
+    precoColunasOcultas = serializers.JSONField(source='preco_colunas_ocultas', required=False)
 
     class Meta:
         model = PropostaComercial
@@ -307,9 +313,56 @@ class PropostaComercialSerializer(serializers.ModelSerializer):
             'referencias', 'saudacao', 'assunto', 'textoAbertura',
             'responsabilidadeContratada', 'responsabilidadeContratante', 'preco',
             'condicoesGerais', 'condicoesPagamento', 'prazo', 'efetivoPrevisto', 'encerramento',
-            'escopoBasicoServicos', 'precoItens',
+            'escopoBasicoServicos', 'precoItens', 'precoColunasOcultas',
             'proposta_escopo', 'proposta_escopo_input'
         ]
+
+class TemplatePropostaSerializer(serializers.ModelSerializer):
+    """Template de texto da Proposta. Expõe os campos em camelCase, iguais aos do
+    formulário da PropostaView, para o front aplicar direto no propostaForm."""
+
+    # `validators=[]` desliga o UniqueValidator automático (mensagem em inglês) — quem
+    # cuida da duplicidade é o validate_nome abaixo, case-insensitive e em português.
+    # A constraint UNIQUE da coluna continua valendo como rede de segurança no banco.
+    nome = serializers.CharField(max_length=120, allow_blank=True, validators=[])
+    textoAbertura = serializers.CharField(source='texto_de_abertura', required=False, allow_blank=True, default='')
+    responsabilidadeContratada = serializers.CharField(source='responsabilidade_contratada', required=False, allow_blank=True, default='')
+    # O form da proposta chama o item C de "escopoC" (é a Responsabilidade da Contratante).
+    escopoC = serializers.CharField(source='responsabilidade_contratante', required=False, allow_blank=True, default='')
+    condicoesGerais = serializers.CharField(source='condicoes_gerais', required=False, allow_blank=True, default='')
+    condicoesPagamento = serializers.CharField(source='condicoes_pagamento', required=False, allow_blank=True, default='')
+    efetivoPrevisto = serializers.CharField(source='efetivo_previsto', required=False, allow_blank=True, default='')
+    referencia = serializers.CharField(required=False, allow_blank=True, default='')
+    saudacao = serializers.CharField(required=False, allow_blank=True, default='')
+    assunto = serializers.CharField(required=False, allow_blank=True, default='')
+    prazo = serializers.CharField(required=False, allow_blank=True, default='')
+    encerramento = serializers.CharField(required=False, allow_blank=True, default='')
+    criadoPor = serializers.CharField(source='criado_por', required=False, allow_blank=True, default='')
+    criadoEm = serializers.DateTimeField(source='criado_em', read_only=True)
+    atualizadoEm = serializers.DateTimeField(source='atualizado_em', read_only=True)
+
+    class Meta:
+        model = TemplateProposta
+        fields = [
+            'id', 'nome',
+            'referencia', 'saudacao', 'assunto', 'textoAbertura',
+            'responsabilidadeContratada', 'escopoC', 'condicoesGerais',
+            'prazo', 'efetivoPrevisto', 'condicoesPagamento', 'encerramento',
+            'criadoPor', 'criadoEm', 'atualizadoEm',
+        ]
+
+    def validate_nome(self, value):
+        nome = (value or '').strip()
+        if not nome:
+            raise serializers.ValidationError('Dê um nome ao template.')
+        # Nome é único (case-insensitive) — o front pergunta antes se quer substituir.
+        existente = TemplateProposta.objects.filter(nome__iexact=nome)
+        if self.instance is not None:
+            existente = existente.exclude(pk=self.instance.pk)
+        if existente.exists():
+            raise serializers.ValidationError(f'Já existe um template chamado "{nome}".')
+        return nome
+
 
 # ------------------  The Summary & Container  -------------------
 
@@ -687,4 +740,4 @@ class LogAtividadeSerializer(serializers.ModelSerializer):
                   'modulo', 'descricao', 'timestamp', 'timestamp_fmt']
 
     def get_timestamp_fmt(self, obj):
-        return obj.timestamp.strftime('%d/%m/%Y %H:%M:%S')
+        return timezone.localtime(obj.timestamp).strftime('%d/%m/%Y %H:%M:%S')

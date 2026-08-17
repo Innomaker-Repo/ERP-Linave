@@ -4,30 +4,11 @@ import { useErp } from '../../../context/ErpContext';
 import {
   approvalRouteLabel,
   formatCurrency,
-  MOCK_GERENTE_COMERCIAL_EMAIL,
-  MOCK_DIRETOR_FINANCEIRO_EMAIL,
+  resolveApprovalRoute,
+  APPROVAL_LIMIT,
   type QuoteItem,
-  type ApprovalRoute,
   type RequisicaoCompra,
 } from './comprasLocal';
-
-const isGerenteComercialEmail = (email: string) => {
-  const normalized = email.trim().toLowerCase();
-  return (
-    normalized.startsWith('comercial@') ||
-    normalized.includes('gerente.comercial') ||
-    (normalized.includes('gerente') && normalized.includes('comercial'))
-  );
-};
-
-const isDiretorFinanceiroEmail = (email: string) => {
-  const normalized = email.trim().toLowerCase();
-  return (
-    normalized.startsWith('financeiro@') ||
-    normalized.includes('diretor.financeiro') ||
-    (normalized.includes('diretor') && normalized.includes('financeiro'))
-  );
-};
 
 export function ComprasAprovacoesView({ searchQuery }: { searchQuery: string }) {
   const { userSession, compras, saveEntity } = useErp();
@@ -51,32 +32,19 @@ export function ComprasAprovacoesView({ searchQuery }: { searchQuery: string }) 
   }, [compras]);
 
   const roleNorm = String(userSession?.role || '').toUpperCase();
-  const isAdmin = roleNorm === 'ADMIN' || roleNorm === 'GERENTE';
-  const email = String(userSession?.email || '').toLowerCase();
-  const isMockGerenteComercial = email === MOCK_GERENTE_COMERCIAL_EMAIL;
-  const isMockDiretorFinanceiro = email === MOCK_DIRETOR_FINANCEIRO_EMAIL;
-
-  const canApproveGerente = isAdmin || userSession?.permissoes?.aprovacoesComprasGerente === true || isMockGerenteComercial || isGerenteComercialEmail(email);
-  const canApproveFinanceiro = isAdmin || userSession?.permissoes?.aprovacoesComprasFinanceiro === true || isMockDiretorFinanceiro || isDiretorFinanceiroEmail(email);
-
-  const allowedRoutes = useMemo(() => {
-    if (isAdmin) return ['gerenteComercial', 'diretorFinanceiro'] as const;
-
-    const routes: Exclude<ApprovalRoute, null>[] = [];
-    if (canApproveGerente) routes.push('gerenteComercial');
-    if (canApproveFinanceiro) routes.push('diretorFinanceiro');
-    return routes;
-  }, [isAdmin, canApproveGerente, canApproveFinanceiro]);
+  // Regra de aprovação (decidida pelo VALOR do orçamento, não por rota gravada):
+  //   >= R$ 500 -> somente a gerência (Admin/Gerente) vê e aprova;
+  //   <  R$ 500 -> qualquer usuário com acesso a esta aba aprova (setor de compras;
+  //                a aba é liberada pelo painel de permissões, chave aprovacoesCompras).
+  const isGerencia = roleNorm === 'ADMIN' || roleNorm === 'GERENTE';
+  const rotaDoPedido = (request: RequisicaoCompra) => resolveApprovalRoute(request.budgetValue);
 
   const filteredRequests = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
 
     return requests
       .filter((request) => request.stage === 'APROVACAO')
-      .filter((request) => {
-        if (isAdmin) return true;
-        return request.approvalRoute !== null && allowedRoutes.includes(request.approvalRoute);
-      })
+      .filter((request) => isGerencia || rotaDoPedido(request) === 'setorCompras')
       .filter((request) => {
         if (!query) return true;
 
@@ -84,7 +52,7 @@ export function ComprasAprovacoesView({ searchQuery }: { searchQuery: string }) 
           request.solicitante,
           request.departamento,
           request.centroCusto,
-          request.approvalRoute ? approvalRouteLabel[request.approvalRoute] : '',
+          approvalRouteLabel[rotaDoPedido(request)],
           request.budgetValue ? String(request.budgetValue) : '',
           ...request.itens.map((item) => item.descricao || item.nome),
         ]
@@ -93,7 +61,7 @@ export function ComprasAprovacoesView({ searchQuery }: { searchQuery: string }) 
 
         return searchableText.includes(query);
       });
-  }, [requests, searchQuery, isAdmin, allowedRoutes]);
+  }, [requests, searchQuery, isGerencia]);
 
   const patchRequest = (requestId: string, updater: (request: RequisicaoCompra) => RequisicaoCompra) => {
     setRequests((current) => current.map((request) => (request.id === requestId ? updater(request) : request)));
@@ -108,10 +76,10 @@ export function ComprasAprovacoesView({ searchQuery }: { searchQuery: string }) 
       ...request,
       stage: 'COMPRADOS',
       // Ao entrar em finalizados, cada item começa no estado inicial conforme a natureza do
-      // fornecedor selecionado: ITEM -> "Comprar"; SERVIÇO -> "À contratar".
+      // próprio item (Material/Serviço escolhida na solicitação): Material -> "Comprar";
+      // Serviço -> "À contratar".
       itens: request.itens.map((item) => {
-        const detail = (request.budgetDetails || []).find((d) => d.itemId === item.id);
-        const natureza = detail?.naturezaFornecimento || item.naturezaFornecimento || 'SERVICO';
+        const natureza = item.naturezaFornecimento === 'ITEM' ? 'ITEM' : 'SERVICO';
         return {
           ...item,
           naturezaFornecimento: natureza,
@@ -146,7 +114,7 @@ export function ComprasAprovacoesView({ searchQuery }: { searchQuery: string }) 
           </div>
           <div>
             <h1 className="text-3xl font-bold text-white tracking-tight">Aprovações de Compras</h1>
-            <p className="text-white/50 text-sm mt-1">Aprovação final por perfil: gerente comercial para valores menores que R$ 500 e diretor financeiro para valores a partir de R$ 500.</p>
+            <p className="text-white/50 text-sm mt-1">Compras abaixo de R$ {APPROVAL_LIMIT} podem ser aprovadas por todo o setor de compras (quem tem acesso a esta aba); a partir de R$ {APPROVAL_LIMIT}, somente a gerência.</p>
           </div>
         </div>
       </div>
@@ -192,8 +160,8 @@ export function ComprasAprovacoesView({ searchQuery }: { searchQuery: string }) 
                     <td className="p-4 text-white/80 text-sm">{request.centroCusto || '-'}</td>
                     <td className="p-4 text-center text-white/70 text-sm">{request.itens.length}</td>
                     <td className="p-4">
-                      <span className={`px-2 py-1 rounded-full border text-xs font-bold ${request.approvalRoute === 'diretorFinanceiro' ? 'bg-blue-500/10 border-blue-500/20 text-blue-200' : 'bg-orange-500/10 border-orange-500/20 text-orange-200'}`}>
-                        {request.approvalRoute ? approvalRouteLabel[request.approvalRoute] : '-'}
+                      <span className={`px-2 py-1 rounded-full border text-xs font-bold ${rotaDoPedido(request) === 'gerencia' ? 'bg-blue-500/10 border-blue-500/20 text-blue-200' : 'bg-orange-500/10 border-orange-500/20 text-orange-200'}`}>
+                        {approvalRouteLabel[rotaDoPedido(request)]}
                       </span>
                     </td>
                     <td className="p-4 text-right text-emerald-300 font-bold text-sm">{formatCurrency(request.budgetValue)}</td>
@@ -254,7 +222,7 @@ export function ComprasAprovacoesView({ searchQuery }: { searchQuery: string }) 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
                 <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
                   <p className="text-white/35 text-[10px] uppercase tracking-[0.3em] font-black">Rota</p>
-                  <p className="text-white font-semibold mt-2">{selectedRequest.approvalRoute ? approvalRouteLabel[selectedRequest.approvalRoute] : '-'}</p>
+                  <p className="text-white font-semibold mt-2">{approvalRouteLabel[rotaDoPedido(selectedRequest)]}</p>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
                   <p className="text-white/35 text-[10px] uppercase tracking-[0.3em] font-black">Valor total</p>

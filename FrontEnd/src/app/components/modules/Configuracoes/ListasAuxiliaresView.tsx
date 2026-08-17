@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { List, Plus, Trash2, Save, Settings, Info } from 'lucide-react';
+import { toast } from 'sonner';
 
 export function ListasAuxiliaresView() {
   const { listas, saveListas } = useErp();
@@ -23,7 +24,7 @@ export function ListasAuxiliaresView() {
 
   const salvarAlteracoes = () => {
     saveListas(config);
-    alert("Listas atualizadas com sucesso no Drive!");
+    toast.success("Listas atualizadas com sucesso no Drive!");
   };
 
   return (

@@ -3,6 +3,7 @@ import { UserPlus, Save, X, Edit2, Trash2, Building2, User, MapPin, Phone, Calen
 import { useErp } from '../../../context/ErpContext';
 import { getClientes, createCliente, updateCliente, deleteCliente } from '../../../../services/clientes';
 import { toast } from 'sonner';
+import { confirmDialog } from '../../ui/feedback';
 import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
 import { formatDateBR } from '../../../utils/formatDate';
 import { NegocioDetalheModal } from '../Comercial/FinalizadosComercialView';
@@ -114,23 +115,23 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
   const handleSave = async () => {
     // Validação de campos obrigatórios
     if (!currentCliente.razaoSocial?.trim()) {
-      alert('Preencha a Razão Social do cliente.');
+      toast.error('Preencha a Razão Social do cliente.');
       return;
     }
 
     const cpfCnpjTrimmed = currentCliente.cpfCnpj?.trim();
     if (!cpfCnpjTrimmed) {
-      alert('Preencha o CPF/CNPJ do cliente.');
+      toast.error('Preencha o CPF/CNPJ do cliente.');
       return;
     }
 
     if (!currentCliente.contato?.trim()) {
-      alert('Preencha o contato (telefone ou e-mail) do cliente.');
+      toast.error('Preencha o contato (telefone ou e-mail) do cliente.');
       return;
     }
 
     if (!currentCliente.endereco?.trim()) {
-      alert('Preencha o endereço completo do cliente.');
+      toast.error('Preencha o endereço completo do cliente.');
       return;
     }
 
@@ -150,19 +151,19 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
         setListaClientes((prev) => [...prev, clienteAtualizado]);
       }
 
-      alert(`Cliente ${editMode ? 'atualizado' : 'cadastrado'} com sucesso!`);
+      toast.success(`Cliente ${editMode ? 'atualizado' : 'cadastrado'} com sucesso!`);
       setShowForm(false);
       setCurrentCliente(initialClienteState);
     } catch (error: any) {
       console.error(error);
-      alert(`Erro ao salvar cliente: ${error?.response?.data?.detail || error?.message || 'Falha desconhecida'}`);
+      toast.error(`Erro ao salvar cliente: ${error?.response?.data?.detail || error?.message || 'Falha desconhecida'}`);
     } finally {
       setSaving(false);
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm("Tem certeza que deseja excluir este cliente?")) {
+    if (!(await confirmDialog({ message: 'Tem certeza que deseja excluir este cliente?', danger: true, confirmText: 'Excluir' }))) {
       return;
     }
 
@@ -170,10 +171,10 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
     try {
       await deleteCliente(id);
       setListaClientes((prev: any[]) => prev.filter((c: any) => c.id !== id));
-      alert('Cliente excluído com sucesso!');
+      toast.success('Cliente excluído com sucesso!');
     } catch (error: any) {
       console.error(error);
-      alert(`Erro ao deletar cliente: ${error?.response?.data?.detail || error?.message || 'Falha desconhecida'}`);
+      toast.error(`Erro ao deletar cliente: ${error?.response?.data?.detail || error?.message || 'Falha desconhecida'}`);
     } finally {
       setSaving(false);
     }

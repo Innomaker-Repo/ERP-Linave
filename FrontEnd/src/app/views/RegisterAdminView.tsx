@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { loadWorkspace, saveWorkspace, setActiveAdminEmail, ensureWorkspaceShape } from "../services/workspaceStorage";
+import { toast } from 'sonner';
 
 interface RegisterAdminViewProps {
   onRegister: () => void;
@@ -17,7 +18,7 @@ export function RegisterAdminView({ onRegister }: RegisterAdminViewProps) {
     const workspace = ensureWorkspaceShape(await loadWorkspace(email));
 
     if (workspace.users.find((u: any) => u.email === email)) {
-      alert("Usuário já existe");
+      toast.error("Usuário já existe");
       return;
     }
 
