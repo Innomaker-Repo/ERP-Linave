@@ -3,8 +3,16 @@ import path from 'path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 
+// 'http://backend:8000' é o hostname interno do Docker (nome do serviço no
+// docker-compose) — só resolve dentro da rede do container. Rodando o
+// backend nativamente (fora do Docker) com `python manage.py runserver`,
+// ele fica exposto em localhost:8000.
+// const backendProxy = {
+//   target: 'http://backend:8000',
+//   changeOrigin: true,
+// }
 const backendProxy = {
-  target: 'http://backend:8000',
+  target: 'http://localhost:8000',
   changeOrigin: true,
 }
 

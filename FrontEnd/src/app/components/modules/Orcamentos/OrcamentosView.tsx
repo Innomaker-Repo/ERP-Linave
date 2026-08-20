@@ -611,8 +611,9 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
         setOrcamentoData({
           ...formularioBase,
           ...rascunho,
-          // Sempre usa o numero/versão calculada, nunca o do rascunho
-          numeroOrcamento: formularioBase.numeroOrcamento,
+          // Respeita o número editado manualmente e salvo no rascunho; só cai para o
+          // calculado quando o rascunho não tem nenhum (ex.: rascunho antigo sem o campo).
+          numeroOrcamento: rascunho.numeroOrcamento?.trim() || formularioBase.numeroOrcamento,
           dadosServicos: Array.isArray(rascunho?.dadosServicos) && rascunho.dadosServicos.length > 0
             ? rascunho.dadosServicos
             : formularioBase.dadosServicos,
@@ -3024,8 +3025,8 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
             </button>
             <button
               onClick={handleConcluirOrcamento}
-              disabled={saving || Number(orcamentoData.quantidadeItensProduzidos) < 1 || orcamentoData.atividades.filter(i => i.atividade?.trim()).length === 0}
-              title={Number(orcamentoData.quantidadeItensProduzidos) < 1 ? 'Informe a quantidade de itens produzidos para concluir' : orcamentoData.atividades.filter(i => i.atividade?.trim()).length === 0 ? 'Preencha pelo menos uma atividade prevista para concluir' : ''}
+              disabled={saving || (orcTemServico && (Number(orcamentoData.quantidadeItensProduzidos) < 1 || orcamentoData.atividades.filter(i => i.atividade?.trim()).length === 0))}
+              title={!orcTemServico ? '' : Number(orcamentoData.quantidadeItensProduzidos) < 1 ? 'Informe a quantidade de itens produzidos para concluir' : orcamentoData.atividades.filter(i => i.atividade?.trim()).length === 0 ? 'Preencha pelo menos uma atividade prevista para concluir' : ''}
               className="flex-1 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-[#0b1220] py-3 rounded-lg font-black uppercase text-sm tracking-widest transition-all shadow-lg shadow-amber-900/30 disabled:opacity-40 disabled:cursor-not-allowed disabled:from-amber-500 disabled:to-orange-500"
             >
               <Lock size={16} className="inline mr-2" /> Concluir Orçamento

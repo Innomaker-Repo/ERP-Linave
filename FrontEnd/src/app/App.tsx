@@ -62,6 +62,7 @@ function getAbaForSection(section: string): { aba: string; item: string } {
     
     // Configurações
     'usuarios': { aba: 'config', item: 'usuarios' },
+    'empresasPrestadoras': { aba: 'config', item: 'empresasPrestadoras' },
     'logAtividades': { aba: 'config', item: 'logAtividades' },
     'meuPerfil': { aba: 'config', item: 'meuPerfil' },
   };

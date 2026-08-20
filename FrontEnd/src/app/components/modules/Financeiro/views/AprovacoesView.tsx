@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { FinCard, Toolbar, DataTable, Th, Td, Btn, StatusTag, CompanyTag, Pill, EmptyRow, FinModal, Kpi, DeleteBtn } from '../finUi';
+import { FinCard, Toolbar, DataTable, Th, Td, Btn, StatusTag, CompanyTag, Pill, EmptyRow, FinModal, Field, Textarea, Kpi, DeleteBtn } from '../finUi';
 import { br, money, num } from '../finData';
 import { useFin, type FinRecord } from '../useFin';
 import { useFinFilters } from '../finFilters';
@@ -12,10 +12,28 @@ export function AprovacoesView() {
   const rows = records('solicitacao').filter(match);
   const [busy, setBusy] = useState('');
   const [detalhe, setDetalhe] = useState<FinRecord | null>(null);
+  // Reprovação pede um motivo (opcional) antes de confirmar — o solicitante vê esse texto
+  // quando for corrigir e reenviar a solicitação.
+  const [reprovando, setReprovando] = useState<FinRecord | null>(null);
+  const [motivo, setMotivo] = useState('');
 
   const run = async (id: string, fn: (id: string) => Promise<void>) => {
     setBusy(id);
     try { await fn(id); } finally { setBusy(''); }
+  };
+
+  const abrirReprovar = (r: FinRecord) => { setMotivo(''); setReprovando(r); };
+
+  const confirmarReprovar = async () => {
+    if (!reprovando) return;
+    setBusy(reprovando.id);
+    try {
+      await rejectSolicitacao(reprovando.id, motivo.trim());
+      setReprovando(null);
+      setDetalhe(null);
+    } finally {
+      setBusy('');
+    }
   };
 
   return (
@@ -46,7 +64,7 @@ export function AprovacoesView() {
                 {(r.status === 'Aguardando aprovação' || !r.status) && (
                   <>
                     <Btn small variant="green" disabled={busy === r.id} onClick={() => run(r.id, approveSolicitacao)}>Aprovar</Btn>
-                    <Btn small variant="red" disabled={busy === r.id} onClick={() => run(r.id, rejectSolicitacao)}>Reprovar</Btn>
+                    <Btn small variant="red" disabled={busy === r.id} onClick={() => abrirReprovar(r)}>Reprovar</Btn>
                   </>
                 )}
                 <DeleteBtn
@@ -83,6 +101,9 @@ export function AprovacoesView() {
             <p><span className="text-white/40">Documento:</span> <span className="text-white/85">{detalhe.documento || '—'}</span></p>
             <p><span className="text-white/40">Forma solicitada:</span> <span className="text-white/85">{detalhe.forma || '—'}</span></p>
             <p><span className="text-white/40">Status:</span> <span className="text-white/85">{detalhe.status || 'Aguardando aprovação'}</span></p>
+            {detalhe.status === 'Reprovado' && detalhe.motivoReprovacao && (
+              <p><span className="text-white/40">Motivo da reprovação:</span> <span className="text-rose-200">{detalhe.motivoReprovacao}</span></p>
+            )}
           </div>
 
           <div className="mt-4">
@@ -109,10 +130,23 @@ export function AprovacoesView() {
 
           {(detalhe.status === 'Aguardando aprovação' || !detalhe.status) && (
             <div className="mt-5 flex justify-end gap-2">
-              <Btn variant="red" disabled={busy === detalhe.id} onClick={() => run(detalhe.id, rejectSolicitacao).then(() => setDetalhe(null))}>Reprovar</Btn>
+              <Btn variant="red" disabled={busy === detalhe.id} onClick={() => abrirReprovar(detalhe)}>Reprovar</Btn>
               <Btn variant="green" disabled={busy === detalhe.id} onClick={() => run(detalhe.id, approveSolicitacao).then(() => setDetalhe(null))}>Aprovar → Conta a Pagar</Btn>
             </div>
           )}
+        </FinModal>
+      )}
+
+      {/* MODAL: Reprovar (motivo opcional, visível pro solicitante ao reeditar) */}
+      {reprovando && (
+        <FinModal title={`Reprovar ${reprovando.id}`} hint="O motivo é opcional, mas ajuda o solicitante a corrigir e reenviar." onClose={() => setReprovando(null)}>
+          <Field label="Motivo da reprovação (opcional)" span={12}>
+            <Textarea value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Ex.: faltou anexar a nota fiscal, valor divergente..." />
+          </Field>
+          <div className="mt-5 flex justify-end gap-2">
+            <Btn variant="ghost" onClick={() => setReprovando(null)}>Cancelar</Btn>
+            <Btn variant="red" disabled={busy === reprovando.id} onClick={confirmarReprovar}>Confirmar reprovação</Btn>
+          </div>
         </FinModal>
       )}
     </FinCard>

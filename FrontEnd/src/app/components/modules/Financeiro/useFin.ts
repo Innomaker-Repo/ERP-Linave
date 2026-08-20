@@ -221,8 +221,17 @@ export function useFin() {
     await ctx.saveEntity('financeiro', [contaPagar, ...next]);
   };
 
-  const rejectSolicitacao = async (id: string) => {
-    await updateRecords((r) => (r.id === id ? { ...r, status: 'Reprovado' } : r));
+  const rejectSolicitacao = async (id: string, motivo?: string) => {
+    await updateRecords((r) => (r.id === id ? { ...r, status: 'Reprovado', motivoReprovacao: motivo || '' } : r));
+  };
+
+  // Reenvia uma solicitação reprovada: o próprio solicitante corrige os dados e ela volta
+  // para a fila de aprovação, como se fosse enviada agora — sem precisar criar um registro novo
+  // (mantém o mesmo id e o anexo já enviado, a menos que troque).
+  const reenviarSolicitacao = async (id: string, patch: Partial<FinRecord>) => {
+    await updateRecords((r) => (r.id === id
+      ? { ...r, ...patch, status: 'Aguardando aprovação', motivoReprovacao: '' }
+      : r));
   };
 
   // Rótulo do recebível gerado pela nota. O número é opcional na emissão (nem sempre já
@@ -243,13 +252,15 @@ export function useFin() {
         return { ...r, numero, ...(patch.emissao ? { emissao: patch.emissao } : {}) };
       }
       // O recebível guarda uma "fonte" por origem (NF de serviço, recibo de locação);
-      // só a fonte desta nota muda, e a referência do topo é recomposta a partir delas.
+      // só a fonte desta nota muda, e a referência/emissão do topo são recompostas a partir delas.
       if (r.tipo === 'contaReceber' && Array.isArray(r.fontes) && r.fontes.some((f: any) => f?.id === nfeId)) {
-        const fontes = r.fontes.map((f: any) => (f?.id === nfeId ? { ...f, referencia } : f));
+        const fontes = r.fontes.map((f: any) =>
+          (f?.id === nfeId ? { ...f, referencia, ...(patch.emissao ? { emissao: patch.emissao } : {}) } : f));
         return {
           ...r,
           fontes,
           referencia: fontes.map((f: any) => f.referencia).filter(Boolean).join(' · '),
+          emissaoNfe: fontes.find((f: any) => f.origem === 'NFe')?.emissao || r.emissaoNfe || '',
         };
       }
       return r;
@@ -301,6 +312,7 @@ export function useFin() {
       referencia: referenciaNfe(payload.numero),
       baixado: payload.baixado,
       impostos: payload.impostos,
+      emissao: payload.emissao,
     });
     await ctx.saveEntity('financeiro', next);
   };
@@ -461,9 +473,10 @@ export function useFin() {
   return {
     // leitura
     oss, empresas, departamentos, fornecedores, clientes, financeiro, records, nfeSolicitacoes,
+    userSession: ctx.userSession,
     // escrita
     addRecord, addSolicitacao, updateRecords, updateRecord, deleteRecord, contarDependentes,
-    addDepartamento, approveSolicitacao, rejectSolicitacao, emitirNfe, atualizarNfeEmitida,
+    addDepartamento, approveSolicitacao, rejectSolicitacao, reenviarSolicitacao, emitirNfe, atualizarNfeEmitida,
     parcelarConta, pagarConta,
     // contas fixas (recorrentes)
     sincronizarContasFixas, salvarContaFixa, excluirContaFixa, ocorrenciasFuturasDaFixa,

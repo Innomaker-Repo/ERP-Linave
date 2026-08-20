@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Building2, Edit2, Plus, Save, Trash2, X } from 'lucide-react';
 import { useErp } from '../../../context/ErpContext';
+import { renomearEmpresaPrestadora } from '../../../../services/comercial';
 import { toast } from 'sonner';
 
 interface EmpresaPrestadora {
@@ -75,7 +76,11 @@ const normalizarEmpresasPrestadoras = (config: any): EmpresaPrestadora[] => {
       }];
 
   empresasPadrao.forEach((empresaPadrao) => {
+    // Compara por id OU por nome: depois que "Linave"/"Servinave" é renomeada, o registro
+    // continua com o mesmo id (só o nome mudou) — comparar só pelo nome reinjetaria um
+    // duplicado "fantasma" com o nome antigo e o mesmo id, toda vez que a tela recarrega.
     const jaExiste = origem.some((empresa: any) => {
+      if (typeof empresa !== 'string' && empresa?.id === empresaPadrao.id) return true;
       const nomeBase = typeof empresa === 'string'
         ? empresa
         : empresa?.nome || empresa?.razaoSocial || empresa?.empresaNome || '';
@@ -128,7 +133,7 @@ const normalizarEmpresasPrestadoras = (config: any): EmpresaPrestadora[] => {
 };
 
 export function EmpresasPrestadorasView() {
-  const { config, saveConfig } = useErp();
+  const { config, saveConfig, financeiro, saveEntity } = useErp();
   const [empresas, setEmpresas] = useState<EmpresaPrestadora[]>(() => normalizarEmpresasPrestadoras(config));
   const [formData, setFormData] = useState(EMPTY_FORM);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -203,14 +208,51 @@ export function EmpresasPrestadorasView() {
     if (editingId === id) limparFormulario();
   };
 
+  // Empresa é um campo de texto copiado (não uma referência) em negócio, medição e em
+  // todo registro do financeiro — renomear aqui não alcança quem já foi criado com o nome
+  // antigo, a não ser que a gente reescreva explicitamente cada lugar. Por isso, antes de
+  // salvar o cadastro, comparamos com o que estava salvo e propagamos toda renomeação.
   const handleSalvarAlteracoes = async () => {
     setSaving(true);
     try {
+      const antes = normalizarEmpresasPrestadoras(config);
+      const renomeacoes = empresas
+        .map((emp) => {
+          const original = antes.find((a) => a.id === emp.id);
+          return original && original.nome !== emp.nome ? { de: original.nome, para: emp.nome } : null;
+        })
+        .filter((r): r is { de: string; para: string } => r !== null);
+
+      if (renomeacoes.length > 0) {
+        let financeiroAtualizado = financeiro;
+        for (const { de, para } of renomeacoes) {
+          try {
+            // eslint-disable-next-line no-await-in-loop
+            await renomearEmpresaPrestadora(de, para);
+          } catch (erro) {
+            console.error(`Falha ao propagar renomeação de "${de}" para "${para}" em negócios/medições:`, erro);
+            toast.error(`"${de}" foi renomeada, mas não consegui atualizar os negócios/medições já criados. Tente salvar de novo.`);
+          }
+          // Ordem de Serviço e Orçamento/Proposta não guardam empresa própria — exibem a
+          // do negócio vinculado, então já acompanham a mudança feita acima.
+          financeiroAtualizado = financeiroAtualizado.map((r: any) => (r.empresa === de ? { ...r, empresa: para } : r));
+        }
+        if (financeiroAtualizado !== financeiro) {
+          // eslint-disable-next-line no-await-in-loop
+          await saveEntity('financeiro', financeiroAtualizado);
+        }
+      }
+
       await saveConfig({
         ...config,
         empresasPrestadoras: empresas
       });
       toast.success('Empresas prestadoras salvas com sucesso.');
+
+      if (renomeacoes.length > 0) {
+        toast.info('Recarregando para atualizar negócios, OS e financeiro com o novo nome...');
+        setTimeout(() => window.location.reload(), 1500);
+      }
     } finally {
       setSaving(false);
     }

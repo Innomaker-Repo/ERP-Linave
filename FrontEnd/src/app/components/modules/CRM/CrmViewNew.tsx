@@ -181,12 +181,17 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       : [{ id: 'EMP-LINAVE', nome: fallbackNome }];
 
     empresasPadrao.forEach((empresaPadrao) => {
+      // Contém (não só igualdade exata): a empresa já cadastrada costuma ter o nome completo
+      // ("Servinave Serviços Marítimos"), não só "Servinave" — comparar por igualdade estrita
+      // não reconhecia isso como a mesma empresa e injetava um "Servinave" fantasma duplicado,
+      // com o mesmo id da empresa real (causava o warning de key duplicada no <select>).
       const jaExiste = origem.some((empresa: any) => {
         const nomeBase = typeof empresa === 'string'
           ? empresa
           : empresa?.nome || empresa?.razaoSocial || empresa?.empresaNome || '';
 
-        return String(nomeBase).trim().toLowerCase() === empresaPadrao.nome.toLowerCase();
+        const nomeNormalizado = String(nomeBase).trim().toLowerCase();
+        return !!nomeNormalizado && nomeNormalizado.includes(empresaPadrao.nome.toLowerCase());
       });
 
       if (!jaExiste) {
@@ -195,6 +200,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     });
 
     const empresasUnicas = new Map<string, { id: string; nome: string; cnpj: string }>();
+    const idsUsados = new Set<string>();
 
     origem.forEach((empresa: any, index: number) => {
       const nomeBase = typeof empresa === 'string'
@@ -207,8 +213,14 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       const chave = nome.toLowerCase();
       if (empresasUnicas.has(chave)) return;
 
+      // Defesa extra: se por algum motivo o id já foi usado por outra empresa nesta lista
+      // (dado antigo/mal migrado), gera um id alternativo em vez de repetir a key no <select>.
+      let id = typeof empresa === 'object' && empresa?.id ? String(empresa.id) : `empresa-${index}`;
+      if (idsUsados.has(id)) id = `${id}-${index}`;
+      idsUsados.add(id);
+
       empresasUnicas.set(chave, {
-        id: typeof empresa === 'object' && empresa?.id ? empresa.id : `empresa-${index}`,
+        id,
         nome,
         cnpj: typeof empresa === 'object' ? empresa?.cnpj || empresa?.empresaCnpj || '' : ''
       });
@@ -718,7 +730,7 @@ const initialServico: Servico = {
 
   const handleAbrirDocumentoMediacao = (obra: any) => {
     const obraAtual = (negociosBackend || []).find((item: any) => item.id === obra.id) || obra;
-    const cliente = listaClientesCRM.find((item: any) => item.id === obraAtual.clienteId);
+    const cliente = listaClientesCRM.find((item: any) => String(item.id) === String(obraAtual.clienteId));
 
     // Usar o ID do projeto diretamente (já tem formato correto: LN-0731/26)
     const idProjetoFormatado = obraAtual.id || '';
@@ -851,7 +863,7 @@ const initialServico: Servico = {
 
     try {
       const obraAtual = (obras || []).find((item: any) => item.id === documentoMediacaoForm.obraId);
-      const clienteAtual = listaClientesCRM.find((c: any) => c.id === obraAtual?.clienteId);
+      const clienteAtual = listaClientesCRM.find((c: any) => String(c.id) === String(obraAtual?.clienteId));
 
       console.log("Iniciando geração de PDF de medição...", { documentoMediacaoForm });
 
@@ -933,7 +945,7 @@ const initialServico: Servico = {
     }
 
     const ultimaProposta = selectedObraDetalhes.propostas[selectedObraDetalhes.propostas.length - 1];
-    const clienteAtual = listaClientesCRM.find((c: any) => c.id === selectedObraDetalhes.clienteId);
+    const clienteAtual = listaClientesCRM.find((c: any) => String(c.id) === String(selectedObraDetalhes.clienteId));
 
     try {
       let logoBase64: string | undefined;
@@ -1057,7 +1069,10 @@ const initialServico: Servico = {
     return [];
   };
 
-  const persistirObraAtualizada = async (obraAtualizada: any, moverParaTopo = false, payloadUpdate: Record<string, any> | null = null) => {
+  // Devolve true/false pro chamador saber se a gravação no backend realmente aconteceu —
+  // sem isso, um erro aqui (ex.: campo obrigatório faltando) fica só no toast desta função,
+  // e quem chamou segue achando que deu certo e mostra "sucesso" + fecha a tela mesmo assim.
+  const persistirObraAtualizada = async (obraAtualizada: any, moverParaTopo = false, payloadUpdate: Record<string, any> | null = null): Promise<boolean> => {
     try {
       // 1. Monta o payload para o Django
       const payloadParaBackend = payloadUpdate || {
@@ -1089,9 +1104,11 @@ const initialServico: Servico = {
       if (editingObra?.id === obraAtualizada.id) setEditingObra(obraAtualizada);
       if (selectedObraArquivos?.id === obraAtualizada.id) setSelectedObraArquivos(obraAtualizada);
 
+      return true;
     } catch (error) {
       console.error('Erro ao atualizar no banco de dados:', error);
       toast.error('Erro ao salvar alteração no banco de dados.');
+      return false;
     }
   };
   
@@ -1185,20 +1202,20 @@ const initialServico: Servico = {
 
     const possuiOrcamento = normalizarOrcamentosDaObra(obraComDocumentos).length > 0;
     if (!possuiOrcamento) {
-      persistirObraAtualizada(obraComDocumentos);
+      if (!(await persistirObraAtualizada(obraComDocumentos))) return;
       toast.success('Arquivos atualizados com sucesso.');
       return;
     }
 
     const fazerNovoOrcamento = await confirmDialog('Fazer novo orçamento?');
     if (!fazerNovoOrcamento) {
-      persistirObraAtualizada(obraComDocumentos);
+      if (!(await persistirObraAtualizada(obraComDocumentos))) return;
       toast.success('Arquivos atualizados sem alterar orçamento.');
       return;
     }
 
     const obraReorcamento = criarReorcamentoPorAlteracaoArquivos(obraComDocumentos);
-    persistirObraAtualizada(obraReorcamento, true);
+    if (!(await persistirObraAtualizada(obraReorcamento, true))) return;
     toast.success('Arquivos alterados. Negócio voltou para aguardando orçamento.');
   };
 
@@ -1237,10 +1254,11 @@ const initialServico: Servico = {
         categoria: 'cliente_assinado',
       });
 
-      persistirObraAtualizada({
+      const salvo = await persistirObraAtualizada({
         ...obraAtual,
         documentoClienteAssinado
       });
+      if (!salvo) return;
 
       toast.success('Documento assinado do cliente anexado e salvo no banco.');
     } catch (error) {
@@ -1257,10 +1275,11 @@ const initialServico: Servico = {
       try { await excluirDocumento(backendId); } catch { /* prossegue mesmo se falhar */ }
     }
 
-    persistirObraAtualizada({
+    const salvo = await persistirObraAtualizada({
       ...obraAtual,
       documentoClienteAssinado: null
     });
+    if (!salvo) return;
 
     toast.success('Documento assinado do cliente removido.');
   };
@@ -1531,8 +1550,10 @@ const initialServico: Servico = {
       tipo_servico: String(editingObra.tipo || editingObra.tipo_servico || '').trim() || null,
     };
 
-    // Chama a função da API e fecha o modal
-    await persistirObraAtualizada(editingObra, false, payloadUpdate);
+    // Chama a função da API e só fecha o modal se a gravação realmente aconteceu — antes disso
+    // o toast de sucesso e o fechamento aconteciam mesmo quando o backend rejeitava a alteração.
+    const salvo = await persistirObraAtualizada(editingObra, false, payloadUpdate);
+    if (!salvo) return;
     toast.success("Negócio atualizado com sucesso!");
     setShowEditModal(false);
     setEditingObra(null);
@@ -1591,9 +1612,10 @@ const initialServico: Servico = {
       status: proximaCategoria
     };
 
-    // Usando await e fechando a função corretamente
-    await persistirObraAtualizada(obraAtualizada);
-    setNegociosBackend(prev => 
+    // Usando await e só fechando a tela se a gravação realmente aconteceu
+    const salvo = await persistirObraAtualizada(obraAtualizada);
+    if (!salvo) return;
+    setNegociosBackend(prev =>
       prev.map(o => o.id === obraAtualizada.id ? obraAtualizada : o)
     );
     toast.success(mensagem);
@@ -1637,8 +1659,9 @@ const initialServico: Servico = {
       versaoNegocio: proximaVersao(selectedObraDetalhes.versaoNegocio || ''),
     };
 
-    // Usando await e fechando a função corretamente
-    await persistirObraAtualizada(obraAtualizada, true);
+    // Usando await e só fechando a tela se a gravação realmente aconteceu
+    const salvo = await persistirObraAtualizada(obraAtualizada, true);
+    if (!salvo) return;
     toast.success("Orçamento recusado. Negócio retornou para Aguardando orçamento.");
     setShowDetalhesObraModal(false);
     setSelectedObraDetalhes(null);
@@ -1667,7 +1690,7 @@ const initialServico: Servico = {
 
     const ultimoOrcamento = orcamentosBase.length > 0 ? orcamentosBase[orcamentosBase.length - 1] : null;
     const ultimaProposta = propostasBase.length > 0 ? propostasBase[propostasBase.length - 1] : null;
-    const cliente = listaClientesCRM.find((c: any) => c.id === selectedObraDetalhes?.clienteId);
+    const cliente = listaClientesCRM.find((c: any) => String(c.id) === String(selectedObraDetalhes?.clienteId));
     const logoBase64 = await getBase64FromUrl(getLogoUrlForEmpresa(selectedObraDetalhes?.empresaPrestadora));
 
     try {
@@ -1707,7 +1730,7 @@ const initialServico: Servico = {
     if (!selectedObraDetalhes?.orcamentos || selectedObraDetalhes.orcamentos.length === 0) return;
 
     const ultimoOrcamento = selectedObraDetalhes.orcamentos[selectedObraDetalhes.orcamentos.length - 1];
-    const cliente = listaClientesCRM.find(c => c.id === selectedObraDetalhes.clienteId);
+    const cliente = listaClientesCRM.find(c => String(c.id) === String(selectedObraDetalhes.clienteId));
 
     try {
       const resultado = gerarOrcamentoPDF(ultimoOrcamento, cliente, selectedObraDetalhes);
@@ -1812,12 +1835,13 @@ const initialServico: Servico = {
   const handleArquivarNegocio = async (obra: any, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!(await confirmDialog({ title: 'Arquivar negócio', message: `Arquivar "${obra.nome}"?\n\nO negócio será removido do Kanban e listado em Negócios → Finalizados.`, confirmText: 'Arquivar' }))) return;
-    await persistirObraAtualizada({
+    const salvo = await persistirObraAtualizada({
       ...obra,
       categoria: 'Arquivado',
       status: 'Arquivado',
       dataArquivamento: new Date().toISOString().split('T')[0],
     });
+    if (!salvo) return;
     toast.success(`"${obra.nome}" arquivado com sucesso.`);
   };
 
@@ -1836,7 +1860,8 @@ const initialServico: Servico = {
       status: 'Finalização'
     };
 
-    await persistirObraAtualizada(obraAtualizada);
+    const salvo = await persistirObraAtualizada(obraAtualizada);
+    if (!salvo) return;
     toast.success('Negócio movido para Finalização.');
   };
 
@@ -2015,7 +2040,7 @@ const obrasOrdenadas = useMemo(() => {
               <div className="space-y-4 flex-1 overflow-y-auto">
                 {obrasNaColuna.length > 0 ? (
                   obrasNaColuna.map((obra: any) => {
-                    const cliente = listaClientesCRM.find(c => c.id === obra.clienteId);
+                    const cliente = listaClientesCRM.find(c => String(c.id) === String(obra.clienteId));
                     const ultimaPropostaCard = Array.isArray(obra.propostas) && obra.propostas.length > 0
                       ? obra.propostas[obra.propostas.length - 1]
                       : null;
@@ -2833,7 +2858,20 @@ const obrasOrdenadas = useMemo(() => {
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
                     <p className="text-white/50 text-xs mb-1">Cliente</p>
-                    <p className="text-white font-bold">{listaClientesCRM.find(c => c.id === selectedObraDetalhes.clienteId)?.razaoSocial}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-white font-bold">
+                        {listaClientesCRM.find(c => String(c.id) === String(selectedObraDetalhes.clienteId))?.razaoSocial
+                          || <span className="text-white/30 italic font-normal">Cliente não encontrado no cadastro</span>}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => window.dispatchEvent(new CustomEvent('mudarTelaERP', { detail: 'clientes' }))}
+                        className="text-cyan-400 hover:text-cyan-300 text-[10px] font-black uppercase tracking-widest underline underline-offset-2 flex-shrink-0"
+                        title="Ir para Base de Clientes para reeditar o cadastro"
+                      >
+                        Editar cadastro
+                      </button>
+                    </div>
                   </div>
                   <div>
                     <p className="text-white/50 text-xs mb-1">Responsável</p>
@@ -2877,7 +2915,7 @@ const obrasOrdenadas = useMemo(() => {
                           ].map(([label, value]) => (
                             <div key={label as string} className={label === 'Descrição' || label === 'Observações' ? 'col-span-2' : ''}>
                               <p className="text-white/35 text-[10px] font-black uppercase tracking-widest mb-0.5">{label}</p>
-                              <p className="text-white/80 text-xs font-semibold">{(value as string) || <span className="text-white/20 italic font-normal">—</span>}</p>
+                              <p className="text-white/80 text-xs font-semibold whitespace-pre-wrap">{(value as string) || <span className="text-white/20 italic font-normal">—</span>}</p>
                             </div>
                           ))}
                         </div>
@@ -3810,7 +3848,7 @@ const obrasOrdenadas = useMemo(() => {
       {/* MODAL - PROPOSTA COMPLETA */}
       {showPropostaFullModal && selectedObraDetalhes?.propostas && selectedObraDetalhes.propostas.length > 0 && (() => {
         const ultimaProposta = selectedObraDetalhes.propostas[selectedObraDetalhes.propostas.length - 1];
-        const cliente = listaClientesCRM.find(c => c.id === selectedObraDetalhes.clienteId);
+        const cliente = listaClientesCRM.find(c => String(c.id) === String(selectedObraDetalhes.clienteId));
         const idProjetoModal = extrairIdProjetoDoNumero(ultimaProposta.numeroProposta || '');
         return (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -3837,7 +3875,7 @@ const obrasOrdenadas = useMemo(() => {
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div>
                       <p className="text-white/50 text-xs mb-1">Cliente</p>
-                      <p className="text-white font-bold">{listaClientesCRM.find(c => c.id === selectedObraDetalhes.clienteId)?.razaoSocial}</p>
+                      <p className="text-white font-bold">{listaClientesCRM.find(c => String(c.id) === String(selectedObraDetalhes.clienteId))?.razaoSocial}</p>
                     </div>
                     <div>
                       <p className="text-white/50 text-xs mb-1">Negócio</p>
@@ -4077,7 +4115,7 @@ const obrasOrdenadas = useMemo(() => {
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div>
                       <p className="text-white/50 text-xs mb-1">Cliente</p>
-                      <p className="text-white font-bold">{listaClientesCRM.find(c => c.id === selectedObraDetalhes.clienteId)?.razaoSocial}</p>
+                      <p className="text-white font-bold">{listaClientesCRM.find(c => String(c.id) === String(selectedObraDetalhes.clienteId))?.razaoSocial}</p>
                     </div>
                     <div>
                       <p className="text-white/50 text-xs mb-1">Projeto</p>
@@ -4426,7 +4464,7 @@ const obrasOrdenadas = useMemo(() => {
       {/* MODAL - ORÇAMENTO COMPLETO */}
       {showOrcamentoFullModal && selectedObraDetalhes?.orcamentos && selectedObraDetalhes.orcamentos.length > 0 && (() => {
         const ultimoOrcamento = selectedObraDetalhes.orcamentos[selectedObraDetalhes.orcamentos.length - 1];
-        const cliente = listaClientesCRM.find(c => c.id === selectedObraDetalhes.clienteId);
+        const cliente = listaClientesCRM.find(c => String(c.id) === String(selectedObraDetalhes.clienteId));
         const idProjetoOrc = selectedObraDetalhes.id || '';
         return (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">

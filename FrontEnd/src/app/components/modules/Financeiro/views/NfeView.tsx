@@ -1,11 +1,11 @@
 import React, { useMemo, useState } from 'react';
-import { Plus, FileCheck2, ExternalLink, Paperclip, Hash } from 'lucide-react';
+import { Plus, FileCheck2, ExternalLink, Paperclip, Hash, CalendarClock } from 'lucide-react';
 import {
   FinCard, Toolbar, DataTable, Th, Td, Btn, StatusTag, CompanyTag, Pill, AlertBar, EmptyRow,
   FinModal, Field, Input, MoneyInput, Select, FileInput, DeleteBtn, boldOS,
 } from '../finUi';
 import {
-  br, money, num, todayStr, genFinId, TAX_DEFAULTS, calcNfeLiquido, calcImpostosNfe,
+  br, money, num, isOld, todayStr, genFinId, TAX_DEFAULTS, calcNfeLiquido, calcImpostosNfe,
   FORMAS_PAGAMENTO, type NfeSolicitacao,
 } from '../finData';
 import { useFin } from '../useFin';
@@ -14,6 +14,18 @@ import { uploadDocumento } from '../../../../../services/documentosService';
 import { toast } from 'sonner';
 
 const TIPOS_NFE = ['NFe Serviço', 'NFe Alocado', 'Nota de débito', 'Outro'];
+
+// Nota de débito é o documento de locação — Linave emite "Nota de Débito" (N/D), as demais
+// prestadoras emitem "Recibo de Locação" (R/L). O nº digitado continua o mesmo; só ganha esse
+// prefixo pra diferenciar de um nº de NFe de serviço de verdade.
+const isLinaveEmpresa = (empresa?: any) => String(empresa || '').toLowerCase().includes('linave');
+
+// Sigla mostrada antes do nº, para identificar o tipo de documento de cabeça sem abrir a linha.
+const prefixoTipoNfe = (tipoNfe: string, empresa?: any): string => {
+  if (tipoNfe === 'Nota de débito') return isLinaveEmpresa(empresa) ? 'N/D' : 'R/L';
+  if (tipoNfe === 'NFe Serviço') return 'N/S';
+  return '';
+};
 
 // Valor sentinela do dropdown de clientes: libera o campo de texto para um cliente que
 // ainda não está cadastrado (nota avulsa), sem obrigar a cadastrar antes de solicitar.
@@ -65,7 +77,7 @@ const emptyNf = () => ({
 export function NfeView() {
   const {
     nfeSolicitacoes, financeiro, empresas, oss, clientes,
-    emitirNfe, atualizarNfeEmitida, addRecord, deleteRecord,
+    emitirNfe, atualizarNfeEmitida, addRecord, updateRecord, deleteRecord,
   } = useFin();
   const { match } = useFinFilters();
   const solicitacoes = nfeSolicitacoes.filter(match);
@@ -135,6 +147,31 @@ export function NfeView() {
     } catch (erro) {
       console.error('Erro ao atualizar a NFe:', erro);
       toast.error('Não foi possível atualizar a nota.');
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  // ---- Modal: alterar a data planejada para emitir (só solicitação manual, não emitida) ----
+  const [editandoData, setEditandoData] = useState<NfeSolicitacao | null>(null);
+  const [dataEmitirForm, setDataEmitirForm] = useState(todayStr);
+
+  const abrirEdicaoData = (sol: NfeSolicitacao) => {
+    setDataEmitirForm(sol.dataEmitir || todayStr);
+    setEditandoData(sol);
+  };
+
+  const salvarDataEmitir = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editandoData) return;
+    setSalvando(true);
+    try {
+      await updateRecord(editandoData.id, { dataEmitir: dataEmitirForm });
+      toast.success('Data para emitir atualizada.');
+      setEditandoData(null);
+    } catch (erro) {
+      console.error('Erro ao atualizar a data para emitir:', erro);
+      toast.error('Não foi possível atualizar a data.');
     } finally {
       setSalvando(false);
     }
@@ -233,14 +270,16 @@ export function NfeView() {
         minWidth={1200}
         head={<>
           <Th>Solicitação</Th><Th>{boldOS('OS')}</Th><Th>Empresa</Th><Th>Cliente</Th><Th>Valor</Th>
-          <Th>Origem</Th><Th>Data emitir</Th><Th>Tipo NFe</Th><Th>Nº da NF</Th><Th>Status</Th><Th>Anexos</Th><Th>Ação</Th>
+          <Th>Origem</Th><Th>Data emitir</Th><Th>Tipo NFe</Th><Th>Nº da NF</Th><Th>Emissão</Th><Th>Status</Th><Th>Anexos</Th><Th>Ação</Th>
         </>}
       >
         {solicitacoes.length === 0 ? (
-          <EmptyRow cols={12} text="Nenhuma solicitação de NFe (finalize um negócio com medição para gerar)" />
+          <EmptyRow cols={13} text="Nenhuma solicitação de NFe (finalize um negócio com medição para gerar)" />
         ) : solicitacoes.map((r) => {
           const nota = notaPorSolicitacao.get(r.id);
           const semNumero = Boolean(nota) && !String(nota.numero || '').trim();
+          // Ainda não emitida e a data planejada já passou: chama atenção em vermelho.
+          const emitirAtrasado = r.status !== 'Emitida e arquivada' && isOld(r.dataEmitir);
           return (
           <tr key={r.id} className={`transition-colors hover:bg-white/5 ${semNumero ? 'bg-amber-500/[0.06]' : ''}`}>
             <Td className="font-black text-white">{r.id}</Td>
@@ -249,15 +288,23 @@ export function NfeView() {
             <Td className="text-white">{r.cliente}</Td>
             <Td className="font-bold text-white">{money(num(r.valor))}</Td>
             <Td><Pill tone={r.derived ? 'info' : 'neutral'}>{r.derived ? 'Medição' : 'Manual'}</Pill></Td>
-            <Td>{br(r.dataEmitir)}</Td>
+            {/* !text-rose-300: a base text-white/80 do Td vence a cor condicional em especificidade
+                igual no Tailwind v4 — precisa do modificador important para a cor vermelha aparecer. */}
+            <Td className={emitirAtrasado ? 'font-bold text-rose-300!' : ''}>{br(r.dataEmitir)}</Td>
             <Td>{r.tipoNfe}</Td>
             <Td>
               {!nota
                 ? <span className="text-white/30">—</span>
                 : semNumero
                   ? <Pill tone="wait">Sem número</Pill>
-                  : <span className="font-bold text-white">{nota.numero}</span>}
+                  : <span className="font-bold text-white">
+                      {(() => {
+                        const prefixo = prefixoTipoNfe(r.tipoNfe, r.empresa);
+                        return prefixo ? `${prefixo} ${nota.numero}` : nota.numero;
+                      })()}
+                    </span>}
             </Td>
+            <Td>{nota?.emissao ? br(nota.emissao) : <span className="text-white/30">—</span>}</Td>
             <Td><StatusTag status={r.status} /></Td>
             <Td className="whitespace-normal"><AnexosCell anexos={r.anexos} /></Td>
             <Td>
@@ -269,6 +316,12 @@ export function NfeView() {
                 {nota && (
                   <Btn small variant={semNumero ? 'amber' : 'secondary'} onClick={() => abrirEdicaoNota(nota)}>
                     <Hash size={12} /> {semNumero ? 'Informar nº' : 'Editar nº'}
+                  </Btn>
+                )}
+                {/* Ainda não emitida (não veio da medição/obra): dá para ajustar o prazo planejado. */}
+                {!r.derived && r.status === 'Aguardando emissão' && (
+                  <Btn small variant="secondary" onClick={() => abrirEdicaoData(r)}>
+                    <CalendarClock size={12} /> Alterar data
                   </Btn>
                 )}
                 {/* Solicitações derivadas de negócio finalizado não são registros salvos —
@@ -384,6 +437,34 @@ export function NfeView() {
 
             <div className="col-span-12 flex justify-end gap-2">
               <Btn type="button" variant="ghost" onClick={() => setEditandoNota(null)}>Cancelar</Btn>
+              <Btn type="submit" variant="green" disabled={salvando}>{salvando ? 'Salvando...' : 'Salvar'}</Btn>
+            </div>
+          </form>
+        </FinModal>
+      )}
+
+      {/* MODAL: alterar a data planejada para emitir */}
+      {editandoData && (
+        <FinModal
+          title="Alterar data para emitir"
+          hint="Ajusta o prazo planejado para emissão desta solicitação."
+          onClose={() => setEditandoData(null)}
+        >
+          <form className="grid grid-cols-12 gap-4" onSubmit={salvarDataEmitir}>
+            <Field label="Cliente" span={8}><Input value={String(editandoData.cliente || '')} disabled /></Field>
+            <Field label="Valor" span={4}><Input value={money(num(editandoData.valor))} disabled /></Field>
+
+            <Field label="Data para emitir" span={6}>
+              <Input
+                type="date"
+                autoFocus
+                value={dataEmitirForm}
+                onChange={(e) => setDataEmitirForm(e.target.value)}
+              />
+            </Field>
+
+            <div className="col-span-12 flex justify-end gap-2">
+              <Btn type="button" variant="ghost" onClick={() => setEditandoData(null)}>Cancelar</Btn>
               <Btn type="submit" variant="green" disabled={salvando}>{salvando ? 'Salvando...' : 'Salvar'}</Btn>
             </div>
           </form>

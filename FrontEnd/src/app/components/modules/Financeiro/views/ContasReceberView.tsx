@@ -5,7 +5,7 @@ import {
   FinModal, Field, Input, MoneyInput, Select, Textarea, ImpostosPanel, DeleteBtn,
 } from '../finUi';
 import {
-  br, money, num, isOld, todayStr, download,
+  br, money, num, isOld, todayStr, download, bancoLabel,
   IMPOSTOS_NFE, IMPOSTO_LABEL, impostosDoRegistro,
 } from '../finData';
 import { useFin, type FinRecord } from '../useFin';
@@ -14,12 +14,15 @@ import { useFinNavigate, FIN_SECTIONS } from '../finNav';
 
 const status = (r: any) => (r.recebido ? 'Recebido' : isOld(r.vencimentoRecebimento) ? 'Vencido' : 'A receber');
 
+const STATUS_FILTROS = ['Todos', 'A receber', 'Recebido', 'Vencido'] as const;
+type StatusFiltro = typeof STATUS_FILTROS[number];
+
 // Dropdown de banco (hoisted: componente estável para não remontar os inputs do modal).
-function BancoSelect({ value, onChange, bancos }: { value: string; onChange: (v: string) => void; bancos: string[] }) {
+function BancoSelect({ value, onChange, bancos }: { value: string; onChange: (v: string) => void; bancos: Array<{ id: string; nome: string; empresa?: string }> }) {
   return (
     <Select value={value} onChange={(e) => onChange(e.target.value)}>
       <option value="">{bancos.length ? 'Selecione o banco...' : 'Nenhum banco cadastrado'}</option>
-      {bancos.map((b) => <option key={b}>{b}</option>)}
+      {bancos.map((b) => <option key={b.id} value={b.nome}>{bancoLabel(b)}</option>)}
     </Select>
   );
 }
@@ -35,9 +38,11 @@ export function ContasReceberView() {
   const { records, updateRecord, deleteRecord } = useFin();
   const { match } = useFinFilters();
   const navegar = useFinNavigate();
-  const rows = records('contaReceber').filter(match);
-  const bancos = records('banco').map((b) => b.nome).filter(Boolean) as string[];
-  const vencidas = useMemo(() => rows.filter((r) => status(r) === 'Vencido'), [rows]);
+  const todasAsLinhas = records('contaReceber').filter(match);
+  const [statusFiltro, setStatusFiltro] = useState<StatusFiltro>('Todos');
+  const rows = statusFiltro === 'Todos' ? todasAsLinhas : todasAsLinhas.filter((r) => status(r) === statusFiltro);
+  const bancos = records('banco').filter((b) => b.nome) as Array<{ id: string; nome: string; empresa?: string }>;
+  const vencidas = useMemo(() => todasAsLinhas.filter((r) => status(r) === 'Vencido'), [todasAsLinhas]);
   const [salvando, setSalvando] = useState(false);
 
   // Modal de detalhes (somente leitura, com o detalhamento dos impostos).
@@ -96,14 +101,14 @@ export function ContasReceberView() {
   // conferir a retenção sem abrir nota por nota.
   const exportarCsv = () => {
     const head = [
-      'Origem', 'Empresa', 'Cliente', 'Referência', 'Valor original',
+      'Origem', 'Empresa', 'Cliente', 'Referência', 'Emissão NFe', 'Valor original',
       ...IMPOSTOS_NFE.map((k) => `${IMPOSTO_LABEL[k]} (R$)`),
       'Total impostos', 'Valor líquido', 'Vencimento', 'Recebido?', 'Data receb.', 'Valor recebido', 'Banco', 'Status',
     ];
     const linhas: any[][] = rows.map((r) => {
       const imp = impostosDoRegistro(r);
       return [
-        r.origem || 'Manual', r.empresa, r.cliente, r.referencia || '',
+        r.origem || 'Manual', r.empresa, r.cliente, r.referencia || '', r.emissaoNfe || '',
         num(r.valorOriginal ?? r.valor),
         ...IMPOSTOS_NFE.map((k) => num(imp?.valores?.[k])),
         num(imp?.total),
@@ -113,7 +118,7 @@ export function ContasReceberView() {
     });
     const soma = (fn: (r: any) => number) => rows.reduce((s, r) => s + fn(r), 0);
     linhas.push([
-      'TOTAL', '', '', '',
+      'TOTAL', '', '', '', '',
       soma((r) => num(r.valorOriginal ?? r.valor)),
       ...IMPOSTOS_NFE.map((k) => soma((r) => num(impostosDoRegistro(r)?.valores?.[k]))),
       soma((r) => num(impostosDoRegistro(r)?.total)),
@@ -148,15 +153,33 @@ export function ContasReceberView() {
         <AlertBar>⚠️ Existem {vencidas.length} conta(s) a receber vencida(s): vencimento anterior a hoje e ainda não recebido.</AlertBar>
       )}
 
+      {/* Filtro por status: A receber / Recebido / Vencido (além dos filtros globais de empresa/banco/período). */}
+      <div className="mb-4 flex flex-wrap items-center gap-1.5">
+        <span className="mr-1 text-[10px] font-black uppercase tracking-widest text-white/30">Status</span>
+        {STATUS_FILTROS.map((s) => (
+          <button
+            key={s}
+            onClick={() => setStatusFiltro(s)}
+            className={`rounded-full border px-3 py-1 text-[11px] font-bold transition-all active:scale-95 ${
+              statusFiltro === s
+                ? 'border-amber-400/60 bg-amber-500/20 text-amber-200 shadow-sm shadow-amber-500/10'
+                : 'border-white/10 bg-white/5 text-white/55 hover:border-white/20 hover:text-white/80'
+            }`}
+          >
+            {s}
+          </button>
+        ))}
+      </div>
+
       <DataTable
-        minWidth={1600}
+        minWidth={1700}
         head={<>
-          <Th>Origem</Th><Th>Empresa</Th><Th>Cliente</Th><Th>Referência</Th><Th>Original</Th><Th>Impostos</Th><Th>Líquido</Th>
+          <Th>Origem</Th><Th>Empresa</Th><Th>Cliente</Th><Th>Referência</Th><Th>Emissão NFe</Th><Th>Original</Th><Th>Impostos</Th><Th>Líquido</Th>
           <Th>Vencimento</Th><Th>Recebido?</Th><Th>Data receb.</Th><Th>Valor recebido</Th><Th>Banco</Th><Th>Status</Th><Th>Ação</Th>
         </>}
       >
         {rows.length === 0 ? (
-          <EmptyRow cols={14} text="Nenhuma conta a receber no período (emita uma NFe para gerar)" />
+          <EmptyRow cols={15} text="Nenhuma conta a receber no período (emita uma NFe para gerar)" />
         ) : rows.map((r) => {
           const st = status(r);
           const imp = impostosDoRegistro(r);
@@ -166,10 +189,13 @@ export function ContasReceberView() {
               <Td><CompanyTag empresa={String(r.empresa)} /></Td>
               <Td className="text-white">{r.cliente}</Td>
               <Td className="text-white/60">{r.referencia || '—'}</Td>
+              <Td className="text-white/60">{r.emissaoNfe ? br(r.emissaoNfe) : '—'}</Td>
               <Td>{money(num(r.valorOriginal ?? r.valor))}</Td>
-              <Td className={imp ? 'text-rose-300' : 'text-white/30'}>{imp ? `- ${money(imp.total)}` : '—'}</Td>
+              {/* !text-rose-300 / !text-white/30: a base text-white/80 do Td vence a cor condicional
+                  em especificidade igual no Tailwind v4 sem o modificador important. */}
+              <Td className={imp ? 'text-rose-300!' : 'text-white/30!'}>{imp ? `- ${money(imp.total)}` : '—'}</Td>
               <Td className="font-bold text-white">{money(num(r.valorLiquido ?? r.valor))}</Td>
-              <Td className={st === 'Vencido' ? 'font-bold text-rose-300' : ''}>{br(r.vencimentoRecebimento)}</Td>
+              <Td className={st === 'Vencido' ? 'font-bold text-rose-300!' : ''}>{br(r.vencimentoRecebimento)}</Td>
               <Td>{r.recebido ? 'Sim' : 'Não'}</Td>
               <Td>{r.dataRecebimento ? br(r.dataRecebimento) : '-'}</Td>
               <Td>{r.valorRecebido ? money(num(r.valorRecebido)) : '-'}</Td>
@@ -205,6 +231,7 @@ export function ContasReceberView() {
               <Field label="Cliente" span={8}><Input value={String(detalhe.cliente || '')} disabled /></Field>
               <Field label="Origem" span={4}><Input value={String(detalhe.origem || 'Manual')} disabled /></Field>
               <Field label="Referência" span={8}><Input value={String(detalhe.referencia || '—')} disabled /></Field>
+              <Field label="Emissão NFe" span={4}><Input value={detalhe.emissaoNfe ? br(detalhe.emissaoNfe) : '—'} disabled /></Field>
               <Field label="Vencimento" span={4}><Input value={br(detalhe.vencimentoRecebimento)} disabled /></Field>
               <Field label="Recebido?" span={4}><Input value={detalhe.recebido ? 'Sim' : 'Não'} disabled /></Field>
               <Field label="Banco" span={4}><Input value={String(detalhe.bancoRecebimento || '—')} disabled /></Field>

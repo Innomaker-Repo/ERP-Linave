@@ -4,7 +4,7 @@ import {
   House, Users, Anchor, ClipboardList,
   ShoppingCart, DollarSign, Settings, Factory,
   HeartHandshake, Clock, FileText, Zap, CheckCircle2, Trash2, LayoutGrid, Package2, History,
-  FilePlus, Banknote, ScrollText, Wallet, TrendingUp, Landmark, Ruler, UserCog, ShoppingBag
+  FilePlus, Banknote, ScrollText, Wallet, TrendingUp, Landmark, Ruler, UserCog, ShoppingBag, Building2
 } from 'lucide-react';
 
 /* =========================================================================================
@@ -115,6 +115,7 @@ export const DEPARTMENTS: NavDepartment[] = [
     icon: Settings,
     items: [
       { id: 'usuarios', label: 'Usuários & Acessos', icon: Users },
+      { id: 'empresasPrestadoras', label: 'Empresas Prestadoras', icon: Building2 },
       { id: 'logAtividades', label: 'Log de Atividades', icon: History },
       { id: 'meuPerfil', label: 'Meu Perfil', icon: UserCog },
     ]
@@ -135,8 +136,9 @@ export const hasAccess = (userSession: any, itemId: string): boolean => {
     return itemId !== 'meuPerfil';
   }
 
-  // Gerente/Usuário: sem acesso a gerenciamento de usuários nem log de atividades
-  if (itemId === 'usuarios' || itemId === 'logAtividades') return false;
+  // Gerente/Usuário: sem acesso a gerenciamento de usuários, log de atividades nem
+  // empresas prestadoras (renomear uma empresa é admin-only no backend também).
+  if (itemId === 'usuarios' || itemId === 'logAtividades' || itemId === 'empresasPrestadoras') return false;
 
   // Gerente: acesso a tudo mais; usa "Meu Perfil"
   if (role === 'GERENTE') return true;

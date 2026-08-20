@@ -1,7 +1,9 @@
 import React, { useMemo } from 'react';
 import { useErp } from '../context/ErpContext';
 import { DEPARTMENTS, hasAccess } from '../navigation';
-import { ShoppingCart, FilePlus, ArrowRight, Compass } from 'lucide-react';
+import { ShoppingCart, FilePlus, ArrowRight, Compass, ListChecks } from 'lucide-react';
+import { normalizeRequests, stageLabel, matchesSolicitante as matchesSolicitanteCompra } from '../components/modules/Compras/comprasLocal';
+import { matchesSolicitante as matchesSolicitanteFin, money, br } from '../components/modules/Financeiro/finData';
 
 /* =========================================================================================
  * HOME — primeira tela após o login, para TODOS os usuários.
@@ -28,8 +30,34 @@ function saudacaoPorHora(): string {
   return 'Boa noite';
 }
 
+type Tone = 'ok' | 'wait' | 'bad' | 'info';
+
+const TONE_CLASS: Record<Tone, string> = {
+  ok: 'border-emerald-500/30 bg-emerald-500/15 text-emerald-300',
+  wait: 'border-amber-500/30 bg-amber-500/15 text-amber-300',
+  bad: 'border-rose-500/30 bg-rose-500/15 text-rose-300',
+  info: 'border-sky-500/30 bg-sky-500/15 text-sky-300',
+};
+
+const toneDaSolicitacaoPagamento = (status: string): Tone =>
+  status === 'Aprovado' ? 'ok' : status === 'Reprovado' ? 'bad' : 'wait';
+
+const toneDoPedidoCompra = (stage: string): Tone =>
+  stage === 'COMPRADOS' ? 'ok' : stage === 'APROVACAO' ? 'info' : 'wait';
+
+interface MinhaSolicitacaoResumo {
+  id: string;
+  modulo: 'Compra' | 'Pagamento';
+  titulo: string;
+  subtitulo: string;
+  status: string;
+  tone: Tone;
+  data: string;
+  destino: string;
+}
+
 export function HomePage({ onNavigate }: HomePageProps) {
-  const { userSession } = useErp();
+  const { userSession, financeiro, compras } = useErp() as any;
 
   const primeiroNome = String(userSession?.nome || 'Usuário').trim().split(' ')[0];
   const role = String(userSession?.role || '').toUpperCase();
@@ -48,6 +76,48 @@ export function HomePage({ onNavigate }: HomePageProps) {
         .filter((dept) => dept.items.length > 0),
     [userSession],
   );
+
+  // "Minhas Solicitações": Compras (pedidos ainda no funil) + Solicitação de Pagamento do
+  // Financeiro, do usuário logado — juntas numa lista só, mais recentes primeiro.
+  const minhasSolicitacoes = useMemo<MinhaSolicitacaoResumo[]>(() => {
+    const pedidosCompra: MinhaSolicitacaoResumo[] = normalizeRequests(compras)
+      .filter((r) => matchesSolicitanteCompra(r, userSession))
+      .map((r) => {
+        const primeiroItem = r.itens?.[0];
+        const titulo = primeiroItem ? (primeiroItem.descricao || primeiroItem.nome || 'Item sem nome') : 'Requisição de compra';
+        const extras = (r.itens?.length || 0) > 1 ? ` +${r.itens.length - 1} item(ns)` : '';
+        return {
+          id: `compra-${r.id}`,
+          modulo: 'Compra' as const,
+          titulo: `${titulo}${extras}`,
+          subtitulo: r.centroCusto ? `OS: ${r.centroCusto}` : (r.departamento || ''),
+          status: stageLabel[r.stage] || r.stage,
+          tone: toneDoPedidoCompra(r.stage),
+          data: r.createdAt || r.updatedAt || '',
+          destino: 'minhasCompras',
+        };
+      });
+
+    const solicitacoesPagamento: MinhaSolicitacaoResumo[] = (Array.isArray(financeiro) ? financeiro : [])
+      .filter((r: any) => r?.tipo === 'solicitacao' && matchesSolicitanteFin(r, userSession))
+      .map((r: any) => {
+        const status = r.status || 'Aguardando aprovação';
+        return {
+          id: `pagamento-${r.id}`,
+          modulo: 'Pagamento' as const,
+          titulo: r.fornecedor || 'Solicitação de pagamento',
+          subtitulo: r.valor ? money(Number(r.valor) || 0) : '',
+          status,
+          tone: toneDaSolicitacaoPagamento(status),
+          data: r.createdAt || '',
+          destino: 'finSolicitacao',
+        };
+      });
+
+    return [...pedidosCompra, ...solicitacoesPagamento]
+      .sort((a, b) => String(b.data).localeCompare(String(a.data)))
+      .slice(0, 6);
+  }, [compras, financeiro, userSession]);
 
   const irPara = (section: string) => {
     window.dispatchEvent(new CustomEvent('fecharOrcamentoSolicitado'));
@@ -118,6 +188,43 @@ export function HomePage({ onNavigate }: HomePageProps) {
             </button>
           </div>
         </section>
+
+        {/* MINHAS SOLICITAÇÕES — Compras + Solicitação de Pagamento do usuário logado */}
+        {minhasSolicitacoes.length > 0 && (
+          <section className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-600">
+            <div className="flex items-center gap-2">
+              <ListChecks size={14} className="text-amber-500" />
+              <h2 className="text-amber-400 text-xs font-black uppercase tracking-[0.2em]">Minhas solicitações</h2>
+              <div className="flex-1 h-px bg-gradient-to-r from-white/10 to-transparent" />
+            </div>
+
+            <div className="rounded-3xl border border-white/5 bg-[#101f3d]/60 divide-y divide-white/5 overflow-hidden">
+              {minhasSolicitacoes.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => irPara(item.destino)}
+                  className="w-full flex items-center justify-between gap-4 px-5 py-4 text-left transition-colors hover:bg-white/5"
+                >
+                  <div className="min-w-0 flex items-center gap-3">
+                    <span className={`shrink-0 px-2 py-1 rounded-full border text-[9px] font-black uppercase tracking-widest ${item.modulo === 'Compra' ? 'border-amber-500/30 bg-amber-500/10 text-amber-300' : 'border-sky-500/30 bg-sky-500/10 text-sky-300'}`}>
+                      {item.modulo}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-white text-sm font-bold truncate">{item.titulo}</p>
+                      {item.subtitulo && <p className="text-white/40 text-xs truncate">{item.subtitulo}</p>}
+                    </div>
+                  </div>
+                  <div className="shrink-0 flex items-center gap-3">
+                    <span className="text-white/30 text-[10px] hidden sm:inline">{item.data ? br(item.data.slice(0, 10)) : ''}</span>
+                    <span className={`px-2.5 py-1 rounded-full border text-[10px] font-black uppercase tracking-widest ${TONE_CLASS[item.tone]}`}>
+                      {item.status}
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* SEUS ACESSOS — tudo que o usuário pode abrir, agrupado por departamento */}
         <section className="space-y-4 animate-in fade-in slide-in-from-bottom-3 duration-700">

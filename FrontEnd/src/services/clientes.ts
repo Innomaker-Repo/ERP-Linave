@@ -136,6 +136,16 @@ export const deleteCliente = async (clienteId: string) => {
 };
 
 /**
+ * Renomeia um cliente em cascata: reescreve a razão social antiga em todas as medições
+ * já criadas no backend (Negócio/OS/Orçamento/Proposta referenciam o cliente por FK e já
+ * acompanham a edição sozinhos — ver docstring da view no backend).
+ */
+export const renomearClienteCascata = async (de: string, para: string) => {
+  const response = await api.post('clientes/renomear/', { de, para });
+  return response.data as { medicoes_atualizadas: number };
+};
+
+/**
  * Sincroniza clientes locais com o backend
  * Cria ou atualiza clientes que ainda não existem no backend
  */

@@ -259,3 +259,10 @@ export const createOrcamento = async (payload: OrcamentoPayload) => {
   const response = await api.post('orcamentos/criar/', payload);
   return response.data;
 };
+
+// Renomeia uma empresa prestadora em cascata: reescreve o nome antigo em todos os
+// negócios e medições já criados no backend (ver docstring da view no backend).
+export const renomearEmpresaPrestadora = async (de: string, para: string) => {
+  const response = await api.post('empresas-prestadoras/renomear/', { de, para });
+  return response.data as { negocios_atualizados: number; medicoes_atualizadas: number };
+};

@@ -199,7 +199,7 @@ export function ReciboLocacaoView() {
         valorOriginal: total,
         valorLiquido: total,
         vencimento: recEmitido.dataVencimento,
-        referencia: `Rec.Loc. ${recEmitido.numero}`,
+        referencia: `${isLinaveEmpresa(recEmitido.empresa) ? 'N/D' : 'R/L'} ${recEmitido.numero}`,
       });
     }
     await saveEntity('financeiro', next);

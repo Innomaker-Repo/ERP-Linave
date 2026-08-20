@@ -348,6 +348,44 @@ const listarItensASerIncluido = (aSerIncluido: OsFormData['aSerIncluido']): stri
     .map((item) => item.label as string)
     .concat((aSerIncluido.extras || []).map((e) => String(e.label || '').trim()).filter(Boolean));
 
+// Mapa disciplina (chave fixa do H/H da OS) -> nomes de função reconhecidos no orçamento
+// (já sem acento/caixa, comparação normalizada). Função que não bater com nenhuma entra
+// como H/H customizável (maoObra.extras), então nada da mão de obra orçada se perde.
+const DISCIPLINAS_HH = {
+  estrutura: ['estrutura'],
+  tubulacao: ['tubulacao', 'tubulação'],
+  andaimes: ['andaimes', 'andaime'],
+  mecanica: ['mecanica', 'mecanico', 'mecânica', 'mecânico'],
+  pintura: ['pintura', 'pintor'],
+  eletrica: ['eletrica', 'eletricista', 'elétrica'],
+  cq: ['cq', 'controle de qualidade', 'qualidade'],
+  sms: ['sms', 'seguranca', 'segurança'],
+};
+
+const normalizarTexto = (v: string): string =>
+  String(v || '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+// Converte a mão de obra do orçamento (por função: quantidade x dias) em H/H da OS,
+// somando por disciplina (jornada padrão de 8h) e jogando o que não reconhece em "extras".
+const gerarSeedMaoObraDoOrcamento = (maoDeObraOrcamento: Array<{ funcao: string; quantidade: string; dias: string }>): OsFormData['maoObra'] => {
+  const seed = { estrutura: 0, tubulacao: 0, andaimes: 0, mecanica: 0, pintura: 0, eletrica: 0, cq: 0, sms: 0 } as Record<keyof typeof DISCIPLINAS_HH, number>;
+  const extras: Array<{ id: string; nome: string; hora: number }> = [];
+
+  (maoDeObraOrcamento || []).forEach((item, index) => {
+    const horas = (Number(item.quantidade) || 0) * (Number(item.dias) || 0) * 8;
+    if (horas <= 0) return;
+    const nomeNormalizado = normalizarTexto(item.funcao);
+    const disciplina = (Object.keys(DISCIPLINAS_HH) as Array<keyof typeof DISCIPLINAS_HH>).find((key) => DISCIPLINAS_HH[key].includes(nomeNormalizado));
+    if (disciplina) {
+      seed[disciplina] += horas;
+    } else {
+      extras.push({ id: `hh-orcamento-${Date.now()}-${index}`, nome: item.funcao, hora: horas });
+    }
+  });
+
+  return { ...seed, extras };
+};
+
 const criarInitialOsData = (): OsFormData => ({
   id: '',
   obraId: '',
@@ -704,6 +742,11 @@ export function OsView({ searchQuery }: OSViewProps) {
     const totalDiasSeed = somarDiasDoOrcamento(resumoConsolidado.orcamento);
     setDiasPrevistos(totalDiasSeed);
 
+    // Puxa o H/H (mão de obra) do orçamento aprovado: quantidade x dias x jornada de 8h,
+    // somado por disciplina reconhecida; função que não bate com nenhuma disciplina fixa
+    // entra como H/H customizável, então nada do que foi orçado fica de fora da OS.
+    const maoObraSeed = gerarSeedMaoObraDoOrcamento(resumoConsolidado.orcamento.maoDeObra);
+
     setFormData((prev) => ({
       ...prev,
       obraId: obra.id,
@@ -721,6 +764,7 @@ export function OsView({ searchQuery }: OSViewProps) {
         servico: servico.tipo || servico.descricao || `Serviço ${index + 1}`,
         hora: 0
       })),
+      maoObra: maoObraSeed,
       resumoConsolidado
     }));
   };

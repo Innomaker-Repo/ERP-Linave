@@ -259,6 +259,57 @@ class NegocioViewSet(LogMixin, viewsets.ModelViewSet):
 
         return Response(serializer.data)
     
+# Renomeia uma empresa prestadora (Linave/Servinave/...) em cascata: atualiza de uma vez
+# TODOS os negócios e medições já criados que guardam o nome antigo (são campos de texto
+# copiados na criação, não uma referência a um cadastro central — por isso precisam ser
+# reescritos explicitamente aqui). Ordem de Serviço e Orçamento/Proposta não têm campo de
+# empresa próprio: eles exibem a empresa lendo do negócio vinculado, então já acompanham
+# a mudança sem precisar de nenhum update adicional.
+@api_view(['POST'])
+@permission_classes([IsAdmin])
+def renomear_empresa_prestadora(request):
+    de = str(request.data.get('de') or '').strip()
+    para = str(request.data.get('para') or '').strip()
+    if not de or not para:
+        return Response({'error': 'Informe "de" e "para".'}, status=status.HTTP_400_BAD_REQUEST)
+    if de == para:
+        return Response({'negocios_atualizados': 0, 'medicoes_atualizadas': 0})
+
+    with transaction.atomic():
+        negocios_atualizados = Negocio.objects.filter(empresa_prestadora=de).update(empresa_prestadora=para)
+        medicoes_atualizadas = Medicao.objects.filter(empresa=de).update(empresa=para)
+
+    _registrar_log(
+        request, 'atualizacao', 'Empresas Prestadoras',
+        f'Renomeada "{de}" -> "{para}" ({negocios_atualizados} negócio(s), {medicoes_atualizadas} medição(ões))',
+    )
+    return Response({'negocios_atualizados': negocios_atualizados, 'medicoes_atualizadas': medicoes_atualizadas})
+
+
+# Renomeia (razão social) um cliente em cascata. Negócio, Ordem de Serviço, Orçamento
+# (Levantamento) e Proposta referenciam o Cliente por chave estrangeira — ao editar o
+# cliente direto (PATCH /clientes/<id>/) eles já mostram o nome novo sozinhos, sem
+# precisar de nada aqui. Só a Medição guarda o nome do cliente copiado como texto.
+@api_view(['POST'])
+@permission_classes([permissao_modulo(*COMERCIAL, *FINANCEIRO)])
+def renomear_cliente(request):
+    de = str(request.data.get('de') or '').strip()
+    para = str(request.data.get('para') or '').strip()
+    if not de or not para:
+        return Response({'error': 'Informe "de" e "para".'}, status=status.HTTP_400_BAD_REQUEST)
+    if de == para:
+        return Response({'medicoes_atualizadas': 0})
+
+    with transaction.atomic():
+        medicoes_atualizadas = Medicao.objects.filter(cliente=de).update(cliente=para)
+
+    _registrar_log(
+        request, 'atualizacao', 'Clientes',
+        f'Cliente renomeado "{de}" -> "{para}" ({medicoes_atualizadas} medição(ões))',
+    )
+    return Response({'medicoes_atualizadas': medicoes_atualizadas})
+
+
 #ORÇAMENTOS
 # --- Funções Customizadas ---
 @api_view(['POST'])

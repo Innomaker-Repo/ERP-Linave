@@ -1801,11 +1801,11 @@ export function PropostaView() {
           </div>
           <div className="space-y-1.5">
             <label className={labelClass}>Nº Proposta</label>
-            <input 
+            <input
               type="text"
-              className={`${inputClass} bg-white/5 cursor-not-allowed`}
-              disabled
+              className={inputClass}
               value={propostaForm.numeroProposta}
+              onChange={e => setPropostaForm({...propostaForm, numeroProposta: e.target.value})}
             />
           </div>
         </div>

@@ -102,10 +102,18 @@ export interface Banco {
   pix: string;
 }
 
+// Rótulo do banco nos menus suspensos: "Itaú - Linave". Usado em todo lugar que lista
+// bancos pra escolher (filtros, pagamento, recebimento) — o valor selecionado continua
+// sendo só o nome do banco, isso é só o texto exibido na opção.
+export const bancoLabel = (b: { nome?: string; empresa?: string }): string =>
+  b?.empresa ? `${b.nome} - ${b.empresa}` : String(b?.nome || '');
+
 export interface Solicitacao {
   id: string;
   empresa: Empresa;
   solicitante: string;
+  solicitanteCpf?: string;
+  solicitanteEmail?: string;
   tipo: string;
   vinculoTipo: 'OS' | 'Departamento';
   vinculoValor: string;
@@ -118,7 +126,27 @@ export interface Solicitacao {
   status: string;
   descricao: string;
   anexos: string[];
+  motivoReprovacao?: string;
 }
+
+// Identifica se o registro (solicitação, requisição etc.) foi criado pelo usuário logado.
+// Confere primeiro por CPF/e-mail (estável mesmo se o nome digitado mudar); cai para o nome
+// em texto livre só quando não há esses campos (registros antigos, sem vínculo de usuário).
+export const matchesSolicitante = (
+  record: { solicitante?: string; solicitanteCpf?: string; solicitanteEmail?: string },
+  session: { cpf?: string; email?: string; nome?: string; username?: string } | null | undefined,
+): boolean => {
+  if (!session) return false;
+  const norm = (v?: string) => String(v || '').trim().toLowerCase();
+  const cpf = norm(session.cpf);
+  const email = norm(session.email);
+  const nome = norm(session.nome || session.username);
+  if (cpf && norm(record.solicitanteCpf) === cpf) return true;
+  if (email && norm(record.solicitanteEmail) === email) return true;
+  const s = norm(record.solicitante);
+  if (!s) return false;
+  return (!!nome && s === nome) || (!!email && s === email);
+};
 
 export interface ContaPagar {
   id: string;
@@ -365,7 +393,7 @@ export const mapOsToFinanceiro = (os: any, obra?: any): OS => {
 export const negocioValor = (obra: any): number => orcamentoValor(obra);
 
 // ---------- NFe: impostos e cálculo de líquido ----------
-export const TAX_DEFAULTS = { cofins: 3, csll: 1, inss: 0, ir: 1.5, pis: 0.0065, iss: 5 };
+export const TAX_DEFAULTS = { cofins: 3, csll: 1, inss: 5.5, ir: 1.5, pis: 0.65, iss: 0 };
 
 export const calcNfeLiquido = (original: number, taxes: Record<string, number>): number => {
   const totalImpostos = Object.values(taxes).reduce((s, p) => s + tax(original, p), 0);
@@ -552,6 +580,7 @@ export interface AporteReceber {
   referencia?: string;
   baixado?: number;          // valor já recebido na emissão (NFe); semeia o recebimento na criação
   impostos?: ImpostosNfe;    // detalhamento retido na NF que originou este aporte
+  emissao?: string;          // data de emissão da NFe (origem 'NFe'), exibida em Contas a Receber
 }
 
 const _maxData = (a?: string, b?: string): string => {
@@ -572,6 +601,7 @@ export const upsertContaReceberPorMedicao = (financeiro: any[], aporte: AporteRe
     vencimento: aporte.vencimento || '',
     referencia: aporte.referencia || '',
     impostos: aporte.impostos || null,
+    emissao: aporte.emissao || '',
   };
 
   // Reconstrói o recebível a partir das suas fontes (soma valores, vencimento = o mais distante).
@@ -591,6 +621,9 @@ export const upsertContaReceberPorMedicao = (financeiro: any[], aporte: AporteRe
       // Fica no recebível para a tela e o CSV não precisarem voltar na NFe de origem.
       impostos: somarImpostos(fontes.map((f) => f.impostos)),
       vencimentoRecebimento: fontes.reduce((v, f) => _maxData(v, f.vencimento), ''),
+      // Data de emissão da NFe que originou o recebível (fonte 'NFe' especificamente —
+      // o recibo de locação não tem emissão de nota própria neste fluxo).
+      emissaoNfe: fontes.find((f) => f.origem === 'NFe')?.emissao || base?.emissaoNfe || '',
       // Recebível já existia → preserva o recebimento (manual ou anterior). Novo → semeia do `baixado`.
       recebido: base ? (base.recebido ?? false) : (baixado > 0 && baixado >= valorLiquido),
       dataRecebimento: base?.dataRecebimento ?? '',
@@ -716,6 +749,29 @@ export const documentoDuplicado = (
     normTxt(r.fornecedor) === forn &&
     normTxt(r.documento) === doc,
   );
+};
+
+// Mesma regra do documento duplicado, mas para o momento da SOLICITAÇÃO de pagamento — o
+// bloqueio precisa acontecer aqui também, senão duas solicitações da mesma nota podem ser
+// aprovadas em paralelo e virar duas Contas a Pagar (pagamento em duplicidade). Considera:
+// - outra solicitação ainda ativa (Aguardando aprovação/Aprovado) com o mesmo fornecedor+documento
+//   — uma Reprovada não conta, porque o próprio reenvio dela passa pelo mesmo id (selfId);
+// - uma Conta a Pagar já existente para esse fornecedor+documento (ex.: lançada direto, sem
+//   passar por solicitação).
+export const solicitacaoDuplicada = (
+  records: Array<{ id?: string; tipo?: string; status?: string; fornecedor?: string; documento?: string }>,
+  args: { fornecedor: string; documento: string; selfId?: string | null },
+): boolean => {
+  const doc = normTxt(args.documento);
+  const forn = normTxt(args.fornecedor);
+  if (!doc || !forn) return false; // sem documento ou sem fornecedor → nada a validar
+
+  return records.some((r) => {
+    if (!r?.id || r.id === args.selfId) return false;
+    if (normTxt(r.fornecedor) !== forn || normTxt(r.documento) !== doc) return false;
+    if (r.tipo === 'solicitacao') return r.status !== 'Reprovado';
+    return r.tipo === 'contaPagar';
+  });
 };
 
 export const buildContasPagar = (
@@ -910,14 +966,16 @@ const montarOcorrenciaDaRegra = (fixa: any, vencimento: string) => ({
   createdAt: new Date().toISOString(),
 });
 
-// Cópia da ocorrência PAGA para a competência seguinte. Copia o que é da conta (valor,
-// fornecedor, natureza, banco, forma — inclusive ajustes que o usuário fez naquele mês) e
-// zera o que pertence só àquele pagamento: documento, anexo, comprovante, juros e datas.
+// Cópia da ocorrência PAGA para a competência seguinte. Copia o que é da conta (fornecedor,
+// natureza, banco, forma) e zera o que pertence só àquele pagamento ou varia mês a mês:
+// valor, documento, anexo, comprovante, juros e datas — a nova competência nasce em aberto,
+// sem repetir o valor pago na anterior (contas como água/luz variam de mês para mês).
 const copiarOcorrencia = (base: any, fixa: any, vencimento: string) => ({
   ...base,
   id: idOcorrenciaFixa(fixa.id, vencimento),
   vencimento,
   status: CP_STATUS.aberto,
+  valor: 0,
   // Nasce sempre como conta única: se a anterior tinha sido parcelada, a nova não herda
   // o vínculo de mãe/filha, que pertencia àquela competência.
   type: 'single',
