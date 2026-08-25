@@ -8,6 +8,7 @@
  * =======================================================================================*/
 import { useMemo } from 'react';
 import { useErp } from '../../../context/ErpContext';
+import { getFinanceiro } from '../../../../services/financeiroService';
 import {
   mapOsToFinanceiro, obraFinalizada, docsMediacao, negocioValor, empresaFromCC, todayStr, days, num,
   upsertContaReceberPorMedicao, garantirOcorrenciasContasFixas, proximaOcorrenciaAposPagamento, CP_STATUS,
@@ -141,9 +142,25 @@ export function useFin() {
   }, [ctx.obras, ctx.os, financeiro]);
 
   // ----- Escrita (infra pronta) -----
+  // Toda escrita aqui é replace-all: o array final substitui a tabela inteira no servidor.
+  // `financeiro` (acima) é só o que foi carregado no LOGIN — se o usuário está logado há
+  // horas, pode estar bem atrás do que outros usuários já gravaram nesse meio-tempo. Usar
+  // essa cópia como base apagaria silenciosamente as mudanças deles. Por isso toda função
+  // de escrita busca o estado mais recente do servidor primeiro, e só then monta o array
+  // final em cima dele — reduz a janela de corrida de "desde o login" pra "essa ação".
+  const financeiroAtual = async (): Promise<FinRecord[]> => {
+    try {
+      const fresh = await getFinanceiro();
+      return Array.isArray(fresh) ? fresh : financeiro;
+    } catch {
+      return financeiro;
+    }
+  };
+
   // Acrescenta um registro à coleção `financeiro`.
   const addRecord = async (record: FinRecord) => {
-    const next = [{ ...record, createdAt: new Date().toISOString() }, ...financeiro];
+    const base = await financeiroAtual();
+    const next = [{ ...record, createdAt: new Date().toISOString() }, ...base];
     await ctx.saveEntity('financeiro', next);
   };
 
@@ -156,7 +173,8 @@ export function useFin() {
 
   // Atualiza registros financeiros por função de mapeamento.
   const updateRecords = async (mapFn: (r: FinRecord) => FinRecord) => {
-    const next = financeiro.map(mapFn);
+    const base = await financeiroAtual();
+    const next = base.map(mapFn);
     await ctx.saveEntity('financeiro', next);
   };
 
@@ -170,9 +188,10 @@ export function useFin() {
   // na tela e ainda somando no total. A confirmação é responsabilidade de quem chama
   // (todas as telas usam confirmDialog antes).
   const deleteRecord = async (id: string) => {
-    const alvo = financeiro.find((r) => r.id === id);
+    const base = await financeiroAtual();
+    const alvo = base.find((r) => r.id === id);
     if (!alvo) return;
-    const next = financeiro.filter((r) => r.id !== id && !(alvo.type === 'parent' && r.parentId === id));
+    const next = base.filter((r) => r.id !== id && !(alvo.type === 'parent' && r.parentId === id));
     await ctx.saveEntity('financeiro', next);
   };
 
@@ -186,7 +205,8 @@ export function useFin() {
   // Aprova uma solicitação: marca como aprovada e cria a Conta a Pagar correspondente
   // (numa única escrita, para o estado ficar consistente).
   const approveSolicitacao = async (id: string) => {
-    const sol = financeiro.find((r) => r.id === id);
+    const base = await financeiroAtual();
+    const sol = base.find((r) => r.id === id);
     if (!sol) return;
     const now = new Date().toISOString();
     const contaPagar: FinRecord = {
@@ -217,7 +237,7 @@ export function useFin() {
       comprovantes: [],
       createdAt: now,
     };
-    const next = financeiro.map((r) => (r.id === id ? { ...r, status: 'Aprovado' } : r));
+    const next = base.map((r) => (r.id === id ? { ...r, status: 'Aprovado' } : r));
     await ctx.saveEntity('financeiro', [contaPagar, ...next]);
   };
 
@@ -247,7 +267,8 @@ export function useFin() {
   const atualizarNfeEmitida = async (nfeId: string, patch: { numero?: string; emissao?: string }) => {
     const numero = String(patch.numero ?? '').trim();
     const referencia = referenciaNfe(numero);
-    const next = financeiro.map((r) => {
+    const base = await financeiroAtual();
+    const next = base.map((r) => {
       if (r.id === nfeId && r.tipo === 'nfe') {
         return { ...r, numero, ...(patch.emissao ? { emissao: patch.emissao } : {}) };
       }
@@ -298,7 +319,8 @@ export function useFin() {
     };
     // A conta a receber da parte de SERVIÇO é mesclada por medição: se o recibo de locação da
     // mesma medição já criou (ou criar depois) um recebível, os dois somam num só.
-    const next = upsertContaReceberPorMedicao([nfe, ...financeiro], {
+    const base = await financeiroAtual();
+    const next = upsertContaReceberPorMedicao([nfe, ...base], {
       medicaoId: sol.medicaoId || '',
       medicaoNumero: sol.medicaoNumero || '',
       ordemServicoNumero: sol.os || '',
@@ -320,11 +342,12 @@ export function useFin() {
   // Parcela uma conta a pagar: cria a conta mãe (valor total) e as parcelas filhas
   // (cada uma com vencimento, valor e status próprios) — numa única escrita.
   const parcelarConta = async (id: string, nParcelas: number, intervaloDias: number, dataInicio?: string) => {
-    const src = financeiro.find((r) => r.id === id);
+    const listaAtual = await financeiroAtual();
+    const src = listaAtual.find((r) => r.id === id);
     if (!src) return;
     const n = Math.max(2, Math.floor(nParcelas));
     const parentId = src.id;
-    const resto = financeiro.filter((r) => r.id !== parentId && r.parentId !== parentId);
+    const resto = listaAtual.filter((r) => r.id !== parentId && r.parentId !== parentId);
     const total = num(src.valor);
     const base = Math.floor((total / n) * 100) / 100;
     const sobra = Math.round((total - base * n) * 100) / 100;
@@ -357,8 +380,9 @@ export function useFin() {
     id: string,
     p: { dataPagamento: string; valorPago: number; banco: string; houveJuros: boolean; jurosPago: number; motivoJuros: string; comprovantes: string[] },
   ) => {
+    const listaAtual = await financeiroAtual();
     let parentId: string | null = null;
-    let next = financeiro.map((r) => {
+    let next = listaAtual.map((r) => {
       if (r.id !== id) return r;
       parentId = r.parentId || null;
       return {
@@ -406,9 +430,10 @@ export function useFin() {
   // e para retomar o encadeamento quando a última ocorrência sumiu (pausa, exclusão).
   // Só escreve quando há algo novo — chamada na abertura da tela de Contas a Pagar.
   const sincronizarContasFixas = async (): Promise<number> => {
-    const novas = garantirOcorrenciasContasFixas(financeiro);
+    const listaAtual = await financeiroAtual();
+    const novas = garantirOcorrenciasContasFixas(listaAtual);
     if (novas.length === 0) return 0;
-    await ctx.saveEntity('financeiro', [...novas, ...financeiro]);
+    await ctx.saveEntity('financeiro', [...novas, ...listaAtual]);
     return novas.length;
   };
 
@@ -416,10 +441,11 @@ export function useFin() {
   // futuras ainda não pagas (mudou o valor da luz? o mês que vem já sai corrigido), mas
   // nunca para as pagas nem para as vencidas — isso reescreveria histórico financeiro.
   const salvarContaFixa = async (regra: FinRecord) => {
-    const existe = financeiro.some((r) => r.id === regra.id);
+    const listaAtual = await financeiroAtual();
+    const existe = listaAtual.some((r) => r.id === regra.id);
     const base = existe
-      ? financeiro.map((r) => (r.id === regra.id ? { ...r, ...regra } : r))
-      : [{ ...regra, createdAt: new Date().toISOString() }, ...financeiro];
+      ? listaAtual.map((r) => (r.id === regra.id ? { ...r, ...regra } : r))
+      : [{ ...regra, createdAt: new Date().toISOString() }, ...listaAtual];
 
     const next = base.map((r) => {
       const alvo = r.tipo === 'contaPagar'
@@ -447,7 +473,8 @@ export function useFin() {
   // Exclui a regra e as ocorrências futuras não pagas que ela havia gerado. As ocorrências
   // já pagas (e as vencidas) permanecem: são histórico financeiro, não configuração.
   const excluirContaFixa = async (id: string) => {
-    const next = financeiro.filter((r) => {
+    const listaAtual = await financeiroAtual();
+    const next = listaAtual.filter((r) => {
       if (r.id === id) return false;
       const futuraNaoPaga = r.tipo === 'contaPagar'
         && r.contaFixaId === id
@@ -474,6 +501,8 @@ export function useFin() {
     // leitura
     oss, empresas, departamentos, fornecedores, clientes, financeiro, records, nfeSolicitacoes,
     userSession: ctx.userSession,
+    pendingEditSolicitacaoId: ctx.pendingEditSolicitacaoId,
+    setPendingEditSolicitacaoId: ctx.setPendingEditSolicitacaoId,
     // escrita
     addRecord, addSolicitacao, updateRecords, updateRecord, deleteRecord, contarDependentes,
     addDepartamento, approveSolicitacao, rejectSolicitacao, reenviarSolicitacao, emitirNfe, atualizarNfeEmitida,

@@ -40,7 +40,8 @@ const stateTone = (state: string) =>
 
 export function MinhasComprasView({ searchQuery }: MinhasComprasViewProps) {
   const { compras, comprasHistorico, userSession } = useErp() as any;
-  const isAdmin = String(userSession?.role || '').toUpperCase() === 'ADMIN';
+  // Admin e gerente veem o histórico de todos; colaborador comum só o próprio.
+  const isAdmin = ['ADMIN', 'GERENTE'].includes(String(userSession?.role || '').toUpperCase());
 
   const [filtro, setFiltro] = useState(searchQuery || '');
   const [solicitanteFiltro, setSolicitanteFiltro] = useState(''); // só admin
@@ -120,7 +121,7 @@ export function MinhasComprasView({ searchQuery }: MinhasComprasViewProps) {
         </h1>
         <p className="text-white/50 text-sm">
           Acompanhe suas solicitações, as compras em andamento e o estado de cada item — do pedido à conclusão.
-          {isAdmin && <span className="text-white/40"> Como administrador, você vê as compras de todos e pode filtrar por usuário.</span>}
+          {isAdmin && <span className="text-white/40"> Como {String(userSession?.role || '').toUpperCase() === 'ADMIN' ? 'administrador' : 'gerente'}, você vê as compras de todos e pode filtrar por usuário.</span>}
         </p>
       </div>
 

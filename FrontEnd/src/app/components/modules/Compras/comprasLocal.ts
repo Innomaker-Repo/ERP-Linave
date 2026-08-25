@@ -332,6 +332,11 @@ export interface CompraHistoricoRegistro {
   nfeNumero?: string;
   nfeAnexos?: string[];
   contaPagarId?: string;
+  // Número do Pedido de Compra (PC-0001...) gerado automaticamente ao aprovar a solicitação,
+  // agrupando os itens por fornecedor selecionado. Ausente nos registros do fluxo manual antigo
+  // (marcar item a item como comprado) — esses continuam existindo como exceção/ajuste pontual.
+  pedidoCompraNumero?: string;
+  fornecedorCnpj?: string;
   compradoEm: string;
   compradoPor: string;
   estoqueOkEm?: string;
@@ -349,6 +354,8 @@ export const buildHistoricoRecord = (
   detail: QuoteItem | null,
   userLabel: string,
   contaPagarId?: string,
+  pedidoCompraNumero?: string,
+  fornecedorCnpj?: string,
 ): CompraHistoricoRegistro => {
   const isItem = (detail?.naturezaFornecimento || item.naturezaFornecimento) === 'ITEM';
 
@@ -374,9 +381,98 @@ export const buildHistoricoRecord = (
     purchaseState: isItem ? 'comprado' : 'contratado',
     nfeStatus: 'pendente',
     contaPagarId,
+    pedidoCompraNumero,
+    fornecedorCnpj,
     compradoEm: new Date().toISOString(),
     compradoPor: userLabel,
   };
+};
+
+// ---------------------------------------------------------------------------
+// Pedido de Compra — gerado automaticamente na aprovação, agrupando os itens
+// da solicitação por fornecedor selecionado na cotação (1 Pedido de Compra por
+// fornecedor). Não é uma entidade própria no backend: é uma VIEW derivada dos
+// registros de CompraHistoricoRegistro que compartilham o mesmo `pedidoCompraNumero`.
+// ---------------------------------------------------------------------------
+export interface PedidoCompraItemResumo {
+  itemId: string;
+  nome: string;
+  descricao: string;
+  qtd: number;
+  un: string;
+  valorUnitario: number;
+  valorTotal: number;
+}
+
+export interface PedidoCompraResumo {
+  numero: string;
+  solicitacaoId: string;
+  centroCusto: string;
+  solicitante: string;
+  departamento: string;
+  fornecedor: string;
+  fornecedorCnpj: string;
+  itens: PedidoCompraItemResumo[];
+  valorTotal: number;
+  prazoEntrega: string;
+  condicaoPagamento: string;
+  observacoes: string;
+  data: string;
+}
+
+// Maior sequência de Pedido de Compra já usada (formato "PC-0001"), para calcular o próximo
+// número. Varre o histórico completo — cada Pedido de Compra novo soma 1 a partir daqui.
+export const parsePedidoCompraSeq = (registros: CompraHistoricoRegistro[]): number => {
+  let max = 0;
+  for (const r of registros || []) {
+    const m = /^PC-(\d+)$/.exec(String((r as any)?.pedidoCompraNumero || ''));
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return max;
+};
+
+export const formatPedidoCompraNumero = (seq: number) => `PC-${String(seq).padStart(4, '0')}`;
+
+// Reagrupa registros de histórico (já persistidos) por Pedido de Compra, para reexibir/rebaixar
+// o documento depois. Registros do fluxo manual antigo (sem pedidoCompraNumero) não entram aqui.
+export const agruparPorPedidoCompra = (registros: CompraHistoricoRegistro[]): PedidoCompraResumo[] => {
+  const map = new Map<string, PedidoCompraResumo>();
+  for (const r of registros || []) {
+    const numero = (r as any).pedidoCompraNumero;
+    if (!numero) continue;
+
+    if (!map.has(numero)) {
+      map.set(numero, {
+        numero,
+        solicitacaoId: r.pedidoId,
+        centroCusto: r.centroCusto,
+        solicitante: r.solicitante,
+        departamento: r.departamento,
+        fornecedor: r.fornecedor,
+        fornecedorCnpj: (r as any).fornecedorCnpj || '',
+        itens: [],
+        valorTotal: 0,
+        prazoEntrega: r.prazoEntrega,
+        condicaoPagamento: r.condicaoPagamento,
+        observacoes: '',
+        data: r.compradoEm,
+      });
+    }
+
+    const pedido = map.get(numero)!;
+    const valorTotalItem = r.valor || 0;
+    pedido.itens.push({
+      itemId: r.itemId,
+      nome: r.itemNome,
+      descricao: r.itemDescricao,
+      qtd: r.qtd,
+      un: r.un,
+      valorUnitario: r.qtd > 0 ? valorTotalItem / r.qtd : valorTotalItem,
+      valorTotal: valorTotalItem,
+    });
+    pedido.valorTotal += valorTotalItem;
+  }
+  return Array.from(map.values()).sort((a, b) => b.numero.localeCompare(a.numero));
 };
 
 // Rótulo da etapa do pedido no funil de compras (usado no histórico por usuário).

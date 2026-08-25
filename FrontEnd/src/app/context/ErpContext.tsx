@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { getClientes, createCliente, updateCliente, deleteCliente as deleteClienteApi, getNegocios, getOrdensServico } from '../../services/comercialService';
 import { mapNegociosToObras, mapOrdensToOs } from '../../services/obrasMapper';
+import { pularNumerosReservados } from '../../services/numeroSequencial';
 import { getFornecedores, createFornecedor, updateFornecedor, deleteFornecedor as deleteFornecedorApi } from '../../services/fornecedoresService';
 import { getFinanceiro, syncFinanceiro, criarSolicitacaoPagamento } from '../../services/financeiroService';
 import { getCompras, syncCompras, syncComprasHistorico } from '../../services/comprasService';
@@ -100,7 +101,8 @@ export const gerarIdProjetoDeNegocio = (negocio: any): string => {
   const idNumerico = [negocio?.negocioBackendId, negocio?.backendId, negocio?.id]
     .find((valor) => valor !== null && valor !== undefined && /^\d+$/.test(String(valor)));
   const empresa = negocio?.empresa_prestadora ?? negocio?.empresaPrestadora;
-  return gerarIdProjeto(getPrefixoEmpresa(empresa), String(idNumerico ?? '').padStart(4, '0'));
+  const numeroAjustado = idNumerico !== undefined ? pularNumerosReservados(Number(idNumerico)) : '';
+  return gerarIdProjeto(getPrefixoEmpresa(empresa), String(numeroAjustado).padStart(4, '0'));
 };
 // ------------------------------------------
 
@@ -974,6 +976,8 @@ interface ErpContextData {
   deleteFornecedor: (id: any) => Promise<void>;
   refreshMedicoes: () => Promise<any[]>;
   uploadFileToDrive: (file: File) => Promise<string | null>;
+  pendingEditSolicitacaoId: string | null;
+  setPendingEditSolicitacaoId: (id: string | null) => void;
 }
 
 const ErpContext = createContext<ErpContextData>({} as ErpContextData);
@@ -990,6 +994,11 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const [data, setData] = useState<any>(() => createInitialData(null));
+
+  // Sinal leve pra "Meus Pagamentos" (lista) mandar a Solicitação de Pagamento (formulário)
+  // abrir direto em modo edição depois de navegar pra lá — evita ida e volta de estado
+  // via eventos com timing incerto entre telas que vivem em módulos diferentes.
+  const [pendingEditSolicitacaoId, setPendingEditSolicitacaoId] = useState<string | null>(null);
 
   // Se há uma sessão salva mas o access token sumiu, tenta renová-lo via
   // refresh token (válido por 30 dias). Só força logout se AMBOS falharem.
@@ -1074,6 +1083,24 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     return () => {
       mounted = false;
     };
+  }, [userSession?.email]);
+
+  // `financeiro` só era buscado uma vez, no login — quem ficasse com a aba aberta via
+  // sempre a mesma foto (de horas atrás), mesmo com outros usuários aprovando/pagando/
+  // criando solicitações nesse meio-tempo. Ao voltar pra aba, busca o estado mais recente
+  // sem exigir F5. Não precisa de polling constante: focus já cobre o caso comum (trocou
+  // de aba/app e voltou).
+  useEffect(() => {
+    if (!userSession) return;
+    const atualizarFinanceiro = () => {
+      getFinanceiro()
+        .then((fresh) => {
+          if (Array.isArray(fresh)) setData((prev: any) => ({ ...prev, financeiro: fresh }));
+        })
+        .catch(() => { /* mantém o que já está em memória se a busca falhar */ });
+    };
+    window.addEventListener('focus', atualizarFinanceiro);
+    return () => window.removeEventListener('focus', atualizarFinanceiro);
   }, [userSession?.email]);
 
   const showTestAlert = (operacao: string) => {
@@ -1314,7 +1341,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
 
  
   return (
-    <ErpContext.Provider value={{ userSession, setUserSession, loading, loginComGoogle, loginDireto, logout, saveEntity, criarSolicitacaoFinanceiro, saveListas, saveConfig, saveCliente, deleteCliente, saveFornecedor, deleteFornecedor, refreshMedicoes, uploadFileToDrive, ...data }}>
+    <ErpContext.Provider value={{ userSession, setUserSession, loading, loginComGoogle, loginDireto, logout, saveEntity, criarSolicitacaoFinanceiro, saveListas, saveConfig, saveCliente, deleteCliente, saveFornecedor, deleteFornecedor, refreshMedicoes, uploadFileToDrive, pendingEditSolicitacaoId, setPendingEditSolicitacaoId, ...data }}>
       {children}
     </ErpContext.Provider>
   );

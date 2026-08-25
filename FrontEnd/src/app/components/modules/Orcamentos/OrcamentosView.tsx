@@ -2159,6 +2159,13 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                           </div>
                         </div>
 
+                        <button
+                          onClick={() => setDetalhesModal({ obra, orc: ultimoOrcamento })}
+                          className="w-full bg-white/5 hover:bg-white/10 border border-white/10 text-white/70 hover:text-white py-2.5 rounded-lg font-black uppercase text-xs tracking-widest transition-all flex items-center justify-center gap-2"
+                        >
+                          <Eye size={14} /> Detalhes
+                        </button>
+
                         <div className="flex items-center gap-2">
                           <button
                             onClick={() => handleDownloadOrcamentoPDF(ultimoOrcamento, obra)}

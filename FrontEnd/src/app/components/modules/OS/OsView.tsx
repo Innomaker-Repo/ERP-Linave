@@ -5,7 +5,10 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../ui/feedback';
-import { criarOrdemServico, atualizarOrdemServico, deleteOrdemServico } from '../../../../services/comercialService';
+import { criarOrdemServico, atualizarOrdemServico, atualizarStatusOs, deleteOrdemServico, getNegocioPorId } from '../../../../services/comercialService';
+import { mapNegocioToObra } from '../../../../services/obrasMapper';
+import { uploadDocumento, excluirDocumento } from '../../../../services/documentosService';
+import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
 import { getLogoUrlForEmpresa } from '../../../utils/company';
 import { formatDateBR } from '../../../utils/formatDate';
 import { boldOS } from '../../../utils/osHighlight';
@@ -143,6 +146,10 @@ interface DocumentoAssinatura {
   tamanho: number;
   dataUpload: string;
   conteudo: string;
+  // Presentes quando o documento vem do upload real (tabela Documento no SQL, via
+  // uploadDocumento) — `url` e `conteudo` apontam pro mesmo caminho relativo (/media/...).
+  backendId?: number;
+  url?: string;
 }
 
 interface HoraServicoLinha {
@@ -953,6 +960,84 @@ export function OsView({ searchQuery }: OSViewProps) {
     saveEntity('os', listaOS.filter((item) => item.id !== osId));
   };
 
+  // Persiste mudança de status (envio/aprovação) da OS: primeiro no SQL (via backendId),
+  // depois no estado local — e também no `selectedOS` aberto, pra UI atualizar na hora sem
+  // precisar fechar e reabrir o modal de detalhes.
+  const atualizarStatusOSPorId = async (osId: string, atualizacao: any) => {
+    const osItem = listaOS.find((item) => item.id === osId);
+    const backendId = (osItem as any)?.backendId;
+    if (backendId != null) {
+      const payload: any = {};
+      if (atualizacao.statusOs !== undefined) payload.status_os = atualizacao.statusOs;
+      if (atualizacao.statusEnvio !== undefined) payload.status_envio = atualizacao.statusEnvio;
+      if (atualizacao.statusAprovacao !== undefined) payload.status_aprovacao = atualizacao.statusAprovacao;
+      if (Object.keys(payload).length > 0) {
+        try {
+          await atualizarStatusOs(backendId, payload);
+        } catch (err) {
+          console.error('Erro ao atualizar status da OS no backend:', err);
+        }
+      }
+    }
+    saveEntity('os', listaOS.map((item) => (item.id === osId ? { ...item, ...atualizacao } : item)));
+    setSelectedOS((prev) => (prev && prev.id === osId ? { ...prev, ...atualizacao } as OsFormData : prev));
+  };
+
+  // Anexa (ou substitui) a assinatura de aprovação da OS — persistida na tabela Documento,
+  // vinculada ao id (SQL) da OS. Slot único: remove a anterior antes de subir a nova.
+  const handleUploadAssinaturaAprovacaoOS = async (osId: string, files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const arquivo = Array.from(files)[0];
+    const isPdf = arquivo.type === 'application/pdf' || arquivo.name.toLowerCase().endsWith('.pdf');
+    const isImagem = arquivo.type === 'image/png' || arquivo.type === 'image/jpeg' || /\.(png|jpe?g)$/i.test(arquivo.name);
+    if (!isPdf && !isImagem) {
+      toast.error('A assinatura da OS deve ser PDF, PNG ou JPG.');
+      return;
+    }
+    const osItem = listaOS.find((item) => item.id === osId);
+    const osBackendId = (osItem as any)?.backendId;
+    if (osBackendId == null) {
+      toast.error('OS sem identificador no banco — não foi possível anexar a assinatura.');
+      return;
+    }
+    try {
+      const anterior = (osItem as any)?.documentoAssinaturaAprovacao;
+      if (anterior?.backendId) {
+        try { await excluirDocumento(anterior.backendId); } catch { /* segue mesmo se falhar */ }
+      }
+      const documentoAssinaturaAprovacao = await uploadDocumento(arquivo, {
+        vinculoTipo: 'os',
+        vinculoId: osBackendId,
+        categoria: 'os_assinatura',
+      });
+      await atualizarStatusOSPorId(osId, { documentoAssinaturaAprovacao });
+      toast.success('Assinatura da OS anexada e salva no banco.');
+    } catch (error) {
+      toast.error('Não foi possível anexar a assinatura da OS.');
+    }
+  };
+
+  const handleAprovarOS = (osId: string) => {
+    atualizarStatusOSPorId(osId, { statusAprovacao: 'aprovada', dataAprovacao: new Date().toISOString().split('T')[0] });
+    toast.success('OS aprovada com sucesso.');
+  };
+
+  const handleVerAssinaturaOS = (doc: any) => {
+    const href = getDocumentHref(doc);
+    if (!href) {
+      toast.error('Documento indisponível para visualização.');
+      return;
+    }
+    window.open(href, '_blank', 'noopener,noreferrer');
+  };
+
+  const handleDownloadAssinaturaOS = (doc: any) => {
+    downloadDocument(doc, {
+      fallbackName: 'assinatura-os',
+      onInvalid: () => toast.error('Documento indisponível para download.'),
+    });
+  };
+
   const handleDownloadOSFromList = (osParam: OsFormData) => {
     setSelectedOS(osParam);
     setShowDetalhesOS(true);
@@ -976,8 +1061,23 @@ export function OsView({ searchQuery }: OSViewProps) {
       return;
     }
 
-    const selectedObraDetalhes = (obras || []).find((o: any) => o.id === osPrincipal.obraId);
-    
+    let selectedObraDetalhes = (obras || []).find((o: any) => o.id === osPrincipal.obraId);
+
+    // Rebusca o negócio fresco do servidor (não a cópia carregada no login/última sincronia):
+    // se o escopo da proposta foi preenchido/editado depois que `obras` foi hidratado nesta
+    // sessão, a cópia em memória fica desatualizada e a OS sai sem o escopo mesmo a proposta
+    // já tendo o campo preenchido no banco.
+    if (osPrincipal.negocioBackendId) {
+      try {
+        const negocioFresco = await getNegocioPorId(osPrincipal.negocioBackendId);
+        if (negocioFresco) {
+          selectedObraDetalhes = mapNegocioToObra(negocioFresco);
+        }
+      } catch (e) {
+        console.error('Erro ao rebuscar negócio para o PDF da OS:', e);
+      }
+    }
+
     const orcamentosBase = Array.isArray(osPrincipal?.orcamentos) && osPrincipal.orcamentos.length > 0
       ? osPrincipal.orcamentos
       : Array.isArray(selectedObraDetalhes?.orcamentos) && selectedObraDetalhes.orcamentos.length > 0
@@ -1081,16 +1181,29 @@ export function OsView({ searchQuery }: OSViewProps) {
       printDado('LOCAL:', localOS, margin + 2, y + 3.5);
       printDado('Encarregado:', osPrincipal.supervisorEncarregado || '', margin + 102, y + 3.5);
       y += rowH;
-      y += 5; 
-      
+      y += 5;
+
+      // Cita a proposta de origem (número + versão), para deixar claro de qual documento o
+      // escopo abaixo veio — e sinalizar rápido, ao olhar o impresso, quando esse vínculo
+      // não foi resolvido (número em branco = proposta não encontrada para este negócio).
+      if (ultimaProposta?.numeroProposta) {
+        doc.setFont('Helvetica', 'italic');
+        doc.setFontSize(7.5);
+        doc.setTextColor(70, 70, 70);
+        const versaoTxt = ultimaProposta.versao ? ` versão ${ultimaProposta.versao}` : '';
+        doc.text(`OS elaborada de acordo com a Proposta ${ultimaProposta.numeroProposta}${versaoTxt}`, margin, y);
+        doc.setTextColor(0, 0, 0);
+        y += 4;
+      }
+
       const leftW = 120;
       const rightW = (pageWidth - 2 * margin) - leftW;
-      
+
       doc.setFont('Helvetica', 'bold');
       doc.setFillColor(230, 230, 230);
       doc.rect(margin, y, leftW, 6, 'FD');
       doc.rect(margin + leftW, y, rightW, 6, 'FD');
-      
+
       doc.text('DESCRIÇÃO DO SERVIÇO', margin + leftW/2, y + 4, { align: 'center' });
       doc.text('A SER INCLUIDO', margin + leftW + rightW/2, y + 4, { align: 'center' });
       y += 6;
@@ -1903,6 +2016,60 @@ export function OsView({ searchQuery }: OSViewProps) {
                     <p className="text-white/50 text-sm mb-1">Status de Aprovação</p>
                     <p className={`font-black uppercase text-base ${selectedOS.statusAprovacao === 'aprovada' ? 'text-emerald-300' : 'text-amber-300'}`}>{selectedOS.statusAprovacao || 'pendente'}</p>
                   </div>
+                </div>
+              </div>
+
+              <div className="bg-gradient-to-r from-purple-500/10 to-violet-500/10 rounded-2xl p-6 border border-purple-500/30 space-y-4">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <h3 className="text-purple-300 font-black text-lg">APROVAÇÃO DA OS</h3>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={`px-2 py-1 rounded-full text-[10px] font-black uppercase border ${selectedOS.statusAprovacao === 'aprovada' ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' : 'bg-amber-500/20 border-amber-500/40 text-amber-300'}`}>
+                      {selectedOS.statusAprovacao === 'aprovada' ? 'OS Aprovada' : 'OS Pendente'}
+                    </span>
+                    <span className={`px-2 py-1 rounded-full text-[10px] font-black uppercase border ${(selectedOS.documentoAssinaturaAprovacao?.conteudo || selectedOS.documentoAssinaturaAprovacao?.url) ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300' : 'bg-red-500/20 border-red-500/40 text-red-300'}`}>
+                      {(selectedOS.documentoAssinaturaAprovacao?.conteudo || selectedOS.documentoAssinaturaAprovacao?.url) ? 'Assinatura Anexada' : 'Sem Assinatura'}
+                    </span>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-white/50 text-xs mb-2">Anexar assinatura de aprovação (PDF, PNG ou JPG)</p>
+                  <input
+                    type="file"
+                    accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
+                    onChange={(e) => {
+                      handleUploadAssinaturaAprovacaoOS(selectedOS.id, e.target.files);
+                      e.currentTarget.value = '';
+                    }}
+                    className="w-full text-xs text-white/70 file:mr-2 file:rounded-md file:border-0 file:bg-cyan-500 file:px-3 file:py-1.5 file:text-xs file:font-black file:uppercase file:text-[#0b1220] hover:file:bg-cyan-400"
+                  />
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {(selectedOS.documentoAssinaturaAprovacao?.conteudo || selectedOS.documentoAssinaturaAprovacao?.url) && (
+                    <>
+                      <button
+                        onClick={() => handleVerAssinaturaOS(selectedOS.documentoAssinaturaAprovacao)}
+                        className="px-3 py-1.5 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/40 text-blue-300 text-[11px] font-black uppercase transition"
+                      >
+                        <Eye size={13} className="inline mr-1" /> Ver Assinatura
+                      </button>
+                      <button
+                        onClick={() => handleDownloadAssinaturaOS(selectedOS.documentoAssinaturaAprovacao)}
+                        className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-[11px] font-black uppercase transition"
+                      >
+                        <Download size={13} className="inline mr-1" /> Download
+                      </button>
+                    </>
+                  )}
+                  {selectedOS.statusAprovacao !== 'aprovada' && (
+                    <button
+                      onClick={() => handleAprovarOS(selectedOS.id)}
+                      className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-[11px] font-black uppercase transition"
+                    >
+                      <Check size={13} className="inline mr-1" /> Aprovar OS
+                    </button>
+                  )}
                 </div>
               </div>
 

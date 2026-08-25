@@ -16,6 +16,7 @@ import { downloadDocument, getDocumentHref } from '../../../utils/documentDownlo
 import { formatDateBR } from '../../../utils/formatDate';
 import { isEmpresaLinave, getLogoUrlForEmpresa } from '../../../utils/company';
 import { uploadDocumento, excluirDocumento } from '../../../../services/documentosService';
+import { formatarNumeroSequencial } from '../../../../services/numeroSequencial';
 import { MODALIDADES, temServico, temLocacao, modalidadeLabel } from '../../../utils/modalidade';
 // Substitua as importações antigas por esta única:
 import {
@@ -378,7 +379,7 @@ const initialServico: Servico = {
 
           const formatados = dados.map((n: any) => {
             const prefixo = String(n.empresa_prestadora || '').toLowerCase().includes('servinave') ? 'VTS' : 'LN';
-            const idFormatado = `${prefixo}-${String(n.id).padStart(4, '0')}/${String(new Date().getFullYear()).slice(-2)}`;
+            const idFormatado = `${prefixo}-${formatarNumeroSequencial(n.id)}/${String(new Date().getFullYear()).slice(-2)}`;
             const idClienteStr = String(n.cliente || '');
             // Preserva campos frontend-only (dadosMediacao, finalizadoComMediacao, documentosNegocio, etc.)
             const obraExistente = obrasContextoAtual.find(
@@ -456,7 +457,7 @@ const initialServico: Servico = {
     const prefixo = emp.includes('servinave') ? 'VTS'
       : emp.includes('linave') ? 'LN'
       : getPrefixoEmpresa(obra.empresaPrestadora || 'LN');
-    const idPadded = String(numericId).padStart(4, '0');
+    const idPadded = formatarNumeroSequencial(numericId);
     const ano = String(new Date().getFullYear()).slice(-2);
     return `${prefixo}-${idPadded}/${ano}`;
   };
@@ -1474,7 +1475,7 @@ const initialServico: Servico = {
 
           // 3. Monta o objeto de forma totalmente segura ANTES de fechar a tela
           const negocioFormatado = {
-            id: `${getPrefixoEmpresa(dadosNegocio.empresa_prestadora || formData.empresaPrestadora)}-${String(dadosNegocio.id || Date.now()).padStart(4, '0')}/${String(new Date().getFullYear()).slice(-2)}`, 
+            id: `${getPrefixoEmpresa(dadosNegocio.empresa_prestadora || formData.empresaPrestadora)}-${formatarNumeroSequencial(dadosNegocio.id || Date.now())}/${String(new Date().getFullYear()).slice(-2)}`,
             nome: dadosNegocio.nome_negocio || formData.nomeNegocio,
             clienteId: String(dadosNegocio.cliente || formData.clienteId), 
             nomeClienteResolvido: listaClientesCRM.find((c: any) => String(c.id) === String(dadosNegocio.cliente || formData.clienteId))?.razaoSocial || 'Cliente Identificado',
@@ -1824,14 +1825,6 @@ const initialServico: Servico = {
     saveEntity('os', novaLista);
   };
 
-  const handleAprovarOSNoCard = (osId: string) => {
-    atualizarOSPorId(osId, {
-      statusAprovacao: 'aprovada',
-      dataAprovacao: new Date().toISOString().split('T')[0]
-    });
-    toast.success('OS aprovada com sucesso.');
-  };
-
   const handleArquivarNegocio = async (obra: any, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!(await confirmDialog({ title: 'Arquivar negócio', message: `Arquivar "${obra.nome}"?\n\nO negócio será removido do Kanban e listado em Negócios → Finalizados.`, confirmText: 'Arquivar' }))) return;
@@ -1863,49 +1856,6 @@ const initialServico: Servico = {
     const salvo = await persistirObraAtualizada(obraAtualizada);
     if (!salvo) return;
     toast.success('Negócio movido para Finalização.');
-  };
-
-  const handleUploadAssinaturaAprovacaoOS = async (osId: string, files: FileList | null) => {
-    if (!files || files.length === 0) return;
-
-    const arquivo = Array.from(files)[0];
-    const isPdf = arquivo.type === 'application/pdf' || arquivo.name.toLowerCase().endsWith('.pdf');
-    const isImagem = arquivo.type === 'image/png' || arquivo.type === 'image/jpeg'
-      || arquivo.name.toLowerCase().endsWith('.png')
-      || arquivo.name.toLowerCase().endsWith('.jpg')
-      || arquivo.name.toLowerCase().endsWith('.jpeg');
-
-    if (!isPdf && !isImagem) {
-      toast.error('A assinatura da OS deve ser PDF, PNG ou JPG.');
-      return;
-    }
-
-    // A assinatura é persistida na tabela Documento, vinculada ao id (SQL) da OS.
-    const osItem = (Array.isArray(os) ? os : []).find((item: any) => String(item.id) === String(osId));
-    const osBackendId = (osItem as any)?.backendId;
-    if (osBackendId == null) {
-      toast.error('OS sem identificador no banco — não foi possível anexar a assinatura.');
-      return;
-    }
-
-    try {
-      // Slot único: remove a assinatura anterior do banco antes de subir a nova.
-      const anterior = (osItem as any)?.documentoAssinaturaAprovacao;
-      if (anterior?.backendId) {
-        try { await excluirDocumento(anterior.backendId); } catch { /* segue mesmo se falhar */ }
-      }
-
-      const documentoAssinaturaAprovacao = await uploadDocumento(arquivo, {
-        vinculoTipo: 'os',
-        vinculoId: osBackendId,
-        categoria: 'os_assinatura',
-      });
-
-      atualizarOSPorId(osId, { documentoAssinaturaAprovacao });
-      toast.success('Assinatura da OS anexada e salva no banco.');
-    } catch (error) {
-      toast.error('Não foi possível anexar a assinatura da OS.');
-    }
   };
 
   // Retorna a medição APROVADA do negócio (criada/aprovada na aba Comercial → Medição).
@@ -3310,7 +3260,7 @@ const obrasOrdenadas = useMemo(() => {
                           <p className="text-white/70 text-xs">{osbatch.descricao}</p>
 
                           {osbatch.statusEnvio === 'enviada' && (
-                            <div className="mt-3 pt-3 border-t border-white/10 space-y-3">
+                            <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
                               <div className="flex flex-wrap items-center gap-2">
                                 <span className={`px-2 py-1 rounded-full text-[10px] font-black uppercase border ${osbatch.statusAprovacao === 'aprovada' ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' : 'bg-amber-500/20 border-amber-500/40 text-amber-300'}`}>
                                   {osbatch.statusAprovacao === 'aprovada' ? 'OS Aprovada' : 'OS Pendente'}
@@ -3319,42 +3269,12 @@ const obrasOrdenadas = useMemo(() => {
                                   {(osbatch.documentoAssinaturaAprovacao?.conteudo || osbatch.documentoAssinaturaAprovacao?.url) ? 'Assinatura Anexada' : 'Sem Assinatura'}
                                 </span>
                               </div>
-
-                              <input
-                                type="file"
-                                accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
-                                onChange={(e) => {
-                                  handleUploadAssinaturaAprovacaoOS(osbatch.id, e.target.files);
-                                  e.currentTarget.value = '';
-                                }}
-                                className="w-full text-[10px] text-white/70 file:mr-2 file:rounded-md file:border-0 file:bg-cyan-500 file:px-2.5 file:py-1 file:text-[10px] file:font-black file:uppercase file:text-[#0b1220] hover:file:bg-cyan-400"
-                              />
-
-                              {(osbatch.documentoAssinaturaAprovacao?.conteudo || osbatch.documentoAssinaturaAprovacao?.url) && (
-                                <div className="flex items-center gap-2">
-                                  <button
-                                    onClick={() => handleVerDocumentoNegocio(osbatch.documentoAssinaturaAprovacao)}
-                                    className="px-3 py-1.5 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/40 text-blue-300 text-[11px] font-black uppercase transition"
-                                  >
-                                    <Eye size={13} className="inline mr-1" /> Ver Assinatura
-                                  </button>
-                                  <button
-                                    onClick={() => handleDownloadDocumento(osbatch.documentoAssinaturaAprovacao)}
-                                    className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-[11px] font-black uppercase transition"
-                                  >
-                                    <Download size={13} className="inline mr-1" /> Download
-                                  </button>
-                                </div>
-                              )}
-
-                              {osbatch.statusAprovacao !== 'aprovada' && (
-                                <button
-                                  onClick={() => handleAprovarOSNoCard(osbatch.id)}
-                                  className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-[11px] font-black uppercase transition"
-                                >
-                                  <CheckCircle size={13} className="inline mr-1" /> Aprovar OS
-                                </button>
-                              )}
+                              {/* Anexar assinatura e aprovar a OS agora é feito em Comercial → Fazer OS
+                                  (na tela "Ver OS"), não mais por aqui — evita duplicar a mesma ação
+                                  em dois lugares diferentes. */}
+                              <p className="text-white/35 text-[10px] uppercase tracking-widest font-bold">
+                                Anexe a assinatura e aprove em {boldOS('Fazer OS')} → Ver OS.
+                              </p>
                             </div>
                           )}
                         </div>

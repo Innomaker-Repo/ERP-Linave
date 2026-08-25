@@ -26,6 +26,7 @@ const PERMISSAO_GRUPOS = [
       { id: 'crm', label: 'Negócios (CRM)' },
       { id: 'orcamentos', label: 'Orçar Negócios' },
       { id: 'proposta', label: 'Fazer Proposta' },
+      { id: 'templatesProposta', label: 'Templates de Proposta' },
       { id: 'fazerOs', label: boldOS('Fazer OS') },
       { id: 'medicao', label: 'Medição' },
       { id: 'finalizadosComercial', label: 'Finalizados' },

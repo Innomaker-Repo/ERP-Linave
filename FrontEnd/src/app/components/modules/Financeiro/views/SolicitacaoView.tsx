@@ -1,7 +1,7 @@
-import React, { useMemo, useState } from 'react';
-import { Send, CheckCircle2, Pencil, X } from 'lucide-react';
-import { FinCard, Toolbar, Field, Input, MoneyInput, Select, Textarea, FileInput, Btn, StatusTag, DataTable, Th, Td, EmptyRow, boldOS } from '../finUi';
-import { todayStr, genFinId, num, br, money, FORMAS_PAGAMENTO, TIPOS_REEMBOLSO, matchesSolicitante, solicitacaoDuplicada } from '../finData';
+import React, { useEffect, useState } from 'react';
+import { Send, CheckCircle2, X } from 'lucide-react';
+import { FinCard, Toolbar, Field, Input, MoneyInput, Select, Textarea, FileInput, Btn, boldOS } from '../finUi';
+import { todayStr, genFinId, num, FORMAS_PAGAMENTO, TIPOS_REEMBOLSO, solicitacaoDuplicada } from '../finData';
 import { useFin } from '../useFin';
 import { uploadDocumento } from '../../../../../services/documentosService';
 import { toast } from 'sonner';
@@ -24,7 +24,10 @@ const formVazio = (empresaPadrao: string) => ({
 });
 
 export function SolicitacaoView() {
-  const { empresas, oss, fornecedores, financeiro, userSession, addSolicitacao, reenviarSolicitacao } = useFin();
+  const {
+    empresas, oss, fornecedores, financeiro, userSession, addSolicitacao, reenviarSolicitacao,
+    pendingEditSolicitacaoId, setPendingEditSolicitacaoId,
+  } = useFin();
   const vinculo = 'OS' as const;
   const [anexos, setAnexos] = useState<File[]>([]);
   const [salvando, setSalvando] = useState(false);
@@ -37,13 +40,6 @@ export function SolicitacaoView() {
   // e reenviar sem perder o vínculo com o registro original (mesmo id, mesmos anexos se não trocar).
   const [editandoId, setEditandoId] = useState<string | null>(null);
   const [anexosExistentes, setAnexosExistentes] = useState<string[]>([]);
-
-  const minhasSolicitacoes = useMemo(
-    () => (Array.isArray(financeiro) ? financeiro : [])
-      .filter((r: any) => r?.tipo === 'solicitacao' && matchesSolicitante(r, userSession))
-      .sort((a: any, b: any) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''))),
-    [financeiro, userSession],
-  );
 
   const abrirEdicao = (sol: any) => {
     setEditandoId(sol.id);
@@ -64,6 +60,18 @@ export function SolicitacaoView() {
     });
     setOk('');
   };
+
+  // Chegou da tela "Meus Pagamentos" com o pedido de editar uma solicitação reprovada
+  // específica — abre o formulário já naquele registro assim que ele existir na lista.
+  useEffect(() => {
+    if (!pendingEditSolicitacaoId) return;
+    const alvo = (Array.isArray(financeiro) ? financeiro : []).find((r: any) => r.id === pendingEditSolicitacaoId);
+    if (alvo) {
+      abrirEdicao(alvo);
+      setPendingEditSolicitacaoId(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingEditSolicitacaoId, financeiro]);
 
   const cancelarEdicao = () => {
     setEditandoId(null);
@@ -209,33 +217,6 @@ export function SolicitacaoView() {
             )}
           </div>
         </form>
-      </FinCard>
-
-      <FinCard>
-        <Toolbar title="Minhas Solicitações" hint="Solicitações enviadas por você. Reprovadas podem ser corrigidas e reenviadas." />
-        <DataTable
-          head={<>
-            <Th>Solicitação</Th><Th>Fornecedor</Th><Th>Valor</Th><Th>Vencimento</Th><Th>Status</Th><Th>Motivo da reprovação</Th><Th>Ação</Th>
-          </>}
-        >
-          {minhasSolicitacoes.length === 0 ? (
-            <EmptyRow cols={7} text="Você ainda não enviou nenhuma solicitação." />
-          ) : minhasSolicitacoes.map((r: any) => (
-            <tr key={r.id} className="transition-colors hover:bg-white/5">
-              <Td className="font-black text-white">{r.id}</Td>
-              <Td className="text-white">{r.fornecedor}</Td>
-              <Td className="font-bold text-white">{money(num(r.valor))}</Td>
-              <Td>{br(r.vencimento)}</Td>
-              <Td><StatusTag status={r.status || 'Aguardando aprovação'} /></Td>
-              <Td className="max-w-[240px] whitespace-normal text-white/60">{r.status === 'Reprovado' ? (r.motivoReprovacao || '—') : '—'}</Td>
-              <Td>
-                {r.status === 'Reprovado' && (
-                  <Btn small variant="secondary" onClick={() => abrirEdicao(r)}><Pencil size={13} /> Editar e reenviar</Btn>
-                )}
-              </Td>
-            </tr>
-          ))}
-        </DataTable>
       </FinCard>
     </div>
   );

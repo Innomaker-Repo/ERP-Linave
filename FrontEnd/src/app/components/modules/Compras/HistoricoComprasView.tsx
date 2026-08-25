@@ -1,14 +1,16 @@
 import React, { useMemo, useState } from 'react';
-import { Archive, FileCheck2, FileWarning, History, Package, Search } from 'lucide-react';
+import { Archive, FileCheck2, FileDown, FileWarning, History, Package, Search } from 'lucide-react';
 import { useErp } from '../../../context/ErpContext';
 import {
   formatCurrency,
   purchaseStateLabel,
   toItemRecords,
   type CompraHistoricoRegistro,
+  type PedidoCompraResumo,
 } from './comprasLocal';
 import { FinModal, Field, Input, FileInput, Btn } from '../Financeiro/finUi';
 import { uploadDocumento } from '../../../../services/documentosService';
+import { handleDownloadPedidoCompraPDF } from './handleDownloadPedidoCompraPDF';
 import { toast } from 'sonner';
 
 interface HistoricoComprasViewProps {
@@ -74,18 +76,59 @@ export function HistoricoComprasView({ searchQuery }: HistoricoComprasViewProps)
     });
   }, [registros, filtro, osFiltro]);
 
-  // Agrupa por pedido (OS / centro de custo) só para exibição.
+  // Agrupa para exibição: quando o item veio da geração automática na aprovação, o agrupamento
+  // é por Pedido de Compra (1 fornecedor); registros do fluxo manual antigo (sem
+  // pedidoCompraNumero) continuam agrupados por pedido/solicitação, como antes.
   const grupos = useMemo(() => {
-    const map = new Map<string, { pedidoId: string; centroCusto: string; solicitante: string; departamento: string; itens: CompraHistoricoRegistro[] }>();
+    const map = new Map<string, { key: string; pedidoCompraNumero?: string; fornecedor?: string; pedidoId: string; centroCusto: string; solicitante: string; departamento: string; itens: CompraHistoricoRegistro[] }>();
     registrosFiltrados.forEach((r) => {
-      const key = r.pedidoId || r.id;
+      const numeroPC = (r as any).pedidoCompraNumero as string | undefined;
+      const key = numeroPC || r.pedidoId || r.id;
       if (!map.has(key)) {
-        map.set(key, { pedidoId: key, centroCusto: r.centroCusto, solicitante: r.solicitante, departamento: r.departamento, itens: [] });
+        map.set(key, {
+          key,
+          pedidoCompraNumero: numeroPC,
+          fornecedor: numeroPC ? r.fornecedor : undefined,
+          pedidoId: r.pedidoId,
+          centroCusto: r.centroCusto,
+          solicitante: r.solicitante,
+          departamento: r.departamento,
+          itens: [],
+        });
       }
       map.get(key)!.itens.push(r);
     });
     return Array.from(map.values());
   }, [registrosFiltrados]);
+
+  const baixarPedidoCompra = (grupo: { pedidoCompraNumero?: string; fornecedor?: string; pedidoId: string; centroCusto: string; solicitante: string; departamento: string; itens: CompraHistoricoRegistro[] }) => {
+    if (!grupo.pedidoCompraNumero) return;
+    const primeiro = grupo.itens[0];
+    const resumo: PedidoCompraResumo = {
+      numero: grupo.pedidoCompraNumero,
+      solicitacaoId: grupo.pedidoId,
+      centroCusto: grupo.centroCusto,
+      solicitante: grupo.solicitante,
+      departamento: grupo.departamento,
+      fornecedor: grupo.fornecedor || '',
+      fornecedorCnpj: (primeiro as any)?.fornecedorCnpj || '',
+      itens: grupo.itens.map((it) => ({
+        itemId: it.itemId,
+        nome: it.itemNome,
+        descricao: it.itemDescricao,
+        qtd: it.qtd,
+        un: it.un,
+        valorUnitario: it.qtd > 0 ? (it.valor || 0) / it.qtd : (it.valor || 0),
+        valorTotal: it.valor || 0,
+      })),
+      valorTotal: grupo.itens.reduce((sum, it) => sum + (it.valor || 0), 0),
+      prazoEntrega: primeiro?.prazoEntrega || '',
+      condicaoPagamento: primeiro?.condicaoPagamento || '',
+      observacoes: '',
+      data: primeiro?.compradoEm || '',
+    };
+    handleDownloadPedidoCompraPDF(resumo);
+  };
 
   const totalItens = registrosFiltrados.length;
   const nfePendentes = registrosFiltrados.filter((r) => r.nfeStatus !== 'lancada').length;
@@ -202,10 +245,15 @@ export function HistoricoComprasView({ searchQuery }: HistoricoComprasViewProps)
           {grupos.map((grupo) => {
             const total = grupo.itens.reduce((sum, it) => sum + (it.valor || 0), 0);
             return (
-              <article key={grupo.pedidoId} className="overflow-hidden rounded-[28px] border border-white/10 bg-[#101f3d] shadow-2xl shadow-black/20">
+              <article key={grupo.key} className="overflow-hidden rounded-[28px] border border-white/10 bg-[#101f3d] shadow-2xl shadow-black/20">
                 <div className="flex flex-wrap items-start justify-between gap-4 border-b border-white/10 px-6 py-4">
                   <div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {grupo.pedidoCompraNumero && (
+                        <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-emerald-200">
+                          {grupo.pedidoCompraNumero} • {grupo.fornecedor}
+                        </span>
+                      )}
                       <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-amber-200">
                         OS: {grupo.centroCusto || '—'}
                       </span>
@@ -218,9 +266,16 @@ export function HistoricoComprasView({ searchQuery }: HistoricoComprasViewProps)
                       {grupo.departamento ? ` • ${grupo.departamento}` : ''}
                     </p>
                   </div>
-                  <div className="text-right">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Total</p>
-                    <p className="text-xl font-black text-emerald-300">{total ? formatCurrency(total) : '—'}</p>
+                  <div className="flex items-center gap-4">
+                    <div className="text-right">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Total</p>
+                      <p className="text-xl font-black text-emerald-300">{total ? formatCurrency(total) : '—'}</p>
+                    </div>
+                    {grupo.pedidoCompraNumero && (
+                      <Btn small variant="ghost" onClick={() => baixarPedidoCompra(grupo)}>
+                        <FileDown size={13} /> Pedido de Compra
+                      </Btn>
+                    )}
                   </div>
                 </div>
 

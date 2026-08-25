@@ -8,13 +8,14 @@
  */
 
 import { mapDocsApiToFront } from './documentosService';
+import { formatarNumeroSequencial } from './numeroSequencial';
 
 const prefixoEmpresa = (empresa?: string) =>
   String(empresa || '').toLowerCase().includes('servinave') ? 'VTS' : 'LN';
 
 export const formatNegocioId = (negocio: any): string => {
   const prefixo = prefixoEmpresa(negocio?.empresa_prestadora ?? negocio?.empresaPrestadora);
-  const numero = String(negocio?.id ?? '').padStart(4, '0');
+  const numero = formatarNumeroSequencial(negocio?.id);
   const ano = String(new Date().getFullYear()).slice(-2);
   return `${prefixo}-${numero}/${ano}`;
 };

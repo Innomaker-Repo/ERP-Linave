@@ -104,7 +104,7 @@ export function ReciboLocacaoView() {
     const aprovadas = new Set(
       meds.filter((m: any) => String(m.status).toLowerCase() === 'aprovada').map((m: any) => String(m.ordemServicoBackendId)),
     );
-    return (Array.isArray(os) ? os : []).filter((o: any) => aprovadas.has(String(o.backendId)) && !o.usoInterno);
+    return (Array.isArray(os) ? os : []).filter((o: any) => aprovadas.has(String(o.backendId)));
   }, [os, medicoes]);
 
   const persistir = async (rec: any) => {

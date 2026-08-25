@@ -1,14 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
-import { Ruler, Plus, X, Save, Download, Check, Ban, Filter, Clock, CheckCircle2, Copy, FilePlus, Send, FileText, Lock, Unlock, ShieldAlert } from 'lucide-react';
+import { Ruler, Plus, X, Save, Download, Check, Ban, Filter, Clock, CheckCircle2, Copy, FilePlus, Send, FileText, Lock, Unlock, ShieldAlert, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog, promptDialog } from '../../ui/feedback';
 import { isOsAprovada, formatOsLabel } from '../../../../services/ordensServico';
-import { criarMedicao, atualizarStatusMedicao } from '../../../../services/medicoesService';
+import { criarMedicao, atualizarStatusMedicao, atualizarMedicao, deleteMedicao } from '../../../../services/medicoesService';
 import { uploadDocumento } from '../../../../services/documentosService';
-import { atualizarOrdemServico } from '../../../../services/comercialService';
+import { atualizarOrdemServico, getNegocioPorId } from '../../../../services/comercialService';
+import { mapNegocioToObra } from '../../../../services/obrasMapper';
 import { handleDownloadMedicaoPDF } from '../CRM/handleDownloadMedicaoPDF';
 import { genFinId, todayStr, FORMAS_PAGAMENTO, construirReciboDeMedicao } from '../Financeiro/finData';
+import { getFinanceiro } from '../../../../services/financeiroService';
 import { temServico, temLocacao } from '../../../utils/modalidade';
 import { formatDateBR } from '../../../utils/formatDate';
 import { boldOS } from '../../../utils/osHighlight';
@@ -64,14 +66,16 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
   const [salvando, setSalvando] = useState(false);
   const [filtroOsHistorico, setFiltroOsHistorico] = useState<string>('');
   const [versaoBase, setVersaoBase] = useState<any>(null);   // medição-base para "colar medição antiga"
+  const [editandoId, setEditandoId] = useState<string | null>(null); // id da medição em edição (null = criando nova)
   const [nfePopup, setNfePopup] = useState<any>(null);       // medição recém-aprovada → solicitar NFe
   const [nfeForm, setNfeForm] = useState<any>(null);
   const [solicitandoNfe, setSolicitandoNfe] = useState(false);
 
-  // OS elegíveis para medição: apenas as APROVADAS (trabalho em execução/concluído),
-  // excluindo as OS de uso interno (café/papel/etc.), que não são medidas.
+  // OS elegíveis para medição: as APROVADAS (trabalho em execução/concluído). As OS de uso
+  // interno (1000 Linave / 2000 Servinave) entram também — todo menu suspenso de OS do
+  // sistema precisa listá-las, mesmo não sendo o uso típico deste formulário.
   const osAprovadas = useMemo(
-    () => (Array.isArray(os) ? os : []).filter((o: any) => isOsAprovada(o) && !o.usoInterno),
+    () => (Array.isArray(os) ? os : []).filter((o: any) => isOsAprovada(o)),
     [os],
   );
 
@@ -351,18 +355,65 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
         representanteCliente: form.representanteCliente,
         representanteLinave: form.representanteLinave,
         valorTotal: totalMedicao,
+        // Editar sempre volta para "pendente" — corrigiu os dados, aguarda nova aprovação
+        // (mesmo padrão de "reenviar" já usado em Solicitação de Pagamento).
         status: 'pendente',
         itens: itensValidos,
       };
-      await criarMedicao(payload);
+      if (editandoId) {
+        await atualizarMedicao(editandoId, payload);
+      } else {
+        await criarMedicao(payload);
+      }
       await refreshMedicoes();
-      toast.success('Medição criada (aguardando aprovação).');
+      toast.success(editandoId ? 'Medição atualizada (aguardando aprovação).' : 'Medição criada (aguardando aprovação).');
       setForm(formInicial());
+      setEditandoId(null);
     } catch (error) {
       console.error('Erro ao salvar medição:', error);
       toast.error('Erro ao salvar a medição no banco.');
     } finally {
       setSalvando(false);
+    }
+  };
+
+  // Carrega uma medição salva (pendente ou recusada) de volta no formulário para correção.
+  // Aprovada não entra aqui: uma vez aprovada ela já pode ter gerado solicitação de NFe/recibo
+  // vinculada aos valores atuais — a correção pós-aprovação é feita via "Nova versão".
+  const handleEditarMedicao = (m: any) => {
+    const osDoMed = osAprovadas.find((o: any) => String(o.backendId) === String(m.ordemServicoBackendId));
+    if (osDoMed) setOsSelecionadaId(String(osDoMed.id));
+    setVersaoBase(null);
+    setEditandoId(m.id);
+    setForm({
+      dataEmissao: m.dataEmissao || new Date().toISOString().split('T')[0],
+      embarcacao: m.embarcacao || '',
+      numeroBM: m.numeroBM || '',
+      periodo: m.periodo || '',
+      representanteCliente: m.representanteCliente || '',
+      representanteLinave: m.representanteLinave || '',
+      itens: (Array.isArray(m.itens) && m.itens.length ? m.itens : [{}]).map((i: any) => ({ ...novaLinha(), ...i })),
+    });
+    toast.info(`Editando ${m.numeroMedicao || m.ordemServicoNumero}. Ajuste os dados e clique em "Salvar alterações".`);
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleCancelarEdicao = () => {
+    setEditandoId(null);
+    setOsSelecionadaId('');
+    setForm(formInicial());
+  };
+
+  const handleExcluirMedicao = async (m: any) => {
+    if (!(await confirmDialog({ message: `Excluir a medição ${m.numeroMedicao || m.ordemServicoNumero}? Esta ação não pode ser desfeita.`, danger: true, confirmText: 'Excluir' }))) return;
+    try {
+      await deleteMedicao(m.id);
+      await refreshMedicoes();
+      toast.success('Medição excluída.');
+      if (editandoId === m.id) handleCancelarEdicao();
+    } catch (error) {
+      console.error('Erro ao excluir medição:', error);
+      toast.error('Erro ao excluir a medição.');
     }
   };
 
@@ -376,8 +427,24 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
     return osDoMed?.descricaoGeralServico || osDoMed?.projeto || '';
   };
 
+  // Medições que já têm uma solicitação de NFe enviada (tipo `nfeReq` vinculado por
+  // medicaoId) — usado para bloquear o reenvio duplicado depois que "Solicitar NFe" já
+  // foi clicado uma vez, independente do status atual da solicitação (aguardando ou já
+  // emitida e arquivada).
+  const medicoesComNfeSolicitada = useMemo(() => {
+    const set = new Set<string>();
+    (Array.isArray(financeiro) ? financeiro : []).forEach((r: any) => {
+      if (r?.tipo === 'nfeReq' && r?.medicaoId) set.add(String(r.medicaoId));
+    });
+    return set;
+  }, [financeiro]);
+
   // Abre o popup "Medição aprovada → Solicitar NFe", pré-preenchido com os dados da medição.
   const abrirSolicitacaoNfe = (med: any) => {
+    if (medicoesComNfeSolicitada.has(String(med.id))) {
+      toast.error('NFe já solicitada para esta medição.');
+      return;
+    }
     setNfePopup(med);
     // Item 8: a NF puxa APENAS o valor de SERVIÇO (locação fica de fora).
     const itensMed = Array.isArray(med.itens) ? med.itens : [];
@@ -478,6 +545,19 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
     if (!nfePopup || !nfeForm) return;
     setSolicitandoNfe(true);
     try {
+      // Rechecagem contra o servidor (não o `financeiro` do login, que pode estar
+      // desatualizado) logo antes de gravar — evita duplicar a solicitação se o popup
+      // ficou aberto enquanto outra aba/usuário já solicitou a NFe desta medição.
+      const financeiroFresco = await getFinanceiro().catch(() => (Array.isArray(financeiro) ? financeiro : []));
+      const jaSolicitada = (Array.isArray(financeiroFresco) ? financeiroFresco : []).some(
+        (r: any) => r?.tipo === 'nfeReq' && String(r?.medicaoId || '') === String(nfePopup.id),
+      );
+      if (jaSolicitada) {
+        toast.error('NFe já solicitada para esta medição.');
+        setNfePopup(null);
+        setNfeForm(null);
+        return;
+      }
       const nfeReq = {
         id: genFinId('SNF'),
         tipo: 'nfeReq',
@@ -502,7 +582,7 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
         medicaoNumero: nfePopup.numeroMedicao,
         createdAt: new Date().toISOString(),
       };
-      await saveEntity('financeiro', [nfeReq, ...(Array.isArray(financeiro) ? financeiro : [])]);
+      await saveEntity('financeiro', [nfeReq, ...(Array.isArray(financeiroFresco) ? financeiroFresco : [])]);
       toast.success('Solicitação de NFe enviada ao Financeiro (aba NFe).');
       setNfePopup(null);
       setNfeForm(null);
@@ -515,7 +595,6 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
   };
 
   const handleDownload = async (medicao: any) => {
-    const obra = obrasById.get(`${medicao.obraId || ''}`) || obrasById.get(medicao.ordemServicoNumero) || {};
     const cli = (Array.isArray(clientes) ? clientes : []).find((c: any) => c.razaoSocial === medicao.cliente);
     // CNPJ da prestadora vem do cadastro de Empresas Prestadoras (config), nunca do cliente.
     const prestadora = (config?.empresasPrestadoras || []).find(
@@ -534,8 +613,24 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
       representanteLinave: medicao.representanteLinave,
       tabelaItens: medicao.itens,
     };
+
+    // Rebusca o negócio fresco do servidor para citar a proposta de origem (número + versão)
+    // no PDF — não a cópia de `obras` carregada no login, que pode estar desatualizada.
+    // Mesma lógica já aplicada na Ordem de Serviço.
+    let ultimaProposta: any = null;
+    if (medicao.negocioBackendId) {
+      try {
+        const negocioFresco = await getNegocioPorId(medicao.negocioBackendId);
+        const obraFresca = negocioFresco ? mapNegocioToObra(negocioFresco) : null;
+        const propostasFrescas = Array.isArray(obraFresca?.propostas) ? obraFresca.propostas : [];
+        ultimaProposta = propostasFrescas.length > 0 ? propostasFrescas[propostasFrescas.length - 1] : null;
+      } catch (error) {
+        console.error('Erro ao rebuscar negócio para o PDF da medição:', error);
+      }
+    }
+
     try {
-      await handleDownloadMedicaoPDF(documentoMediacaoForm, cli || {}, { id: medicao.ordemServicoNumero });
+      await handleDownloadMedicaoPDF(documentoMediacaoForm, cli || {}, { id: medicao.ordemServicoNumero }, ultimaProposta);
     } catch {
       toast.error('Erro ao gerar o PDF da medição.');
     }
@@ -568,13 +663,20 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
       <section className="bg-[#101f3d] rounded-[28px] border border-white/10 p-6 space-y-6">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <h2 className="text-emerald-300 font-black uppercase tracking-widest text-sm">
-            Nova medição {versaoBase && <span className="text-violet-300 normal-case">(nova versão de {versaoBase.numeroMedicao})</span>}
+            {editandoId ? 'Editando medição' : 'Nova medição'} {versaoBase && <span className="text-violet-300 normal-case">(nova versão de {versaoBase.numeroMedicao})</span>}
           </h2>
-          {versaoBase && (
-            <button onClick={handleColarMedicaoAntiga} className="px-3 py-1.5 rounded-lg bg-violet-500/20 hover:bg-violet-500/30 border border-violet-500/40 text-violet-200 text-xs font-black uppercase flex items-center gap-1">
-              <Copy size={13} /> Colar medição antiga
-            </button>
-          )}
+          <div className="flex gap-2">
+            {versaoBase && (
+              <button onClick={handleColarMedicaoAntiga} className="px-3 py-1.5 rounded-lg bg-violet-500/20 hover:bg-violet-500/30 border border-violet-500/40 text-violet-200 text-xs font-black uppercase flex items-center gap-1">
+                <Copy size={13} /> Colar medição antiga
+              </button>
+            )}
+            {editandoId && (
+              <button onClick={handleCancelarEdicao} className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-white/70 text-xs font-black uppercase flex items-center gap-1">
+                <X size={13} /> Cancelar edição
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -643,7 +745,7 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
 
             <div className="flex justify-end">
               <button onClick={handleSalvar} disabled={salvando} className="px-6 py-3 rounded-lg bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-white font-black uppercase text-xs tracking-widest disabled:opacity-50 flex items-center gap-2">
-                <Save size={16} /> {salvando ? 'Salvando…' : 'Salvar Medição'}
+                <Save size={16} /> {salvando ? 'Salvando…' : (editandoId ? 'Salvar alterações' : 'Salvar Medição')}
               </button>
             </div>
           </div>
@@ -704,6 +806,12 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
                 <div className="flex flex-wrap gap-2">
                   <button onClick={() => handleDownload(m)} className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-white/80 text-xs font-bold flex items-center gap-1"><Download size={13} /> Documento</button>
                   <button onClick={() => handleFazerNovaVersao(m)} className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-white/80 text-xs font-bold flex items-center gap-1"><FilePlus size={13} /> Nova versão</button>
+                  {(m.status === 'pendente' || m.status === 'recusada') && (
+                    <>
+                      <button onClick={() => handleEditarMedicao(m)} className="px-3 py-1.5 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 border border-sky-500/40 text-sky-200 text-xs font-bold flex items-center gap-1"><Pencil size={13} /> Editar</button>
+                      <button onClick={() => handleExcluirMedicao(m)} className="px-3 py-1.5 rounded-lg bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300 text-xs font-bold flex items-center gap-1"><Trash2 size={13} /> Excluir</button>
+                    </>
+                  )}
                   {m.status === 'pendente' && (
                     <>
                       <button onClick={() => handleStatus(m, 'aprovada')} className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-xs font-bold flex items-center gap-1"><Check size={13} /> Aprovar</button>
@@ -712,7 +820,11 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
                   )}
                   {m.status === 'aprovada' && (
                     <>
-                      <button onClick={() => abrirSolicitacaoNfe(m)} className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-xs font-bold flex items-center gap-1"><Send size={13} /> Solicitar NFe</button>
+                      {medicoesComNfeSolicitada.has(String(m.id)) ? (
+                        <span className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-white/40 text-xs font-bold flex items-center gap-1"><Send size={13} /> NFe já solicitada</span>
+                      ) : (
+                        <button onClick={() => abrirSolicitacaoNfe(m)} className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-xs font-bold flex items-center gap-1"><Send size={13} /> Solicitar NFe</button>
+                      )}
                       <span className="px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-bold flex items-center gap-1"><CheckCircle2 size={13} /> Libera finalização</span>
                     </>
                   )}

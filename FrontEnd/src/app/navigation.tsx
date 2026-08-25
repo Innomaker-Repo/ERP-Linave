@@ -4,7 +4,7 @@ import {
   House, Users, Anchor, ClipboardList,
   ShoppingCart, DollarSign, Settings, Factory,
   HeartHandshake, Clock, FileText, Zap, CheckCircle2, Trash2, LayoutGrid, Package2, History,
-  FilePlus, Banknote, ScrollText, Wallet, TrendingUp, Landmark, Ruler, UserCog, ShoppingBag, Building2
+  FilePlus, Banknote, ScrollText, Wallet, TrendingUp, Landmark, Ruler, UserCog, ShoppingBag, Building2, Receipt
 } from 'lucide-react';
 
 /* =========================================================================================
@@ -50,6 +50,9 @@ export const DEPARTMENTS: NavDepartment[] = [
       // Fazer Proposta
       { id: 'proposta', label: 'Fazer Proposta', icon: FileText },
 
+      // Gerenciar os templates de texto usados em "Fazer Proposta"
+      { id: 'templatesProposta', label: 'Templates de Proposta', icon: FilePlus },
+
       // Fazer Ordem de Serviço
       { id: 'fazerOs', label: boldOS('Fazer OS'), icon: Zap },
 
@@ -71,6 +74,7 @@ export const DEPARTMENTS: NavDepartment[] = [
       // Operação
       { id: 'finDashboard', label: 'Dashboard Financeiro', icon: House },
       { id: 'finSolicitacao', label: 'Solicitação de Pagamento', icon: FilePlus },
+      { id: 'meusPagamentos', label: 'Meus Pagamentos', icon: Receipt },
       { id: 'finAprovacoes', label: 'Aprovações', icon: CheckCircle2 },
       { id: 'finPagar', label: 'Contas a Pagar', icon: Banknote },
       { id: 'finNfe', label: 'NFe', icon: ScrollText },
@@ -125,7 +129,7 @@ export const DEPARTMENTS: NavDepartment[] = [
 // Itens liberados a TODO usuário logado, independentemente do painel de permissões:
 // solicitar compra, ver o próprio histórico de compras e solicitar pagamento.
 // (O backend espelha isso: compras_data e financeiro/solicitacao/ são só IsAuthenticated.)
-export const ITENS_LIBERADOS_A_TODOS = ['compras', 'minhasCompras', 'finSolicitacao'] as const;
+export const ITENS_LIBERADOS_A_TODOS = ['compras', 'minhasCompras', 'finSolicitacao', 'meusPagamentos'] as const;
 
 export const hasAccess = (userSession: any, itemId: string): boolean => {
   if (!userSession) return false;
