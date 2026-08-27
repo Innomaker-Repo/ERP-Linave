@@ -7,9 +7,11 @@ import { useFinFilters } from '../finFilters';
 // Leitura real: solicitações guardadas na coleção `financeiro` (tipo 'solicitacao').
 // Aprovar transforma a solicitação em Conta a Pagar (escrita via saveEntity).
 export function AprovacoesView() {
-  const { records, approveSolicitacao, rejectSolicitacao, deleteRecord } = useFin();
+  const { records, approveSolicitacao, rejectSolicitacao, deleteRecord, userSession } = useFin();
   const { match } = useFinFilters();
   const rows = records('solicitacao').filter(match);
+  // Autorizar (aprovar/reprovar) é ato de gerência — usuário comum só solicita.
+  const isGerencia = ['ADMIN', 'GERENTE'].includes(String(userSession?.role || '').toUpperCase());
   const [busy, setBusy] = useState('');
   const [detalhe, setDetalhe] = useState<FinRecord | null>(null);
   // Reprovação pede um motivo (opcional) antes de confirmar — o solicitante vê esse texto
@@ -61,7 +63,7 @@ export function AprovacoesView() {
             <Td>
               <div className="flex gap-2">
                 <Btn small variant="secondary" onClick={() => setDetalhe(r)}>Ver mais</Btn>
-                {(r.status === 'Aguardando aprovação' || !r.status) && (
+                {(r.status === 'Aguardando aprovação' || !r.status) && isGerencia && (
                   <>
                     <Btn small variant="green" disabled={busy === r.id} onClick={() => run(r.id, approveSolicitacao)}>Aprovar</Btn>
                     <Btn small variant="red" disabled={busy === r.id} onClick={() => abrirReprovar(r)}>Reprovar</Btn>
@@ -128,7 +130,7 @@ export function AprovacoesView() {
             <p className="rounded-2xl border border-white/5 bg-[#0b1220] p-4 text-sm text-white/75">{detalhe.descricao || '—'}</p>
           </div>
 
-          {(detalhe.status === 'Aguardando aprovação' || !detalhe.status) && (
+          {(detalhe.status === 'Aguardando aprovação' || !detalhe.status) && isGerencia && (
             <div className="mt-5 flex justify-end gap-2">
               <Btn variant="red" disabled={busy === detalhe.id} onClick={() => abrirReprovar(detalhe)}>Reprovar</Btn>
               <Btn variant="green" disabled={busy === detalhe.id} onClick={() => run(detalhe.id, approveSolicitacao).then(() => setDetalhe(null))}>Aprovar → Conta a Pagar</Btn>

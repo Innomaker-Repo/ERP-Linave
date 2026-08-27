@@ -95,6 +95,12 @@ export const getPrefixoEmpresa = (empresaPrestadora?: string): string => {
  * o mesmo ID base do negócio ao qual estão atrelados.
  */
 export const gerarIdProjetoDeNegocio = (negocio: any): string => {
+  // Número escolhido pelo usuário na criação sempre vence o cálculo automático —
+  // mesma regra de formatNegocioId (obrasMapper.ts), pra OS/Orçamento/Proposta herdarem
+  // o número certo mesmo quando ele não segue a sequência automática do id do banco.
+  const customizado = String(negocio?.numeroCustomizado ?? negocio?.numero_customizado ?? '').trim();
+  if (customizado) return customizado;
+
   // Usa apenas o id sequencial numérico do backend. Ignora qualquer `id` que já
   // venha formatado (ex.: "SN-0002/26") para não duplicar prefixo/ano numa obra
   // já mapeada — nesse caso o número puro está em negocioBackendId/backendId.

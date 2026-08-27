@@ -18,7 +18,7 @@ from .serializers import (
     DocumentoSerializer, UserSerializer
 )
 from .permissions import (
-    IsAdmin, permissao_modulo, eh_admin,
+    IsAdmin, permissao_modulo, eh_admin, escreve_em_tudo,
     COMERCIAL, PRODUCAO, FINANCEIRO, COMPRAS_GESTAO, SUPRIMENTOS,
 )
 
@@ -644,6 +644,24 @@ def financeiro_data(request):
         payload = payload.get('financeiro', payload.get('data', []))
     if not isinstance(payload, list):
         return Response({'error': 'Esperado um array de registros financeiros.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Aprovar/reprovar solicitação é ato de gerência — mesmo tendo permissão de
+    # escrita no módulo Financeiro (ex.: finSolicitacao, liberado a todo mundo),
+    # um usuário comum não pode fazer essa transição de status por aqui.
+    if not escreve_em_tudo(request.user):
+        from .models import SolicitacaoPagamento
+        status_atual = dict(SolicitacaoPagamento.objects.values_list('record_id', 'status'))
+        for record in payload:
+            if not isinstance(record, dict) or record.get('tipo') != 'solicitacao':
+                continue
+            novo_status = record.get('status') or 'Aguardando aprovação'
+            if novo_status in ('Aprovado', 'Reprovado'):
+                rid = str(record.get('id') or '').strip()
+                if status_atual.get(rid) != novo_status:
+                    return Response(
+                        {'error': 'Somente administradores e gerentes podem aprovar ou reprovar solicitações de pagamento.'},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
 
     total = replace_all(payload)
     _registrar_log(request, 'atualizacao', 'Financeiro', f'Registros financeiros sincronizados ({total} itens).')

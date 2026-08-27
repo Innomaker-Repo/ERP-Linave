@@ -1347,6 +1347,47 @@ class FinanceiroSolicitacaoCriarTests(APITestCase):
         resp = self.client.post(f'{BASE}/financeiro/solicitacao/', {'id': 'SP-X'}, format='json')
         self.assertEqual(resp.status_code, 401)
 
+    def test_usuario_com_permissao_finsolicitacao_nao_aprova_via_replace_all(self):
+        # finSolicitacao dá acesso de escrita ao módulo (passa no permissao_modulo),
+        # mas aprovar/reprovar continua sendo ato de gerência — o replace-all não pode
+        # servir de atalho pra um usuário comum autorizar a própria solicitação.
+        from .models import SolicitacaoPagamento
+        criar_usuario('user-sol', permissoes={'finSolicitacao': True})
+        self._logar('user-sol')
+        self.client.post(f'{BASE}/financeiro/solicitacao/', {'id': 'SP-APV', 'valor': 10}, format='json')
+
+        payload = [{'id': 'SP-APV', 'tipo': 'solicitacao', 'valor': 10, 'status': 'Aprovado'}]
+        resp = self.client.post(f'{BASE}/financeiro/', payload, format='json')
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(SolicitacaoPagamento.objects.get(record_id='SP-APV').status, 'Aguardando aprovação')
+
+    def test_gerente_aprova_via_replace_all(self):
+        from .models import SolicitacaoPagamento
+        criar_usuario('user-sol', permissoes={'finSolicitacao': True})
+        self._logar('user-sol')
+        self.client.post(f'{BASE}/financeiro/solicitacao/', {'id': 'SP-APV2', 'valor': 10}, format='json')
+
+        criar_gerente('ger-fin')
+        self._logar('ger-fin')
+        payload = [{'id': 'SP-APV2', 'tipo': 'solicitacao', 'valor': 10, 'status': 'Aprovado'}]
+        resp = self.client.post(f'{BASE}/financeiro/', payload, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(SolicitacaoPagamento.objects.get(record_id='SP-APV2').status, 'Aprovado')
+
+    def test_usuario_pode_reenviar_solicitacao_reprovada(self):
+        # Regressão: o bloqueio é só pra ENTRAR em Aprovado/Reprovado — o solicitante
+        # continua livre pra corrigir e reenviar (status volta a 'Aguardando aprovação').
+        from .models import SolicitacaoPagamento
+        criar_usuario('user-sol', permissoes={'finSolicitacao': True})
+        self._logar('user-sol')
+        self.client.post(f'{BASE}/financeiro/solicitacao/', {'id': 'SP-REENVIO', 'valor': 10}, format='json')
+        SolicitacaoPagamento.objects.filter(record_id='SP-REENVIO').update(status='Reprovado')
+
+        payload = [{'id': 'SP-REENVIO', 'tipo': 'solicitacao', 'valor': 10, 'status': 'Aguardando aprovação'}]
+        resp = self.client.post(f'{BASE}/financeiro/', payload, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(SolicitacaoPagamento.objects.get(record_id='SP-REENVIO').status, 'Aguardando aprovação')
+
 
 # =============================================================================
 # 20. CONFIGURAÇÕES — SINGLETON

@@ -135,10 +135,24 @@ class NegocioSerializer(serializers.ModelSerializer):
     orcamentos = serializers.SerializerMethodField()
     propostas = serializers.SerializerMethodField()
     documentos = serializers.SerializerMethodField()
+    # Declarado explicitamente (sem UniqueValidator automático do DRF, que viria em inglês)
+    # para dar a mensagem de duplicidade em português — ver validate_numero_customizado.
+    numero_customizado = serializers.CharField(max_length=30, required=False, allow_blank=True, allow_null=True)
 
     class Meta:
         model = Negocio
         fields = '__all__'
+
+    def validate_numero_customizado(self, value):
+        valor = (value or '').strip()
+        if not valor:
+            return None
+        qs = Negocio.objects.filter(numero_customizado__iexact=valor)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError(f'Já existe um negócio com o número "{valor}".')
+        return valor
 
     def get_documentos(self, obj):
         docs = Documento.objects.filter(vinculo_tipo='negocio', vinculo_id=str(obj.id))

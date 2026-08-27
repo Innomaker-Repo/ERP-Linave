@@ -258,6 +258,7 @@ const initialServico: Servico = {
 
   const initialForm = {
     empresaPrestadora: empresaPrestadoraPadrao,
+    numeroNegocio: '',
     nomeNegocio: '',
     clienteId: '',
     cnpj: '',
@@ -282,6 +283,9 @@ const initialServico: Servico = {
   // --- FORMULÁRIO DE NOVO NEGÓCIO ---
   const createInitialForm = () => ({
   empresaPrestadora: empresaPrestadoraPadrao,
+  // Vazio = usa a sugestão automática (calculada ao vivo em numeroNegocioSugerido);
+  // só passa a valer o texto digitado quando o usuário efetivamente edita o campo.
+  numeroNegocio: '',
   nomeNegocio: '',
   clienteId: '',
   cnpj: '',
@@ -304,6 +308,23 @@ const initialServico: Servico = {
 });
  
  const [formData, setFormData] = useState(createInitialForm);
+
+  // Sugestão de "Nº do Negócio" pro form de Novo Negócio: próximo número da sequência global
+  // (maior número já em uso entre todos os negócios + 1, pulando os reservados de uso
+  // interno), com o prefixo da empresa selecionada. O usuário pode digitar por cima —
+  // nesse caso o valor digitado é o que vai (ver handleCreateNegocio).
+  const numeroNegocioSugerido = useMemo(() => {
+    const extrairNumero = (id: string): number => {
+      const m = /-(\d+)\//.exec(String(id || ''));
+      return m ? parseInt(m[1], 10) : 0;
+    };
+    const maiorNumero = (Array.isArray(obras) ? obras : []).reduce(
+      (max: number, o: any) => Math.max(max, extrairNumero(o.id)), 0,
+    );
+    const numero = formatarNumeroSequencial(maiorNumero + 1);
+    const ano = String(new Date().getFullYear()).slice(-2);
+    return `${getPrefixoEmpresa(formData.empresaPrestadora)}-${numero}/${ano}`;
+  }, [obras, formData.empresaPrestadora]);
 
   // --- FUNÇÕES DE MANIPULAÇÃO DE SERVIÇOS (Corrigindo o ReferenceError) ---
   const handleAddServico = () => {
@@ -379,7 +400,8 @@ const initialServico: Servico = {
 
           const formatados = dados.map((n: any) => {
             const prefixo = String(n.empresa_prestadora || '').toLowerCase().includes('servinave') ? 'VTS' : 'LN';
-            const idFormatado = `${prefixo}-${formatarNumeroSequencial(n.id)}/${String(new Date().getFullYear()).slice(-2)}`;
+            const numeroCustomizadoAtual = String(n.numero_customizado || '').trim();
+            const idFormatado = numeroCustomizadoAtual || `${prefixo}-${formatarNumeroSequencial(n.id)}/${String(new Date().getFullYear()).slice(-2)}`;
             const idClienteStr = String(n.cliente || '');
             // Preserva campos frontend-only (dadosMediacao, finalizadoComMediacao, documentosNegocio, etc.)
             const obraExistente = obrasContextoAtual.find(
@@ -389,6 +411,7 @@ const initialServico: Servico = {
             return {
               ...obraExistente,
               id: idFormatado,
+              numeroCustomizado: numeroCustomizadoAtual || undefined,
               nome: n.nome_negocio,
               clienteId: n.cliente,
               nomeClienteResolvido: clientesMapa[idClienteStr] || n.cliente_nome || n.nome_cliente || "Cliente Identificado",
@@ -449,6 +472,7 @@ const initialServico: Servico = {
     if (idBase) {
       return idBase;
     }
+    if (obra.numeroCustomizado) return String(obra.numeroCustomizado);
 
     const numericId = obra.negocioBackendId
       || parseInt(String(obra.id || '').replace(/\D/g, ''), 10)
@@ -1359,6 +1383,24 @@ const initialServico: Servico = {
       return toast.error("Nome do Negócio, Cliente e Solicitante são obrigatórios.");
     }
 
+    // Nº do Negócio: usa a sugestão se o usuário não mexeu no campo. Precisa seguir o
+    // padrão PREFIXO-NÚMERO/ANO e não pode colidir com um negócio que já existe — os dois
+    // checados aqui, antes de gastar uma chamada ao backend (que também valida a duplicidade
+    // como rede de segurança, ver validate_numero_customizado no serializer).
+    const numeroNegocioFinal = (formData.numeroNegocio || numeroNegocioSugerido).trim();
+    if (!numeroNegocioFinal) {
+      return toast.error('Informe o número do negócio.');
+    }
+    if (!/^[A-Za-z]+-\d+\/\d{2,4}$/.test(numeroNegocioFinal)) {
+      return toast.error('Número do negócio fora do padrão. Use PREFIXO-NÚMERO/ANO (ex.: LN-0009/26).');
+    }
+    const numeroJaExiste = (Array.isArray(obras) ? obras : []).some(
+      (o: any) => String(o.id || '').trim().toUpperCase() === numeroNegocioFinal.toUpperCase(),
+    );
+    if (numeroJaExiste) {
+      return toast.error(`Já existe um negócio com o número "${numeroNegocioFinal}". Escolha outro número.`);
+    }
+
     if (incluiServico && (formData.servicos.length === 0 || !formData.servicos.some(s => s.descricao.trim()))) {
       return toast.error("Adicione pelo menos um serviço com descrição na aba Serviços.");
     }
@@ -1388,6 +1430,7 @@ const initialServico: Servico = {
 
    const payloadDjango = {
       nome_negocio: formData.nomeNegocio.trim(),
+      numero_customizado: numeroNegocioFinal,
       cliente: parseInt(formData.clienteId, 10),
       empresa_prestadora: formData.empresaPrestadora,
       categoria: 'Planejamento',
@@ -1475,7 +1518,9 @@ const initialServico: Servico = {
 
           // 3. Monta o objeto de forma totalmente segura ANTES de fechar a tela
           const negocioFormatado = {
-            id: `${getPrefixoEmpresa(dadosNegocio.empresa_prestadora || formData.empresaPrestadora)}-${formatarNumeroSequencial(dadosNegocio.id || Date.now())}/${String(new Date().getFullYear()).slice(-2)}`,
+            id: dadosNegocio.numero_customizado || numeroNegocioFinal
+              || `${getPrefixoEmpresa(dadosNegocio.empresa_prestadora || formData.empresaPrestadora)}-${formatarNumeroSequencial(dadosNegocio.id || Date.now())}/${String(new Date().getFullYear()).slice(-2)}`,
+            numeroCustomizado: dadosNegocio.numero_customizado || numeroNegocioFinal || undefined,
             nome: dadosNegocio.nome_negocio || formData.nomeNegocio,
             clienteId: String(dadosNegocio.cliente || formData.clienteId), 
             nomeClienteResolvido: listaClientesCRM.find((c: any) => String(c.id) === String(dadosNegocio.cliente || formData.clienteId))?.razaoSocial || 'Cliente Identificado',
@@ -1512,7 +1557,12 @@ const initialServico: Servico = {
 
         } catch (error: any) {
       console.error('Erro detalhado do Backend:', error);
-      toast.error('Erro ao salvar novo serviço! Verifique os dados e tente novamente.');
+      const dadosErro = error?.response?.data;
+      const mensagemNumero = Array.isArray(dadosErro?.numero_customizado) ? dadosErro.numero_customizado[0] : undefined;
+      const mensagemEspecifica = mensagemNumero
+        || (typeof dadosErro === 'string' ? dadosErro : undefined)
+        || (typeof dadosErro?.detail === 'string' ? dadosErro.detail : undefined);
+      toast.error(mensagemEspecifica || 'Erro ao salvar novo serviço! Verifique os dados e tente novamente.');
     }
   };
 
@@ -2389,7 +2439,7 @@ const obrasOrdenadas = useMemo(() => {
               <div className="bg-gradient-to-r from-blue-500/10 to-cyan-500/10 rounded-2xl border border-blue-500/20 p-6">
                 <h3 className="text-lg font-black text-white uppercase mb-4">Dados Principais</h3>
                 
-                <div className="grid grid-cols-3 gap-4 mb-4">
+                <div className="grid grid-cols-4 gap-4 mb-4">
                   <div className="space-y-1.5">
                     <label className={labelClass}>Empresa Prestadora *</label>
                     <select
@@ -2438,6 +2488,18 @@ const obrasOrdenadas = useMemo(() => {
                         <option key={m.value} value={m.value}>{m.label}</option>
                       ))}
                     </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className={labelClass}>Nº do Negócio *</label>
+                    <input
+                      type="text"
+                      className={inputClass}
+                      value={formData.numeroNegocio || numeroNegocioSugerido}
+                      onChange={e => setFormData({ ...formData, numeroNegocio: e.target.value })}
+                      placeholder={numeroNegocioSugerido}
+                      title="Sugestão automática — edite se precisar seguir outra numeração"
+                    />
                   </div>
                 </div>
 
