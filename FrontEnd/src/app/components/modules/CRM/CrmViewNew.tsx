@@ -257,7 +257,9 @@ const initialServico: Servico = {
   };
 
   const initialForm = {
-    empresaPrestadora: empresaPrestadoraPadrao,
+    // Vazio de propósito: obriga a escolha explícita da empresa (o Nº do Negócio só
+    // aparece depois disso, já que a numeração é uma sequência separada por empresa).
+    empresaPrestadora: '',
     numeroNegocio: '',
     nomeNegocio: '',
     clienteId: '',
@@ -282,7 +284,9 @@ const initialServico: Servico = {
 
   // --- FORMULÁRIO DE NOVO NEGÓCIO ---
   const createInitialForm = () => ({
-  empresaPrestadora: empresaPrestadoraPadrao,
+  // Vazio de propósito: obriga a escolha explícita da empresa (o Nº do Negócio só
+  // aparece depois disso, já que a numeração é uma sequência separada por empresa).
+  empresaPrestadora: '',
   // Vazio = usa a sugestão automática (calculada ao vivo em numeroNegocioSugerido);
   // só passa a valer o texto digitado quando o usuário efetivamente edita o campo.
   numeroNegocio: '',
@@ -309,21 +313,31 @@ const initialServico: Servico = {
  
  const [formData, setFormData] = useState(createInitialForm);
 
-  // Sugestão de "Nº do Negócio" pro form de Novo Negócio: próximo número da sequência global
-  // (maior número já em uso entre todos os negócios + 1, pulando os reservados de uso
-  // interno), com o prefixo da empresa selecionada. O usuário pode digitar por cima —
-  // nesse caso o valor digitado é o que vai (ver handleCreateNegocio).
+  // Piso de cada sequência: 0934/26 foi o último negócio da Linave e 0380/26 o último da
+  // Servinave no controle anterior (fora deste sistema) — cada empresa continua a partir
+  // do número seguinte ao seu próprio último (935 e 381), numeração independente por empresa.
+  const NUMERO_NEGOCIO_PISO_LINAVE = 934;
+  const NUMERO_NEGOCIO_PISO_SERVINAVE = 380;
+
+  // Sugestão de "Nº do Negócio" pro form de Novo Negócio: próximo número da sequência DA
+  // EMPRESA SELECIONADA (maior número já em uso entre os negócios daquele prefixo + 1, nunca
+  // abaixo do piso da empresa, pulando os reservados de uso interno). Só existe depois que o
+  // usuário escolhe a Empresa Prestadora — sem empresa não há como saber qual sequência usar.
+  // O usuário pode digitar por cima — nesse caso o valor digitado é o que vai (ver handleSave).
   const numeroNegocioSugerido = useMemo(() => {
+    if (!formData.empresaPrestadora) return '';
+    const prefixo = getPrefixoEmpresa(formData.empresaPrestadora);
+    const piso = prefixo === 'VTS' ? NUMERO_NEGOCIO_PISO_SERVINAVE : NUMERO_NEGOCIO_PISO_LINAVE;
     const extrairNumero = (id: string): number => {
-      const m = /-(\d+)\//.exec(String(id || ''));
+      const m = new RegExp(`^${prefixo}-(\\d+)/`).exec(String(id || '').trim().toUpperCase());
       return m ? parseInt(m[1], 10) : 0;
     };
     const maiorNumero = (Array.isArray(obras) ? obras : []).reduce(
-      (max: number, o: any) => Math.max(max, extrairNumero(o.id)), 0,
+      (max: number, o: any) => Math.max(max, extrairNumero(o.id)), piso,
     );
     const numero = formatarNumeroSequencial(maiorNumero + 1);
     const ano = String(new Date().getFullYear()).slice(-2);
-    return `${getPrefixoEmpresa(formData.empresaPrestadora)}-${numero}/${ano}`;
+    return `${prefixo}-${numero}/${ano}`;
   }, [obras, formData.empresaPrestadora]);
 
   // --- FUNÇÕES DE MANIPULAÇÃO DE SERVIÇOS (Corrigindo o ReferenceError) ---
@@ -652,8 +666,9 @@ const initialServico: Servico = {
 
  useEffect(() => {
   const empresasDisponiveis = empresasPrestadoras.map((empresa) => empresa.nome);
-  // Só alteramos o estado se houver empresas E o campo atual estiver vazio ou for inválido
-  if (empresasDisponiveis.length > 0 && !empresasDisponiveis.includes(formData.empresaPrestadora)) {
+  // Só corrige um valor INVÁLIDO (empresa que não existe mais na lista) — vazio é um
+  // estado válido aqui (o usuário ainda não escolheu a empresa de propósito).
+  if (empresasDisponiveis.length > 0 && formData.empresaPrestadora && !empresasDisponiveis.includes(formData.empresaPrestadora)) {
     setFormData((prev) => ({ ...prev, empresaPrestadora: empresasDisponiveis[0] }));
   }
 }, [empresasPrestadoras, formData.empresaPrestadora]); // Adicione a dependência para validação segura
@@ -1379,6 +1394,9 @@ const initialServico: Servico = {
     const incluiServico = temServico(formData.modalidade);
     const incluiLocacao = temLocacao(formData.modalidade);
 
+    if (!formData.empresaPrestadora) {
+      return toast.error('Selecione a Empresa Prestadora.');
+    }
     if (!formData.nomeNegocio.trim() || !formData.clienteId || !formData.solicitante) {
       return toast.error("Nome do Negócio, Cliente e Solicitante são obrigatórios.");
     }
@@ -2447,6 +2465,7 @@ const obrasOrdenadas = useMemo(() => {
                       value={formData.empresaPrestadora}
                       onChange={e => setFormData({...formData, empresaPrestadora: e.target.value})}
                     >
+                      <option value="" disabled>Selecione a empresa</option>
                       {empresasPrestadoras.map((empresa) => (
                         <option key={empresa.id} value={empresa.nome}>
                           {empresa.nome}{empresa.cnpj ? ` - ${empresa.cnpj}` : ''}
@@ -2495,10 +2514,11 @@ const obrasOrdenadas = useMemo(() => {
                     <input
                       type="text"
                       className={inputClass}
+                      disabled={!formData.empresaPrestadora}
                       value={formData.numeroNegocio || numeroNegocioSugerido}
                       onChange={e => setFormData({ ...formData, numeroNegocio: e.target.value })}
-                      placeholder={numeroNegocioSugerido}
-                      title="Sugestão automática — edite se precisar seguir outra numeração"
+                      placeholder={formData.empresaPrestadora ? numeroNegocioSugerido : 'Selecione a empresa primeiro'}
+                      title={formData.empresaPrestadora ? 'Sugestão automática — edite se precisar seguir outra numeração' : 'Escolha a Empresa Prestadora para ver o próximo número'}
                     />
                   </div>
                 </div>
