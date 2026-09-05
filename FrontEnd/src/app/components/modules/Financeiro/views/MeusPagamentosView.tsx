@@ -91,7 +91,7 @@ export function MeusPagamentosView() {
           <Wallet size={14} /> {isAdmin ? 'Pagamentos por usuário' : 'Meus Pagamentos'}
         </div>
         <h1 className="text-3xl font-black text-white">
-          {isAdmin ? 'Histórico de pagamentos (todos os usuários)' : 'Meu histórico de pagamentos'}
+          {isAdmin ? 'Histórico de pagamentos' : 'Meu histórico de pagamentos'}
         </h1>
         <p className="text-white/50 text-sm">
           Acompanhe suas solicitações de pagamento, o que está em aprovação e o que já foi aprovado.

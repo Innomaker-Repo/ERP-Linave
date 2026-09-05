@@ -624,6 +624,25 @@ def almoxarifado_data(request):
     return Response(result, status=status.HTTP_200_OK)
 
 
+# Rede de segurança do replace-all abaixo: um POST em financeiro/ nunca deve encolher o
+# banco de forma drástica. Isso já causou perda real de dados uma vez — uma escrita partiu
+# de uma cópia incompleta do estado atual (a busca que deveria trazer tudo falhou e devolveu
+# uma lista vazia/parcial), e o replace-all apagou tudo que não estava nela. Com poucos
+# registros (ambiente novo/de teste) essa checagem não faz sentido, daí o piso mínimo.
+FINANCEIRO_QUEDA_PISO_MINIMO = 20
+FINANCEIRO_QUEDA_FRACAO_MAXIMA = 0.5  # recusa se a lista nova tiver menos da metade do total atual
+
+
+def _financeiro_contagem_atual():
+    from .models import (
+        Banco, SolicitacaoPagamento, ContaPagar, NotaFiscal, ContaReceber,
+        EstudoLocacao, ReciboLocacao, FinanceiroExtra,
+    )
+    modelos = (Banco, SolicitacaoPagamento, ContaPagar, NotaFiscal, ContaReceber,
+               EstudoLocacao, ReciboLocacao, FinanceiroExtra)
+    return sum(m.objects.count() for m in modelos)
+
+
 @api_view(['GET', 'POST', 'PUT'])
 @permission_classes([permissao_modulo(*FINANCEIRO, *COMPRAS_GESTAO)])
 def financeiro_data(request):
@@ -644,6 +663,19 @@ def financeiro_data(request):
         payload = payload.get('financeiro', payload.get('data', []))
     if not isinstance(payload, list):
         return Response({'error': 'Esperado um array de registros financeiros.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    contagem_atual = _financeiro_contagem_atual()
+    if contagem_atual >= FINANCEIRO_QUEDA_PISO_MINIMO and len(payload) < contagem_atual * FINANCEIRO_QUEDA_FRACAO_MAXIMA:
+        return Response(
+            {
+                'error': (
+                    f'Operação recusada: a lista enviada ({len(payload)} registro(s)) é muito menor que '
+                    f'o total atual no banco ({contagem_atual} registro(s)). Isso indica uma cópia '
+                    f'desatualizada do Financeiro, que apagaria dados. Recarregue a página e tente novamente.'
+                ),
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
     # Aprovar/reprovar solicitação é ato de gerência — mesmo tendo permissão de
     # escrita no módulo Financeiro (ex.: finSolicitacao, liberado a todo mundo),

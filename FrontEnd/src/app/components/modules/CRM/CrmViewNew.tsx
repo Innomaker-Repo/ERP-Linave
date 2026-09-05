@@ -271,6 +271,9 @@ const initialServico: Servico = {
     telefone: '',
     email: '',
     dataSolicitacao: new Date().toISOString().split('T')[0],
+    // "Deseja ir direto para OS?" — pula o quadro do CRM e vai direto pra criação da OS
+    // assim que o negócio for salvo (com confirmação antes, ver handleSave).
+    desejaIrDiretoParaOs: false,
     servicos: [{ ...initialServico, id: `servico-${Date.now()}` }],
     itensAlocacao: [] as ItemAlocacaoForm[],
     fase: 'Pre-Venda' as FaseOS,
@@ -300,6 +303,9 @@ const initialServico: Servico = {
   telefone: '',
   email: '',
   dataSolicitacao: new Date().toISOString().split('T')[0],
+  // "Deseja ir direto para OS?" — pula o quadro do CRM e vai direto pra criação da OS
+  // assim que o negócio for salvo (com confirmação antes, ver handleSave).
+  desejaIrDiretoParaOs: false,
   servicos: [{ ...initialServico, id: `servico-${Date.now()}` }],
   itensAlocacao: [] as ItemAlocacaoForm[],
   fase: 'Pre-Venda' as FaseOS,
@@ -1427,6 +1433,17 @@ const initialServico: Servico = {
       return toast.error("Adicione pelo menos um item de equipamento na aba Alocação.");
     }
 
+    // "Deseja ir direto para OS?" — confirma a intenção antes de criar o negócio. Se o
+    // usuário recuar aqui, o negócio ainda é criado normalmente, só sem o redirecionamento.
+    let navegarParaOsAoConcluir = formData.desejaIrDiretoParaOs;
+    if (navegarParaOsAoConcluir) {
+      navegarParaOsAoConcluir = await confirmDialog({
+        title: 'Deseja ir direto para OS?',
+        message: 'Ao confirmar, assim que o negócio for salvo você será levado direto para a criação da Ordem de Serviço.',
+        confirmText: 'Sim, ir para OS',
+      });
+    }
+
     // 1. Mapeamento para o formato exato que o NegocioSerializer (Django) exige
     // Não enviamos o 'id', deixamos o MySQL gerar o ID numérico (AUTO_INCREMENT)
    const incluiServicoPayload = temServico(formData.modalidade);
@@ -1572,6 +1589,13 @@ const initialServico: Servico = {
 
           // Atualiza a memória global para a tela de Orçamentos enxergar!
           saveEntity('obras', [...(obras || []), negocioFormatado]);
+
+          // "Deseja ir direto para OS?" confirmado — pula o quadro do CRM e vai
+          // direto pra tela de criação de OS (mesmo padrão de navegação cross-módulo
+          // já usado nesta tela para "orcamentos" e "clientes").
+          if (navegarParaOsAoConcluir) {
+            window.dispatchEvent(new CustomEvent('mudarTelaERP', { detail: 'fazerOs' }));
+          }
 
         } catch (error: any) {
       console.error('Erro detalhado do Backend:', error);
@@ -2603,6 +2627,22 @@ const obrasOrdenadas = useMemo(() => {
                       onChange={e => setFormData({...formData, dataSolicitacao: e.target.value})}
                     />
                   </div>
+                </div>
+
+                <div className="mt-4 flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-[#0b1220] p-5">
+                  <div>
+                    <p className="text-sm font-black text-white uppercase tracking-wide">Deseja ir direto para OS?</p>
+                    <p className="mt-1 text-xs text-white/50">Ao marcar esta opção, serão abertos os anexos de Orçamento/Proposta e os campos da Ordem de Serviço.</p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={formData.desejaIrDiretoParaOs}
+                    onClick={() => setFormData({ ...formData, desejaIrDiretoParaOs: !formData.desejaIrDiretoParaOs })}
+                    className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${formData.desejaIrDiretoParaOs ? 'bg-emerald-500' : 'bg-white/15'}`}
+                  >
+                    <span className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${formData.desejaIrDiretoParaOs ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                  </button>
                 </div>
               </div>
               )}
