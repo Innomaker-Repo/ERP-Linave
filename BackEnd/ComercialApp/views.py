@@ -18,7 +18,7 @@ from .serializers import (
     DocumentoSerializer, UserSerializer
 )
 from .permissions import (
-    IsAdmin, permissao_modulo, eh_admin,
+    IsAdmin, permissao_modulo, eh_admin, escreve_em_tudo,
     COMERCIAL, PRODUCAO, FINANCEIRO, COMPRAS_GESTAO, SUPRIMENTOS,
 )
 
@@ -259,6 +259,57 @@ class NegocioViewSet(LogMixin, viewsets.ModelViewSet):
 
         return Response(serializer.data)
     
+# Renomeia uma empresa prestadora (Linave/Servinave/...) em cascata: atualiza de uma vez
+# TODOS os negócios e medições já criados que guardam o nome antigo (são campos de texto
+# copiados na criação, não uma referência a um cadastro central — por isso precisam ser
+# reescritos explicitamente aqui). Ordem de Serviço e Orçamento/Proposta não têm campo de
+# empresa próprio: eles exibem a empresa lendo do negócio vinculado, então já acompanham
+# a mudança sem precisar de nenhum update adicional.
+@api_view(['POST'])
+@permission_classes([IsAdmin])
+def renomear_empresa_prestadora(request):
+    de = str(request.data.get('de') or '').strip()
+    para = str(request.data.get('para') or '').strip()
+    if not de or not para:
+        return Response({'error': 'Informe "de" e "para".'}, status=status.HTTP_400_BAD_REQUEST)
+    if de == para:
+        return Response({'negocios_atualizados': 0, 'medicoes_atualizadas': 0})
+
+    with transaction.atomic():
+        negocios_atualizados = Negocio.objects.filter(empresa_prestadora=de).update(empresa_prestadora=para)
+        medicoes_atualizadas = Medicao.objects.filter(empresa=de).update(empresa=para)
+
+    _registrar_log(
+        request, 'atualizacao', 'Empresas Prestadoras',
+        f'Renomeada "{de}" -> "{para}" ({negocios_atualizados} negócio(s), {medicoes_atualizadas} medição(ões))',
+    )
+    return Response({'negocios_atualizados': negocios_atualizados, 'medicoes_atualizadas': medicoes_atualizadas})
+
+
+# Renomeia (razão social) um cliente em cascata. Negócio, Ordem de Serviço, Orçamento
+# (Levantamento) e Proposta referenciam o Cliente por chave estrangeira — ao editar o
+# cliente direto (PATCH /clientes/<id>/) eles já mostram o nome novo sozinhos, sem
+# precisar de nada aqui. Só a Medição guarda o nome do cliente copiado como texto.
+@api_view(['POST'])
+@permission_classes([permissao_modulo(*COMERCIAL, *FINANCEIRO)])
+def renomear_cliente(request):
+    de = str(request.data.get('de') or '').strip()
+    para = str(request.data.get('para') or '').strip()
+    if not de or not para:
+        return Response({'error': 'Informe "de" e "para".'}, status=status.HTTP_400_BAD_REQUEST)
+    if de == para:
+        return Response({'medicoes_atualizadas': 0})
+
+    with transaction.atomic():
+        medicoes_atualizadas = Medicao.objects.filter(cliente=de).update(cliente=para)
+
+    _registrar_log(
+        request, 'atualizacao', 'Clientes',
+        f'Cliente renomeado "{de}" -> "{para}" ({medicoes_atualizadas} medição(ões))',
+    )
+    return Response({'medicoes_atualizadas': medicoes_atualizadas})
+
+
 #ORÇAMENTOS
 # --- Funções Customizadas ---
 @api_view(['POST'])
@@ -573,6 +624,25 @@ def almoxarifado_data(request):
     return Response(result, status=status.HTTP_200_OK)
 
 
+# Rede de segurança do replace-all abaixo: um POST em financeiro/ nunca deve encolher o
+# banco de forma drástica. Isso já causou perda real de dados uma vez — uma escrita partiu
+# de uma cópia incompleta do estado atual (a busca que deveria trazer tudo falhou e devolveu
+# uma lista vazia/parcial), e o replace-all apagou tudo que não estava nela. Com poucos
+# registros (ambiente novo/de teste) essa checagem não faz sentido, daí o piso mínimo.
+FINANCEIRO_QUEDA_PISO_MINIMO = 20
+FINANCEIRO_QUEDA_FRACAO_MAXIMA = 0.5  # recusa se a lista nova tiver menos da metade do total atual
+
+
+def _financeiro_contagem_atual():
+    from .models import (
+        Banco, SolicitacaoPagamento, ContaPagar, NotaFiscal, ContaReceber,
+        EstudoLocacao, ReciboLocacao, FinanceiroExtra,
+    )
+    modelos = (Banco, SolicitacaoPagamento, ContaPagar, NotaFiscal, ContaReceber,
+               EstudoLocacao, ReciboLocacao, FinanceiroExtra)
+    return sum(m.objects.count() for m in modelos)
+
+
 @api_view(['GET', 'POST', 'PUT'])
 @permission_classes([permissao_modulo(*FINANCEIRO, *COMPRAS_GESTAO)])
 def financeiro_data(request):
@@ -593,6 +663,37 @@ def financeiro_data(request):
         payload = payload.get('financeiro', payload.get('data', []))
     if not isinstance(payload, list):
         return Response({'error': 'Esperado um array de registros financeiros.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    contagem_atual = _financeiro_contagem_atual()
+    if contagem_atual >= FINANCEIRO_QUEDA_PISO_MINIMO and len(payload) < contagem_atual * FINANCEIRO_QUEDA_FRACAO_MAXIMA:
+        return Response(
+            {
+                'error': (
+                    f'Operação recusada: a lista enviada ({len(payload)} registro(s)) é muito menor que '
+                    f'o total atual no banco ({contagem_atual} registro(s)). Isso indica uma cópia '
+                    f'desatualizada do Financeiro, que apagaria dados. Recarregue a página e tente novamente.'
+                ),
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Aprovar/reprovar solicitação é ato de gerência — mesmo tendo permissão de
+    # escrita no módulo Financeiro (ex.: finSolicitacao, liberado a todo mundo),
+    # um usuário comum não pode fazer essa transição de status por aqui.
+    if not escreve_em_tudo(request.user):
+        from .models import SolicitacaoPagamento
+        status_atual = dict(SolicitacaoPagamento.objects.values_list('record_id', 'status'))
+        for record in payload:
+            if not isinstance(record, dict) or record.get('tipo') != 'solicitacao':
+                continue
+            novo_status = record.get('status') or 'Aguardando aprovação'
+            if novo_status in ('Aprovado', 'Reprovado'):
+                rid = str(record.get('id') or '').strip()
+                if status_atual.get(rid) != novo_status:
+                    return Response(
+                        {'error': 'Somente administradores e gerentes podem aprovar ou reprovar solicitações de pagamento.'},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
 
     total = replace_all(payload)
     _registrar_log(request, 'atualizacao', 'Financeiro', f'Registros financeiros sincronizados ({total} itens).')

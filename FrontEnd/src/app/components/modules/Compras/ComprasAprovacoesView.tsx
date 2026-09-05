@@ -1,19 +1,30 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { CheckCircle2, Clock3, ShoppingCart, Undo2 } from 'lucide-react';
+import { CheckCircle2, Clock3, FileDown, ShoppingCart, Undo2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { useErp } from '../../../context/ErpContext';
 import {
   approvalRouteLabel,
+  buildHistoricoRecord,
   formatCurrency,
+  formatPedidoCompraNumero,
+  parsePedidoCompraSeq,
   resolveApprovalRoute,
   APPROVAL_LIMIT,
+  type CompraHistoricoRegistro,
+  type ItemCompra,
+  type PedidoCompraResumo,
   type QuoteItem,
   type RequisicaoCompra,
 } from './comprasLocal';
+import { CP_STATUS, empresaFromCC } from '../Financeiro/finData';
+import { handleDownloadPedidoCompraPDF } from './handleDownloadPedidoCompraPDF';
 
 export function ComprasAprovacoesView({ searchQuery }: { searchQuery: string }) {
-  const { userSession, compras, saveEntity } = useErp();
+  const { userSession, compras, financeiro, comprasHistorico, fornecedores, saveEntity } = useErp() as any;
   const [requests, setRequests] = useState<RequisicaoCompra[]>(() => (Array.isArray(compras) ? compras : []));
   const [selectedRequest, setSelectedRequest] = useState<RequisicaoCompra | null>(null);
+  const [gerando, setGerando] = useState<string | null>(null);
+  const [pedidosGeradosModal, setPedidosGeradosModal] = useState<PedidoCompraResumo[] | null>(null);
 
   // Só persiste em mudança de fato local (não no mount/sync), para não sobrescrever o
   // workspace compartilhado com estado vazio/antigo.
@@ -71,24 +82,165 @@ export function ComprasAprovacoesView({ searchQuery }: { searchQuery: string }) 
     naturezaFornecimento === 'ITEM' ? 'comprar' : 'aContratar'
   );
 
-  const handleApprove = (requestId: string) => {
-    patchRequest(requestId, (request) => ({
-      ...request,
-      stage: 'COMPRADOS',
-      // Ao entrar em finalizados, cada item começa no estado inicial conforme a natureza do
-      // próprio item (Material/Serviço escolhida na solicitação): Material -> "Comprar";
-      // Serviço -> "À contratar".
-      itens: request.itens.map((item) => {
-        const natureza = item.naturezaFornecimento === 'ITEM' ? 'ITEM' : 'SERVICO';
-        return {
-          ...item,
-          naturezaFornecimento: natureza,
-          purchaseState: getDefaultItemPurchaseState(natureza),
-        };
-      }),
-      purchaseState: request.purchaseState || 'comprar',
-      updatedAt: new Date().toISOString(),
-    }));
+  // Aprovação: para cada item com fornecedor selecionado na cotação, agrupa por fornecedor e
+  // gera automaticamente 1 Pedido de Compra + 1 Conta a Pagar por fornecedor (regra: quantidade
+  // de fornecedores selecionados = quantidade de Pedidos de Compra = quantidade de Contas a
+  // Pagar). Itens sem seleção válida (não deveria acontecer, mas fica como rede de segurança)
+  // continuam indo para a coluna Comprados, onde o fluxo manual item a item (marcar como
+  // comprado/contratado) permanece disponível como exceção/ajuste pontual.
+  const handleApprove = async (requestId: string) => {
+    const request = requests.find((r) => r.id === requestId);
+    if (!request) return;
+
+    setGerando(requestId);
+    try {
+      const detailsById = new Map((request.budgetDetails || []).map((d) => [d.itemId, d]));
+      const elegiveis = request.itens.filter((item) => {
+        const detail = detailsById.get(item.id);
+        return detail && !detail.jaEmEstoque && detail.fornecedorSelecionado && detail.valorSelecionado !== null && detail.valorSelecionado !== undefined;
+      });
+
+      if (elegiveis.length > 0) {
+        const gruposPorFornecedor = new Map<string, ItemCompra[]>();
+        for (const item of elegiveis) {
+          const fornecedor = detailsById.get(item.id)!.fornecedorSelecionado;
+          if (!gruposPorFornecedor.has(fornecedor)) gruposPorFornecedor.set(fornecedor, []);
+          gruposPorFornecedor.get(fornecedor)!.push(item);
+        }
+
+        const historicoAtual: any[] = Array.isArray(comprasHistorico) ? comprasHistorico : [];
+        const financeiroAtual: any[] = Array.isArray(financeiro) ? financeiro : [];
+        const catalogoFornecedores: any[] = Array.isArray(fornecedores) ? fornecedores : [];
+        const userLabel = userSession?.nome || userSession?.email || 'sistema';
+
+        const novasContas: any[] = [];
+        const novosRegistros: CompraHistoricoRegistro[] = [];
+        const pedidosGerados: PedidoCompraResumo[] = [];
+        let seq = parsePedidoCompraSeq(historicoAtual);
+
+        for (const [fornecedor, itensDoGrupo] of gruposPorFornecedor) {
+          seq += 1;
+          const numero = formatPedidoCompraNumero(seq);
+          const cnpj = catalogoFornecedores.find((f: any) => f?.razaoSocial === fornecedor)?.cnpj || '';
+          const primeiroDetail = detailsById.get(itensDoGrupo[0].id)!;
+          const valorTotalGrupo = itensDoGrupo.reduce((sum, item) => sum + (detailsById.get(item.id)?.valorSelecionado || 0), 0);
+          const todosMateriais = itensDoGrupo.every((item) => (detailsById.get(item.id)?.naturezaFornecimento || item.naturezaFornecimento) === 'ITEM');
+          const contaPagarId = `CP-${Date.now().toString(36).toUpperCase()}-${seq}`;
+
+          novasContas.push({
+            id: contaPagarId,
+            tipo: 'contaPagar' as const,
+            type: 'single' as const,
+            parentId: null,
+            parcela: '-',
+            totalParcelas: 1,
+            origemCompra: true,
+            pedidoCompraNumero: numero,
+            empresa: empresaFromCC(request.centroCusto, 'Linave'),
+            vinculoTipo: 'OS' as const,
+            vinculoValor: request.centroCusto,
+            fornecedor,
+            tipoPagamento: todosMateriais ? 'Material' : 'Fornecedor',
+            natureza: '',
+            documento: '',
+            valor: valorTotalGrupo,
+            vencimento: '',
+            banco: '',
+            forma: '',
+            obs: `Pedido de Compra ${numero} — ${itensDoGrupo.length} item(ns), gerado automaticamente na aprovação.`,
+            status: CP_STATUS.semDoc,
+            valorPago: 0,
+            jurosPago: 0,
+            anexos: [] as string[],
+            comprovantes: [] as string[],
+            dataPagamento: '',
+            createdAt: new Date().toISOString(),
+          });
+
+          for (const item of itensDoGrupo) {
+            const detail = detailsById.get(item.id) || null;
+            novosRegistros.push(buildHistoricoRecord(request, item, detail, userLabel, contaPagarId, numero, cnpj));
+          }
+
+          pedidosGerados.push({
+            numero,
+            solicitacaoId: request.id,
+            centroCusto: request.centroCusto,
+            solicitante: request.solicitante,
+            departamento: request.departamento,
+            fornecedor,
+            fornecedorCnpj: cnpj,
+            itens: itensDoGrupo.map((item) => {
+              const detail = detailsById.get(item.id)!;
+              const valorTotalItem = detail.valorSelecionado || 0;
+              return {
+                itemId: item.id,
+                nome: item.nome,
+                descricao: item.descricao,
+                qtd: item.qtd,
+                un: item.un,
+                valorUnitario: item.qtd > 0 ? valorTotalItem / item.qtd : valorTotalItem,
+                valorTotal: valorTotalItem,
+              };
+            }),
+            valorTotal: valorTotalGrupo,
+            prazoEntrega: primeiroDetail.prazoEntregaSelecionado || '',
+            condicaoPagamento: primeiroDetail.condicaoPagamentoSelecionada || '',
+            observacoes: '',
+            data: new Date().toISOString(),
+          });
+        }
+
+        await saveEntity?.('financeiro', [...novasContas, ...financeiroAtual]);
+        const idsNovos = new Set(novosRegistros.map((r) => r.id));
+        await saveEntity?.('comprasHistorico', [...novosRegistros, ...historicoAtual.filter((r: any) => !idsNovos.has(r?.id))]);
+
+        pedidosGerados.forEach((pedido) => handleDownloadPedidoCompraPDF(pedido));
+        setPedidosGeradosModal(pedidosGerados);
+        toast.success(
+          pedidosGerados.length === 1
+            ? `Pedido de Compra ${pedidosGerados[0].numero} gerado e conta a pagar criada.`
+            : `${pedidosGerados.length} Pedidos de Compra gerados, um por fornecedor, cada um com sua conta a pagar.`
+        );
+
+        const idsProcessados = new Set(elegiveis.map((i) => i.id));
+        setRequests((current) =>
+          current
+            .map((r): RequisicaoCompra => {
+              if (r.id !== requestId) return r;
+              return {
+                ...r,
+                itens: r.itens.filter((it) => !idsProcessados.has(it.id)),
+                budgetDetails: (r.budgetDetails || []).filter((d) => !idsProcessados.has(d.itemId)),
+                stage: 'COMPRADOS',
+                purchaseState: r.purchaseState || 'comprar',
+                updatedAt: new Date().toISOString(),
+              };
+            })
+            .filter((r) => r.id !== requestId || r.itens.length > 0)
+        );
+        return;
+      }
+
+      // Nenhum item elegível para geração automática (sem seleção de fornecedor) — mantém o
+      // comportamento anterior: request inteira vai para Comprados, fluxo manual item a item.
+      patchRequest(requestId, (current) => ({
+        ...current,
+        stage: 'COMPRADOS',
+        itens: current.itens.map((item) => {
+          const natureza = item.naturezaFornecimento === 'ITEM' ? 'ITEM' : 'SERVICO';
+          return {
+            ...item,
+            naturezaFornecimento: natureza,
+            purchaseState: getDefaultItemPurchaseState(natureza),
+          };
+        }),
+        purchaseState: current.purchaseState || 'comprar',
+        updatedAt: new Date().toISOString(),
+      }));
+    } finally {
+      setGerando(null);
+    }
   };
 
   const handleReturnToSolicitations = (requestId: string) => {
@@ -180,11 +332,12 @@ export function ComprasAprovacoesView({ searchQuery }: { searchQuery: string }) 
                           onMouseDown={(event) => event.stopPropagation()}
                           onClick={(event) => {
                             event.stopPropagation();
-                            handleApprove(request.id);
+                            void handleApprove(request.id);
                           }}
-                          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold uppercase tracking-wider"
+                          disabled={gerando === request.id}
+                          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold uppercase tracking-wider disabled:opacity-50 disabled:cursor-wait"
                         >
-                          <CheckCircle2 size={14} /> Aprovar
+                          <CheckCircle2 size={14} /> {gerando === request.id ? 'Gerando...' : 'Aprovar'}
                         </button>
                       </div>
                     </td>
@@ -197,9 +350,43 @@ export function ComprasAprovacoesView({ searchQuery }: { searchQuery: string }) 
 
         <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 text-xs text-white/45 flex items-center gap-2">
           <ShoppingCart size={14} />
-          As aprovações desta tela movem automaticamente o pedido para a coluna Comprados no Kanban.
+          Ao aprovar, o sistema agrupa os itens por fornecedor selecionado na cotação e gera automaticamente 1 Pedido de Compra + 1 Conta a Pagar por fornecedor (com PDF do pedido). Itens sem fornecedor selecionado seguem para a coluna Comprados, onde o lançamento manual item a item continua disponível como exceção.
         </div>
       </section>
+
+      {pedidosGeradosModal && (
+        <div className="fixed inset-0 z-[95] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl max-h-[85vh] overflow-hidden rounded-[28px] border border-white/10 bg-[#0b1220] shadow-2xl">
+            <div className="flex items-start justify-between gap-4 p-6 border-b border-white/5">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.35em] text-white/35 font-black">Aprovação concluída</p>
+                <h2 className="text-2xl font-black text-white mt-2">
+                  {pedidosGeradosModal.length === 1 ? '1 Pedido de Compra gerado' : `${pedidosGeradosModal.length} Pedidos de Compra gerados`}
+                </h2>
+              </div>
+              <button onClick={() => setPedidosGeradosModal(null)} className="p-3 rounded-xl bg-white/5 hover:bg-white/10 text-white/70 transition-colors">
+                Fechar
+              </button>
+            </div>
+            <div className="p-6 overflow-y-auto max-h-[calc(85vh-96px)] space-y-3">
+              {pedidosGeradosModal.map((pedido) => (
+                <div key={pedido.numero} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-white font-bold text-sm">{pedido.numero} — {pedido.fornecedor}</p>
+                    <p className="text-white/45 text-xs mt-1">{pedido.itens.length} item(ns) • {formatCurrency(pedido.valorTotal)} • Conta a pagar já criada (Aberto S/Documento)</p>
+                  </div>
+                  <button
+                    onClick={() => handleDownloadPedidoCompraPDF(pedido)}
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-white text-xs font-bold uppercase tracking-wider shrink-0"
+                  >
+                    <FileDown size={14} /> Baixar PDF
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {selectedRequest && (
         <div className="fixed inset-0 z-[90] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">

@@ -144,6 +144,19 @@ export const handleDownloadOSPDF = ({
   y += rowH;
   y += 5;
 
+  // Cita a proposta de origem (número + versão), para deixar claro de qual documento o
+  // escopo abaixo veio — e sinalizar rápido, ao olhar o impresso, quando esse vínculo não
+  // foi resolvido (número em branco = proposta não encontrada para este negócio).
+  if (ultimaProposta?.numeroProposta) {
+    doc.setFont('Helvetica', 'italic');
+    doc.setFontSize(7.5);
+    doc.setTextColor(70, 70, 70);
+    const versaoTxt = ultimaProposta.versao ? ` versão ${ultimaProposta.versao}` : '';
+    doc.text(`OS elaborada de acordo com a Proposta ${ultimaProposta.numeroProposta}${versaoTxt}`, margin, y);
+    doc.setTextColor(0, 0, 0);
+    y += 4;
+  }
+
   const leftW = 120;
   const rightW = (pageWidth - 2 * margin) - leftW;
 

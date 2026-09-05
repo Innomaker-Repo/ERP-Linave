@@ -1,9 +1,16 @@
 import os
 from pathlib import Path
 from datetime import timedelta
+from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Carrega variaveis do arquivo .env na raiz do repositorio (ambiente local,
+# fora do Docker). Em producao o container nao tem esse arquivo e as
+# variaveis ja vem prontas do docker-compose, entao a chamada abaixo nao
+# tem efeito nenhum la (load_dotenv nunca sobrescreve uma env var existente).
+load_dotenv(BASE_DIR.parent / '.env')
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY')
@@ -77,8 +84,12 @@ SECURE_BROWSER_XSS_FILTER = True
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 #SECURE_SSL_REDIRECT = True  # Redireciona tudo de HTTP para HTTPS
 
-SESSION_COOKIE_SECURE = True  # Garante que o cookie de sessão use HTTPS
-CSRF_COOKIE_SECURE = True  # Garante que o cookie anti-CSRF use HTTPS
+# Em produção (HTTPS via Traefik) o cookie só pode trafegar por HTTPS. Em
+# localhost (DEBUG=True, sem certificado) isso impediria o navegador de
+# sequer gravar o cookie e o login nunca funcionaria — por isso a regra
+# fica amarrada ao DEBUG em vez de fixa em True.
+SESSION_COOKIE_SECURE = not DEBUG  # Garante que o cookie de sessão use HTTPS em produção
+CSRF_COOKIE_SECURE = not DEBUG  # Garante que o cookie anti-CSRF use HTTPS em produção
 SESSION_COOKIE_HTTPONLY = True  # Garante que o cookie de sessão não seja acessível via JavaScript
 
 DJANGO_CORS = os.environ.get('DJANGO_CORS_ALLOWED_ORIGINS', 'http://localhost,http://127.0.0.1')

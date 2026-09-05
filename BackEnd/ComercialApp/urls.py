@@ -4,7 +4,7 @@ from .views import (
     NegocioViewSet, ClienteViewSet, OrdemServicoViewSet,
     PropostaComercialViewSet, TemplatePropostaViewSet, FornecedorViewSet, MedicaoViewSet,
     DocumentoViewSet, UserViewSet, usuario_me,
-    criar_orcamento,
+    criar_orcamento, renomear_empresa_prestadora, renomear_cliente,
     ordens_servico_por_cliente, ordens_servico_por_negocio, atualizar_status_os,
     atualizar_status_medicao,
     financeiro_data, financeiro_solicitacao_criar, compras_data, almoxarifado_data, configuracoes_data,
@@ -41,6 +41,12 @@ urlpatterns = [
 
     # Criação de orçamento (cria Levantamento/Orcamento/itens/Resumo numa transação)
     path('orcamentos/criar/', criar_orcamento, name='criar-orcamento'),
+
+    # Renomeia empresa prestadora em cascata (negócios + medições já criados)
+    path('empresas-prestadoras/renomear/', renomear_empresa_prestadora, name='renomear-empresa-prestadora'),
+
+    # Renomeia cliente em cascata (medições já criadas — o resto referencia por FK)
+    path('clientes/renomear/', renomear_cliente, name='renomear-cliente'),
 
     # Filtros de Ordens de Serviço
     path('os-por-cliente/<int:cliente_id>/', ordens_servico_por_cliente, name='os-por-cliente'),

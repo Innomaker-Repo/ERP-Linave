@@ -14,6 +14,7 @@ Including another URLconf
     1. Import the include() function: from django.urls import include, path
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
+import os
 from django.contrib import admin
 from django.urls import include, path
 from django.views.generic import TemplateView
@@ -38,3 +39,10 @@ urlpatterns = [
 # proxiado pelo Vite / túnel ngrok).
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+    # Serve o build do Vite (FrontEnd/dist/assets) quando o Django é acessado direto
+    # (porta 8000), sem passar pelo proxy do Vite dev server. A rota '' acima já
+    # encontra o dist/index.html via TEMPLATES.DIRS, mas os arquivos que esse HTML
+    # referencia em /assets/... nunca ficavam expostos — daí o 404/MIME error no
+    # navegador. Em produção isso também é responsabilidade do nginx/whitenoise.
+    urlpatterns += static('assets/', document_root=os.path.join(settings.BASE_DIR, '../FrontEnd/dist/assets'))

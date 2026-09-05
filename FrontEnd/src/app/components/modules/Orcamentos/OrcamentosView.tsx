@@ -611,8 +611,9 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
         setOrcamentoData({
           ...formularioBase,
           ...rascunho,
-          // Sempre usa o numero/versão calculada, nunca o do rascunho
-          numeroOrcamento: formularioBase.numeroOrcamento,
+          // Respeita o número editado manualmente e salvo no rascunho; só cai para o
+          // calculado quando o rascunho não tem nenhum (ex.: rascunho antigo sem o campo).
+          numeroOrcamento: rascunho.numeroOrcamento?.trim() || formularioBase.numeroOrcamento,
           dadosServicos: Array.isArray(rascunho?.dadosServicos) && rascunho.dadosServicos.length > 0
             ? rascunho.dadosServicos
             : formularioBase.dadosServicos,
@@ -1791,39 +1792,47 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
   // aplicados POR ITEM. Substitui apenas as linhas da categoria pedida (preserva a outra).
   //  - serviço  : 1 linha por MDO/material/terceirizado → base × (1+margem%+oh%) × (1+imposto%)
   //  - locação  : 1 linha por item → valorTotal (já com margem/OH do item) × (1+impostoLocacao%)
-  const gerarMacroDoOrcamento = (categoria: 'servico' | 'locacao') => {
+  // `manual` = true quando vem do clique no botão "Puxar do orçamento" (não do auto-preenchimento
+  // silencioso ao abrir o formulário) — só nesse caso avisamos o usuário quando não há nada pra puxar,
+  // já que sem essa mensagem o botão "parece não funcionar" quando os campos de origem estão zerados.
+  const gerarMacroDoOrcamento = (categoria: 'servico' | 'locacao', manual = false) => {
     const pd = (v: any) => parseDecimal(v) || 0;
     const novoId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    setOrcamentoData(prev => {
-      const outras = (prev.atividadesMacro || []).filter(m => (m.categoria || 'servico') !== categoria);
-      const novas: AtividadeMacro[] = [];
-      // Deriva o valor unitário a partir da quantidade (e dias) REAIS do item, preservando o
-      // total da linha: quantidade × valorUnitario × dias === base × fator (o mesmo total de antes).
-      // Assim o macro (e a proposta que o consome) mostra a quantidade real, e não "1".
-      if (categoria === 'servico') {
-        const fator = (1 + (pd(prev.margem) + pd(prev.oh)) / 100) * (1 + pd(prev.impostos) / 100);
-        const push = (desc: string, unidade: string, base: number, qtd: number, dias: number) => {
-          if (!String(desc).trim() || base <= 0) return;
-          const q = qtd > 0 ? qtd : 1;
-          const d = dias > 0 ? dias : 1;
-          const valorUnitario = (base * fator) / (q * d);
-          novas.push({ id: novoId(), descricao: String(desc).trim(), quantidade: String(q), unidade, valorUnitario: valorUnitario.toFixed(2), dias: String(d), categoria: 'servico' });
-        };
-        (prev.maoDeObra || []).forEach((i: any) => push(i.funcao || '', 'MDO', pd(i.valorTotal), pd(i.quantidade), pd(i.dias)));
-        (prev.materiais || []).forEach((i: any) => push(i.descricao || '', i.unidade || 'un', pd(i.valorTotal), pd(i.quantidade), 1));
-        (prev.terceirizados || []).forEach((i: any) => push(i.descricao || '', i.unidade || 'serv', pd(i.valorTotal), pd(i.quantidade), 1));
-      } else {
-        const fatorLoc = 1 + pd(prev.impostosLocacao) / 100;
-        (prev.itensAlocacao || []).forEach((i: any) => {
-          const base = pd(i.valorTotal); // já embute margem/O.H do item
-          if (!String(i.equipamento || '').trim() || base <= 0) return;
-          const q = pd(i.quantidade) > 0 ? pd(i.quantidade) : 1;
-          const valorUnitario = (base * fatorLoc) / q;
-          novas.push({ id: novoId(), descricao: String(i.equipamento).trim(), quantidade: String(q), unidade: i.unidade || 'un', valorUnitario: valorUnitario.toFixed(2), dias: '1', categoria: 'locacao' });
-        });
-      }
-      return { ...prev, atividadesMacro: [...outras, ...novas] };
-    });
+    const outras = (orcamentoData.atividadesMacro || []).filter(m => (m.categoria || 'servico') !== categoria);
+    const novas: AtividadeMacro[] = [];
+    // Deriva o valor unitário a partir da quantidade (e dias) REAIS do item, preservando o
+    // total da linha: quantidade × valorUnitario × dias === base × fator (o mesmo total de antes).
+    // Assim o macro (e a proposta que o consome) mostra a quantidade real, e não "1".
+    if (categoria === 'servico') {
+      const fator = (1 + (pd(orcamentoData.margem) + pd(orcamentoData.oh)) / 100) * (1 + pd(orcamentoData.impostos) / 100);
+      const push = (desc: string, unidade: string, base: number, qtd: number, dias: number) => {
+        if (!String(desc).trim() || base <= 0) return;
+        const q = qtd > 0 ? qtd : 1;
+        const d = dias > 0 ? dias : 1;
+        const valorUnitario = (base * fator) / (q * d);
+        novas.push({ id: novoId(), descricao: String(desc).trim(), quantidade: String(q), unidade, valorUnitario: valorUnitario.toFixed(2), dias: String(d), categoria: 'servico' });
+      };
+      (orcamentoData.maoDeObra || []).forEach((i: any) => push(i.funcao || '', 'MDO', pd(i.valorTotal), pd(i.quantidade), pd(i.dias)));
+      (orcamentoData.materiais || []).forEach((i: any) => push(i.descricao || '', i.unidade || 'un', pd(i.valorTotal), pd(i.quantidade), 1));
+      (orcamentoData.terceirizados || []).forEach((i: any) => push(i.descricao || '', i.unidade || 'serv', pd(i.valorTotal), pd(i.quantidade), 1));
+    } else {
+      const fatorLoc = 1 + pd(orcamentoData.impostosLocacao) / 100;
+      (orcamentoData.itensAlocacao || []).forEach((i: any) => {
+        const base = pd(i.valorTotal); // já embute margem/O.H do item
+        if (!String(i.equipamento || '').trim() || base <= 0) return;
+        const q = pd(i.quantidade) > 0 ? pd(i.quantidade) : 1;
+        const valorUnitario = (base * fatorLoc) / q;
+        novas.push({ id: novoId(), descricao: String(i.equipamento).trim(), quantidade: String(q), unidade: i.unidade || 'un', valorUnitario: valorUnitario.toFixed(2), dias: '1', categoria: 'locacao' });
+      });
+    }
+    if (manual && novas.length === 0) {
+      toast.error(categoria === 'servico'
+        ? 'Nenhum item de Mão de Obra, Materiais ou Terceirizados com descrição e valor preenchidos para puxar.'
+        : 'Nenhum item de Locação com equipamento e valor preenchidos para puxar.');
+      return;
+    }
+    setOrcamentoData(prev => ({ ...prev, atividadesMacro: [...outras, ...novas] }));
+    if (manual) toast.success(`${novas.length} linha(s) puxada(s) do orçamento.`);
   };
 
   const removeAtividadeMacro = (id: string) => {
@@ -1896,7 +1905,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
           <p className="text-white/50 text-xs mt-1">Puxado do orçamento com margem, O.H e imposto por item — editável. Vai para o item D (Preço) da Proposta.</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => gerarMacroDoOrcamento(categoria)} title="Recarrega as linhas a partir dos campos do orçamento (substitui as desta tabela)" className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg font-black text-[11px] uppercase transition">
+          <button onClick={() => gerarMacroDoOrcamento(categoria, true)} title="Recarrega as linhas a partir dos campos do orçamento (substitui as desta tabela)" className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg font-black text-[11px] uppercase transition">
             <RefreshCw size={14} className="inline mr-1.5" /> Puxar do orçamento
           </button>
           <button onClick={() => addAtividadeMacro(categoria)} className={`px-3 py-2 rounded-lg font-black text-[11px] uppercase transition ${addBtnClass}`}>
@@ -2157,6 +2166,13 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                             </span>
                           </div>
                         </div>
+
+                        <button
+                          onClick={() => setDetalhesModal({ obra, orc: ultimoOrcamento })}
+                          className="w-full bg-white/5 hover:bg-white/10 border border-white/10 text-white/70 hover:text-white py-2.5 rounded-lg font-black uppercase text-xs tracking-widest transition-all flex items-center justify-center gap-2"
+                        >
+                          <Eye size={14} /> Detalhes
+                        </button>
 
                         <div className="flex items-center gap-2">
                           <button
@@ -3024,8 +3040,8 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
             </button>
             <button
               onClick={handleConcluirOrcamento}
-              disabled={saving || Number(orcamentoData.quantidadeItensProduzidos) < 1 || orcamentoData.atividades.filter(i => i.atividade?.trim()).length === 0}
-              title={Number(orcamentoData.quantidadeItensProduzidos) < 1 ? 'Informe a quantidade de itens produzidos para concluir' : orcamentoData.atividades.filter(i => i.atividade?.trim()).length === 0 ? 'Preencha pelo menos uma atividade prevista para concluir' : ''}
+              disabled={saving || (orcTemServico && (Number(orcamentoData.quantidadeItensProduzidos) < 1 || orcamentoData.atividades.filter(i => i.atividade?.trim()).length === 0))}
+              title={!orcTemServico ? '' : Number(orcamentoData.quantidadeItensProduzidos) < 1 ? 'Informe a quantidade de itens produzidos para concluir' : orcamentoData.atividades.filter(i => i.atividade?.trim()).length === 0 ? 'Preencha pelo menos uma atividade prevista para concluir' : ''}
               className="flex-1 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-[#0b1220] py-3 rounded-lg font-black uppercase text-sm tracking-widest transition-all shadow-lg shadow-amber-900/30 disabled:opacity-40 disabled:cursor-not-allowed disabled:from-amber-500 disabled:to-orange-500"
             >
               <Lock size={16} className="inline mr-2" /> Concluir Orçamento

@@ -7,7 +7,9 @@
  *   - departamentos via saveListas.
  * =======================================================================================*/
 import { useMemo } from 'react';
+import { toast } from 'sonner';
 import { useErp } from '../../../context/ErpContext';
+import api from '../../../../services/api';
 import {
   mapOsToFinanceiro, obraFinalizada, docsMediacao, negocioValor, empresaFromCC, todayStr, days, num,
   upsertContaReceberPorMedicao, garantirOcorrenciasContasFixas, proximaOcorrenciaAposPagamento, CP_STATUS,
@@ -141,10 +143,45 @@ export function useFin() {
   }, [ctx.obras, ctx.os, financeiro]);
 
   // ----- Escrita (infra pronta) -----
+  // Toda escrita aqui é replace-all: o array final substitui a tabela inteira no servidor.
+  // `financeiro` (acima) é só o que foi carregado no LOGIN — se o usuário está logado há
+  // horas, pode estar bem atrás do que outros usuários já gravaram nesse meio-tempo. Usar
+  // essa cópia como base apagaria silenciosamente as mudanças deles. Por isso toda função
+  // de escrita busca o estado mais recente do servidor primeiro, e só then monta o array
+  // final em cima dele — reduz a janela de corrida de "desde o login" pra "essa ação".
+  //
+  // Importante: NÃO usa getFinanceiro() (services/financeiroService.ts) — aquela função é
+  // pra leitura de tela e, de propósito, transforma qualquer falha em `[]` (aceitável quando
+  // é só exibição). Aqui uma falha vale muito mais: se o array vier vazio por causa de um erro
+  // de rede, e não porque o Financeiro está genuinamente vazio, a escrita seguinte manda só o
+  // registro novo pro replace-all — apagando o histórico inteiro (foi exatamente isso que
+  // aconteceu). Por isso a busca é feita direto aqui, sem capturar o erro: se falhar, propaga.
+  const financeiroAtual = async (): Promise<FinRecord[]> => {
+    const response = await api.get('financeiro/');
+    return Array.isArray(response.data) ? response.data : [];
+  };
+
+  // Envolve uma escrita que depende do estado atual do Financeiro. Se `financeiroAtual()`
+  // falhar, ABORTA sem chamar saveEntity — nada é salvo nem apagado — e avisa o usuário, em
+  // vez de deixar a escrita seguir com uma base incompleta (a causa raiz do apagão anterior).
+  const comFinanceiroAtual = async <T,>(fn: (base: FinRecord[]) => Promise<T>): Promise<T | undefined> => {
+    let base: FinRecord[];
+    try {
+      base = await financeiroAtual();
+    } catch (error) {
+      console.error('Erro ao buscar o estado atual do Financeiro:', error);
+      toast.error('Não foi possível confirmar os dados atuais do Financeiro. Tente novamente.');
+      return undefined;
+    }
+    return fn(base);
+  };
+
   // Acrescenta um registro à coleção `financeiro`.
   const addRecord = async (record: FinRecord) => {
-    const next = [{ ...record, createdAt: new Date().toISOString() }, ...financeiro];
-    await ctx.saveEntity('financeiro', next);
+    await comFinanceiroAtual(async (base) => {
+      const next = [{ ...record, createdAt: new Date().toISOString() }, ...base];
+      await ctx.saveEntity('financeiro', next);
+    });
   };
 
   // Solicitação de pagamento: usa o endpoint append-only, aberto a TODO usuário logado
@@ -156,8 +193,10 @@ export function useFin() {
 
   // Atualiza registros financeiros por função de mapeamento.
   const updateRecords = async (mapFn: (r: FinRecord) => FinRecord) => {
-    const next = financeiro.map(mapFn);
-    await ctx.saveEntity('financeiro', next);
+    await comFinanceiroAtual(async (base) => {
+      const next = base.map(mapFn);
+      await ctx.saveEntity('financeiro', next);
+    });
   };
 
   // Atualiza um registro específico por id (merge de campos).
@@ -170,10 +209,12 @@ export function useFin() {
   // na tela e ainda somando no total. A confirmação é responsabilidade de quem chama
   // (todas as telas usam confirmDialog antes).
   const deleteRecord = async (id: string) => {
-    const alvo = financeiro.find((r) => r.id === id);
-    if (!alvo) return;
-    const next = financeiro.filter((r) => r.id !== id && !(alvo.type === 'parent' && r.parentId === id));
-    await ctx.saveEntity('financeiro', next);
+    await comFinanceiroAtual(async (base) => {
+      const alvo = base.find((r) => r.id === id);
+      if (!alvo) return;
+      const next = base.filter((r) => r.id !== id && !(alvo.type === 'parent' && r.parentId === id));
+      await ctx.saveEntity('financeiro', next);
+    });
   };
 
   // Quantas linhas somem junto com o registro (mãe leva as parcelas filhas).
@@ -186,43 +227,54 @@ export function useFin() {
   // Aprova uma solicitação: marca como aprovada e cria a Conta a Pagar correspondente
   // (numa única escrita, para o estado ficar consistente).
   const approveSolicitacao = async (id: string) => {
-    const sol = financeiro.find((r) => r.id === id);
-    if (!sol) return;
-    const now = new Date().toISOString();
-    const contaPagar: FinRecord = {
-      id: `CP-${Date.now().toString(36).toUpperCase()}`,
-      tipo: 'contaPagar',
-      origemSolicitacao: sol.id,
-      type: 'single',
-      empresa: sol.empresa,
-      vinculoTipo: sol.vinculoTipo,
-      vinculoValor: sol.vinculoValor,
-      fornecedor: sol.fornecedor,
-      tipoPagamento: sol.tipoPagamento,
-      natureza: sol.natureza || '',
-      documento: sol.documento,
-      valor: sol.valor,
-      vencimento: sol.vencimento,
-      banco: '',
-      forma: sol.forma,
-      status: 'Aberto',
-      // Os anexos da solicitação (URLs /media/... dos documentos já persistidos) precisam
-      // seguir para a Conta a Pagar: é o mesmo documento que o solicitante enviou e que
-      // quem paga precisa consultar. Sem isso a conta nasce sem anexo e `contaTemDocumento`
-      // retorna false, afetando o status e a liberação no estoque.
-      anexos: Array.isArray(sol.anexos) ? sol.anexos : [],
-      descricao: sol.descricao || '',
-      valorPago: 0,
-      jurosPago: 0,
-      comprovantes: [],
-      createdAt: now,
-    };
-    const next = financeiro.map((r) => (r.id === id ? { ...r, status: 'Aprovado' } : r));
-    await ctx.saveEntity('financeiro', [contaPagar, ...next]);
+    await comFinanceiroAtual(async (base) => {
+      const sol = base.find((r) => r.id === id);
+      if (!sol) return;
+      const now = new Date().toISOString();
+      const contaPagar: FinRecord = {
+        id: `CP-${Date.now().toString(36).toUpperCase()}`,
+        tipo: 'contaPagar',
+        origemSolicitacao: sol.id,
+        type: 'single',
+        empresa: sol.empresa,
+        vinculoTipo: sol.vinculoTipo,
+        vinculoValor: sol.vinculoValor,
+        fornecedor: sol.fornecedor,
+        tipoPagamento: sol.tipoPagamento,
+        natureza: sol.natureza || '',
+        documento: sol.documento,
+        valor: sol.valor,
+        vencimento: sol.vencimento,
+        banco: '',
+        forma: sol.forma,
+        status: 'Aberto',
+        // Os anexos da solicitação (URLs /media/... dos documentos já persistidos) precisam
+        // seguir para a Conta a Pagar: é o mesmo documento que o solicitante enviou e que
+        // quem paga precisa consultar. Sem isso a conta nasce sem anexo e `contaTemDocumento`
+        // retorna false, afetando o status e a liberação no estoque.
+        anexos: Array.isArray(sol.anexos) ? sol.anexos : [],
+        descricao: sol.descricao || '',
+        valorPago: 0,
+        jurosPago: 0,
+        comprovantes: [],
+        createdAt: now,
+      };
+      const next = base.map((r) => (r.id === id ? { ...r, status: 'Aprovado' } : r));
+      await ctx.saveEntity('financeiro', [contaPagar, ...next]);
+    });
   };
 
-  const rejectSolicitacao = async (id: string) => {
-    await updateRecords((r) => (r.id === id ? { ...r, status: 'Reprovado' } : r));
+  const rejectSolicitacao = async (id: string, motivo?: string) => {
+    await updateRecords((r) => (r.id === id ? { ...r, status: 'Reprovado', motivoReprovacao: motivo || '' } : r));
+  };
+
+  // Reenvia uma solicitação reprovada: o próprio solicitante corrige os dados e ela volta
+  // para a fila de aprovação, como se fosse enviada agora — sem precisar criar um registro novo
+  // (mantém o mesmo id e o anexo já enviado, a menos que troque).
+  const reenviarSolicitacao = async (id: string, patch: Partial<FinRecord>) => {
+    await updateRecords((r) => (r.id === id
+      ? { ...r, ...patch, status: 'Aguardando aprovação', motivoReprovacao: '' }
+      : r));
   };
 
   // Rótulo do recebível gerado pela nota. O número é opcional na emissão (nem sempre já
@@ -238,23 +290,27 @@ export function useFin() {
   const atualizarNfeEmitida = async (nfeId: string, patch: { numero?: string; emissao?: string }) => {
     const numero = String(patch.numero ?? '').trim();
     const referencia = referenciaNfe(numero);
-    const next = financeiro.map((r) => {
-      if (r.id === nfeId && r.tipo === 'nfe') {
-        return { ...r, numero, ...(patch.emissao ? { emissao: patch.emissao } : {}) };
-      }
-      // O recebível guarda uma "fonte" por origem (NF de serviço, recibo de locação);
-      // só a fonte desta nota muda, e a referência do topo é recomposta a partir delas.
-      if (r.tipo === 'contaReceber' && Array.isArray(r.fontes) && r.fontes.some((f: any) => f?.id === nfeId)) {
-        const fontes = r.fontes.map((f: any) => (f?.id === nfeId ? { ...f, referencia } : f));
-        return {
-          ...r,
-          fontes,
-          referencia: fontes.map((f: any) => f.referencia).filter(Boolean).join(' · '),
-        };
-      }
-      return r;
+    await comFinanceiroAtual(async (base) => {
+      const next = base.map((r) => {
+        if (r.id === nfeId && r.tipo === 'nfe') {
+          return { ...r, numero, ...(patch.emissao ? { emissao: patch.emissao } : {}) };
+        }
+        // O recebível guarda uma "fonte" por origem (NF de serviço, recibo de locação);
+        // só a fonte desta nota muda, e a referência/emissão do topo são recompostas a partir delas.
+        if (r.tipo === 'contaReceber' && Array.isArray(r.fontes) && r.fontes.some((f: any) => f?.id === nfeId)) {
+          const fontes = r.fontes.map((f: any) =>
+            (f?.id === nfeId ? { ...f, referencia, ...(patch.emissao ? { emissao: patch.emissao } : {}) } : f));
+          return {
+            ...r,
+            fontes,
+            referencia: fontes.map((f: any) => f.referencia).filter(Boolean).join(' · '),
+            emissaoNfe: fontes.find((f: any) => f.origem === 'NFe')?.emissao || r.emissaoNfe || '',
+          };
+        }
+        return r;
+      });
+      await ctx.saveEntity('financeiro', next);
     });
-    await ctx.saveEntity('financeiro', next);
   };
 
   // Emite e arquiva a NFe: registra a NFe e cria a Conta a Receber (uma única escrita).
@@ -287,56 +343,61 @@ export function useFin() {
     };
     // A conta a receber da parte de SERVIÇO é mesclada por medição: se o recibo de locação da
     // mesma medição já criou (ou criar depois) um recebível, os dois somam num só.
-    const next = upsertContaReceberPorMedicao([nfe, ...financeiro], {
-      medicaoId: sol.medicaoId || '',
-      medicaoNumero: sol.medicaoNumero || '',
-      ordemServicoNumero: sol.os || '',
-      empresa: sol.empresa,
-      cliente: payload.cliente,
-      origem: 'NFe',
-      fonteId: nfe.id,
-      valorOriginal: payload.original,
-      valorLiquido: payload.liquido,
-      vencimento: payload.vencimento,
-      referencia: referenciaNfe(payload.numero),
-      baixado: payload.baixado,
-      impostos: payload.impostos,
+    await comFinanceiroAtual(async (base) => {
+      const next = upsertContaReceberPorMedicao([nfe, ...base], {
+        medicaoId: sol.medicaoId || '',
+        medicaoNumero: sol.medicaoNumero || '',
+        ordemServicoNumero: sol.os || '',
+        empresa: sol.empresa,
+        cliente: payload.cliente,
+        origem: 'NFe',
+        fonteId: nfe.id,
+        valorOriginal: payload.original,
+        valorLiquido: payload.liquido,
+        vencimento: payload.vencimento,
+        referencia: referenciaNfe(payload.numero),
+        baixado: payload.baixado,
+        impostos: payload.impostos,
+        emissao: payload.emissao,
+      });
+      await ctx.saveEntity('financeiro', next);
     });
-    await ctx.saveEntity('financeiro', next);
   };
 
   // Parcela uma conta a pagar: cria a conta mãe (valor total) e as parcelas filhas
   // (cada uma com vencimento, valor e status próprios) — numa única escrita.
   const parcelarConta = async (id: string, nParcelas: number, intervaloDias: number, dataInicio?: string) => {
-    const src = financeiro.find((r) => r.id === id);
-    if (!src) return;
-    const n = Math.max(2, Math.floor(nParcelas));
-    const parentId = src.id;
-    const resto = financeiro.filter((r) => r.id !== parentId && r.parentId !== parentId);
-    const total = num(src.valor);
-    const base = Math.floor((total / n) * 100) / 100;
-    const sobra = Math.round((total - base * n) * 100) / 100;
+    await comFinanceiroAtual(async (listaAtual) => {
+      const src = listaAtual.find((r) => r.id === id);
+      if (!src) return;
+      const n = Math.max(2, Math.floor(nParcelas));
+      const parentId = src.id;
+      const resto = listaAtual.filter((r) => r.id !== parentId && r.parentId !== parentId);
+      const total = num(src.valor);
+      const base = Math.floor((total / n) * 100) / 100;
+      const sobra = Math.round((total - base * n) * 100) / 100;
 
-    const mae: FinRecord = { ...src, type: 'parent', parentId: null, parcela: 'Mãe', totalParcelas: n, status: 'Parcelado', valorPago: 0, jurosPago: 0, comprovantes: [], dataPagamento: '' };
-    const filhas: FinRecord[] = [];
-    for (let i = 1; i <= n; i++) {
-      filhas.push({
-        ...src,
-        id: `${parentId}-${String(i).padStart(2, '0')}`,
-        type: 'child',
-        parentId,
-        parcela: `${i}/${n}`,
-        totalParcelas: n,
-        valor: i === n ? Math.round((base + sobra) * 100) / 100 : base,
-        vencimento: days(dataInicio || src.vencimento || todayStr, intervaloDias * (i - 1)),
-        status: 'Aberto',
-        valorPago: 0,
-        jurosPago: 0,
-        comprovantes: [],
-        dataPagamento: '',
-      });
-    }
-    await ctx.saveEntity('financeiro', [mae, ...filhas, ...resto]);
+      const mae: FinRecord = { ...src, type: 'parent', parentId: null, parcela: 'Mãe', totalParcelas: n, status: 'Parcelado', valorPago: 0, jurosPago: 0, comprovantes: [], dataPagamento: '' };
+      const filhas: FinRecord[] = [];
+      for (let i = 1; i <= n; i++) {
+        filhas.push({
+          ...src,
+          id: `${parentId}-${String(i).padStart(2, '0')}`,
+          type: 'child',
+          parentId,
+          parcela: `${i}/${n}`,
+          totalParcelas: n,
+          valor: i === n ? Math.round((base + sobra) * 100) / 100 : base,
+          vencimento: days(dataInicio || src.vencimento || todayStr, intervaloDias * (i - 1)),
+          status: 'Aberto',
+          valorPago: 0,
+          jurosPago: 0,
+          comprovantes: [],
+          dataPagamento: '',
+        });
+      }
+      await ctx.saveEntity('financeiro', [mae, ...filhas, ...resto]);
+    });
   };
 
   // Paga uma conta (data real, banco, juros e comprovante). Se for parcela filha,
@@ -345,47 +406,49 @@ export function useFin() {
     id: string,
     p: { dataPagamento: string; valorPago: number; banco: string; houveJuros: boolean; jurosPago: number; motivoJuros: string; comprovantes: string[] },
   ) => {
-    let parentId: string | null = null;
-    let next = financeiro.map((r) => {
-      if (r.id !== id) return r;
-      parentId = r.parentId || null;
-      return {
-        ...r,
-        status: 'Pago',
-        dataPagamento: p.dataPagamento,
-        valorPago: p.valorPago,
-        banco: p.banco,
-        houveJuros: p.houveJuros,
-        jurosPago: p.jurosPago,
-        motivoJuros: p.motivoJuros,
-        comprovantes: p.comprovantes,
-      };
-    });
-
-    if (parentId) {
-      const kids = next.filter((r) => r.parentId === parentId);
-      const todasPagas = kids.length > 0 && kids.every((k) => k.status === 'Pago');
-      next = next.map((r) => {
-        if (r.id !== parentId) return r;
+    return comFinanceiroAtual(async (listaAtual) => {
+      let parentId: string | null = null;
+      let next = listaAtual.map((r) => {
+        if (r.id !== id) return r;
+        parentId = r.parentId || null;
         return {
           ...r,
-          valorPago: kids.reduce((s, k) => s + num(k.valorPago), 0),
-          jurosPago: kids.reduce((s, k) => s + num(k.jurosPago), 0),
-          comprovantes: kids.flatMap((k) => k.comprovantes || []),
-          status: todasPagas ? 'Pago' : 'Parcelado',
-          dataPagamento: todasPagas ? p.dataPagamento : '',
+          status: 'Pago',
+          dataPagamento: p.dataPagamento,
+          valorPago: p.valorPago,
+          banco: p.banco,
+          houveJuros: p.houveJuros,
+          jurosPago: p.jurosPago,
+          motivoJuros: p.motivoJuros,
+          comprovantes: p.comprovantes,
         };
       });
-    }
 
-    // Conta fixa: quitar a competência atual é o que faz nascer a próxima. É assim que a
-    // lista vira o histórico progressivo — uma linha paga por mês/semana/dia, em sequência,
-    // e sempre uma única conta em aberto à frente.
-    const paga = next.find((r) => r.id === id);
-    const proximas = paga ? proximaOcorrenciaAposPagamento(next, paga) : [];
+      if (parentId) {
+        const kids = next.filter((r) => r.parentId === parentId);
+        const todasPagas = kids.length > 0 && kids.every((k) => k.status === 'Pago');
+        next = next.map((r) => {
+          if (r.id !== parentId) return r;
+          return {
+            ...r,
+            valorPago: kids.reduce((s, k) => s + num(k.valorPago), 0),
+            jurosPago: kids.reduce((s, k) => s + num(k.jurosPago), 0),
+            comprovantes: kids.flatMap((k) => k.comprovantes || []),
+            status: todasPagas ? 'Pago' : 'Parcelado',
+            dataPagamento: todasPagas ? p.dataPagamento : '',
+          };
+        });
+      }
 
-    await ctx.saveEntity('financeiro', [...proximas, ...next]);
-    return proximas[0] || null;
+      // Conta fixa: quitar a competência atual é o que faz nascer a próxima. É assim que a
+      // lista vira o histórico progressivo — uma linha paga por mês/semana/dia, em sequência,
+      // e sempre uma única conta em aberto à frente.
+      const paga = next.find((r) => r.id === id);
+      const proximas = paga ? proximaOcorrenciaAposPagamento(next, paga) : [];
+
+      await ctx.saveEntity('financeiro', [...proximas, ...next]);
+      return proximas[0] || null;
+    });
   };
 
   // ----- Contas fixas (recorrentes) -----
@@ -394,56 +457,63 @@ export function useFin() {
   // e para retomar o encadeamento quando a última ocorrência sumiu (pausa, exclusão).
   // Só escreve quando há algo novo — chamada na abertura da tela de Contas a Pagar.
   const sincronizarContasFixas = async (): Promise<number> => {
-    const novas = garantirOcorrenciasContasFixas(financeiro);
-    if (novas.length === 0) return 0;
-    await ctx.saveEntity('financeiro', [...novas, ...financeiro]);
-    return novas.length;
+    const resultado = await comFinanceiroAtual(async (listaAtual) => {
+      const novas = garantirOcorrenciasContasFixas(listaAtual);
+      if (novas.length === 0) return 0;
+      await ctx.saveEntity('financeiro', [...novas, ...listaAtual]);
+      return novas.length;
+    });
+    return resultado ?? 0;
   };
 
   // Cria ou atualiza a REGRA. Ao editar, os dados são propagados para as ocorrências
   // futuras ainda não pagas (mudou o valor da luz? o mês que vem já sai corrigido), mas
   // nunca para as pagas nem para as vencidas — isso reescreveria histórico financeiro.
   const salvarContaFixa = async (regra: FinRecord) => {
-    const existe = financeiro.some((r) => r.id === regra.id);
-    const base = existe
-      ? financeiro.map((r) => (r.id === regra.id ? { ...r, ...regra } : r))
-      : [{ ...regra, createdAt: new Date().toISOString() }, ...financeiro];
+    await comFinanceiroAtual(async (listaAtual) => {
+      const existe = listaAtual.some((r) => r.id === regra.id);
+      const base = existe
+        ? listaAtual.map((r) => (r.id === regra.id ? { ...r, ...regra } : r))
+        : [{ ...regra, createdAt: new Date().toISOString() }, ...listaAtual];
 
-    const next = base.map((r) => {
-      const alvo = r.tipo === 'contaPagar'
-        && r.contaFixaId === regra.id
-        && r.status !== CP_STATUS.pago
-        && String(r.vencimento || '') >= todayStr;
-      if (!alvo) return r;
-      return {
-        ...r,
-        empresa: regra.empresa,
-        fornecedor: regra.fornecedor || regra.descricao,
-        tipoPagamento: regra.categoria,
-        contaFixaCategoria: regra.categoria,
-        contaFixaPeriodicidade: regra.periodicidade,
-        contaFixaDescricao: regra.descricao,
-        natureza: regra.natureza || '',
-        valor: num(regra.valor),
-        forma: regra.forma || '',
-        banco: regra.banco || '',
-      };
+      const next = base.map((r) => {
+        const alvo = r.tipo === 'contaPagar'
+          && r.contaFixaId === regra.id
+          && r.status !== CP_STATUS.pago
+          && String(r.vencimento || '') >= todayStr;
+        if (!alvo) return r;
+        return {
+          ...r,
+          empresa: regra.empresa,
+          fornecedor: regra.fornecedor || regra.descricao,
+          tipoPagamento: regra.categoria,
+          contaFixaCategoria: regra.categoria,
+          contaFixaPeriodicidade: regra.periodicidade,
+          contaFixaDescricao: regra.descricao,
+          natureza: regra.natureza || '',
+          valor: num(regra.valor),
+          forma: regra.forma || '',
+          banco: regra.banco || '',
+        };
+      });
+      await ctx.saveEntity('financeiro', next);
     });
-    await ctx.saveEntity('financeiro', next);
   };
 
   // Exclui a regra e as ocorrências futuras não pagas que ela havia gerado. As ocorrências
   // já pagas (e as vencidas) permanecem: são histórico financeiro, não configuração.
   const excluirContaFixa = async (id: string) => {
-    const next = financeiro.filter((r) => {
-      if (r.id === id) return false;
-      const futuraNaoPaga = r.tipo === 'contaPagar'
-        && r.contaFixaId === id
-        && r.status !== CP_STATUS.pago
-        && String(r.vencimento || '') >= todayStr;
-      return !futuraNaoPaga;
+    await comFinanceiroAtual(async (listaAtual) => {
+      const next = listaAtual.filter((r) => {
+        if (r.id === id) return false;
+        const futuraNaoPaga = r.tipo === 'contaPagar'
+          && r.contaFixaId === id
+          && r.status !== CP_STATUS.pago
+          && String(r.vencimento || '') >= todayStr;
+        return !futuraNaoPaga;
+      });
+      await ctx.saveEntity('financeiro', next);
     });
-    await ctx.saveEntity('financeiro', next);
   };
 
   // Quantas ocorrências futuras não pagas somem junto com a regra (para a confirmação).
@@ -461,9 +531,12 @@ export function useFin() {
   return {
     // leitura
     oss, empresas, departamentos, fornecedores, clientes, financeiro, records, nfeSolicitacoes,
+    userSession: ctx.userSession,
+    pendingEditSolicitacaoId: ctx.pendingEditSolicitacaoId,
+    setPendingEditSolicitacaoId: ctx.setPendingEditSolicitacaoId,
     // escrita
     addRecord, addSolicitacao, updateRecords, updateRecord, deleteRecord, contarDependentes,
-    addDepartamento, approveSolicitacao, rejectSolicitacao, emitirNfe, atualizarNfeEmitida,
+    addDepartamento, approveSolicitacao, rejectSolicitacao, reenviarSolicitacao, emitirNfe, atualizarNfeEmitida,
     parcelarConta, pagarConta,
     // contas fixas (recorrentes)
     sincronizarContasFixas, salvarContaFixa, excluirContaFixa, ocorrenciasFuturasDaFixa,

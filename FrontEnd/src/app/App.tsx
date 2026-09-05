@@ -26,6 +26,7 @@ function getAbaForSection(section: string): { aba: string; item: string } {
     'crm': { aba: 'comercial', item: 'crm' },
     'clientes': { aba: 'comercial', item: 'clientes' },
     'proposta': { aba: 'comercial', item: 'proposta' },
+    'templatesProposta': { aba: 'comercial', item: 'templatesProposta' },
     'fazerOs': { aba: 'comercial', item: 'fazerOs' },
     'orcamentos': { aba: 'comercial', item: 'orcamentos' },
     'medicao': { aba: 'comercial', item: 'medicao' },
@@ -34,6 +35,7 @@ function getAbaForSection(section: string): { aba: string; item: string } {
     // Financeiro (cada seção é um item próprio do sidebar)
     'finDashboard': { aba: 'financeiro', item: 'dashboard' },
     'finSolicitacao': { aba: 'financeiro', item: 'solicitacao' },
+    'meusPagamentos': { aba: 'financeiro', item: 'meusPagamentos' },
     'finAprovacoes': { aba: 'financeiro', item: 'aprovacoes' },
     'finPagar': { aba: 'financeiro', item: 'pagar' },
     'finNfe': { aba: 'financeiro', item: 'nfe' },
@@ -62,6 +64,7 @@ function getAbaForSection(section: string): { aba: string; item: string } {
     
     // Configurações
     'usuarios': { aba: 'config', item: 'usuarios' },
+    'empresasPrestadoras': { aba: 'config', item: 'empresasPrestadoras' },
     'logAtividades': { aba: 'config', item: 'logAtividades' },
     'meuPerfil': { aba: 'config', item: 'meuPerfil' },
   };
@@ -127,7 +130,7 @@ export default function App() {
         <Sidebar activeSection={activeSection} setActiveSection={setActiveSection} onClose={() => setSidebarOpen(false)} />
       )}
       <main className="flex-1 overflow-y-auto bg-[#0b1220] flex flex-col">
-        <Header activeSection={activeSection} searchQuery={searchQuery} setSearchQuery={setSearchQuery} onToggleSidebar={() => setSidebarOpen(o => !o)} />
+        <Header activeSection={activeSection} searchQuery={searchQuery} setSearchQuery={setSearchQuery} onToggleSidebar={() => setSidebarOpen(o => !o)} onNavigate={setActiveSection} />
         
         <section className="flex-1 animate-in fade-in slide-in-from-bottom-2 duration-500 relative p-6">
           {(() => {

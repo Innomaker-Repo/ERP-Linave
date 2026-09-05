@@ -8,13 +8,19 @@
  */
 
 import { mapDocsApiToFront } from './documentosService';
+import { formatarNumeroSequencial } from './numeroSequencial';
 
 const prefixoEmpresa = (empresa?: string) =>
   String(empresa || '').toLowerCase().includes('servinave') ? 'VTS' : 'LN';
 
 export const formatNegocioId = (negocio: any): string => {
+  // Número escolhido pelo usuário na criação (ver Novo Negócio → campo "Nº do Negócio")
+  // sempre vence o cálculo automático — é a mesma regra em todo lugar que formata esse id.
+  const customizado = String(negocio?.numero_customizado ?? negocio?.numeroCustomizado ?? '').trim();
+  if (customizado) return customizado;
+
   const prefixo = prefixoEmpresa(negocio?.empresa_prestadora ?? negocio?.empresaPrestadora);
-  const numero = String(negocio?.id ?? '').padStart(4, '0');
+  const numero = formatarNumeroSequencial(negocio?.id);
   const ano = String(new Date().getFullYear()).slice(-2);
   return `${prefixo}-${numero}/${ano}`;
 };
@@ -30,6 +36,9 @@ export const mapNegocioToObra = (n: any, clientesMapa: Record<string, string> = 
   const documentosNegocio = docsFront.filter((d) => d.categoria !== 'cliente_assinado');
   return {
     id: idFormatado,
+    // Guardado à parte (além de já refletido em `id`) para quem precisa recalcular o id
+    // a partir do id numérico cru do backend (ex.: gerarIdProjetoDeNegocio ao criar uma OS).
+    numeroCustomizado: String(n?.numero_customizado ?? '').trim() || undefined,
     nome: n?.nome_negocio,
     clienteId: n?.cliente,
     nomeClienteResolvido:

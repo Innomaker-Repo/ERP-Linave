@@ -12,6 +12,7 @@ import { getNegocios } from '../../../../services/comercial';
 import { getClientes, criarProposta, atualizarProposta, atualizarNegocio } from '../../../../services/comercialService';
 import {
   CAMPOS_TEMPLATE_PROPOSTA,
+  ROTULOS_CAMPO_TEMPLATE,
   getPropostaTemplates,
   createPropostaTemplate,
   updatePropostaTemplate,
@@ -74,20 +75,6 @@ interface PropostaFormData {
 //   - preço  -> preco, precoItens, precoTextoLivre (vem do orçamento)
 //   - escopo -> escopoA, escopoBasicoServicos (levantado a bordo)
 //   - autopreenchidos -> dataProposta, numeroProposta, cliente, atribuidoA, cargoContato
-const ROTULOS_CAMPO_TEMPLATE: Record<CampoTemplateProposta, string> = {
-  referencia: 'Referência',
-  saudacao: 'Saudação',
-  assunto: 'Assunto',
-  textoAbertura: 'Texto de Abertura',
-  responsabilidadeContratada: 'B - Resp. da Contratada',
-  escopoC: 'C - Resp. da Contratante',
-  condicoesGerais: 'E - Condições Gerais',
-  prazo: 'F - Prazo',
-  efetivoPrevisto: 'G - Efetivo Previsto',
-  condicoesPagamento: 'H - Cond. de Pagamento',
-  encerramento: 'Encerramento',
-};
-
 const indexToVersaoAlfabetica = (index: number) => {
   if (index <= 0) return '';
   let value = index - 1;
@@ -969,6 +956,13 @@ export function PropostaView() {
   const handleSaveProposta = async () => {
     if (!selectedObra) return;
 
+    const confirmado = await confirmDialog({
+      title: 'Enviar proposta ao cliente',
+      message: 'Tem certeza? Ao clicar você certifica que está tudo correto e que vai enviar ao cliente a proposta atual.',
+      confirmText: 'Enviar Proposta',
+    });
+    if (!confirmado) return;
+
     const proximaVersaoLetra = getVersaoInicialProposta(selectedObra.propostas);
 
     const componentesId = extrairComponentesDoId(selectedObra.id);
@@ -1802,11 +1796,11 @@ export function PropostaView() {
           </div>
           <div className="space-y-1.5">
             <label className={labelClass}>Nº Proposta</label>
-            <input 
+            <input
               type="text"
-              className={`${inputClass} bg-white/5 cursor-not-allowed`}
-              disabled
+              className={inputClass}
               value={propostaForm.numeroProposta}
+              onChange={e => setPropostaForm({...propostaForm, numeroProposta: e.target.value})}
             />
           </div>
         </div>

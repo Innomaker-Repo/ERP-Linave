@@ -83,9 +83,15 @@ class Negocio(models.Model):
 
     id = models.BigAutoField(primary_key=True)
     cliente = models.ForeignKey('Cliente', on_delete=models.CASCADE, related_name='negocios')
-    empresa_prestadora = models.CharField(max_length=100) 
-    nome_negocio = models.CharField(max_length=200) 
+    empresa_prestadora = models.CharField(max_length=100)
+    nome_negocio = models.CharField(max_length=200)
     solicitante = models.CharField(max_length=150)
+    # Número do projeto (ex.: "LN-0009/26") escolhido pelo usuário na criação do negócio,
+    # sobrepondo o número que sairia da sequência automática (prefixo da empresa + id
+    # sequencial + ano corrente). Nulo = usa o cálculo automático de sempre (compatibilidade
+    # com negócios já existentes). Unicidade validada no serializer (mensagem em português);
+    # o unique=True aqui é só a rede de segurança contra corrida de duas gravações simultâneas.
+    numero_customizado = models.CharField(max_length=30, null=True, blank=True, unique=True)
     cargo = models.CharField(max_length=100, null=True, blank=True)
     telefone = models.CharField(max_length=20, null=True, blank=True)
     email = models.EmailField(max_length=254)

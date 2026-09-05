@@ -3,6 +3,7 @@ import { FinFiltersProvider, FinFiltersBar } from '../../components/modules/Fina
 import { FinNavProvider } from '../../components/modules/Financeiro/finNav';
 import { DashboardView } from '../../components/modules/Financeiro/views/DashboardView';
 import { SolicitacaoView } from '../../components/modules/Financeiro/views/SolicitacaoView';
+import { MeusPagamentosView } from '../../components/modules/Financeiro/views/MeusPagamentosView';
 import { AprovacoesView } from '../../components/modules/Financeiro/views/AprovacoesView';
 import { ContasPagarView } from '../../components/modules/Financeiro/views/ContasPagarView';
 import { NfeView } from '../../components/modules/Financeiro/views/NfeView';
@@ -25,6 +26,7 @@ interface FinanceiroModuleProps {
 const VIEWS: Record<string, React.ComponentType> = {
   dashboard: DashboardView,
   solicitacao: SolicitacaoView,
+  meusPagamentos: MeusPagamentosView,
   aprovacoes: AprovacoesView,
   pagar: ContasPagarView,
   nfe: NfeView,

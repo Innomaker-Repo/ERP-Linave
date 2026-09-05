@@ -1291,6 +1291,49 @@ class FinanceiroCRUDTests(APITestCase):
         self.assertEqual(resp.status_code, 200)
 
 
+class FinanceiroReplaceAllGuardTests(APITestCase):
+    """Rede de segurança em financeiro_data: recusa um replace-all que encolheria o banco
+    de forma drástica (a causa raiz do apagão real de dados — uma escrita partiu de uma
+    cópia incompleta do estado atual e o replace-all apagou o que não estava nela)."""
+
+    def setUp(self):
+        self.admin = criar_admin('adm-guard', 'Admin@teste1')
+        resp = obter_token(self.client, 'adm-guard', 'Admin@teste1')
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {resp.data["access"]}')
+
+    def _solicitacoes(self, n):
+        return [{'id': f'SP-{i:04d}', 'tipo': 'solicitacao', 'valor': 10} for i in range(n)]
+
+    def test_recusa_queda_drastica_acima_do_piso(self):
+        from .models import SolicitacaoPagamento
+        # Estabelece 25 registros (acima do piso de 20 que ativa a checagem).
+        self.assertEqual(self.client.post(f'{BASE}/financeiro/', self._solicitacoes(25), format='json').status_code, 200)
+        self.assertEqual(SolicitacaoPagamento.objects.count(), 25)
+
+        # Uma lista com só 2 registros (bem menos da metade de 25) deve ser recusada.
+        resp = self.client.post(f'{BASE}/financeiro/', self._solicitacoes(2), format='json')
+        self.assertEqual(resp.status_code, 400)
+        # Nada foi apagado: os 25 registros originais continuam intactos.
+        self.assertEqual(SolicitacaoPagamento.objects.count(), 25)
+
+    def test_permite_queda_moderada_acima_do_piso(self):
+        from .models import SolicitacaoPagamento
+        self.assertEqual(self.client.post(f'{BASE}/financeiro/', self._solicitacoes(25), format='json').status_code, 200)
+        # 20 de 25 é 80% — acima do piso de 50%, deve passar normalmente.
+        resp = self.client.post(f'{BASE}/financeiro/', self._solicitacoes(20), format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(SolicitacaoPagamento.objects.count(), 20)
+
+    def test_nao_bloqueia_banco_pequeno_abaixo_do_piso(self):
+        from .models import SolicitacaoPagamento
+        # Com poucos registros (ambiente novo/de teste), mesmo uma queda proporcionalmente
+        # grande não deve ser bloqueada — é abaixo do piso mínimo que ativa a checagem.
+        self.assertEqual(self.client.post(f'{BASE}/financeiro/', self._solicitacoes(5), format='json').status_code, 200)
+        resp = self.client.post(f'{BASE}/financeiro/', self._solicitacoes(1), format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(SolicitacaoPagamento.objects.count(), 1)
+
+
 class FinanceiroSolicitacaoCriarTests(APITestCase):
     """POST /comercial/financeiro/solicitacao/ — append-only, aberto a todo autenticado.
 
@@ -1346,6 +1389,47 @@ class FinanceiroSolicitacaoCriarTests(APITestCase):
     def test_anonimo_retorna_401(self):
         resp = self.client.post(f'{BASE}/financeiro/solicitacao/', {'id': 'SP-X'}, format='json')
         self.assertEqual(resp.status_code, 401)
+
+    def test_usuario_com_permissao_finsolicitacao_nao_aprova_via_replace_all(self):
+        # finSolicitacao dá acesso de escrita ao módulo (passa no permissao_modulo),
+        # mas aprovar/reprovar continua sendo ato de gerência — o replace-all não pode
+        # servir de atalho pra um usuário comum autorizar a própria solicitação.
+        from .models import SolicitacaoPagamento
+        criar_usuario('user-sol', permissoes={'finSolicitacao': True})
+        self._logar('user-sol')
+        self.client.post(f'{BASE}/financeiro/solicitacao/', {'id': 'SP-APV', 'valor': 10}, format='json')
+
+        payload = [{'id': 'SP-APV', 'tipo': 'solicitacao', 'valor': 10, 'status': 'Aprovado'}]
+        resp = self.client.post(f'{BASE}/financeiro/', payload, format='json')
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(SolicitacaoPagamento.objects.get(record_id='SP-APV').status, 'Aguardando aprovação')
+
+    def test_gerente_aprova_via_replace_all(self):
+        from .models import SolicitacaoPagamento
+        criar_usuario('user-sol', permissoes={'finSolicitacao': True})
+        self._logar('user-sol')
+        self.client.post(f'{BASE}/financeiro/solicitacao/', {'id': 'SP-APV2', 'valor': 10}, format='json')
+
+        criar_gerente('ger-fin')
+        self._logar('ger-fin')
+        payload = [{'id': 'SP-APV2', 'tipo': 'solicitacao', 'valor': 10, 'status': 'Aprovado'}]
+        resp = self.client.post(f'{BASE}/financeiro/', payload, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(SolicitacaoPagamento.objects.get(record_id='SP-APV2').status, 'Aprovado')
+
+    def test_usuario_pode_reenviar_solicitacao_reprovada(self):
+        # Regressão: o bloqueio é só pra ENTRAR em Aprovado/Reprovado — o solicitante
+        # continua livre pra corrigir e reenviar (status volta a 'Aguardando aprovação').
+        from .models import SolicitacaoPagamento
+        criar_usuario('user-sol', permissoes={'finSolicitacao': True})
+        self._logar('user-sol')
+        self.client.post(f'{BASE}/financeiro/solicitacao/', {'id': 'SP-REENVIO', 'valor': 10}, format='json')
+        SolicitacaoPagamento.objects.filter(record_id='SP-REENVIO').update(status='Reprovado')
+
+        payload = [{'id': 'SP-REENVIO', 'tipo': 'solicitacao', 'valor': 10, 'status': 'Aguardando aprovação'}]
+        resp = self.client.post(f'{BASE}/financeiro/', payload, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(SolicitacaoPagamento.objects.get(record_id='SP-REENVIO').status, 'Aguardando aprovação')
 
 
 # =============================================================================

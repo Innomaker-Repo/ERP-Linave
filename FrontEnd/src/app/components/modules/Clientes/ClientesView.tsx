@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { UserPlus, Save, X, Edit2, Trash2, Building2, User, MapPin, Phone, Calendar, UserCheck, History, Eye, FileText } from 'lucide-react';
 import { useErp } from '../../../context/ErpContext';
-import { getClientes, createCliente, updateCliente, deleteCliente } from '../../../../services/clientes';
+import { getClientes, createCliente, updateCliente, deleteCliente, renomearClienteCascata } from '../../../../services/clientes';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../ui/feedback';
 import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
@@ -9,7 +9,7 @@ import { formatDateBR } from '../../../utils/formatDate';
 import { NegocioDetalheModal } from '../Comercial/FinalizadosComercialView';
 
 export function ClientesView({ searchQuery }: { searchQuery: string }) {
-  const { obras, os, userSession, medicoes, config } = useErp() as any;
+  const { obras, os, userSession, medicoes, config, financeiro, saveEntity } = useErp() as any;
   const [negocioDetalhe, setNegocioDetalhe] = useState<any>(null);
 
   // Helpers compartilhados com o modal de detalhes do negócio
@@ -63,6 +63,9 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
   const [showClienteModal, setShowClienteModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  // Razão social como estava ANTES de abrir o formulário de edição — usada pra detectar
+  // renomeação e disparar a cascata pro que já foi criado (medições, financeiro).
+  const [razaoSocialOriginal, setRazaoSocialOriginal] = useState('');
 
 
   // Carregar clientes do backend na montagem
@@ -104,6 +107,7 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
   const handleOpenForm = (cliente: any = null) => {
     if (cliente) {
       setCurrentCliente(cliente);
+      setRazaoSocialOriginal(cliente.razaoSocial || '');
       setEditMode(true);
     } else {
       setCurrentCliente(initialClienteState);
@@ -145,6 +149,34 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
         setListaClientes((prev) =>
           prev.map((c) => c.id === currentCliente.id ? clienteAtualizado : c)
         );
+
+        // Negócio/OS/Orçamento/Proposta referenciam o cliente por FK e já mostram o nome
+        // novo sozinhos. Só a Medição e o Financeiro guardam a razão social como texto
+        // copiado — propaga a mudança pra eles não ficarem com o nome antigo pra sempre.
+        const novaRazaoSocial = (clienteAtualizado.razaoSocial || '').trim();
+        if (razaoSocialOriginal && novaRazaoSocial && razaoSocialOriginal !== novaRazaoSocial) {
+          try {
+            await renomearClienteCascata(razaoSocialOriginal, novaRazaoSocial);
+          } catch (erroCascata) {
+            console.error('Falha ao propagar renomeação de cliente nas medições:', erroCascata);
+            toast.error('Cliente renomeado, mas não consegui atualizar as medições já criadas. Tente salvar de novo.');
+          }
+          // NFe/Contas usam `cliente`; Recibo de Locação usa `clienteNome` — cobre os dois.
+          const financeiroAtual = Array.isArray(financeiro) ? financeiro : [];
+          const temNoFinanceiro = financeiroAtual.some(
+            (r: any) => r.cliente === razaoSocialOriginal || r.clienteNome === razaoSocialOriginal
+          );
+          if (temNoFinanceiro) {
+            const financeiroAtualizado = financeiroAtual.map((r: any) => ({
+              ...r,
+              ...(r.cliente === razaoSocialOriginal ? { cliente: novaRazaoSocial } : {}),
+              ...(r.clienteNome === razaoSocialOriginal ? { clienteNome: novaRazaoSocial } : {}),
+            }));
+            await saveEntity('financeiro', financeiroAtualizado);
+          }
+          toast.info('Recarregando para atualizar negócios, OS e financeiro com o novo nome...');
+          setTimeout(() => window.location.reload(), 1500);
+        }
       } else {
         // Criar novo cliente no backend
         clienteAtualizado = await createCliente(currentCliente);

@@ -7,7 +7,7 @@ import React, { createContext, useContext, useEffect, useMemo, useRef, useState 
 import { Building2, Landmark, CalendarRange, ArrowRight, SlidersHorizontal, X } from 'lucide-react';
 import { Select } from './finUi';
 import { useFin } from './useFin';
-import { days, todayStr } from './finData';
+import { days, todayStr, bancoLabel } from './finData';
 
 export interface FinFilterState {
   empresa: string;
@@ -166,7 +166,7 @@ function PresetChip({ label, active, onClick }: { label: string; active: boolean
 export function FinFiltersBar({ view = '' }: { view?: string }) {
   const { filters, setFilters } = useFinFilters();
   const { empresas, records } = useFin();
-  const bancos = records('banco').map((b) => b.nome).filter(Boolean) as string[];
+  const bancos = records('banco').filter((b) => b.nome) as Array<{ id: string; nome: string; empresa?: string }>;
   const presets = presetsDaView(view);
 
   const ativos =
@@ -224,7 +224,7 @@ export function FinFiltersBar({ view = '' }: { view?: string }) {
           <span className={grpLabel}><Landmark size={12} /> Banco</span>
           <Select value={filters.banco} onChange={(e) => setFilters((f) => ({ ...f, banco: e.target.value }))}>
             <option value="Todos">Todos os bancos</option>
-            {bancos.map((b) => <option key={b}>{b}</option>)}
+            {bancos.map((b) => <option key={b.id} value={b.nome}>{bancoLabel(b)}</option>)}
           </Select>
         </div>
 

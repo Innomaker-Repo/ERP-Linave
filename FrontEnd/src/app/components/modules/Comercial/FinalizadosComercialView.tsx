@@ -12,6 +12,8 @@ import { handleDownloadOrcamentoPDF } from '../CRM/handleDownloadOrcamentoPDF';
 import { handleDownloadOSPDF } from '../CRM/handleDownloadOSPDF';
 import { handleDownloadPropostaPDF } from '../CRM/handleDownloadPropostaPDF';
 import { handleDownloadMedicaoPDF } from '../CRM/handleDownloadMedicaoPDF';
+import { getNegocioPorId } from '../../../../services/comercialService';
+import { mapNegocioToObra } from '../../../../services/obrasMapper';
 import { isEmpresaLinave, getLogoUrlForEmpresa } from '../../../utils/company';
 import { boldOS } from '../../../utils/osHighlight';
 
@@ -423,7 +425,23 @@ export function NegocioDetalheModal({
       (o: any) => o.tipoDocumento === 'consolidada' || (o.aSerIncluido && Object.keys(o.aSerIncluido).length > 0)
     ) || osDoNegocio[osDoNegocio.length - 1];
     const logoBase64 = await carregarLogoBase64();
-    handleDownloadOSPDF({ osPrincipal, ultimoOrcamento, ultimaProposta, cliente: clienteCtx, obra, logoBase64 });
+
+    // Rebusca o negócio fresco do servidor antes de gerar o PDF: se a proposta foi editada
+    // (ex.: escopo preenchido) depois que esta tela foi carregada, a cópia em memória fica
+    // desatualizada e a OS sai sem o escopo mesmo já estando preenchido no banco.
+    let obraFresca = obra;
+    if (obra?.negocioBackendId) {
+      try {
+        const negocioFresco = await getNegocioPorId(obra.negocioBackendId);
+        if (negocioFresco) obraFresca = mapNegocioToObra(negocioFresco);
+      } catch (e) {
+        console.error('Erro ao rebuscar negócio para o PDF da OS:', e);
+      }
+    }
+    const propostasFrescas = Array.isArray(obraFresca?.propostas) ? obraFresca.propostas : [];
+    const ultimaPropostaFresca = propostasFrescas.length > 0 ? propostasFrescas[propostasFrescas.length - 1] : ultimaProposta;
+
+    handleDownloadOSPDF({ osPrincipal, ultimoOrcamento, ultimaProposta: ultimaPropostaFresca, cliente: clienteCtx, obra: obraFresca, logoBase64 });
     toast.success('PDF da OS gerado!');
   };
 

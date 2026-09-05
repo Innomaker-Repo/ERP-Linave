@@ -47,9 +47,15 @@ export const StatusTag = ({ status }: { status: string }) => (
   <Pill tone={STATUS_TONE[status] || 'neutral'}>{status}</Pill>
 );
 
-export const CompanyTag = ({ empresa }: { empresa: string }) => (
-  <Pill tone={empresa === 'Linave' ? 'linave' : empresa === 'Servinave' ? 'servinave' : 'neutral'}>{empresa}</Pill>
-);
+// A empresa cadastrada costuma ter o nome completo ("Servinave Serviços Marítimos"), não só
+// "Servinave" — por isso identifica por conteúdo (case-insensitive) e sempre mostra a forma
+// curta na etiqueta, em vez do nome cru, que ficava comprido e sem cor (caía no tom neutro).
+export const CompanyTag = ({ empresa }: { empresa: string }) => {
+  const nome = String(empresa || '').toLowerCase();
+  if (nome.includes('linave')) return <Pill tone="linave">Linave</Pill>;
+  if (nome.includes('servinave')) return <Pill tone="servinave">Servinave</Pill>;
+  return <Pill tone="neutral">{empresa}</Pill>;
+};
 
 export const TypeTag = ({ type }: { type: string }) => (
   <Pill tone={type === 'parent' ? 'mother' : type === 'child' ? 'child' : 'neutral'}>

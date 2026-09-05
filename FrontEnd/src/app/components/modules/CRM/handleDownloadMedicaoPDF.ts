@@ -13,8 +13,9 @@ const loadImage = (url: string): Promise<HTMLImageElement> => {
 
 export const handleDownloadMedicaoPDF = async (
   documentoMediacaoForm: any,
-  cliente: any, 
-  obra: any,    
+  cliente: any,
+  obra: any,
+  ultimaProposta?: any,
 ) => {
   if (!documentoMediacaoForm) return;
 
@@ -190,7 +191,21 @@ export const handleDownloadMedicaoPDF = async (
     drawRowFields('Data emissao:', formatarDataParaBr(documentoMediacaoForm.dataEmissao) || '', 'Embarcaçao:', documentoMediacaoForm.embarcacao || '', true, false);
     drawRowFields('Negócio / Nr. BM:', `${numeroNegocio}${documentoMediacaoForm.numeroBM ? ` • BM ${documentoMediacaoForm.numeroBM}` : ''}`, 'Periodo:', documentoMediacaoForm.periodo || '', true, false);
 
-    y += 8;
+    y += 4;
+
+    // Cita a proposta de origem (número + versão), para deixar claro de qual documento os
+    // itens abaixo foram medidos — mesma citação já aplicada na Ordem de Serviço.
+    if (ultimaProposta?.numeroProposta) {
+      doc.setFont('Arial', 'italic');
+      doc.setFontSize(8);
+      doc.setTextColor(70, 70, 70);
+      const versaoTxt = ultimaProposta.versao ? ` versão ${ultimaProposta.versao}` : '';
+      doc.text(`Medição elaborada de acordo com a Proposta ${ultimaProposta.numeroProposta}${versaoTxt}`, margin, y);
+      doc.setTextColor(0, 0, 0);
+      y += 5;
+    } else {
+      y += 4;
+    }
 
     // ===== 3. TABELA DE ITENS =====
     const colWidths = [12, 78, 20, 15, 30, 35];

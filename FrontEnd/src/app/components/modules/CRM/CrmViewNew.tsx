@@ -16,6 +16,7 @@ import { downloadDocument, getDocumentHref } from '../../../utils/documentDownlo
 import { formatDateBR } from '../../../utils/formatDate';
 import { isEmpresaLinave, getLogoUrlForEmpresa } from '../../../utils/company';
 import { uploadDocumento, excluirDocumento } from '../../../../services/documentosService';
+import { formatarNumeroSequencial } from '../../../../services/numeroSequencial';
 import { MODALIDADES, temServico, temLocacao, modalidadeLabel } from '../../../utils/modalidade';
 // Substitua as importações antigas por esta única:
 import {
@@ -181,12 +182,17 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       : [{ id: 'EMP-LINAVE', nome: fallbackNome }];
 
     empresasPadrao.forEach((empresaPadrao) => {
+      // Contém (não só igualdade exata): a empresa já cadastrada costuma ter o nome completo
+      // ("Servinave Serviços Marítimos"), não só "Servinave" — comparar por igualdade estrita
+      // não reconhecia isso como a mesma empresa e injetava um "Servinave" fantasma duplicado,
+      // com o mesmo id da empresa real (causava o warning de key duplicada no <select>).
       const jaExiste = origem.some((empresa: any) => {
         const nomeBase = typeof empresa === 'string'
           ? empresa
           : empresa?.nome || empresa?.razaoSocial || empresa?.empresaNome || '';
 
-        return String(nomeBase).trim().toLowerCase() === empresaPadrao.nome.toLowerCase();
+        const nomeNormalizado = String(nomeBase).trim().toLowerCase();
+        return !!nomeNormalizado && nomeNormalizado.includes(empresaPadrao.nome.toLowerCase());
       });
 
       if (!jaExiste) {
@@ -195,6 +201,7 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
     });
 
     const empresasUnicas = new Map<string, { id: string; nome: string; cnpj: string }>();
+    const idsUsados = new Set<string>();
 
     origem.forEach((empresa: any, index: number) => {
       const nomeBase = typeof empresa === 'string'
@@ -207,8 +214,14 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
       const chave = nome.toLowerCase();
       if (empresasUnicas.has(chave)) return;
 
+      // Defesa extra: se por algum motivo o id já foi usado por outra empresa nesta lista
+      // (dado antigo/mal migrado), gera um id alternativo em vez de repetir a key no <select>.
+      let id = typeof empresa === 'object' && empresa?.id ? String(empresa.id) : `empresa-${index}`;
+      if (idsUsados.has(id)) id = `${id}-${index}`;
+      idsUsados.add(id);
+
       empresasUnicas.set(chave, {
-        id: typeof empresa === 'object' && empresa?.id ? empresa.id : `empresa-${index}`,
+        id,
         nome,
         cnpj: typeof empresa === 'object' ? empresa?.cnpj || empresa?.empresaCnpj || '' : ''
       });
@@ -244,7 +257,10 @@ const initialServico: Servico = {
   };
 
   const initialForm = {
-    empresaPrestadora: empresaPrestadoraPadrao,
+    // Vazio de propósito: obriga a escolha explícita da empresa (o Nº do Negócio só
+    // aparece depois disso, já que a numeração é uma sequência separada por empresa).
+    empresaPrestadora: '',
+    numeroNegocio: '',
     nomeNegocio: '',
     clienteId: '',
     cnpj: '',
@@ -255,6 +271,9 @@ const initialServico: Servico = {
     telefone: '',
     email: '',
     dataSolicitacao: new Date().toISOString().split('T')[0],
+    // "Deseja ir direto para OS?" — pula o quadro do CRM e vai direto pra criação da OS
+    // assim que o negócio for salvo (com confirmação antes, ver handleSave).
+    desejaIrDiretoParaOs: false,
     servicos: [{ ...initialServico, id: `servico-${Date.now()}` }],
     itensAlocacao: [] as ItemAlocacaoForm[],
     fase: 'Pre-Venda' as FaseOS,
@@ -268,7 +287,12 @@ const initialServico: Servico = {
 
   // --- FORMULÁRIO DE NOVO NEGÓCIO ---
   const createInitialForm = () => ({
-  empresaPrestadora: empresaPrestadoraPadrao,
+  // Vazio de propósito: obriga a escolha explícita da empresa (o Nº do Negócio só
+  // aparece depois disso, já que a numeração é uma sequência separada por empresa).
+  empresaPrestadora: '',
+  // Vazio = usa a sugestão automática (calculada ao vivo em numeroNegocioSugerido);
+  // só passa a valer o texto digitado quando o usuário efetivamente edita o campo.
+  numeroNegocio: '',
   nomeNegocio: '',
   clienteId: '',
   cnpj: '',
@@ -279,6 +303,9 @@ const initialServico: Servico = {
   telefone: '',
   email: '',
   dataSolicitacao: new Date().toISOString().split('T')[0],
+  // "Deseja ir direto para OS?" — pula o quadro do CRM e vai direto pra criação da OS
+  // assim que o negócio for salvo (com confirmação antes, ver handleSave).
+  desejaIrDiretoParaOs: false,
   servicos: [{ ...initialServico, id: `servico-${Date.now()}` }],
   itensAlocacao: [] as ItemAlocacaoForm[],
   fase: 'Pre-Venda' as FaseOS,
@@ -291,6 +318,33 @@ const initialServico: Servico = {
 });
  
  const [formData, setFormData] = useState(createInitialForm);
+
+  // Piso de cada sequência: 0934/26 foi o último negócio da Linave e 0380/26 o último da
+  // Servinave no controle anterior (fora deste sistema) — cada empresa continua a partir
+  // do número seguinte ao seu próprio último (935 e 381), numeração independente por empresa.
+  const NUMERO_NEGOCIO_PISO_LINAVE = 934;
+  const NUMERO_NEGOCIO_PISO_SERVINAVE = 380;
+
+  // Sugestão de "Nº do Negócio" pro form de Novo Negócio: próximo número da sequência DA
+  // EMPRESA SELECIONADA (maior número já em uso entre os negócios daquele prefixo + 1, nunca
+  // abaixo do piso da empresa, pulando os reservados de uso interno). Só existe depois que o
+  // usuário escolhe a Empresa Prestadora — sem empresa não há como saber qual sequência usar.
+  // O usuário pode digitar por cima — nesse caso o valor digitado é o que vai (ver handleSave).
+  const numeroNegocioSugerido = useMemo(() => {
+    if (!formData.empresaPrestadora) return '';
+    const prefixo = getPrefixoEmpresa(formData.empresaPrestadora);
+    const piso = prefixo === 'VTS' ? NUMERO_NEGOCIO_PISO_SERVINAVE : NUMERO_NEGOCIO_PISO_LINAVE;
+    const extrairNumero = (id: string): number => {
+      const m = new RegExp(`^${prefixo}-(\\d+)/`).exec(String(id || '').trim().toUpperCase());
+      return m ? parseInt(m[1], 10) : 0;
+    };
+    const maiorNumero = (Array.isArray(obras) ? obras : []).reduce(
+      (max: number, o: any) => Math.max(max, extrairNumero(o.id)), piso,
+    );
+    const numero = formatarNumeroSequencial(maiorNumero + 1);
+    const ano = String(new Date().getFullYear()).slice(-2);
+    return `${prefixo}-${numero}/${ano}`;
+  }, [obras, formData.empresaPrestadora]);
 
   // --- FUNÇÕES DE MANIPULAÇÃO DE SERVIÇOS (Corrigindo o ReferenceError) ---
   const handleAddServico = () => {
@@ -366,7 +420,8 @@ const initialServico: Servico = {
 
           const formatados = dados.map((n: any) => {
             const prefixo = String(n.empresa_prestadora || '').toLowerCase().includes('servinave') ? 'VTS' : 'LN';
-            const idFormatado = `${prefixo}-${String(n.id).padStart(4, '0')}/${String(new Date().getFullYear()).slice(-2)}`;
+            const numeroCustomizadoAtual = String(n.numero_customizado || '').trim();
+            const idFormatado = numeroCustomizadoAtual || `${prefixo}-${formatarNumeroSequencial(n.id)}/${String(new Date().getFullYear()).slice(-2)}`;
             const idClienteStr = String(n.cliente || '');
             // Preserva campos frontend-only (dadosMediacao, finalizadoComMediacao, documentosNegocio, etc.)
             const obraExistente = obrasContextoAtual.find(
@@ -376,6 +431,7 @@ const initialServico: Servico = {
             return {
               ...obraExistente,
               id: idFormatado,
+              numeroCustomizado: numeroCustomizadoAtual || undefined,
               nome: n.nome_negocio,
               clienteId: n.cliente,
               nomeClienteResolvido: clientesMapa[idClienteStr] || n.cliente_nome || n.nome_cliente || "Cliente Identificado",
@@ -436,6 +492,7 @@ const initialServico: Servico = {
     if (idBase) {
       return idBase;
     }
+    if (obra.numeroCustomizado) return String(obra.numeroCustomizado);
 
     const numericId = obra.negocioBackendId
       || parseInt(String(obra.id || '').replace(/\D/g, ''), 10)
@@ -444,7 +501,7 @@ const initialServico: Servico = {
     const prefixo = emp.includes('servinave') ? 'VTS'
       : emp.includes('linave') ? 'LN'
       : getPrefixoEmpresa(obra.empresaPrestadora || 'LN');
-    const idPadded = String(numericId).padStart(4, '0');
+    const idPadded = formatarNumeroSequencial(numericId);
     const ano = String(new Date().getFullYear()).slice(-2);
     return `${prefixo}-${idPadded}/${ano}`;
   };
@@ -619,8 +676,9 @@ const initialServico: Servico = {
 
  useEffect(() => {
   const empresasDisponiveis = empresasPrestadoras.map((empresa) => empresa.nome);
-  // Só alteramos o estado se houver empresas E o campo atual estiver vazio ou for inválido
-  if (empresasDisponiveis.length > 0 && !empresasDisponiveis.includes(formData.empresaPrestadora)) {
+  // Só corrige um valor INVÁLIDO (empresa que não existe mais na lista) — vazio é um
+  // estado válido aqui (o usuário ainda não escolheu a empresa de propósito).
+  if (empresasDisponiveis.length > 0 && formData.empresaPrestadora && !empresasDisponiveis.includes(formData.empresaPrestadora)) {
     setFormData((prev) => ({ ...prev, empresaPrestadora: empresasDisponiveis[0] }));
   }
 }, [empresasPrestadoras, formData.empresaPrestadora]); // Adicione a dependência para validação segura
@@ -722,7 +780,7 @@ const initialServico: Servico = {
 
   const handleAbrirDocumentoMediacao = (obra: any) => {
     const obraAtual = (negociosBackend || []).find((item: any) => item.id === obra.id) || obra;
-    const cliente = listaClientesCRM.find((item: any) => item.id === obraAtual.clienteId);
+    const cliente = listaClientesCRM.find((item: any) => String(item.id) === String(obraAtual.clienteId));
 
     // Usar o ID do projeto diretamente (já tem formato correto: LN-0731/26)
     const idProjetoFormatado = obraAtual.id || '';
@@ -855,7 +913,7 @@ const initialServico: Servico = {
 
     try {
       const obraAtual = (obras || []).find((item: any) => item.id === documentoMediacaoForm.obraId);
-      const clienteAtual = listaClientesCRM.find((c: any) => c.id === obraAtual?.clienteId);
+      const clienteAtual = listaClientesCRM.find((c: any) => String(c.id) === String(obraAtual?.clienteId));
 
       console.log("Iniciando geração de PDF de medição...", { documentoMediacaoForm });
 
@@ -955,7 +1013,7 @@ const initialServico: Servico = {
     }
 
     const ultimaProposta = selectedObraDetalhes.propostas[selectedObraDetalhes.propostas.length - 1];
-    const clienteAtual = listaClientesCRM.find((c: any) => c.id === selectedObraDetalhes.clienteId);
+    const clienteAtual = listaClientesCRM.find((c: any) => String(c.id) === String(selectedObraDetalhes.clienteId));
 
     try {
       let logoBase64: string | undefined;
@@ -1079,7 +1137,10 @@ const initialServico: Servico = {
     return [];
   };
 
-  const persistirObraAtualizada = async (obraAtualizada: any, moverParaTopo = false, payloadUpdate: Record<string, any> | null = null) => {
+  // Devolve true/false pro chamador saber se a gravação no backend realmente aconteceu —
+  // sem isso, um erro aqui (ex.: campo obrigatório faltando) fica só no toast desta função,
+  // e quem chamou segue achando que deu certo e mostra "sucesso" + fecha a tela mesmo assim.
+  const persistirObraAtualizada = async (obraAtualizada: any, moverParaTopo = false, payloadUpdate: Record<string, any> | null = null): Promise<boolean> => {
     try {
       // 1. Monta o payload para o Django
       const payloadParaBackend = payloadUpdate || {
@@ -1111,9 +1172,11 @@ const initialServico: Servico = {
       if (editingObra?.id === obraAtualizada.id) setEditingObra(obraAtualizada);
       if (selectedObraArquivos?.id === obraAtualizada.id) setSelectedObraArquivos(obraAtualizada);
 
+      return true;
     } catch (error) {
       console.error('Erro ao atualizar no banco de dados:', error);
       toast.error('Erro ao salvar alteração no banco de dados.');
+      return false;
     }
   };
   
@@ -1207,20 +1270,20 @@ const initialServico: Servico = {
 
     const possuiOrcamento = normalizarOrcamentosDaObra(obraComDocumentos).length > 0;
     if (!possuiOrcamento) {
-      persistirObraAtualizada(obraComDocumentos);
+      if (!(await persistirObraAtualizada(obraComDocumentos))) return;
       toast.success('Arquivos atualizados com sucesso.');
       return;
     }
 
     const fazerNovoOrcamento = await confirmDialog('Fazer novo orçamento?');
     if (!fazerNovoOrcamento) {
-      persistirObraAtualizada(obraComDocumentos);
+      if (!(await persistirObraAtualizada(obraComDocumentos))) return;
       toast.success('Arquivos atualizados sem alterar orçamento.');
       return;
     }
 
     const obraReorcamento = criarReorcamentoPorAlteracaoArquivos(obraComDocumentos);
-    persistirObraAtualizada(obraReorcamento, true);
+    if (!(await persistirObraAtualizada(obraReorcamento, true))) return;
     toast.success('Arquivos alterados. Negócio voltou para aguardando orçamento.');
   };
 
@@ -1259,10 +1322,11 @@ const initialServico: Servico = {
         categoria: 'cliente_assinado',
       });
 
-      persistirObraAtualizada({
+      const salvo = await persistirObraAtualizada({
         ...obraAtual,
         documentoClienteAssinado
       });
+      if (!salvo) return;
 
       toast.success('Documento assinado do cliente anexado e salvo no banco.');
     } catch (error) {
@@ -1279,10 +1343,11 @@ const initialServico: Servico = {
       try { await excluirDocumento(backendId); } catch { /* prossegue mesmo se falhar */ }
     }
 
-    persistirObraAtualizada({
+    const salvo = await persistirObraAtualizada({
       ...obraAtual,
       documentoClienteAssinado: null
     });
+    if (!salvo) return;
 
     toast.success('Documento assinado do cliente removido.');
   };
@@ -1357,8 +1422,29 @@ const initialServico: Servico = {
     const incluiServico = temServico(formData.modalidade);
     const incluiLocacao = temLocacao(formData.modalidade);
 
+    if (!formData.empresaPrestadora) {
+      return toast.error('Selecione a Empresa Prestadora.');
+    }
     if (!formData.nomeNegocio.trim() || !formData.clienteId || !formData.solicitante) {
       return toast.error("Nome do Negócio, Cliente e Solicitante são obrigatórios.");
+    }
+
+    // Nº do Negócio: usa a sugestão se o usuário não mexeu no campo. Precisa seguir o
+    // padrão PREFIXO-NÚMERO/ANO e não pode colidir com um negócio que já existe — os dois
+    // checados aqui, antes de gastar uma chamada ao backend (que também valida a duplicidade
+    // como rede de segurança, ver validate_numero_customizado no serializer).
+    const numeroNegocioFinal = (formData.numeroNegocio || numeroNegocioSugerido).trim();
+    if (!numeroNegocioFinal) {
+      return toast.error('Informe o número do negócio.');
+    }
+    if (!/^[A-Za-z]+-\d+\/\d{2,4}$/.test(numeroNegocioFinal)) {
+      return toast.error('Número do negócio fora do padrão. Use PREFIXO-NÚMERO/ANO (ex.: LN-0009/26).');
+    }
+    const numeroJaExiste = (Array.isArray(obras) ? obras : []).some(
+      (o: any) => String(o.id || '').trim().toUpperCase() === numeroNegocioFinal.toUpperCase(),
+    );
+    if (numeroJaExiste) {
+      return toast.error(`Já existe um negócio com o número "${numeroNegocioFinal}". Escolha outro número.`);
     }
 
     if (incluiServico && (formData.servicos.length === 0 || !formData.servicos.some(s => s.descricao.trim()))) {
@@ -1367,6 +1453,17 @@ const initialServico: Servico = {
 
     if (incluiLocacao && !(formData.itensAlocacao || []).some(it => it.equipamento.trim())) {
       return toast.error("Adicione pelo menos um item de equipamento na aba Alocação.");
+    }
+
+    // "Deseja ir direto para OS?" — confirma a intenção antes de criar o negócio. Se o
+    // usuário recuar aqui, o negócio ainda é criado normalmente, só sem o redirecionamento.
+    let navegarParaOsAoConcluir = formData.desejaIrDiretoParaOs;
+    if (navegarParaOsAoConcluir) {
+      navegarParaOsAoConcluir = await confirmDialog({
+        title: 'Deseja ir direto para OS?',
+        message: 'Ao confirmar, assim que o negócio for salvo você será levado direto para a criação da Ordem de Serviço.',
+        confirmText: 'Sim, ir para OS',
+      });
     }
 
     // 1. Mapeamento para o formato exato que o NegocioSerializer (Django) exige
@@ -1390,6 +1487,7 @@ const initialServico: Servico = {
 
    const payloadDjango = {
       nome_negocio: formData.nomeNegocio.trim(),
+      numero_customizado: numeroNegocioFinal,
       cliente: parseInt(formData.clienteId, 10),
       empresa_prestadora: formData.empresaPrestadora,
       categoria: 'Planejamento',
@@ -1477,7 +1575,9 @@ const initialServico: Servico = {
 
           // 3. Monta o objeto de forma totalmente segura ANTES de fechar a tela
           const negocioFormatado = {
-            id: `${getPrefixoEmpresa(dadosNegocio.empresa_prestadora || formData.empresaPrestadora)}-${String(dadosNegocio.id || Date.now()).padStart(4, '0')}/${String(new Date().getFullYear()).slice(-2)}`, 
+            id: dadosNegocio.numero_customizado || numeroNegocioFinal
+              || `${getPrefixoEmpresa(dadosNegocio.empresa_prestadora || formData.empresaPrestadora)}-${formatarNumeroSequencial(dadosNegocio.id || Date.now())}/${String(new Date().getFullYear()).slice(-2)}`,
+            numeroCustomizado: dadosNegocio.numero_customizado || numeroNegocioFinal || undefined,
             nome: dadosNegocio.nome_negocio || formData.nomeNegocio,
             clienteId: String(dadosNegocio.cliente || formData.clienteId), 
             nomeClienteResolvido: listaClientesCRM.find((c: any) => String(c.id) === String(dadosNegocio.cliente || formData.clienteId))?.razaoSocial || 'Cliente Identificado',
@@ -1512,9 +1612,21 @@ const initialServico: Servico = {
           // Atualiza a memória global para a tela de Orçamentos enxergar!
           saveEntity('obras', [...(obras || []), negocioFormatado]);
 
+          // "Deseja ir direto para OS?" confirmado — pula o quadro do CRM e vai
+          // direto pra tela de criação de OS (mesmo padrão de navegação cross-módulo
+          // já usado nesta tela para "orcamentos" e "clientes").
+          if (navegarParaOsAoConcluir) {
+            window.dispatchEvent(new CustomEvent('mudarTelaERP', { detail: 'fazerOs' }));
+          }
+
         } catch (error: any) {
       console.error('Erro detalhado do Backend:', error);
-      toast.error('Erro ao salvar novo serviço! Verifique os dados e tente novamente.');
+      const dadosErro = error?.response?.data;
+      const mensagemNumero = Array.isArray(dadosErro?.numero_customizado) ? dadosErro.numero_customizado[0] : undefined;
+      const mensagemEspecifica = mensagemNumero
+        || (typeof dadosErro === 'string' ? dadosErro : undefined)
+        || (typeof dadosErro?.detail === 'string' ? dadosErro.detail : undefined);
+      toast.error(mensagemEspecifica || 'Erro ao salvar novo serviço! Verifique os dados e tente novamente.');
     }
   };
 
@@ -1553,8 +1665,10 @@ const initialServico: Servico = {
       tipo_servico: String(editingObra.tipo || editingObra.tipo_servico || '').trim() || null,
     };
 
-    // Chama a função da API e fecha o modal
-    await persistirObraAtualizada(editingObra, false, payloadUpdate);
+    // Chama a função da API e só fecha o modal se a gravação realmente aconteceu — antes disso
+    // o toast de sucesso e o fechamento aconteciam mesmo quando o backend rejeitava a alteração.
+    const salvo = await persistirObraAtualizada(editingObra, false, payloadUpdate);
+    if (!salvo) return;
     toast.success("Negócio atualizado com sucesso!");
     setShowEditModal(false);
     setEditingObra(null);
@@ -1613,9 +1727,10 @@ const initialServico: Servico = {
       status: proximaCategoria
     };
 
-    // Usando await e fechando a função corretamente
-    await persistirObraAtualizada(obraAtualizada);
-    setNegociosBackend(prev => 
+    // Usando await e só fechando a tela se a gravação realmente aconteceu
+    const salvo = await persistirObraAtualizada(obraAtualizada);
+    if (!salvo) return;
+    setNegociosBackend(prev =>
       prev.map(o => o.id === obraAtualizada.id ? obraAtualizada : o)
     );
     toast.success(mensagem);
@@ -1659,8 +1774,9 @@ const initialServico: Servico = {
       versaoNegocio: proximaVersao(selectedObraDetalhes.versaoNegocio || ''),
     };
 
-    // Usando await e fechando a função corretamente
-    await persistirObraAtualizada(obraAtualizada, true);
+    // Usando await e só fechando a tela se a gravação realmente aconteceu
+    const salvo = await persistirObraAtualizada(obraAtualizada, true);
+    if (!salvo) return;
     toast.success("Orçamento recusado. Negócio retornou para Aguardando orçamento.");
     setShowDetalhesObraModal(false);
     setSelectedObraDetalhes(null);
@@ -1689,7 +1805,7 @@ const initialServico: Servico = {
 
     const ultimoOrcamento = orcamentosBase.length > 0 ? orcamentosBase[orcamentosBase.length - 1] : null;
     const ultimaProposta = propostasBase.length > 0 ? propostasBase[propostasBase.length - 1] : null;
-    const cliente = listaClientesCRM.find((c: any) => c.id === selectedObraDetalhes?.clienteId);
+    const cliente = listaClientesCRM.find((c: any) => String(c.id) === String(selectedObraDetalhes?.clienteId));
     const logoBase64 = await getBase64FromUrl(getLogoUrlForEmpresa(selectedObraDetalhes?.empresaPrestadora));
 
     try {
@@ -1729,7 +1845,7 @@ const initialServico: Servico = {
     if (!selectedObraDetalhes?.orcamentos || selectedObraDetalhes.orcamentos.length === 0) return;
 
     const ultimoOrcamento = selectedObraDetalhes.orcamentos[selectedObraDetalhes.orcamentos.length - 1];
-    const cliente = listaClientesCRM.find(c => c.id === selectedObraDetalhes.clienteId);
+    const cliente = listaClientesCRM.find(c => String(c.id) === String(selectedObraDetalhes.clienteId));
 
     try {
       const resultado = gerarOrcamentoPDF(ultimoOrcamento, cliente, selectedObraDetalhes);
@@ -1823,23 +1939,16 @@ const initialServico: Servico = {
     saveEntity('os', novaLista);
   };
 
-  const handleAprovarOSNoCard = (osId: string) => {
-    atualizarOSPorId(osId, {
-      statusAprovacao: 'aprovada',
-      dataAprovacao: new Date().toISOString().split('T')[0]
-    });
-    toast.success('OS aprovada com sucesso.');
-  };
-
   const handleArquivarNegocio = async (obra: any, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!(await confirmDialog({ title: 'Arquivar negócio', message: `Arquivar "${obra.nome}"?\n\nO negócio será removido do Kanban e listado em Negócios → Finalizados.`, confirmText: 'Arquivar' }))) return;
-    await persistirObraAtualizada({
+    const salvo = await persistirObraAtualizada({
       ...obra,
       categoria: 'Arquivado',
       status: 'Arquivado',
       dataArquivamento: new Date().toISOString().split('T')[0],
     });
+    if (!salvo) return;
     toast.success(`"${obra.nome}" arquivado com sucesso.`);
   };
 
@@ -1858,51 +1967,9 @@ const initialServico: Servico = {
       status: 'Finalização'
     };
 
-    await persistirObraAtualizada(obraAtualizada);
+    const salvo = await persistirObraAtualizada(obraAtualizada);
+    if (!salvo) return;
     toast.success('Negócio movido para Finalização.');
-  };
-
-  const handleUploadAssinaturaAprovacaoOS = async (osId: string, files: FileList | null) => {
-    if (!files || files.length === 0) return;
-
-    const arquivo = Array.from(files)[0];
-    const isPdf = arquivo.type === 'application/pdf' || arquivo.name.toLowerCase().endsWith('.pdf');
-    const isImagem = arquivo.type === 'image/png' || arquivo.type === 'image/jpeg'
-      || arquivo.name.toLowerCase().endsWith('.png')
-      || arquivo.name.toLowerCase().endsWith('.jpg')
-      || arquivo.name.toLowerCase().endsWith('.jpeg');
-
-    if (!isPdf && !isImagem) {
-      toast.error('A assinatura da OS deve ser PDF, PNG ou JPG.');
-      return;
-    }
-
-    // A assinatura é persistida na tabela Documento, vinculada ao id (SQL) da OS.
-    const osItem = (Array.isArray(os) ? os : []).find((item: any) => String(item.id) === String(osId));
-    const osBackendId = (osItem as any)?.backendId;
-    if (osBackendId == null) {
-      toast.error('OS sem identificador no banco — não foi possível anexar a assinatura.');
-      return;
-    }
-
-    try {
-      // Slot único: remove a assinatura anterior do banco antes de subir a nova.
-      const anterior = (osItem as any)?.documentoAssinaturaAprovacao;
-      if (anterior?.backendId) {
-        try { await excluirDocumento(anterior.backendId); } catch { /* segue mesmo se falhar */ }
-      }
-
-      const documentoAssinaturaAprovacao = await uploadDocumento(arquivo, {
-        vinculoTipo: 'os',
-        vinculoId: osBackendId,
-        categoria: 'os_assinatura',
-      });
-
-      atualizarOSPorId(osId, { documentoAssinaturaAprovacao });
-      toast.success('Assinatura da OS anexada e salva no banco.');
-    } catch (error) {
-      toast.error('Não foi possível anexar a assinatura da OS.');
-    }
   };
 
   // Retorna a medição APROVADA do negócio (criada/aprovada na aba Comercial → Medição).
@@ -2037,7 +2104,7 @@ const obrasOrdenadas = useMemo(() => {
               <div className="space-y-4 flex-1 overflow-y-auto">
                 {obrasNaColuna.length > 0 ? (
                   obrasNaColuna.map((obra: any) => {
-                    const cliente = listaClientesCRM.find(c => c.id === obra.clienteId);
+                    const cliente = listaClientesCRM.find(c => String(c.id) === String(obra.clienteId));
                     const ultimaPropostaCard = Array.isArray(obra.propostas) && obra.propostas.length > 0
                       ? obra.propostas[obra.propostas.length - 1]
                       : null;
@@ -2436,7 +2503,7 @@ const obrasOrdenadas = useMemo(() => {
               <div className="bg-gradient-to-r from-blue-500/10 to-cyan-500/10 rounded-2xl border border-blue-500/20 p-6">
                 <h3 className="text-lg font-black text-white uppercase mb-4">Dados Principais</h3>
                 
-                <div className="grid grid-cols-3 gap-4 mb-4">
+                <div className="grid grid-cols-4 gap-4 mb-4">
                   <div className="space-y-1.5">
                     <label className={labelClass}>Empresa Prestadora *</label>
                     <select
@@ -2444,6 +2511,7 @@ const obrasOrdenadas = useMemo(() => {
                       value={formData.empresaPrestadora}
                       onChange={e => setFormData({...formData, empresaPrestadora: e.target.value})}
                     >
+                      <option value="" disabled>Selecione a empresa</option>
                       {empresasPrestadoras.map((empresa) => (
                         <option key={empresa.id} value={empresa.nome}>
                           {empresa.nome}{empresa.cnpj ? ` - ${empresa.cnpj}` : ''}
@@ -2485,6 +2553,19 @@ const obrasOrdenadas = useMemo(() => {
                         <option key={m.value} value={m.value}>{m.label}</option>
                       ))}
                     </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className={labelClass}>Nº do Negócio *</label>
+                    <input
+                      type="text"
+                      className={inputClass}
+                      disabled={!formData.empresaPrestadora}
+                      value={formData.numeroNegocio || numeroNegocioSugerido}
+                      onChange={e => setFormData({ ...formData, numeroNegocio: e.target.value })}
+                      placeholder={formData.empresaPrestadora ? numeroNegocioSugerido : 'Selecione a empresa primeiro'}
+                      title={formData.empresaPrestadora ? 'Sugestão automática — edite se precisar seguir outra numeração' : 'Escolha a Empresa Prestadora para ver o próximo número'}
+                    />
                   </div>
                 </div>
 
@@ -2568,6 +2649,22 @@ const obrasOrdenadas = useMemo(() => {
                       onChange={e => setFormData({...formData, dataSolicitacao: e.target.value})}
                     />
                   </div>
+                </div>
+
+                <div className="mt-4 flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-[#0b1220] p-5">
+                  <div>
+                    <p className="text-sm font-black text-white uppercase tracking-wide">Deseja ir direto para OS?</p>
+                    <p className="mt-1 text-xs text-white/50">Ao marcar esta opção, serão abertos os anexos de Orçamento/Proposta e os campos da Ordem de Serviço.</p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={formData.desejaIrDiretoParaOs}
+                    onClick={() => setFormData({ ...formData, desejaIrDiretoParaOs: !formData.desejaIrDiretoParaOs })}
+                    className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${formData.desejaIrDiretoParaOs ? 'bg-emerald-500' : 'bg-white/15'}`}
+                  >
+                    <span className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${formData.desejaIrDiretoParaOs ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                  </button>
                 </div>
               </div>
               )}
@@ -2855,7 +2952,20 @@ const obrasOrdenadas = useMemo(() => {
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
                     <p className="text-white/50 text-xs mb-1">Cliente</p>
-                    <p className="text-white font-bold">{listaClientesCRM.find(c => c.id === selectedObraDetalhes.clienteId)?.razaoSocial}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-white font-bold">
+                        {listaClientesCRM.find(c => String(c.id) === String(selectedObraDetalhes.clienteId))?.razaoSocial
+                          || <span className="text-white/30 italic font-normal">Cliente não encontrado no cadastro</span>}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => window.dispatchEvent(new CustomEvent('mudarTelaERP', { detail: 'clientes' }))}
+                        className="text-cyan-400 hover:text-cyan-300 text-[10px] font-black uppercase tracking-widest underline underline-offset-2 flex-shrink-0"
+                        title="Ir para Base de Clientes para reeditar o cadastro"
+                      >
+                        Editar cadastro
+                      </button>
+                    </div>
                   </div>
                   <div>
                     <p className="text-white/50 text-xs mb-1">Responsável</p>
@@ -2899,7 +3009,7 @@ const obrasOrdenadas = useMemo(() => {
                           ].map(([label, value]) => (
                             <div key={label as string} className={label === 'Descrição' || label === 'Observações' ? 'col-span-2' : ''}>
                               <p className="text-white/35 text-[10px] font-black uppercase tracking-widest mb-0.5">{label}</p>
-                              <p className="text-white/80 text-xs font-semibold">{(value as string) || <span className="text-white/20 italic font-normal">—</span>}</p>
+                              <p className="text-white/80 text-xs font-semibold whitespace-pre-wrap">{(value as string) || <span className="text-white/20 italic font-normal">—</span>}</p>
                             </div>
                           ))}
                         </div>
@@ -3294,7 +3404,7 @@ const obrasOrdenadas = useMemo(() => {
                           <p className="text-white/70 text-xs">{osbatch.descricao}</p>
 
                           {osbatch.statusEnvio === 'enviada' && (
-                            <div className="mt-3 pt-3 border-t border-white/10 space-y-3">
+                            <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
                               <div className="flex flex-wrap items-center gap-2">
                                 <span className={`px-2 py-1 rounded-full text-[10px] font-black uppercase border ${osbatch.statusAprovacao === 'aprovada' ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' : 'bg-amber-500/20 border-amber-500/40 text-amber-300'}`}>
                                   {osbatch.statusAprovacao === 'aprovada' ? 'OS Aprovada' : 'OS Pendente'}
@@ -3303,42 +3413,12 @@ const obrasOrdenadas = useMemo(() => {
                                   {(osbatch.documentoAssinaturaAprovacao?.conteudo || osbatch.documentoAssinaturaAprovacao?.url) ? 'Assinatura Anexada' : 'Sem Assinatura'}
                                 </span>
                               </div>
-
-                              <input
-                                type="file"
-                                accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
-                                onChange={(e) => {
-                                  handleUploadAssinaturaAprovacaoOS(osbatch.id, e.target.files);
-                                  e.currentTarget.value = '';
-                                }}
-                                className="w-full text-[10px] text-white/70 file:mr-2 file:rounded-md file:border-0 file:bg-cyan-500 file:px-2.5 file:py-1 file:text-[10px] file:font-black file:uppercase file:text-[#0b1220] hover:file:bg-cyan-400"
-                              />
-
-                              {(osbatch.documentoAssinaturaAprovacao?.conteudo || osbatch.documentoAssinaturaAprovacao?.url) && (
-                                <div className="flex items-center gap-2">
-                                  <button
-                                    onClick={() => handleVerDocumentoNegocio(osbatch.documentoAssinaturaAprovacao)}
-                                    className="px-3 py-1.5 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/40 text-blue-300 text-[11px] font-black uppercase transition"
-                                  >
-                                    <Eye size={13} className="inline mr-1" /> Ver Assinatura
-                                  </button>
-                                  <button
-                                    onClick={() => handleDownloadDocumento(osbatch.documentoAssinaturaAprovacao)}
-                                    className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-[11px] font-black uppercase transition"
-                                  >
-                                    <Download size={13} className="inline mr-1" /> Download
-                                  </button>
-                                </div>
-                              )}
-
-                              {osbatch.statusAprovacao !== 'aprovada' && (
-                                <button
-                                  onClick={() => handleAprovarOSNoCard(osbatch.id)}
-                                  className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-[11px] font-black uppercase transition"
-                                >
-                                  <CheckCircle size={13} className="inline mr-1" /> Aprovar OS
-                                </button>
-                              )}
+                              {/* Anexar assinatura e aprovar a OS agora é feito em Comercial → Fazer OS
+                                  (na tela "Ver OS"), não mais por aqui — evita duplicar a mesma ação
+                                  em dois lugares diferentes. */}
+                              <p className="text-white/35 text-[10px] uppercase tracking-widest font-bold">
+                                Anexe a assinatura e aprove em {boldOS('Fazer OS')} → Ver OS.
+                              </p>
                             </div>
                           )}
                         </div>
@@ -3832,7 +3912,7 @@ const obrasOrdenadas = useMemo(() => {
       {/* MODAL - PROPOSTA COMPLETA */}
       {showPropostaFullModal && selectedObraDetalhes?.propostas && selectedObraDetalhes.propostas.length > 0 && (() => {
         const ultimaProposta = selectedObraDetalhes.propostas[selectedObraDetalhes.propostas.length - 1];
-        const cliente = listaClientesCRM.find(c => c.id === selectedObraDetalhes.clienteId);
+        const cliente = listaClientesCRM.find(c => String(c.id) === String(selectedObraDetalhes.clienteId));
         const idProjetoModal = extrairIdProjetoDoNumero(ultimaProposta.numeroProposta || '');
         return (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -3859,7 +3939,7 @@ const obrasOrdenadas = useMemo(() => {
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div>
                       <p className="text-white/50 text-xs mb-1">Cliente</p>
-                      <p className="text-white font-bold">{listaClientesCRM.find(c => c.id === selectedObraDetalhes.clienteId)?.razaoSocial}</p>
+                      <p className="text-white font-bold">{listaClientesCRM.find(c => String(c.id) === String(selectedObraDetalhes.clienteId))?.razaoSocial}</p>
                     </div>
                     <div>
                       <p className="text-white/50 text-xs mb-1">Negócio</p>
@@ -4099,7 +4179,7 @@ const obrasOrdenadas = useMemo(() => {
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div>
                       <p className="text-white/50 text-xs mb-1">Cliente</p>
-                      <p className="text-white font-bold">{listaClientesCRM.find(c => c.id === selectedObraDetalhes.clienteId)?.razaoSocial}</p>
+                      <p className="text-white font-bold">{listaClientesCRM.find(c => String(c.id) === String(selectedObraDetalhes.clienteId))?.razaoSocial}</p>
                     </div>
                     <div>
                       <p className="text-white/50 text-xs mb-1">Projeto</p>
@@ -4448,7 +4528,7 @@ const obrasOrdenadas = useMemo(() => {
       {/* MODAL - ORÇAMENTO COMPLETO */}
       {showOrcamentoFullModal && selectedObraDetalhes?.orcamentos && selectedObraDetalhes.orcamentos.length > 0 && (() => {
         const ultimoOrcamento = selectedObraDetalhes.orcamentos[selectedObraDetalhes.orcamentos.length - 1];
-        const cliente = listaClientesCRM.find(c => c.id === selectedObraDetalhes.clienteId);
+        const cliente = listaClientesCRM.find(c => String(c.id) === String(selectedObraDetalhes.clienteId));
         const idProjetoOrc = selectedObraDetalhes.id || '';
         return (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">

@@ -3,19 +3,47 @@ import { useErp } from '../../../context/ErpContext';
 import { Factory, Plus, Save, X, Edit2, Trash2, Phone, MapPin } from 'lucide-react';
 import { toast } from 'sonner';
 
+const FORNECEDOR_VAZIO = {
+  razaoSocial: '',
+  cnpj: '',
+  contato: '',
+  endereco: '',
+  status: 'Ativo',
+  tipo: 'Serviços',
+  descricaoEstadual: '',
+};
+
 export function FornecedoresView({ searchQuery }: { searchQuery: string }) {
-  const { fornecedores, saveFornecedor, userSession } = useErp();
+  const { fornecedores, saveFornecedor, userSession, financeiro, saveEntity } = useErp() as any;
   const [showForm, setShowForm] = useState(false);
   const [selectedFornecedor, setSelectedFornecedor] = useState<any | null>(null);
-  const [fornecedor, setFornecedor] = useState({
-    razaoSocial: '',
-    cnpj: '',
-    contato: '',
-    endereco: '',
-    status: 'Ativo',
-    tipo: 'Serviços',
-    descricaoEstadual: '',
-  });
+  const [fornecedor, setFornecedor] = useState<any>(FORNECEDOR_VAZIO);
+  // id + razão social originais do fornecedor em edição (null = cadastrando um novo).
+  const [editandoId, setEditandoId] = useState<any>(null);
+  const [razaoSocialOriginal, setRazaoSocialOriginal] = useState('');
+
+  const abrirEdicao = (f: any) => {
+    setEditandoId(f.id);
+    setRazaoSocialOriginal(f.razaoSocial || '');
+    setFornecedor({
+      razaoSocial: f.razaoSocial || '',
+      cnpj: f.cnpj || '',
+      contato: f.contato || '',
+      endereco: f.endereco || '',
+      status: f.status || 'Ativo',
+      tipo: f.tipo || 'Serviços',
+      descricaoEstadual: f.descricaoEstadual || '',
+    });
+    setSelectedFornecedor(null);
+    setShowForm(true);
+  };
+
+  const fecharForm = () => {
+    setShowForm(false);
+    setEditandoId(null);
+    setRazaoSocialOriginal('');
+    setFornecedor(FORNECEDOR_VAZIO);
+  };
 
   // CNPJ: só dígitos, formatado como 00.000.000/0000-00 (14 dígitos).
   const formatarCnpj = (valor: string) => {
@@ -69,16 +97,33 @@ export function FornecedoresView({ searchQuery }: { searchQuery: string }) {
     const erro = validar();
     if (erro) return toast.error(erro);
 
-    const novoRegistro = {
+    const novoRegistro: any = {
       ...fornecedor,
       naturezaFornecimento: resolveNaturezaFornecimento(fornecedor.tipo),
       criadoPor: userSession?.username || 'sistema',
     };
+    if (editandoId != null) novoRegistro.id = editandoId;
 
     try {
       await saveFornecedor(novoRegistro);
-      setShowForm(false);
-      setFornecedor({ razaoSocial: '', cnpj: '', contato: '', endereco: '', status: 'Ativo', tipo: 'Serviços', descricaoEstadual: '' });
+
+      // Fornecedor não é referenciado por FK em nenhum outro cadastro (diferente de
+      // Empresa/Cliente) — só aparece como texto copiado nas Solicitações de Pagamento e
+      // Contas a Pagar do Financeiro. Propaga a renomeação pra lá.
+      const novaRazaoSocial = (novoRegistro.razaoSocial || '').trim();
+      if (editandoId != null && razaoSocialOriginal && novaRazaoSocial && razaoSocialOriginal !== novaRazaoSocial) {
+        const financeiroAtual = Array.isArray(financeiro) ? financeiro : [];
+        const temNoFinanceiro = financeiroAtual.some((r: any) => r.fornecedor === razaoSocialOriginal);
+        if (temNoFinanceiro) {
+          const financeiroAtualizado = financeiroAtual.map((r: any) =>
+            r.fornecedor === razaoSocialOriginal ? { ...r, fornecedor: novaRazaoSocial } : r
+          );
+          await saveEntity('financeiro', financeiroAtualizado);
+          toast.info('Fornecedor renomeado — solicitações e contas a pagar já criadas foram atualizadas.');
+        }
+      }
+
+      fecharForm();
     } catch {
       toast.error('Erro ao salvar fornecedor. Verifique a conexão com o servidor e tente novamente.');
     }
@@ -90,11 +135,12 @@ export function FornecedoresView({ searchQuery }: { searchQuery: string }) {
     <div className="p-10 space-y-8 animate-in fade-in duration-500">
       <div className="flex justify-between items-center border-b border-white/5 pb-6">
         <div><h1 className="text-3xl font-black text-white uppercase italic">Fornecedores</h1><p className="text-white/40 text-xs font-bold uppercase tracking-widest mt-1">Gestão de Parceiros e Suprimentos</p></div>
-        <button onClick={() => setShowForm(true)} className="bg-amber-500 text-[#0b1220] px-6 py-3 rounded-2xl font-black text-[10px] uppercase flex items-center gap-2 hover:scale-105 transition-all"><Plus size={16}/> Novo Fornecedor</button>
+        <button onClick={() => { setEditandoId(null); setRazaoSocialOriginal(''); setFornecedor(FORNECEDOR_VAZIO); setShowForm(true); }} className="bg-amber-500 text-[#0b1220] px-6 py-3 rounded-2xl font-black text-[10px] uppercase flex items-center gap-2 hover:scale-105 transition-all"><Plus size={16}/> Novo Fornecedor</button>
       </div>
 
       {showForm && (
         <div className="bg-[#101f3d] p-8 rounded-[32px] border border-amber-500/30 grid grid-cols-2 gap-6 shadow-2xl">
+          <h3 className="col-span-2 text-white font-black uppercase text-sm tracking-widest -mb-2">{editandoId != null ? 'Editar Fornecedor' : 'Novo Fornecedor'}</h3>
           <input placeholder="Razão Social *" value={fornecedor.razaoSocial} className="bg-[#0b1220] p-4 rounded-xl text-white text-sm border border-white/10 focus:border-amber-500 outline-none" onChange={e => setFornecedor({...fornecedor, razaoSocial: e.target.value})} />
           <div className="flex flex-col gap-1">
             <input
@@ -122,8 +168,8 @@ export function FornecedoresView({ searchQuery }: { searchQuery: string }) {
             <option>Inativo</option>
           </select>
           <div className="col-span-2 flex justify-end gap-4 mt-4">
-            <button onClick={() => setShowForm(false)} className="text-white/40 font-bold text-xs uppercase px-6 py-3 rounded-xl border border-white/5 hover:bg-white/5">Cancelar</button>
-            <button onClick={salvar} className="bg-emerald-500 text-[#0b1220] px-8 py-3 rounded-xl font-black text-xs uppercase flex items-center gap-2"><Save size={16}/> Salvar Registro</button>
+            <button onClick={fecharForm} className="text-white/40 font-bold text-xs uppercase px-6 py-3 rounded-xl border border-white/5 hover:bg-white/5">Cancelar</button>
+            <button onClick={salvar} className="bg-emerald-500 text-[#0b1220] px-8 py-3 rounded-xl font-black text-xs uppercase flex items-center gap-2"><Save size={16}/> {editandoId != null ? 'Salvar Alterações' : 'Salvar Registro'}</button>
           </div>
         </div>
       )}
@@ -186,6 +232,9 @@ export function FornecedoresView({ searchQuery }: { searchQuery: string }) {
                 <p className="text-sm text-white/50">Criado por: {selectedFornecedor.criadoPor || '-'}</p>
                 <p className="text-sm text-white/50">Criado em: {selectedFornecedor.criadoEm ? new Date(selectedFornecedor.criadoEm).toLocaleString('pt-BR') : '-'}</p>
               </div>
+            </div>
+            <div className="flex justify-end mt-6">
+              <button onClick={() => abrirEdicao(selectedFornecedor)} className="bg-amber-500 text-[#0b1220] px-6 py-3 rounded-xl font-black text-xs uppercase flex items-center gap-2 hover:scale-105 transition-all"><Edit2 size={14}/> Editar</button>
             </div>
           </div>
         </div>

@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
 import { handleDownloadOSPDF } from '../CRM/handleDownloadOSPDF';
+import { getNegocioPorId } from '../../../../services/comercialService';
+import { mapNegocioToObra } from '../../../../services/obrasMapper';
 import { getLogoUrlForEmpresa } from '../../../utils/company';
 import { boldOS } from '../../../utils/osHighlight';
 import { toast } from 'sonner';
@@ -57,6 +59,7 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
   const { obras, clientes, funcionarios, equipes, os, saveEntity } = useErp();
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [filtroEmpresa, setFiltroEmpresa] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'geral' | 'docs'>('geral');
   const [showOSConsolidadaModal, setShowOSConsolidadaModal] = useState(false);
   const [selectedOSConsolidada, setSelectedOSConsolidada] = useState<any>(null);
@@ -168,15 +171,24 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
       .map((item: any) => item.obraId)
   );
 
-  const filtradas = listaObras.filter((o: any) => {
+  // Exclui as OS internas (1000 Linave / 2000 Servinave) — café/papel etc. não vão pra produção.
+  const obrasElegiveis = listaObras.filter((o: any) => obrasComOSEnviada.has(o.id) && !o.usoInterno);
+
+  // Opções do filtro de empresa vêm dos próprios projetos elegíveis (não de um filtro já
+  // aplicado), pra lista de opções não encolher quando uma empresa já está selecionada.
+  const empresasDisponiveis = Array.from(
+    new Set(obrasElegiveis.map((o: any) => o.empresaPrestadora).filter(Boolean)),
+  ).sort();
+
+  const filtradas = obrasElegiveis.filter((o: any) => {
     const termo = (searchQuery || '').toLowerCase();
     const clienteNome = (listaClientes.find((c: any) => c.id === o.clienteId)?.razaoSocial || '').toLowerCase();
     const correspondeBusca = !termo ||
       (o.nome || '').toLowerCase().includes(termo) ||
       clienteNome.includes(termo);
+    const correspondeEmpresa = !filtroEmpresa || o.empresaPrestadora === filtroEmpresa;
 
-    // Exclui as OS internas (1000 Linave / 2000 Servinave) — café/papel etc. não vão pra produção.
-    return correspondeBusca && obrasComOSEnviada.has(o.id) && !o.usoInterno;
+    return correspondeBusca && correspondeEmpresa;
   });
 
   const formatDocSize = (bytes?: number) => {
@@ -409,7 +421,20 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
 
   // Baixa o PDF de uma OS já enviada/aprovada (sem precisar abrir o CRM).
   const handleBaixarOSPdf = async (item: any) => {
-    const obra = listaObras.find((o: any) => o.id === item?.obraId) || {};
+    let obra = listaObras.find((o: any) => o.id === item?.obraId) || {};
+
+    // Rebusca o negócio fresco do servidor: se a proposta foi editada (ex.: escopo
+    // preenchido) depois que `listaObras` foi hidratado nesta sessão, a cópia em memória
+    // fica desatualizada e a OS sai sem o escopo.
+    if (obra?.negocioBackendId) {
+      try {
+        const negocioFresco = await getNegocioPorId(obra.negocioBackendId);
+        if (negocioFresco) obra = mapNegocioToObra(negocioFresco);
+      } catch (e) {
+        console.error('Erro ao rebuscar negócio para o PDF da OS:', e);
+      }
+    }
+
     const cliente = listaClientes.find((c: any) => c.id === obra.clienteId);
     const orcamentos = Array.isArray(obra.orcamentos) ? obra.orcamentos : [];
     const propostas = Array.isArray(obra.propostas) ? obra.propostas : [];
@@ -433,6 +458,19 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
             <Anchor className="text-amber-500" size={32} /> Gestão de Projetos
           </h1>
           <p className="text-white/40 text-xs font-bold uppercase tracking-[0.2em] mt-2 ml-1">{boldOS('Serviços (Produção): apenas negócios com OS aprovada')}</p>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-white/40 text-[10px] font-black uppercase tracking-[0.2em]">Empresa</label>
+          <select
+            value={filtroEmpresa}
+            onChange={(e) => setFiltroEmpresa(e.target.value)}
+            className="bg-[#101f3d] border border-white/10 rounded-lg px-4 py-2.5 text-white text-sm outline-none focus:border-amber-500 cursor-pointer appearance-none min-w-[180px]"
+          >
+            <option value="">Todas as empresas</option>
+            {empresasDisponiveis.map((empresa: string) => (
+              <option key={empresa} value={empresa}>{empresa}</option>
+            ))}
+          </select>
         </div>
       </div>
 

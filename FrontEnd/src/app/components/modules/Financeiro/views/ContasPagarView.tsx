@@ -6,7 +6,7 @@ import {
 } from '../finUi';
 import {
   br, money, num, todayStr, genFinId, download, days, FORMAS_PAGAMENTO, TIPOS_REEMBOLSO,
-  NATUREZAS_CONTA_PAGAR, CP_STATUS, documentoDuplicado,
+  NATUREZAS_CONTA_PAGAR, CP_STATUS, documentoDuplicado, bancoLabel,
   PERIODICIDADES, CATEGORIAS_CONTA_FIXA, avisosContasFixas, contaVencida, contaPaga,
   diasAteVencimento, type AvisoContaFixa,
 } from '../finData';
@@ -24,7 +24,7 @@ export function ContasPagarView() {
   const { match } = useFinFilters();
   const allContasPagar = records('contaPagar');
   const contasFixas = records('contaFixa');
-  const bancos = records('banco').map((b) => b.nome).filter(Boolean) as string[];
+  const bancos = records('banco').filter((b) => b.nome) as Array<{ id: string; nome: string; empresa?: string }>;
   const [salvando, setSalvando] = useState(false);
 
   // ---- Contas fixas: gera as ocorrências que faltam ao abrir a tela ----
@@ -496,14 +496,17 @@ export function ContasPagarView() {
             </Field>
 
             <Field label="Fornecedor" span={6}><Input value={form.fornecedor} onChange={(e) => setF('fornecedor', e.target.value)} /></Field>
-            <Field label="Documento" span={3}><Input value={form.documento} onChange={(e) => setF('documento', e.target.value)} placeholder="NF / boleto" /></Field>
+            <Field label="Documento" span={3}>
+              <Input value={form.documento} onChange={(e) => setF('documento', e.target.value)} placeholder="Nº único do boleto" />
+              <p className="mt-1 text-[10px] leading-tight text-white/40">Se for boleto, use o Nosso Número ou a linha digitável — é o que evita pagar a mesma nota duas vezes.</p>
+            </Field>
             <Field label="Valor total" span={3}><MoneyInput value={form.valor} onChange={(v) => setF('valor', v)} /></Field>
 
             <Field label="Vencimento" span={3}><Input type="date" value={form.vencimento} onChange={(e) => setF('vencimento', e.target.value)} /></Field>
             <Field label="Banco" span={3}>
               <Select value={form.banco} onChange={(e) => setF('banco', e.target.value)}>
                 <option value="">{bancos.length ? 'A definir...' : 'Nenhum banco cadastrado'}</option>
-                {bancos.map((b) => <option key={b}>{b}</option>)}
+                {bancos.map((b) => <option key={b.id} value={b.nome}>{bancoLabel(b)}</option>)}
               </Select>
             </Field>
             <Field label="Forma" span={6}>
@@ -594,7 +597,7 @@ export function ContasPagarView() {
             <Field label="Banco usado *" span={6}>
               <Select value={pay.banco} onChange={(e) => setPayF('banco', e.target.value)}>
                 <option value="">{bancos.length ? 'Selecione...' : 'Cadastre um banco na aba Bancos'}</option>
-                {bancos.map((b) => <option key={b}>{b}</option>)}
+                {bancos.map((b) => <option key={b.id} value={b.nome}>{bancoLabel(b)}</option>)}
               </Select>
             </Field>
             <Field label="Houve juros?" span={6}>
@@ -826,7 +829,7 @@ export function ContasPagarView() {
             <Field label="Banco" span={6}>
               <Select value={fixa.banco} onChange={(e) => setFixaF('banco', e.target.value)}>
                 <option value="">{bancos.length ? 'Selecione o banco...' : 'Nenhum banco cadastrado'}</option>
-                {bancos.map((b) => <option key={b}>{b}</option>)}
+                {bancos.map((b) => <option key={b.id} value={b.nome}>{bancoLabel(b)}</option>)}
               </Select>
             </Field>
 

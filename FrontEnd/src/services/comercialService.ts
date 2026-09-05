@@ -21,6 +21,19 @@ export const getNegocios = async () => {
     }
 };
 
+// Busca um negócio específico direto do servidor (não a cópia carregada no login).
+// Usado antes de gerar documentos (ex.: PDF da OS) que dependem de dados que podem ter
+// sido editados depois que `obras` foi hidratado nesta sessão (ex.: escopo da proposta).
+export const getNegocioPorId = async (id: any) => {
+    try {
+        const response = await api.get(`negocios/${id}/`);
+        return response.data;
+    } catch (error) {
+        console.error("Erro ao buscar negócio por id:", error);
+        return null;
+    }
+};
+
 // ==========================================
 // NOVAS FUNÇÕES ADICIONADAS AQUI:
 // ==========================================

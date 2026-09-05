@@ -27,6 +27,23 @@ export const CAMPOS_TEMPLATE_PROPOSTA = [
 
 export type CampoTemplateProposta = typeof CAMPOS_TEMPLATE_PROPOSTA[number];
 
+// Rótulos exibidos nos formulários (Fazer Proposta e a tela de gerenciamento de templates).
+// Preço e escopo ficam DE FORA de propósito: preço vem do orçamento e escopo é levantado
+// a bordo, então são sempre específicos de cada negócio, nunca de um template reutilizável.
+export const ROTULOS_CAMPO_TEMPLATE: Record<CampoTemplateProposta, string> = {
+  referencia: 'Referência',
+  saudacao: 'Saudação',
+  assunto: 'Assunto',
+  textoAbertura: 'Texto de Abertura',
+  responsabilidadeContratada: 'B - Resp. da Contratada',
+  escopoC: 'C - Resp. da Contratante',
+  condicoesGerais: 'E - Condições Gerais',
+  prazo: 'F - Prazo',
+  efetivoPrevisto: 'G - Efetivo Previsto',
+  condicoesPagamento: 'H - Cond. de Pagamento',
+  encerramento: 'Encerramento',
+};
+
 export interface PropostaTemplate {
   id: number | string;
   nome: string;
