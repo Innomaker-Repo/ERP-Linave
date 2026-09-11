@@ -1,19 +1,26 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
-import { ArrowRight, Banknote, CalendarClock, CheckCircle2, CircleDollarSign, Eye, Package, Plus, Send, ShoppingCart, Split, Trash2, Users, X } from 'lucide-react';
+import { comFinanceiroAtual } from '../../../../services/financeiroSeguro';
+import { comComprasAtual } from '../../../../services/comprasSeguro';
+import { formatNumeroOsDisplay } from '../../../../services/ordensServico';
+import { ArrowRight, Ban, Banknote, CalendarClock, CircleDollarSign, Eye, FileDown, Package, Plus, Send, ShoppingCart, Split, Trash2, Users, X } from 'lucide-react';
 import {
   APPROVAL_LIMIT,
   BOARD_COLUMNS,
-  approvalRouteLabel,
   buildHistoricoRecord,
   formatCurrency,
-  podeSelecionarFornecedorGerente,
+  formatPedidoCompraNumero,
+  parsePedidoCompraSeqAtual,
   purchaseStateLabel,
-  resolveApprovalRoute,
+  type ItemCompra,
+  type PedidoCompraResumo,
   type QuoteFornecedor,
   type QuoteItem,
   type RequisicaoCompra,
 } from './comprasLocal';
+import { handleDownloadPedidoCompraPDF } from './handleDownloadPedidoCompraPDF';
+import { recusarRequisicao } from './comprasAprovacaoShared';
+import { RecusarPedidoModal } from './RecusarPedidoModal';
 import { FinModal, Field, Input, Select, Textarea, Btn, boldOS } from '../Financeiro/finUi';
 import { toast } from 'sonner';
 import {
@@ -43,6 +50,15 @@ type QuoteModalState = {
   requestId: string;
   mode: 'edit' | 'view';
 } | null;
+
+// Card de "Comprados" agrupado por Pedido de Compra (PC) + fornecedor — ver `comprasCards`.
+type PcCard = {
+  key: string;
+  request: RequisicaoCompra;
+  pedidoCompraNumero?: string;
+  fornecedor?: string;
+  itens: ItemCompra[];
+};
 
 // Formulário do popup "Conta a Pagar" disparado ao marcar um item como comprado/contratado.
 type BuyFormState = {
@@ -170,7 +186,7 @@ const calculateBudgetDetails = (
 };
 
 export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
-  const { userSession, fornecedores, compras, comprasHistorico, financeiro, config, saveEntity } = useErp() as any;
+  const { userSession, fornecedores, compras, financeiro, config, saveEntity } = useErp() as any;
   const [requests, setRequests] = useState<RequisicaoCompra[]>(() => (Array.isArray(compras) ? compras : []));
   const [quoteModal, setQuoteModal] = useState<QuoteModalState>(null);
   const [quoteRows, setQuoteRows] = useState<Record<string, QuoteRowDraft[]>>({});
@@ -179,6 +195,9 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
   const [buyModal, setBuyModal] = useState<{ requestId: string; itemId: string } | null>(null);
   const [buyForm, setBuyForm] = useState<BuyFormState>(emptyBuyForm());
   const [buySaving, setBuySaving] = useState(false);
+
+  // Recusar (com motivo) durante a cotação — devolve ao solicitante, ver comprasAprovacaoShared.ts.
+  const [recusaAlvo, setRecusaAlvo] = useState<RequisicaoCompra | null>(null);
   const setBuyF = (k: keyof BuyFormState, v: string | boolean) => setBuyForm((prev) => ({ ...prev, [k]: v }));
 
   const supplierOptions = useMemo(
@@ -200,29 +219,12 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
     [financeiro]
   );
 
-  // Apenas o gerente comercial / diretor financeiro (mockados) enxergam e operam a etapa
-  // de Seleção do Gerente. Os demais perfis só veem as etapas seguintes.
-  const podeSelecionarGerente = podeSelecionarFornecedorGerente(userSession?.email, userSession?.role);
-  const visibleBoardColumns = useMemo(
-    () => (podeSelecionarGerente ? BOARD_COLUMNS : BOARD_COLUMNS.filter((column) => column.id !== 'SELECAO_GERENTE')),
-    [podeSelecionarGerente]
-  );
+  const visibleBoardColumns = BOARD_COLUMNS;
 
-  // Guarda a última lista recebida do workspace. Só persistimos quando a mudança vem de uma
-  // ação do usuário (requests !== lastSynced), nunca no mount/sync — senão o auto-save
-  // sobrescreveria o workspace (inclusive o compartilhado) com estado vazio/antigo.
-  const lastSyncedComprasRef = useRef<RequisicaoCompra[]>(Array.isArray(compras) ? compras : []);
-
-  // persist requests to workspace so other users (gerente / diretor) see them
-  useEffect(() => {
-    if (requests === lastSyncedComprasRef.current) return;
-    void saveEntity?.('compras', requests || []);
-  }, [requests]);
-
-  // update local state when workspace compras changes
+  // update local state when workspace compras changes (inclusive depois de uma gravação
+  // nossa: saveEntity('compras', ...) atualiza o contexto, e o efeito abaixo reflete aqui).
   useEffect(() => {
     if (Array.isArray(compras)) {
-      lastSyncedComprasRef.current = compras;
       setRequests(compras);
     }
   }, [compras]);
@@ -232,8 +234,16 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
     [requests, quoteModal]
   );
 
-  const patchRequest = (requestId: string, updater: (request: RequisicaoCompra) => RequisicaoCompra) => {
-    setRequests((current) => current.map((request) => (request.id === requestId ? updater(request) : request)));
+  // Grava SEMPRE em cima da cópia mais recente do servidor, nunca do `requests` local (que
+  // pode estar desatualizado se outra pessoa mexeu em Compras nesse meio-tempo) — é o que
+  // causava itens "sumindo" entre a Seleção do Gerente e a aba Aprovações: a gravação com
+  // dado velho falhava ou sobrescrevia em silêncio. Ver comComprasAtual em comprasSeguro.ts.
+  const patchRequest = async (requestId: string, updater: (request: RequisicaoCompra) => RequisicaoCompra) => {
+    await comComprasAtual(async ({ compras: base }) => {
+      const atualizado = base.map((request: any) => (request.id === requestId ? updater(request) : request));
+      await saveEntity?.('compras', atualizado);
+      return true;
+    });
   };
 
   const openQuoteModal = (requestId: string, mode: 'edit' | 'view') => {
@@ -304,7 +314,7 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
     }));
   };
 
-  const handleSaveQuote = () => {
+  const handleSaveQuote = async () => {
     if (!activeRequest || !quoteModal) return;
 
     if (supplierOptions.length === 0) {
@@ -349,7 +359,7 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
         };
       });
 
-    patchRequest(activeRequest.id, (request) => ({
+    await patchRequest(activeRequest.id, (request) => ({
       ...request,
       itens: itensAtualizados,
       budgetDetails: detailsFiltrados,
@@ -367,7 +377,7 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
     closeQuoteModal();
   };
 
-  const handleSendToApproval = (requestId: string) => {
+  const handleSendToApproval = async (requestId: string) => {
     const request = requests.find((item) => item.id === requestId);
     if (!request) return;
 
@@ -375,32 +385,25 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
       return toast.error('Faça a cotação completa antes de enviar para aprovação.');
     }
 
-    const hasAllSelections = (request.budgetDetails || []).every((detail) => detail.jaEmEstoque || (detail.fornecedorSelecionado && detail.valorSelecionado !== null));
-    if (!hasAllSelections || !request.budgetValue || request.budgetValue <= 0) {
-      return toast.error('Selecione manualmente o fornecedor de cada item que não estiver em estoque antes de enviar para aprovação.');
-    }
-
-    patchRequest(requestId, (current) => ({
-      ...current,
-      stage: 'APROVACAO',
-      approvalRoute: resolveApprovalRoute(current.budgetValue),
-      updatedAt: new Date().toISOString(),
-    }));
-  };
-
-  const handleSendToSelection = (requestId: string) => {
-    const request = requests.find((item) => item.id === requestId);
-    if (!request) return;
-
-    if ((request.budgetDetails || []).length === 0) {
-      return toast.error('Faça a cotação completa antes de enviar para seleção do gerente.');
-    }
-
-    patchRequest(requestId, (current) => ({
-      ...current,
-      stage: 'SELECAO_GERENTE',
-      updatedAt: new Date().toISOString(),
-    }));
+    // A escolha do fornecedor vencedor não acontece mais aqui — é feita em Aprovar Com.,
+    // no momento da aprovação do Pedido de Compra (ver ComprasAprovarComercialView).
+    // Sai da cotação e vira Pedido de Compra: recebe o número provisório (PC-XXXX) já aqui,
+    // pra identificar o pedido em Aprovar Com./Aprovar Fin.. Busca a base fresca de compras E
+    // de histórico juntas (o `patchRequest` só cobre `compras`) porque o número depende da
+    // sequência já usada no histórico.
+    await comComprasAtual(async ({ compras: base, comprasHistorico: historico }) => {
+      const atual = base.find((r: any) => r.id === requestId);
+      if (!atual) return true;
+      const numero = atual.pedidoCompraNumero || formatPedidoCompraNumero(parsePedidoCompraSeqAtual(historico, base) + 1);
+      const atualizado = base.map((r: any) => (r.id === requestId ? {
+        ...r,
+        stage: 'AGUARDANDO_COMERCIAL',
+        pedidoCompraNumero: numero,
+        updatedAt: new Date().toISOString(),
+      } : r));
+      await saveEntity?.('compras', atualizado);
+      return true;
+    });
   };
 
   // Abre o popup de Conta a Pagar pré-preenchido com a cotação selecionada do item.
@@ -474,6 +477,7 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
         parcela: '-',
         totalParcelas: 1,
         origemCompra: true,
+        pedidoCompraNumero: item.pedidoCompraNumero || request.pedidoCompraNumero || undefined,
         empresa: buyForm.empresa,
         vinculoTipo: 'OS' as const,
         vinculoValor: request.centroCusto,
@@ -494,31 +498,47 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
         dataPagamento: '',
         createdAt: new Date().toISOString(),
       };
-      await saveEntity?.('financeiro', [conta, ...(Array.isArray(financeiro) ? financeiro : [])]);
+      const salvouFinanceiro = await comFinanceiroAtual(async (base) => {
+        await saveEntity?.('financeiro', [conta, ...base]);
+        return true;
+      });
+      if (!salvouFinanceiro) return; // comFinanceiroAtual já avisou o usuário do erro
 
-      // 2) Histórico de Compras — um registro por item, NFe do fornecedor pendente.
+      // 2) Histórico de Compras — um registro por item, NFe do fornecedor pendente. Busca a
+      //    base mais recente do histórico (não o `comprasHistorico` do contexto, que pode
+      //    estar desatualizado) antes de gravar. Leva o número do Pedido de Compra do próprio
+      //    pedido (atribuído quando ele saiu da cotação) — é isso que faz cada item marcado
+      //    manualmente aqui cair no MESMO card do pedido no Histórico, em vez de um por item.
       const userLabel = userSession?.nome || userSession?.email || 'sistema';
-      const registro = buildHistoricoRecord(request, item, detail, userLabel, contaPagarId);
-      const historicoAtual = Array.isArray(comprasHistorico) ? comprasHistorico : [];
-      const historicoSemDuplicado = historicoAtual.filter((r: any) => r?.id !== registro.id);
-      await saveEntity?.('comprasHistorico', [registro, ...historicoSemDuplicado]);
+      const fornecedorNome = detail?.fornecedorSelecionado || item.fornecedor || '';
+      const fornecedorCnpj = (Array.isArray(fornecedores) ? fornecedores : []).find((f: any) => f?.razaoSocial === fornecedorNome)?.cnpj || '';
+      const registro = buildHistoricoRecord(request, item, detail, userLabel, contaPagarId, item.pedidoCompraNumero || request.pedidoCompraNumero, fornecedorCnpj);
+      const salvouHistorico = await comComprasAtual(async ({ comprasHistorico: historicoAtual }) => {
+        const historicoSemDuplicado = historicoAtual.filter((r: any) => r?.id !== registro.id);
+        await saveEntity?.('comprasHistorico', [registro, ...historicoSemDuplicado]);
+        return true;
+      });
+      if (!salvouHistorico) return; // comComprasAtual já avisou o usuário do erro
 
-      // 3) Compras — remove o item do card; remove o card se ficar sem itens.
-      //    O efeito de auto-save persiste a coleção `compras` no SQL.
-      setRequests((current) =>
-        current
-          .map((r) =>
+      // 3) Compras — remove o item do card; remove o card se ficar sem itens. Aplica em cima
+      //    da base mais recente (não do `requests` local) pelo mesmo motivo do item 2.
+      const salvouCompras = await comComprasAtual(async ({ compras: base }) => {
+        const atualizado = base
+          .map((r: any) =>
             r.id === request.id
               ? {
                   ...r,
-                  itens: r.itens.filter((it) => it.id !== item.id),
-                  budgetDetails: (r.budgetDetails || []).filter((d) => d.itemId !== item.id),
+                  itens: r.itens.filter((it: any) => it.id !== item.id),
+                  budgetDetails: (r.budgetDetails || []).filter((d: any) => d.itemId !== item.id),
                   updatedAt: new Date().toISOString(),
                 }
               : r,
           )
-          .filter((r) => r.itens.length > 0),
-      );
+          .filter((r: any) => r.itens.length > 0);
+        await saveEntity?.('compras', atualizado);
+        return true;
+      });
+      if (!salvouCompras) return; // comComprasAtual já avisou o usuário do erro
 
       setBuyModal(null);
     } finally {
@@ -526,8 +546,8 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
     }
   };
 
-  const handleReturnToSolicitations = (requestId: string) => {
-    patchRequest(requestId, (request) => ({
+  const handleReturnToSolicitations = async (requestId: string) => {
+    await patchRequest(requestId, (request) => ({
       ...request,
       stage: 'SOLICITACOES',
       approvalRoute: null,
@@ -535,48 +555,47 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
     }));
   };
 
-  const handleSelectSupplier = (requestId: string, itemId: string, fornecedorSelecionado: string) => {
-    const req = requests.find((r) => r.id === requestId);
-    if (!req) return;
-
-    if (req.stage !== 'SELECAO_GERENTE') {
-      toast.error('A seleção de fornecedor só pode ser feita na etapa Seleção do Gerente.');
-      return;
-    }
-
-    if (!podeSelecionarGerente) {
-      toast.error('Apenas o gerente comercial ou o diretor financeiro podem selecionar o fornecedor.');
-      return;
-    }
-
-    setRequests((current) => current.map((request) => {
-      if (request.id !== requestId) return request;
-
-      const nextDetails = (request.budgetDetails || []).map((detail) => {
-        if (detail.itemId !== itemId) return detail;
-
-        if (detail.jaEmEstoque) return detail;
-
-        const selectedQuote = detail.fornecedores.find((entry) => entry.fornecedor === fornecedorSelecionado) || null;
-
-        // A natureza NÃO muda com o fornecedor escolhido — ela é do item (definida na solicitação).
-        return {
-          ...detail,
-          fornecedorSelecionado: selectedQuote?.fornecedor || '',
-          valorSelecionado: selectedQuote ? selectedQuote.valor : null,
-          prazoEntregaSelecionado: selectedQuote?.prazoEntrega || '',
-          condicaoPagamentoSelecionada: selectedQuote?.condicaoPagamento || '',
-        };
-      });
-
-      return {
-        ...request,
-        budgetDetails: nextDetails,
-        budgetValue: calculateSelectedBudgetValue(nextDetails),
-        updatedAt: new Date().toISOString(),
-      };
-    }));
+  const confirmarRecusa = async (motivo: string) => {
+    if (!recusaAlvo) return;
+    const userLabel = userSession?.nome || userSession?.email || 'sistema';
+    await recusarRequisicao(recusaAlvo.id, motivo, userLabel, patchRequest);
+    setRecusaAlvo(null);
   };
+
+  // Baixa o PDF do Pedido de Compra vinculado ao card do grupo (PC + fornecedor) — só os itens
+  // daquele grupo, não a requisição inteira.
+  const handleBaixarPedido = (card: PcCard) => {
+    const { request, itens } = card;
+    const resumo: PedidoCompraResumo = {
+      numero: card.pedidoCompraNumero || request.pedidoCompraNumero || '—',
+      solicitacaoId: request.id,
+      centroCusto: request.centroCusto,
+      solicitante: request.solicitante,
+      departamento: request.departamento,
+      fornecedor: card.fornecedor || '',
+      fornecedorCnpj: '',
+      itens: itens.map((item) => {
+        const detail = (request.budgetDetails || []).find((d) => d.itemId === item.id) || null;
+        const valorTotal = detail?.valorSelecionado || 0;
+        return {
+          itemId: item.id,
+          nome: item.nome,
+          descricao: `${item.descricao || item.nome}${detail?.fornecedorSelecionado ? ` — ${detail.fornecedorSelecionado}` : ''}`,
+          qtd: item.qtd,
+          un: item.un,
+          valorUnitario: item.qtd > 0 ? valorTotal / item.qtd : valorTotal,
+          valorTotal,
+        };
+      }),
+      valorTotal: itens.reduce((sum, item) => sum + ((request.budgetDetails || []).find((d) => d.itemId === item.id)?.valorSelecionado || 0), 0),
+      prazoEntrega: '',
+      condicaoPagamento: '',
+      observacoes: '',
+      data: request.createdAt,
+    };
+    handleDownloadPedidoCompraPDF(resumo);
+  };
+
 
   const filteredRequests = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -608,15 +627,73 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
     });
   }, [requests, searchQuery]);
 
-  const requestsByStage = useMemo(
+  // Só as 2 etapas do Kanban propriamente dito (a aprovação saiu daqui, ver Aprovar Com./
+  // Aprovar Fin.) — tipado como Partial porque BoardStage também inclui os estágios de
+  // aprovação, que nunca aparecem como coluna nesta tela.
+  const requestsByStage: Partial<Record<RequisicaoCompra['stage'], RequisicaoCompra[]>> = useMemo(
     () => ({
       SOLICITACOES: filteredRequests.filter((request) => request.stage === 'SOLICITACOES'),
-      SELECAO_GERENTE: filteredRequests.filter((request) => request.stage === 'SELECAO_GERENTE'),
-      APROVACAO: filteredRequests.filter((request) => request.stage === 'APROVACAO'),
       COMPRADOS: filteredRequests.filter((request) => request.stage === 'COMPRADOS'),
     }),
     [filteredRequests]
   );
+
+  // Backfill: itens em Comprados sem `pedidoCompraNumero` (dados de antes desse número
+  // existir, ou aprovados pelo fluxo manual de segurança sem fornecedor pré-selecionado)
+  // ficavam mostrando "—" no card e no PDF do pedido. Assim que a tela detecta algum item
+  // assim, atribui um número novo pra cada um e grava — autoextingue (a próxima checagem já
+  // não encontra mais nada faltando, então não há loop).
+  useEffect(() => {
+    const faltandoNumero = (requestsByStage.COMPRADOS ?? []).some((request) =>
+      request.itens.some((item) => !item.pedidoCompraNumero)
+    );
+    if (!faltandoNumero) return;
+
+    comComprasAtual(async ({ compras: base, comprasHistorico }) => {
+      let seq = parsePedidoCompraSeqAtual(comprasHistorico, base);
+      const atualizado = base.map((r: any) => {
+        if (r.stage !== 'COMPRADOS') return r;
+        return {
+          ...r,
+          itens: r.itens.map((item: any) => {
+            if (item.pedidoCompraNumero) return item;
+            seq += 1;
+            return { ...item, pedidoCompraNumero: formatPedidoCompraNumero(seq) };
+          }),
+        };
+      });
+      await saveEntity?.('compras', atualizado);
+      return true;
+    });
+  }, [requestsByStage]);
+
+  // Cards de Comprados agrupados por Pedido de Compra (PC) + fornecedor — cada requisição
+  // aprovada pode virar vários cards (1 por fornecedor), já que os itens de uma mesma OS podem
+  // ter sido cotados com fornecedores diferentes. Itens sem `pedidoCompraNumero` (rede de
+  // segurança — aprovados sem seleção de fornecedor) viram 1 card por item, preservando o fluxo
+  // manual de escolher o fornecedor na hora de marcar como comprado.
+  const comprasCards: PcCard[] = useMemo(() => {
+    const out: PcCard[] = [];
+    for (const request of requestsByStage.COMPRADOS ?? []) {
+      const grupos = new Map<string, typeof request.itens>();
+      for (const item of request.itens) {
+        const key = item.pedidoCompraNumero || `item:${item.id}`;
+        if (!grupos.has(key)) grupos.set(key, []);
+        grupos.get(key)!.push(item);
+      }
+      for (const [key, itensDoGrupo] of grupos) {
+        const detail = (request.budgetDetails || []).find((d) => d.itemId === itensDoGrupo[0].id) || null;
+        out.push({
+          key: `${request.id}::${key}`,
+          request,
+          pedidoCompraNumero: itensDoGrupo[0].pedidoCompraNumero,
+          fornecedor: detail?.fornecedorSelecionado,
+          itens: itensDoGrupo,
+        });
+      }
+    }
+    return out;
+  }, [requestsByStage]);
 
   const modalRequest = quoteModal ? requests.find((request) => request.id === quoteModal.requestId) || null : null;
   const modalRows = modalRequest ? quoteRows[modalRequest.id] || buildDraftRows(modalRequest) : [];
@@ -650,14 +727,16 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
             </div>
             <div className="text-xs text-white/35 uppercase tracking-widest flex items-center gap-2">
               <CircleDollarSign size={14} />
-              Abaixo de R$ {APPROVAL_LIMIT} o setor de compras aprova; a partir de R$ {APPROVAL_LIMIT}, somente a gerência
+              Ao enviar para aprovação, o pedido segue para a aba Aprovar Com.; acima de R$ {APPROVAL_LIMIT} ele passa depois por Aprovar Fin.
             </div>
           </div>
 
-          <div className={`grid grid-cols-1 md:grid-cols-2 ${visibleBoardColumns.length >= 4 ? 'lg:grid-cols-4' : 'lg:grid-cols-3'} gap-4 items-start`}>
+          <div className={`grid grid-cols-1 md:grid-cols-2 ${visibleBoardColumns.length >= 4 ? 'lg:grid-cols-4' : visibleBoardColumns.length === 3 ? 'lg:grid-cols-3' : 'lg:grid-cols-2'} gap-4 items-start`}>
             {visibleBoardColumns.map((column) => {
               const ColumnIcon = column.icon;
-              const cards = requestsByStage[column.id];
+              const isComprados = column.id === 'COMPRADOS';
+              const solicitacoesCards = isComprados ? [] : (requestsByStage[column.id] ?? []);
+              const cardCount = isComprados ? comprasCards.length : solicitacoesCards.length;
 
               return (
                 <div key={column.id} className={`rounded-3xl border bg-gradient-to-b ${column.accent} p-4 min-h-[360px]`}>
@@ -672,20 +751,87 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
                       </div>
                     </div>
                     <div className="px-3 py-1 rounded-full bg-black/20 border border-white/10 text-white text-[11px] font-bold">
-                      {cards.length}
+                      {cardCount}
                     </div>
                   </div>
 
                   <div className="space-y-3 max-h-[860px] overflow-y-auto pr-1">
-                    {cards.length === 0 ? (
+                    {cardCount === 0 ? (
                       <div className="rounded-2xl border border-dashed border-white/10 bg-white/5 p-6 text-center text-white/35 text-sm">
                         Nenhuma requisição nesta coluna.
                       </div>
-                    ) : cards.map((request) => (
+                    ) : isComprados ? comprasCards.map((card) => (
+                      <article key={card.key} className="rounded-2xl border border-white/10 bg-[#0b1220]/80 p-4 shadow-lg shadow-black/10 space-y-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <h5 className="text-white font-bold text-sm leading-tight">Pedido {card.pedidoCompraNumero || '—'}</h5>
+                            <p className="text-white/45 text-[11px] mt-1">{formatNumeroOsDisplay(card.request.centroCusto)} • {card.request.solicitante || 'Solicitação de compras'}</p>
+                          </div>
+                          <button className="text-white/20 hover:text-white/60 transition-colors" title="Voltar para solicitações" onClick={() => handleReturnToSolicitations(card.request.id)}>
+                            <ArrowRight size={14} className="rotate-180" />
+                          </button>
+                        </div>
+
+                        <div className="flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-wider">
+                          <span className="px-2 py-1 rounded-full bg-white/5 border border-white/10 text-white/45">{card.itens.length} item(ns)</span>
+                          {card.fornecedor && (
+                            <span className="px-2 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-200">{card.fornecedor}</span>
+                          )}
+                          <span className="px-2 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-200">Compras</span>
+                        </div>
+
+                        <div className="space-y-2 pt-1">
+                          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-white/45 uppercase tracking-widest text-[10px] font-bold">OS / Centro de custo</p>
+                              <p className="text-white font-black text-sm mt-0.5 truncate">{formatNumeroOsDisplay(card.request.centroCusto)}</p>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <button onClick={() => openQuoteModal(card.request.id, 'view')} title="Ver cotação" className="p-2 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-white/70">
+                                <Eye size={15} />
+                              </button>
+                              <button onClick={() => handleBaixarPedido(card)} title="Baixar pedido" className="p-2 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-white/70">
+                                <FileDown size={15} />
+                              </button>
+                            </div>
+                          </div>
+                          <div className="space-y-3">
+                            {card.itens.map((item) => {
+                              const detail = (card.request.budgetDetails || []).find((d) => d.itemId === item.id) || null;
+                              const isItem = (detail?.naturezaFornecimento || item.naturezaFornecimento) === 'ITEM';
+                              return (
+                                <div key={`${card.request.id}-${item.id}`} className="rounded-xl border border-white/10 bg-white/[0.03] p-3 space-y-3">
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                      <p className="text-white text-sm font-semibold">{item.descricao || item.nome}</p>
+                                      <p className="text-white/40 text-[11px] mt-1">
+                                        {isItem ? 'Item' : 'Serviço'}
+                                        {detail?.fornecedorSelecionado ? ` • ${detail.fornecedorSelecionado}` : ''}
+                                        {detail?.valorSelecionado != null ? ` • ${formatCurrency(detail.valorSelecionado)}` : ''}
+                                      </p>
+                                    </div>
+                                    <span className="text-[10px] uppercase tracking-widest text-amber-300/80 font-black">{isItem ? 'A comprar' : 'A contratar'}</span>
+                                  </div>
+                                  <button
+                                    onClick={() => openBuyModal(card.request.id, item.id)}
+                                    className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all"
+                                  >
+                                    <Banknote size={14} /> {isItem ? 'Marcar como comprado' : 'Marcar como contratado'}
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                          <p className="text-[11px] text-white/40 rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                            Ao confirmar, geramos a conta a pagar, o item sai do kanban para o Histórico como <strong className="text-white/70">NFe pendente</strong> e, se for item, vai para a tela de estoque.
+                          </p>
+                        </div>
+                      </article>
+                    )) : solicitacoesCards.map((request) => (
                       <article key={request.id} className="rounded-2xl border border-white/10 bg-[#0b1220]/80 p-4 shadow-lg shadow-black/10 space-y-4">
                         <div className="flex items-start justify-between gap-3">
                           <div>
-                            <h5 className="text-white font-bold text-sm leading-tight">{request.centroCusto}</h5>
+                            <h5 className="text-white font-bold text-sm leading-tight">{formatNumeroOsDisplay(request.centroCusto)}</h5>
                             <p className="text-white/45 text-[11px] mt-1">{request.solicitante || 'Solicitação de compras'}</p>
                           </div>
                           <button className="text-white/20 hover:text-white/60 transition-colors" title="Voltar para solicitações" onClick={() => handleReturnToSolicitations(request.id)}>
@@ -701,193 +847,30 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
                           ) : (
                             <span className="px-2 py-1 rounded-full bg-white/5 border border-white/10 text-white/35">Sem orçamento</span>
                           )}
-                          {request.stage === 'APROVACAO' && (
-                            <span className={`px-2 py-1 rounded-full border ${resolveApprovalRoute(request.budgetValue) === 'gerencia' ? 'bg-blue-500/10 border-blue-500/20 text-blue-200' : 'bg-orange-500/10 border-orange-500/20 text-orange-200'}`}>
-                              {approvalRouteLabel[resolveApprovalRoute(request.budgetValue)]}
-                            </span>
-                          )}
-                          {request.stage === 'COMPRADOS' && (
-                            <span className="px-2 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-200">Compras</span>
-                          )}
                         </div>
 
-                        <div className="space-y-2">
-                          {request.itens.map((item) => {
-                            const itemDetail = (request.budgetDetails || []).find((detail) => detail.itemId === item.id) || null;
-
-                            return (
-                              <div key={item.id} className="rounded-xl border border-white/5 bg-white/[0.03] p-3 space-y-3">
-                                <div className="flex items-center justify-between gap-3">
-                                  <div>
-                                    <p className="text-white text-sm font-semibold">{item.descricao || item.nome}</p>
-                                    <p className="text-white/40 text-[11px] mt-1">{item.qtd} {item.un}</p>
-                                  </div>
-                                  <div className="text-right">
-                                    <span className="text-[10px] uppercase tracking-widest text-amber-300/80 font-bold block">{item.qtd} {item.un}</span>
-                                    <span className="text-[10px] uppercase tracking-widest text-violet-300/80 font-black">{item.naturezaFornecimento === 'ITEM' ? 'MATERIAL' : 'SERVIÇO'}</span>
-                                  </div>
-                                </div>
-
-                                {itemDetail ? (
-                                  <div className="space-y-2">
-                                    {(() => {
-                                      const quotedSuppliers = itemDetail.fornecedores.filter((supplier) => supplier.fornecedor.trim() && supplier.valor > 0);
-
-                                      return (
-                                        <>
-                                    {request.stage === 'SELECAO_GERENTE' ? (
-                                      <>
-                                        <label className="text-[10px] uppercase tracking-[0.25em] text-white/40 font-black">Fornecedor da aprovação</label>
-                                        <select
-                                          className="w-full rounded-xl border border-white/10 bg-[#101826] p-3 text-white text-sm outline-none focus:border-amber-500 cursor-pointer"
-                                          value={itemDetail.fornecedorSelecionado}
-                                          onChange={(event) => handleSelectSupplier(request.id, item.id, event.target.value)}
-                                          disabled={itemDetail.jaEmEstoque}
-                                        >
-                                          <option value="">{itemDetail.jaEmEstoque ? 'Item já em estoque' : 'Selecione um fornecedor orçado'}</option>
-                                          {quotedSuppliers.map((supplier, supplierIndex) => {
-                                            const extras = [
-                                              supplier.prazoEntrega?.trim() ? `Entrega: ${supplier.prazoEntrega.trim()}` : '',
-                                              supplier.condicaoPagamento?.trim() ? `Pagto: ${supplier.condicaoPagamento.trim()}` : '',
-                                            ].filter(Boolean).join(' • ');
-                                            return (
-                                              <option key={`${item.id}-${supplier.fornecedor}-${supplierIndex}`} value={supplier.fornecedor}>
-                                                {supplier.fornecedor} - {formatCurrency(supplier.valor)}{extras ? ` • ${extras}` : ''}
-                                              </option>
-                                            );
-                                          })}
-                                        </select>
-                                      </>
-                                    ) : request.stage === 'APROVACAO' || request.stage === 'COMPRADOS' ? (
-                                      <div>
-                                        <label className="text-[10px] uppercase tracking-[0.25em] text-white/40 font-black">Selecionado</label>
-                                        <p className="text-white text-sm mt-1">{itemDetail.fornecedorSelecionado ? itemDetail.fornecedorSelecionado : 'Aguardando seleção do gerente'}</p>
-                                      </div>
-                                    ) : null}
-
-                                    {!itemDetail.jaEmEstoque && itemDetail.fornecedorSelecionado && (
-                                      <div className="grid grid-cols-2 gap-2">
-                                        <div className="rounded-lg border border-white/5 bg-white/[0.03] p-2">
-                                          <p className="text-[9px] uppercase tracking-[0.2em] text-white/40 font-black">Prazo de entrega</p>
-                                          <p className="text-white/80 text-xs mt-0.5">{itemDetail.prazoEntregaSelecionado || '—'}</p>
-                                        </div>
-                                        <div className="rounded-lg border border-white/5 bg-white/[0.03] p-2">
-                                          <p className="text-[9px] uppercase tracking-[0.2em] text-white/40 font-black">Condição de pagamento</p>
-                                          <p className="text-white/80 text-xs mt-0.5">{itemDetail.condicaoPagamentoSelecionada || '—'}</p>
-                                        </div>
-                                      </div>
-                                    )}
-
-                                    <div className="flex flex-wrap gap-2 text-[10px] text-white/35">
-                                      <span className="px-2 py-1 rounded-full bg-white/5">{quotedSuppliers.length} fornecedores</span>
-                                      <span className="px-2 py-1 rounded-full bg-white/5">{itemDetail.fornecedorSelecionado ? `Selecionado: ${itemDetail.fornecedorSelecionado}` : itemDetail.jaEmEstoque ? 'Em estoque' : 'Seleção pendente'}</span>
-                                      <span className="px-2 py-1 rounded-full bg-white/5">{itemDetail.valorSelecionado ? formatCurrency(itemDetail.valorSelecionado) : itemDetail.jaEmEstoque ? 'Sem orçamento' : 'Valor pendente'}</span>
-                                    </div>
-                                        </>
-                                      );
-                                    })()}
-                                  </div>
-                                ) : (
-                                  <div className="rounded-xl border border-dashed border-white/10 bg-black/10 p-3 text-white/35 text-xs">
-                                    Este item ainda não foi orçado.
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
+                        <div className="space-y-2 pt-1">
+                          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 flex items-center justify-between gap-3 text-sm">
+                            <span className="text-white/45 uppercase tracking-widest text-[10px] font-bold">Total do orçamento</span>
+                            <strong className="text-white">{request.budgetValue ? formatCurrency(request.budgetValue) : 'Seleção pendente'}</strong>
+                          </div>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <button onClick={() => openQuoteModal(request.id, 'edit')} className="w-full flex items-center justify-center gap-1.5 bg-sky-600 hover:bg-sky-500 text-white px-2.5 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider transition-all">
+                              <Package size={12} /> Orçar
+                            </button>
+                            <button onClick={() => openQuoteModal(request.id, 'view')} disabled={!(request.budgetDetails || []).length} className="w-full flex items-center justify-center gap-1.5 bg-white/5 hover:bg-white/10 text-white px-2.5 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                              <Eye size={12} /> Ver orçamento
+                            </button>
+                          </div>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <button onClick={() => setRecusaAlvo(request)} className="w-full flex items-center justify-center gap-1.5 bg-red-600/80 hover:bg-red-500 text-white px-2.5 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider transition-all">
+                              <Ban size={12} /> Solicitar reajuste
+                            </button>
+                            <button onClick={() => handleSendToApproval(request.id)} className="w-full flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed" disabled={(request.budgetDetails || []).length === 0}>
+                              <Send size={12} /> Enviar p/ aprovação
+                            </button>
+                          </div>
                         </div>
-
-                        {request.stage === 'SOLICITACOES' && (
-                          <div className="space-y-2 pt-1">
-                            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 flex items-center justify-between gap-3 text-sm">
-                              <span className="text-white/45 uppercase tracking-widest text-[10px] font-bold">Total do orçamento</span>
-                              <strong className="text-white">{request.budgetValue ? formatCurrency(request.budgetValue) : 'Seleção pendente'}</strong>
-                            </div>
-                            <div className="grid grid-cols-2 gap-2">
-                              <button onClick={() => openQuoteModal(request.id, 'edit')} className="w-full flex items-center justify-center gap-2 bg-sky-600 hover:bg-sky-500 text-white px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all">
-                                <Package size={14} /> Orçar
-                              </button>
-                              <button onClick={() => openQuoteModal(request.id, 'view')} disabled={!(request.budgetDetails || []).length} className="w-full flex items-center justify-center gap-2 bg-white/5 hover:bg-white/10 text-white px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed">
-                                <Eye size={14} /> Ver orçamento
-                              </button>
-                            </div>
-                            <button onClick={() => handleSendToSelection(request.id)} className="w-full flex items-center justify-center gap-2 bg-violet-600 hover:bg-violet-500 text-white px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed" disabled={(request.budgetDetails || []).length === 0}>
-                              <Users size={14} /> Enviar para seleção do gerente
-                            </button>
-                          </div>
-                        )}
-
-                        {request.stage === 'SELECAO_GERENTE' && (
-                          <div className="space-y-2 pt-1">
-                            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 flex items-center justify-between gap-3 text-sm">
-                              <span className="text-white/45 uppercase tracking-widest text-[10px] font-bold">Orçamento</span>
-                              <strong className="text-white">{request.budgetValue ? formatCurrency(request.budgetValue) : 'Seleção pendente'}</strong>
-                            </div>
-                            <div className="grid grid-cols-2 gap-2">
-                              <button onClick={() => openQuoteModal(request.id, 'edit')} className="w-full flex items-center justify-center gap-2 bg-sky-600 hover:bg-sky-500 text-white px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all">
-                                <Package size={14} /> Ajustar/Selecionar
-                              </button>
-                              <button onClick={() => openQuoteModal(request.id, 'view')} disabled={!(request.budgetDetails || []).length} className="w-full flex items-center justify-center gap-2 bg-white/5 hover:bg-white/10 text-white px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed">
-                                <Eye size={14} /> Ver orçamento
-                              </button>
-                            </div>
-                            <button onClick={() => handleSendToApproval(request.id)} className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed" disabled={(request.budgetDetails || []).length === 0 || !(request.budgetDetails || []).every((detail) => detail.jaEmEstoque || (detail.fornecedorSelecionado && detail.valorSelecionado !== null))}>
-                              <Send size={14} /> Enviar para aprovação
-                            </button>
-                          </div>
-                        )}
-
-                        {request.stage === 'APROVACAO' && (
-                          <div className="space-y-2 pt-1">
-                            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 flex items-center justify-between gap-3 text-sm">
-                              <span className="text-white/45 uppercase tracking-widest text-[10px] font-bold">Orçamento</span>
-                              <strong className="text-white">{formatCurrency(request.budgetValue || 0)}</strong>
-                            </div>
-                            <div className="grid grid-cols-1 gap-2">
-                              <button onClick={() => openQuoteModal(request.id, 'view')} disabled={!(request.budgetDetails || []).length} className="w-full flex items-center justify-center gap-2 bg-white/5 hover:bg-white/10 text-white px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed">
-                                <Eye size={14} /> Detalhar
-                              </button>
-                            </div>
-                            <p className="text-[11px] text-white/40 rounded-xl border border-white/10 bg-white/[0.03] p-3">
-                              A aprovação final é feita na tela de Aprovações.
-                            </p>
-                          </div>
-                        )}
-
-                        {request.stage === 'COMPRADOS' && (
-                          <div className="space-y-2 pt-1">
-                            <div className="space-y-3">
-                              {request.itens.map((item) => {
-                                const detail = (request.budgetDetails || []).find((d) => d.itemId === item.id) || null;
-                                const isItem = (detail?.naturezaFornecimento || item.naturezaFornecimento) === 'ITEM';
-                                return (
-                                  <div key={`${request.id}-${item.id}`} className="rounded-xl border border-white/10 bg-white/[0.03] p-3 space-y-3">
-                                    <div className="flex items-start justify-between gap-3">
-                                      <div>
-                                        <p className="text-white text-sm font-semibold">{item.descricao || item.nome}</p>
-                                        <p className="text-white/40 text-[11px] mt-1">
-                                          {isItem ? 'Item' : 'Serviço'}
-                                          {detail?.fornecedorSelecionado ? ` • ${detail.fornecedorSelecionado}` : ''}
-                                          {detail?.valorSelecionado != null ? ` • ${formatCurrency(detail.valorSelecionado)}` : ''}
-                                        </p>
-                                      </div>
-                                      <span className="text-[10px] uppercase tracking-widest text-amber-300/80 font-black">{isItem ? 'A comprar' : 'A contratar'}</span>
-                                    </div>
-                                    <button
-                                      onClick={() => openBuyModal(request.id, item.id)}
-                                      className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all"
-                                    >
-                                      <Banknote size={14} /> {isItem ? 'Marcar como comprado' : 'Marcar como contratado'}
-                                    </button>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                            <p className="text-[11px] text-white/40 rounded-xl border border-white/10 bg-white/[0.03] p-3">
-                              Ao confirmar, geramos a conta a pagar, o item sai do kanban para o Histórico como <strong className="text-white/70">NFe pendente</strong> e, se for item, vai para a tela de estoque.
-                            </p>
-                          </div>
-                        )}
                       </article>
                     ))}
                   </div>
@@ -905,7 +888,7 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
               <div>
                 <p className="text-[10px] uppercase tracking-[0.35em] text-white/35 font-black">Documento de Cotação</p>
                 <h2 className="text-2xl font-black text-white mt-2">{quoteModal.mode === 'edit' ? 'Orçar solicitação' : 'Detalhamento do orçamento'}</h2>
-                <p className="text-white/45 text-sm mt-1">{activeRequest.centroCusto}</p>
+                <p className="text-white/45 text-sm mt-1">{formatNumeroOsDisplay(activeRequest.centroCusto)}</p>
               </div>
               <button onClick={closeQuoteModal} className="p-3 rounded-xl bg-white/5 hover:bg-white/10 text-white/70 transition-colors">
                 <X size={18} />
@@ -1121,7 +1104,7 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
               </Select>
             </Field>
             <Field label={boldOS('Vínculo (OS / Centro de custo)')} span={5}>
-              <Input value={buyContext.request.centroCusto} disabled />
+              <Input value={formatNumeroOsDisplay(buyContext.request.centroCusto)} disabled />
             </Field>
             <Field label="Tipo" span={4}>
               <Select value={buyForm.tipoPagamento} onChange={(e) => setBuyF('tipoPagamento', e.target.value)}>
@@ -1174,6 +1157,10 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
             </div>
           </form>
         </FinModal>
+      )}
+
+      {recusaAlvo && (
+        <RecusarPedidoModal request={recusaAlvo} onClose={() => setRecusaAlvo(null)} onConfirm={confirmarRecusa} />
       )}
     </>
   );

@@ -1,15 +1,29 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
+import { Search, X } from 'lucide-react';
 import { FinCard, Toolbar, DataTable, Th, Td, Btn, StatusTag, CompanyTag, Pill, EmptyRow, FinModal, Field, Textarea, Kpi, DeleteBtn } from '../finUi';
 import { br, money, num } from '../finData';
 import { useFin, type FinRecord } from '../useFin';
 import { useFinFilters } from '../finFilters';
+
+// Sem acento/maiúscula — pra "atlantic" achar "Atlantic Náutica Ltda.".
+const normalizar = (v: any): string =>
+  String(v || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 
 // Leitura real: solicitações guardadas na coleção `financeiro` (tipo 'solicitacao').
 // Aprovar transforma a solicitação em Conta a Pagar (escrita via saveEntity).
 export function AprovacoesView() {
   const { records, approveSolicitacao, rejectSolicitacao, deleteRecord, userSession } = useFin();
   const { match } = useFinFilters();
-  const rows = records('solicitacao').filter(match);
+  // Busca por fornecedor: um campo próprio desta tela, à parte dos filtros globais (Empresa/
+  // Banco/Período) — funciona em cima do que já passou por eles, então acha a solicitação do
+  // fornecedor não importa qual empresa esteja selecionada lá em cima (ou nenhuma).
+  const [buscaFornecedor, setBuscaFornecedor] = useState('');
+  const rows = useMemo(() => {
+    const termo = normalizar(buscaFornecedor);
+    return records('solicitacao')
+      .filter(match)
+      .filter((r) => !termo || normalizar(r.fornecedor).includes(termo));
+  }, [records, match, buscaFornecedor]);
   // Autorizar (aprovar/reprovar) é ato de gerência — usuário comum só solicita.
   const isGerencia = ['ADMIN', 'GERENTE'].includes(String(userSession?.role || '').toUpperCase());
   const [busy, setBusy] = useState('');
@@ -41,18 +55,41 @@ export function AprovacoesView() {
   return (
     <FinCard>
       <Toolbar title="Aprovações" hint="Aprovar transforma a solicitação em Conta a Pagar." />
+
+      <div className="mb-4 relative max-w-md">
+        <Search className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-white/25" size={16} />
+        <input
+          type="text"
+          value={buscaFornecedor}
+          onChange={(e) => setBuscaFornecedor(e.target.value)}
+          placeholder="Buscar por fornecedor..."
+          className="w-full rounded-xl border border-white/10 bg-[#0b1220] py-2.5 pl-10 pr-9 text-sm text-white outline-none transition-colors placeholder:text-white/30 focus:border-amber-500/50"
+        />
+        {buscaFornecedor && (
+          <button
+            onClick={() => setBuscaFornecedor('')}
+            title="Limpar busca"
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-lg p-1 text-white/30 transition-colors hover:bg-white/10 hover:text-white/70"
+          >
+            <X size={14} />
+          </button>
+        )}
+      </div>
+
       <DataTable
         minWidth={1100}
         head={<>
-          <Th>Solicitação</Th><Th>Empresa</Th><Th>Solicitante</Th><Th>Vínculo</Th>
+          <Th>Empresa</Th><Th>Solicitante</Th><Th>Vínculo</Th>
           <Th>Fornecedor</Th><Th>Valor</Th><Th>Vencimento</Th><Th>Status</Th><Th>Ação</Th>
         </>}
       >
         {rows.length === 0 ? (
-          <EmptyRow cols={9} text="Nenhuma solicitação enviada" />
+          <EmptyRow
+            cols={8}
+            text={buscaFornecedor ? `Nenhuma solicitação encontrada para "${buscaFornecedor}"` : 'Nenhuma solicitação enviada'}
+          />
         ) : rows.map((r) => (
           <tr key={r.id} className="transition-colors hover:bg-white/5">
-            <Td className="font-black text-white">{r.id}</Td>
             <Td><CompanyTag empresa={String(r.empresa)} /></Td>
             <Td className="text-white">{r.solicitante}</Td>
             <Td className="text-white/60">{r.vinculoTipo}: {r.vinculoValor || '—'}</Td>

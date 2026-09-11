@@ -1,11 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import { Save, Download, FileText, Eye } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import {
   FinCard, Toolbar, DataTable, Th, Td, Btn, StatusTag, CompanyTag, AlertBar, InfoBar, EmptyRow,
   FinModal, Field, Input, MoneyInput, Select, Textarea, ImpostosPanel, DeleteBtn,
 } from '../finUi';
 import {
-  br, money, num, isOld, todayStr, download, bancoLabel,
+  br, money, num, isOld, todayStr, bancoLabel,
   IMPOSTOS_NFE, IMPOSTO_LABEL, impostosDoRegistro,
 } from '../finData';
 import { useFin, type FinRecord } from '../useFin';
@@ -96,10 +97,10 @@ export function ContasReceberView() {
       : `${base}\n\nLançamento manual antigo. Será removido do controle de recebimentos.`;
   };
 
-  // Resumo em CSV do que está na tela (respeita os filtros), com linha de TOTAL ao final.
+  // Resumo em Excel do que está na tela (respeita os filtros), com linha de TOTAL ao final.
   // Traz valor original, cada imposto retido e o total — é o que o contador precisa para
   // conferir a retenção sem abrir nota por nota.
-  const exportarCsv = () => {
+  const exportarExcel = () => {
     const head = [
       'Origem', 'Empresa', 'Cliente', 'Referência', 'Emissão NFe', 'Valor original',
       ...IMPOSTOS_NFE.map((k) => `${IMPOSTO_LABEL[k]} (R$)`),
@@ -125,8 +126,10 @@ export function ContasReceberView() {
       soma((r) => num(r.valorLiquido ?? r.valor)),
       '', '', '', soma((r) => num(r.valorRecebido)), '', '',
     ]);
-    const csv = [head, ...linhas].map((l) => l.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\n');
-    download(csv, 'contas_a_receber.csv', 'text/csv;charset=utf-8');
+    const planilha = XLSX.utils.aoa_to_sheet([head, ...linhas]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, planilha, 'Contas a Receber');
+    XLSX.writeFile(workbook, 'contas_a_receber.xlsx');
   };
 
   return (
@@ -135,7 +138,7 @@ export function ContasReceberView() {
         title="Contas a Receber"
         hint="Valores a receber dos clientes. O banco é definido aqui, no recebimento."
         actions={<>
-          <Btn variant="secondary" onClick={exportarCsv}><Download size={15} /> Exportar CSV</Btn>
+          <Btn variant="secondary" onClick={exportarExcel}><Download size={15} /> Exportar Excel</Btn>
           <Btn variant="amber" onClick={() => navegar(FIN_SECTIONS.nfe)}><FileText size={15} /> Solicitar NFe</Btn>
         </>}
       />

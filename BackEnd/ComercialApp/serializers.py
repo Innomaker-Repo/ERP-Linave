@@ -114,7 +114,7 @@ class NegocioResumoSerializer(serializers.ModelSerializer):
             'solicitante', 'cargo', 'telefone', 'email',
             'categoria', 'status', 'orcamento_realizado',
             'requer_reorcamento', 'tipo_servico',
-            'data_solicitacao'
+            'data_solicitacao', 'numero_customizado', 'created_at',
         ]
 
 class ItemAlocacaoSerializer(serializers.ModelSerializer):
@@ -247,6 +247,7 @@ class PropostaComercialResumoSerializer(serializers.ModelSerializer):
     responsabilidadeContratante = serializers.CharField(source='responsabilidade_contratante', read_only=True)
     condicoesGerais = serializers.CharField(source='condicoes_gerais', read_only=True)
     condicoesPagamento = serializers.CharField(source='condicoes_pagamento', read_only=True)
+    efetivoPrevisto = serializers.CharField(source='efetivo_previsto', read_only=True)
     versao = serializers.SerializerMethodField()
 
     class Meta:
@@ -255,7 +256,7 @@ class PropostaComercialResumoSerializer(serializers.ModelSerializer):
             'id', 'numeroProposta', 'dataCriacao', 'status', 'motivoRecusaProposta',
             'cliente', 'negocio', 'referencias', 'saudacao', 'assunto', 'textoAbertura',
             'responsabilidadeContratada', 'responsabilidadeContratante', 'preco',
-            'condicoesGerais', 'condicoesPagamento', 'prazo', 'encerramento',
+            'condicoesGerais', 'condicoesPagamento', 'prazo', 'efetivoPrevisto', 'encerramento',
             'escopoA', 'escopoBasicoServicos', 'precoItens', 'precoColunasOcultas', 'versao'
         ]
 
@@ -633,6 +634,7 @@ class OrdemServicoSerializer(serializers.ModelSerializer):
             'status_os', 'status_envio', 'status_aprovacao',
             'fechada', 'data_fechamento',
             'data_aprovacao', 'documento_assinatura_aprovacao',
+            'criado_por_nome', 'criado_por_cpf', 'criado_por_email',
             'documentos', 'created_at', 'updated_at'
         ]
         read_only_fields = ('id', 'data_emissao', 'created_at', 'updated_at', 'cliente', 'negocio')

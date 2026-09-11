@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
+import { comFinanceiroAtual } from '../../../../services/financeiroSeguro';
 import { Factory, Plus, Save, X, Edit2, Trash2, Phone, MapPin } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -112,15 +113,15 @@ export function FornecedoresView({ searchQuery }: { searchQuery: string }) {
       // Contas a Pagar do Financeiro. Propaga a renomeação pra lá.
       const novaRazaoSocial = (novoRegistro.razaoSocial || '').trim();
       if (editandoId != null && razaoSocialOriginal && novaRazaoSocial && razaoSocialOriginal !== novaRazaoSocial) {
-        const financeiroAtual = Array.isArray(financeiro) ? financeiro : [];
-        const temNoFinanceiro = financeiroAtual.some((r: any) => r.fornecedor === razaoSocialOriginal);
-        if (temNoFinanceiro) {
-          const financeiroAtualizado = financeiroAtual.map((r: any) =>
+        await comFinanceiroAtual(async (base) => {
+          const temNoFinanceiro = base.some((r: any) => r.fornecedor === razaoSocialOriginal);
+          if (!temNoFinanceiro) return;
+          const financeiroAtualizado = base.map((r: any) =>
             r.fornecedor === razaoSocialOriginal ? { ...r, fornecedor: novaRazaoSocial } : r
           );
           await saveEntity('financeiro', financeiroAtualizado);
           toast.info('Fornecedor renomeado — solicitações e contas a pagar já criadas foram atualizadas.');
-        }
+        });
       }
 
       fecharForm();

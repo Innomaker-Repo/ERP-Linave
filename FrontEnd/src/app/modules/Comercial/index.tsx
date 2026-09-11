@@ -11,9 +11,13 @@ import { OrcamentosView } from '../../components/modules/Orcamentos/OrcamentosVi
 interface ComercialModuleProps {
   activeItem: string;
   searchQuery: string;
+  // Id do negócio (obraId) que a tela de OS deve abrir sozinha ao montar — vem do
+  // fluxo "Deseja ir direto para OS?" do Novo Negócio (ver App.tsx/CrmViewNew.tsx).
+  autoAbrirOsObraId?: string | null;
+  onAutoAbrirOsConsumido?: () => void;
 }
 
-export function ComercialModule({ activeItem, searchQuery }: ComercialModuleProps) {
+export function ComercialModule({ activeItem, searchQuery, autoAbrirOsObraId, onAutoAbrirOsConsumido }: ComercialModuleProps) {
   switch (activeItem) {
     case 'crm':
       return <CrmViewNew searchQuery={searchQuery} />;
@@ -24,7 +28,7 @@ export function ComercialModule({ activeItem, searchQuery }: ComercialModuleProp
     case 'templatesProposta':
       return <TemplatesPropostaView />;
     case 'fazerOs':
-      return <OsView searchQuery={searchQuery} />;
+      return <OsView searchQuery={searchQuery} autoAbrirObraId={autoAbrirOsObraId} onAutoAbrirConsumido={onAutoAbrirOsConsumido} />;
     case 'orcamentos':
       return <OrcamentosView searchQuery={searchQuery} />;
     case 'medicao':

@@ -3,6 +3,7 @@ import { useErp } from '../../../context/ErpContext';
 import { Eraser, Lock, Plus, Send, ShoppingCart, Trash2, UserCircle } from 'lucide-react';
 import { createDefaultRequest, createEmptyItem, createId, initialPurchaseStateFor, type ItemCompra } from './comprasLocal';
 import { formatOsLabel, getOsNumero, podeComprarNaOs } from '../../../../services/ordensServico';
+import { comComprasAtual } from '../../../../services/comprasSeguro';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../ui/feedback';
 
@@ -27,7 +28,7 @@ export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQ
     createDefaultRequest(userSession?.nome || userSession?.email || '', '', '')
   );
   const [itens, setItens] = useState<ItemCompra[]>([createEmptyItem()]);
-  const { compras, saveEntity } = useErp();
+  const { saveEntity } = useErp();
 
   // Solicitante é SEMPRE o usuário logado (não é mais digitado à mão): nome de exibição +
   // identidade estável (CPF/e-mail) gravada na requisição para o histórico por usuário.
@@ -61,7 +62,7 @@ export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQ
     setItens([createEmptyItem()]);
   };
 
-  const handleCreateRequest = () => {
+  const handleCreateRequest = async () => {
     if (!solicitanteNome) {
       return toast.error('Não foi possível identificar seu usuário. Faça login novamente.');
     }
@@ -97,9 +98,15 @@ export function ComprasSolicitacoesView({ searchQuery: _searchQuery }: { searchQ
       updatedAt: new Date().toISOString(),
     };
 
-    // persist into workspace-wide compras list
-    const existing = Array.isArray(compras) ? compras : [];
-    void saveEntity?.('compras', [novaRequisicao, ...existing]);
+    // Grava em cima da lista mais recente do servidor (não do `compras` do contexto, que
+    // pode estar desatualizado) — senão a criação podia sobrescrever/perder solicitação
+    // criada por outra pessoa nesse meio-tempo.
+    const salvou = await comComprasAtual(async ({ compras: existing }) => {
+      await saveEntity?.('compras', [novaRequisicao, ...existing]);
+      return true;
+    });
+    if (!salvou) return; // comComprasAtual já avisou o usuário do erro
+
     setItens([createEmptyItem()]);
     toast.success('Solicitação criada e disponível para o kanban de compras.');
   };

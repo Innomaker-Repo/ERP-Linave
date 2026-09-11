@@ -9,9 +9,16 @@ import { toast } from 'sonner';
 const fornecedorNome = (f: any) =>
   f?.razaoSocial || f?.razao_social || f?.nomeFantasia || f?.nome_fantasia || f?.nome || '';
 
-const formVazio = (empresaPadrao: string) => ({
+// Todo campo deste formulário é obrigatório — marca visualmente o label, mesmo padrão de
+// asterisco vermelho já usado em outras telas do sistema (ex.: Compras/Requisições).
+const req = (label: React.ReactNode): React.ReactNode => (
+  <>{label} <span className="text-red-400">*</span></>
+);
+
+const formVazio = (empresaPadrao: string, nomeSolicitante: string) => ({
   empresa: empresaPadrao,
-  solicitante: '',
+  // Preenchido a partir do usuário logado, não digitado — ver comentário no campo no JSX.
+  solicitante: nomeSolicitante,
   tipo: 'Material',
   vinculoValor: '',
   fornecedor: '',
@@ -33,7 +40,8 @@ export function SolicitacaoView() {
   const [salvando, setSalvando] = useState(false);
   const [ok, setOk] = useState<'' | 'criada' | 'reenviada'>('');
 
-  const [form, setForm] = useState(formVazio(empresas[0] || 'Linave'));
+  const nomeUsuarioLogado = userSession?.nome || userSession?.email || '';
+  const [form, setForm] = useState(formVazio(empresas[0] || 'Linave', nomeUsuarioLogado));
   const set = (k: string, v: string) => setForm((p) => ({ ...p, [k]: v }));
 
   // Edição: reabre uma solicitação já enviada (reprovada) com os mesmos dados, pra corrigir
@@ -77,12 +85,36 @@ export function SolicitacaoView() {
     setEditandoId(null);
     setAnexosExistentes([]);
     setAnexos([]);
-    setForm(formVazio(empresas[0] || 'Linave'));
+    setForm(formVazio(empresas[0] || 'Linave', nomeUsuarioLogado));
+  };
+
+  // Todos os campos do formulário são obrigatórios (inclusive pelo menos 1 anexo) — sem
+  // isso a solicitação chegava incompleta pra quem aprova (sem descrição, sem forma de
+  // pagamento definida, sem OS vinculada...) e só se descobria o que faltava depois.
+  const camposFaltando = (): string[] => {
+    const faltando: string[] = [];
+    if (!form.empresa) faltando.push('Empresa');
+    if (!form.solicitante.trim()) faltando.push('Solicitante');
+    if (!form.tipo) faltando.push('Tipo (reembolso/adiantamento)');
+    if (!form.vinculoValor) faltando.push('OS emitida');
+    if (!form.fornecedor.trim()) faltando.push('Fornecedor / beneficiário');
+    if (!form.documento.trim()) faltando.push('Documento');
+    if (!num(form.valor)) faltando.push('Valor');
+    if (!form.compra) faltando.push('Data compra');
+    if (!form.vencimento) faltando.push('Vencimento');
+    if (!form.forma) faltando.push('Forma solicitada');
+    if (!form.descricao.trim()) faltando.push('Descrição');
+    if (anexos.length === 0 && anexosExistentes.length === 0) faltando.push('Anexar documento / imagem');
+    return faltando;
   };
 
   const enviar = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.solicitante.trim() || !form.fornecedor.trim() || !num(form.valor)) return;
+    const faltando = camposFaltando();
+    if (faltando.length > 0) {
+      toast.error(`Preencha os campos obrigatórios: ${faltando.join(', ')}.`);
+      return;
+    }
     // Bloqueia duplicidade: mesma nota (documento) pro mesmo fornecedor não pode virar uma
     // segunda solicitação — evita aprovar duas vezes e pagar a mesma nota em duplicidade.
     if (solicitacaoDuplicada(financeiro, {
@@ -137,7 +169,7 @@ export function SolicitacaoView() {
       } else {
         await addSolicitacao({ id: idAlvo, tipo: 'solicitacao', status: 'Aguardando aprovação', ...dados });
         setOk('criada');
-        setForm((p) => ({ ...p, solicitante: '', fornecedor: '', documento: '', valor: '', forma: '', descricao: '' }));
+        setForm((p) => ({ ...p, fornecedor: '', documento: '', valor: '', forma: '', descricao: '' }));
         setAnexos([]);
       }
       setTimeout(() => setOk(''), 3000);
@@ -159,22 +191,29 @@ export function SolicitacaoView() {
           }
         />
         <form className="grid grid-cols-12 gap-4" onSubmit={enviar}>
-          <Field label="Empresa" span={3}>
+          <Field label={req('Empresa')} span={3}>
             <Select value={form.empresa} onChange={(e) => set('empresa', e.target.value)}>
               {empresas.map((emp) => <option key={emp}>{emp}</option>)}
             </Select>
           </Field>
-          <Field label="Solicitante" span={3}><Input value={form.solicitante} onChange={(e) => set('solicitante', e.target.value)} placeholder="Nome do solicitante" /></Field>
-          <Field label="Tipo (reembolso/adiantamento)" span={3}>
+          <Field label={req('Solicitante')} span={3}>
+            <Input
+              value={form.solicitante}
+              disabled
+              className="bg-white/5 cursor-not-allowed opacity-70"
+              title="Preenchido automaticamente com o usuário logado — não pode ser digitado, pra esse campo servir de filtro confiável em Meus Pagamentos."
+            />
+          </Field>
+          <Field label={req('Tipo (reembolso/adiantamento)')} span={3}>
             <Select value={form.tipo} onChange={(e) => set('tipo', e.target.value)}>{TIPOS_REEMBOLSO.map((t) => <option key={t}>{t}</option>)}</Select>
           </Field>
-          <Field label={boldOS('OS emitida')} span={3}>
+          <Field label={req(boldOS('OS emitida'))} span={3}>
             <Select value={form.vinculoValor} onChange={(e) => set('vinculoValor', e.target.value)}>
               <option value="">{oss.length ? 'Selecione...' : 'Nenhuma OS no ERP'}</option>
               {oss.map((o, i) => <option key={`${o.numero}-${i}`} value={o.numero}>{o.numero} - {o.cliente}</option>)}
             </Select>
           </Field>
-          <Field label="Fornecedor / beneficiário" span={6}>
+          <Field label={req('Fornecedor / beneficiário')} span={6}>
             <Input
               list="fin-fornecedores"
               value={form.fornecedor}
@@ -185,28 +224,28 @@ export function SolicitacaoView() {
               {fornecedores.map((f, i) => <option key={i} value={fornecedorNome(f)} />)}
             </datalist>
           </Field>
-          <Field label="Documento" span={3}>
+          <Field label={req('Documento')} span={3}>
             <Input value={form.documento} onChange={(e) => set('documento', e.target.value)} placeholder="Nº único do boleto" />
             <p className="mt-1 text-[10px] leading-tight text-white/40">Se for boleto, use o Nosso Número ou a linha digitável — é o que evita pagar a mesma nota duas vezes.</p>
           </Field>
 
-          <Field label="Valor" span={3}><MoneyInput value={form.valor} onChange={(v) => set('valor', v)} /></Field>
-          <Field label="Data compra" span={3}><Input type="date" value={form.compra} onChange={(e) => set('compra', e.target.value)} /></Field>
-          <Field label="Vencimento" span={3}><Input type="date" value={form.vencimento} onChange={(e) => set('vencimento', e.target.value)} /></Field>
-          <Field label="Forma solicitada" span={3}>
+          <Field label={req('Valor')} span={3}><MoneyInput value={form.valor} onChange={(v) => set('valor', v)} /></Field>
+          <Field label={req('Data compra')} span={3}><Input type="date" value={form.compra} onChange={(e) => set('compra', e.target.value)} /></Field>
+          <Field label={req('Vencimento')} span={3}><Input type="date" value={form.vencimento} onChange={(e) => set('vencimento', e.target.value)} /></Field>
+          <Field label={req('Forma solicitada')} span={3}>
             <Select value={form.forma} onChange={(e) => set('forma', e.target.value)}>
               <option value="">Selecione...</option>
               {FORMAS_PAGAMENTO.map((f) => <option key={f}>{f}</option>)}
             </Select>
           </Field>
 
-          <Field label="Anexar documento / imagem" span={12}>
+          <Field label={req('Anexar documento / imagem')} span={12}>
             <FileInput label="Anexar NF, boleto, recibo, PDF ou foto" value={anexos} onChange={setAnexos} />
             {editandoId && anexosExistentes.length > 0 && anexos.length === 0 && (
               <p className="mt-1.5 text-xs text-white/40">Mantendo {anexosExistentes.length} anexo(s) já enviado(s). Anexe um novo arquivo acima só se quiser substituir.</p>
             )}
           </Field>
-          <Field label="Descrição" span={12}><Textarea value={form.descricao} onChange={(e) => set('descricao', e.target.value)} placeholder="Detalhes da solicitação..." /></Field>
+          <Field label={req('Descrição')} span={12}><Textarea value={form.descricao} onChange={(e) => set('descricao', e.target.value)} placeholder="Detalhes da solicitação..." /></Field>
 
           <div className="col-span-12 flex gap-2">
             <Btn variant="amber" type="submit" disabled={salvando}>

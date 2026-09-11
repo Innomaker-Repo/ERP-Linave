@@ -22,6 +22,7 @@ import {
 } from '../../../../services/propostaTemplatesService';
 import { temServico, temLocacao } from '../../../utils/modalidade';
 import { boldOS } from '../../../utils/osHighlight';
+import { formatNumeroOsDisplay } from '../../../../services/ordensServico';
 import { ObservacoesNegocio } from '../../ObservacoesNegocio';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../ui/feedback';
@@ -1317,7 +1318,7 @@ export function PropostaView() {
             <span className="text-white/40 text-xs font-bold uppercase tracking-widest">{boldOS('Filtrar por OS')}</span>
             <select value={filtroOs} onChange={(e) => setFiltroOs(e.target.value)} className="bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-white text-xs">
               <option value="">Todas as OS</option>
-              {osDisponiveis.map((n: any) => <option key={n} value={n}>{n}</option>)}
+              {osDisponiveis.map((n: any) => <option key={n} value={n}>{formatNumeroOsDisplay(n)}</option>)}
             </select>
             {filtroOs && <button onClick={() => setFiltroOs('')} className="text-white/40 text-xs underline">limpar</button>}
           </div>

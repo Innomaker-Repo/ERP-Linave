@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Plus, FileCheck2, ExternalLink, Paperclip, Hash, CalendarClock } from 'lucide-react';
+import { Plus, FileCheck2, ExternalLink, Paperclip, Hash, CalendarClock, Pencil } from 'lucide-react';
 import {
   FinCard, Toolbar, DataTable, Th, Td, Btn, StatusTag, CompanyTag, Pill, AlertBar, EmptyRow,
   FinModal, Field, Input, MoneyInput, Select, FileInput, DeleteBtn, boldOS,
@@ -10,21 +10,28 @@ import {
 } from '../finData';
 import { useFin } from '../useFin';
 import { useFinFilters } from '../finFilters';
+import { useErp } from '../../../../context/ErpContext';
 import { uploadDocumento } from '../../../../../services/documentosService';
+import { ReciboLocacaoFormModal, formInicialRecibo, linhaItem } from './ReciboLocacaoFormModal';
 import { toast } from 'sonner';
 
-const TIPOS_NFE = ['NFe Serviço', 'NFe Alocado', 'Nota de débito', 'Outro'];
+// Só existem 2 naturezas de solicitação (o "Tipo" exibido nunca pode sair de 3 valores — ver
+// siglaTipoNfe abaixo): Serviço (NFe Serviço) ou Locação (Nota de débito). "NFe Alocado"/"Outro"
+// foram removidos daqui pra não nascer mais solicitação fora dessas 2 categorias.
+const TIPOS_NFE = ['NFe Serviço', 'Nota de débito'];
 
-// Nota de débito é o documento de locação — Linave emite "Nota de Débito" (N/D), as demais
-// prestadoras emitem "Recibo de Locação" (R/L). O nº digitado continua o mesmo; só ganha esse
-// prefixo pra diferenciar de um nº de NFe de serviço de verdade.
+// Regra do tipo de documento por empresa: SERVIÇO — Linave emite NFe normal; Servinave emite
+// Nota de Débito (N/D) pro mesmo serviço. LOCAÇÃO (guardada como "Nota de débito" no dado) —
+// qualquer prestadora emite Recibo de Locação (R/L), não depende mais de qual empresa é.
 const isLinaveEmpresa = (empresa?: any) => String(empresa || '').toLowerCase().includes('linave');
 
-// Sigla mostrada antes do nº, para identificar o tipo de documento de cabeça sem abrir a linha.
-const prefixoTipoNfe = (tipoNfe: string, empresa?: any): string => {
-  if (tipoNfe === 'Nota de débito') return isLinaveEmpresa(empresa) ? 'N/D' : 'R/L';
-  if (tipoNfe === 'NFe Serviço') return 'N/S';
-  return '';
+// Sigla usada tanto na coluna "Tipo" quanto como prefixo do nº do documento (mesma regra nos
+// dois lugares, senão as colunas se contradiziam). Só existem 3 valores possíveis: NFe, R/L,
+// N/D — registros antigos com tipoNfe fora dessas 2 naturezas (ex.: "NFe Alocado"/"Outro", de
+// antes dessa regra existir) caem no padrão NFe, nunca mostram o rótulo bruto.
+const siglaTipoNfe = (tipoNfe: string, empresa?: any): string => {
+  if (tipoNfe === 'Nota de débito') return 'R/L';
+  return isLinaveEmpresa(empresa) ? 'NFe' : 'N/D';
 };
 
 // Valor sentinela do dropdown de clientes: libera o campo de texto para um cliente que
@@ -79,8 +86,58 @@ export function NfeView() {
     nfeSolicitacoes, financeiro, empresas, oss, clientes,
     emitirNfe, atualizarNfeEmitida, addRecord, updateRecord, deleteRecord,
   } = useFin();
+  const { config } = useErp() as any;
   const { match } = useFinFilters();
   const solicitacoes = nfeSolicitacoes.filter(match);
+
+  // ---- Ponte solicitação de NFe (tipoNfe "Nota de débito", exibida como "R/L") ↔ Recibo de
+  // Locação de verdade: quem pediu quer que uma solicitação identificada como Recibo abra o
+  // MESMO formulário/fluxo já usado na aba "Recibo de Locação" (itens, emitente, destinatário),
+  // não o fluxo de "Emitir NFe". `reciboForm` guarda o recibo (existente ou recém-semeado a
+  // partir da solicitação) sendo preenchido; `nfeReqId` no recibo linka de volta pra não
+  // duplicar em cliques seguintes.
+  const [reciboForm, setReciboForm] = useState<any>(null);
+
+  const recibosPorNfeReqId = useMemo(() => {
+    const mapa = new Map<string, any>();
+    (Array.isArray(financeiro) ? financeiro : [])
+      .filter((r: any) => r?.tipo === 'reciboLocacao' && r?.nfeReqId)
+      .forEach((r: any) => mapa.set(String(r.nfeReqId), r));
+    return mapa;
+  }, [financeiro]);
+
+  const abrirPreencherRecibo = (r: NfeSolicitacao) => {
+    const existente = recibosPorNfeReqId.get(String(r.id));
+    if (existente) { setReciboForm(existente); return; }
+
+    const recibosAtuais = (Array.isArray(financeiro) ? financeiro : []).filter((x: any) => x?.tipo === 'reciboLocacao');
+    const base = formInicialRecibo(recibosAtuais, r.empresa, config);
+    const valor = num(r.valor);
+    setReciboForm({
+      ...base,
+      nfeReqId: r.id,
+      ordemServicoNumero: r.os || r.contrato || '',
+      clienteNome: r.cliente || '',
+      dataEmissao: r.dataEmitir || base.dataEmissao,
+      status: r.status === 'Emitida e arquivada' ? 'emitido' : 'pendente',
+      itens: valor > 0
+        ? [{ ...linhaItem(), item: '01', qtd: '1', descricao: r.cliente ? `Locação — ${r.cliente}` : 'Locação', valorUnitario: String(valor), total: String(valor) }]
+        : [linhaItem()],
+    });
+  };
+
+  // Mantém a linha da solicitação (valor/status mostrados na tabela) em dia com o que foi
+  // preenchido no recibo — senão a tabela ficava com o valor "antigo" depois de editar.
+  const aoSalvarRecibo = async (recSalvo: any) => {
+    const idOrigem = recSalvo?.nfeReqId;
+    if (!idOrigem) return;
+    const total = (recSalvo.itens || []).reduce((s: number, i: any) => s + (parseFloat(String(i.total).replace(',', '.')) || 0), 0);
+    await updateRecord(idOrigem, {
+      ...(total > 0 ? { valor: total } : {}),
+      dataEmitir: recSalvo.dataEmissao || undefined,
+      status: recSalvo.status === 'emitido' ? 'Emitida e arquivada' : 'Aguardando emissão',
+    });
+  };
 
   // Nota emitida de cada solicitação (o registro 'nfe' aponta para a origem por sourceId).
   // É por aqui que a linha arquivada mostra o número e permite corrigi-lo depois.
@@ -270,7 +327,7 @@ export function NfeView() {
         minWidth={1200}
         head={<>
           <Th>Solicitação</Th><Th>{boldOS('OS')}</Th><Th>Empresa</Th><Th>Cliente</Th><Th>Valor</Th>
-          <Th>Origem</Th><Th>Data emitir</Th><Th>Tipo NFe</Th><Th>Nº da NF</Th><Th>Emissão</Th><Th>Status</Th><Th>Anexos</Th><Th>Ação</Th>
+          <Th>Origem</Th><Th>Data emitir</Th><Th>Tipo</Th><Th>Nº da NF</Th><Th>Emissão</Th><Th>Status</Th><Th>Anexos</Th><Th>Ação</Th>
         </>}
       >
         {solicitacoes.length === 0 ? (
@@ -280,6 +337,8 @@ export function NfeView() {
           const semNumero = Boolean(nota) && !String(nota.numero || '').trim();
           // Ainda não emitida e a data planejada já passou: chama atenção em vermelho.
           const emitirAtrasado = r.status !== 'Emitida e arquivada' && isOld(r.dataEmitir);
+          const sigla = siglaTipoNfe(r.tipoNfe, r.empresa);
+          const ehRecibo = sigla === 'R/L';
           return (
           <tr key={r.id} className={`transition-colors hover:bg-white/5 ${semNumero ? 'bg-amber-500/[0.06]' : ''}`}>
             <Td className="font-black text-white">{r.id}</Td>
@@ -291,38 +350,43 @@ export function NfeView() {
             {/* !text-rose-300: a base text-white/80 do Td vence a cor condicional em especificidade
                 igual no Tailwind v4 — precisa do modificador important para a cor vermelha aparecer. */}
             <Td className={emitirAtrasado ? 'font-bold text-rose-300!' : ''}>{br(r.dataEmitir)}</Td>
-            <Td>{r.tipoNfe}</Td>
+            <Td>{sigla}</Td>
             <Td>
               {!nota
                 ? <span className="text-white/30">—</span>
                 : semNumero
                   ? <Pill tone="wait">Sem número</Pill>
-                  : <span className="font-bold text-white">
-                      {(() => {
-                        const prefixo = prefixoTipoNfe(r.tipoNfe, r.empresa);
-                        return prefixo ? `${prefixo} ${nota.numero}` : nota.numero;
-                      })()}
-                    </span>}
+                  : <span className="font-bold text-white">{sigla} {nota.numero}</span>}
             </Td>
             <Td>{nota?.emissao ? br(nota.emissao) : <span className="text-white/30">—</span>}</Td>
             <Td><StatusTag status={r.status} /></Td>
             <Td className="whitespace-normal"><AnexosCell anexos={r.anexos} /></Td>
             <Td>
               <div className="flex items-center gap-2">
-                {r.status === 'Aguardando emissão'
-                  ? <Btn small variant="amber" onClick={() => abrirEmissao(r)}>Emitir NFe</Btn>
-                  : <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-300"><FileCheck2 size={13} /> Arquivada</span>}
-                {/* Nota já arquivada: permite preencher/corrigir o número depois. */}
-                {nota && (
-                  <Btn small variant={semNumero ? 'amber' : 'secondary'} onClick={() => abrirEdicaoNota(nota)}>
-                    <Hash size={12} /> {semNumero ? 'Informar nº' : 'Editar nº'}
+                {ehRecibo ? (
+                  // Recibo de Locação: mesmo botão/fluxo da aba dedicada — abre o formulário
+                  // de verdade (itens, emitente, destinatário), não "Emitir NFe".
+                  <Btn small variant="secondary" onClick={() => abrirPreencherRecibo(r)}>
+                    <Pencil size={12} /> Preencher / editar
                   </Btn>
-                )}
-                {/* Ainda não emitida (não veio da medição/obra): dá para ajustar o prazo planejado. */}
-                {!r.derived && r.status === 'Aguardando emissão' && (
-                  <Btn small variant="secondary" onClick={() => abrirEdicaoData(r)}>
-                    <CalendarClock size={12} /> Alterar data
-                  </Btn>
+                ) : (
+                  <>
+                    {r.status === 'Aguardando emissão'
+                      ? <Btn small variant="amber" onClick={() => abrirEmissao(r)}>Emitir NFe</Btn>
+                      : <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-300"><FileCheck2 size={13} /> Arquivada</span>}
+                    {/* Nota já arquivada: permite preencher/corrigir o número depois. */}
+                    {nota && (
+                      <Btn small variant={semNumero ? 'amber' : 'secondary'} onClick={() => abrirEdicaoNota(nota)}>
+                        <Hash size={12} /> {semNumero ? 'Informar nº' : 'Editar nº'}
+                      </Btn>
+                    )}
+                    {/* Ainda não emitida (não veio da medição/obra): dá para ajustar o prazo planejado. */}
+                    {!r.derived && r.status === 'Aguardando emissão' && (
+                      <Btn small variant="secondary" onClick={() => abrirEdicaoData(r)}>
+                        <CalendarClock size={12} /> Alterar data
+                      </Btn>
+                    )}
+                  </>
                 )}
                 {/* Solicitações derivadas de negócio finalizado não são registros salvos —
                     são calculadas a partir da obra, então não há o que excluir aqui. */}
@@ -517,6 +581,14 @@ export function NfeView() {
             </div>
           </form>
         </FinModal>
+      )}
+
+      {reciboForm && (
+        <ReciboLocacaoFormModal
+          reciboInicial={reciboForm}
+          onClose={() => setReciboForm(null)}
+          onSaved={aoSalvarRecibo}
+        />
       )}
     </FinCard>
   );

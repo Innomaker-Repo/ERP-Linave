@@ -26,8 +26,12 @@ import {
     criarNegocio,
     atualizarNegocio,
     excluirNegocio, // Adicionado aqui!
-    atualizarStatusOs
+    atualizarStatusOs,
+    criarProposta,
+    getNegocioPorId,
 } from '../../../../services/comercialService';
+import { createOrcamento, buildOrcamentoPayload } from '../../../../services/comercial';
+import { mapNegocioToObra } from '../../../../services/obrasMapper';
 
 
 
@@ -61,6 +65,96 @@ interface DocumentoNegocio {
   url?: string;          // URL relativa /media/... do documento persistido
   backendId?: number;    // id da linha Documento no SQL (para excluir)
   file?: File;           // arquivo bruto, só enquanto o negócio ainda não foi criado
+}
+
+// --- Estruturas do bloco "Importar negócio já fechado" (toggle "Deseja ir
+// direto para OS?") — espelham os shapes reais de OrcamentosView.tsx
+// (Material/Terceirizado) e PropostaView.tsx (EscopoServico/precoItens), mas
+// como tipos próprios: são estado privado deste formulário, não das telas
+// de Orçamento/Proposta.
+interface ImportarEscopoLinha {
+  id: string;
+  valores: Record<string, string>;
+}
+
+interface ImportarEscopoServico {
+  id: string;
+  titulo: string;
+  descricaoServico: string;
+  colunas: string[];
+  linhas: ImportarEscopoLinha[];
+  textosDepois: string[];
+}
+
+interface ImportarPrecoItem {
+  id: string;
+  descricao: string;
+  quantidade: number;
+  unidade: string;
+  valorUnitario: number;
+  dias: number;
+  total: number;
+}
+
+interface ImportarMaterial {
+  id: string;
+  descricao: string;
+  unidade: string;
+  quantidade: string;
+  pesoFator: string;
+  custoUnit: string;
+  valorTotal: string;
+  origemTerceiros: 'Sim' | 'Nao';
+  observacao: string;
+}
+
+interface ImportarTerceirizado {
+  id: string;
+  descricao: string;
+  unidade: string;
+  quantidade: string;
+  pesoFator: string;
+  custoUnit: string;
+  valorTotal: string;
+  observacao: string;
+}
+
+interface ImportarOsData {
+  orcamentoNumero: string;
+  orcamentoVersao: string;
+  orcamentoArquivo: DocumentoNegocio | null;
+  propostaNumero: string;
+  propostaVersao: string;
+  propostaArquivo: DocumentoNegocio | null;
+  escopoServicos: ImportarEscopoServico[];
+  precoItens: ImportarPrecoItem[];
+  precoTextoLivre: string;
+  materiais: ImportarMaterial[];
+  terceirizados: ImportarTerceirizado[];
+}
+
+// Input + botão "Adicionar" para nomear uma nova coluna da planilha de escopo.
+// Componente à parte (com seu próprio estado local) pra não precisar de um
+// mapa de "texto digitado por escopo" no componente pai.
+function ColunaAdder({ onAdd }: { onAdd: (nome: string) => void }) {
+  const [valor, setValor] = useState('');
+  return (
+    <div className="grid grid-cols-[1fr_auto] gap-2">
+      <input
+        className="w-full bg-[#0b1220] border border-white/10 p-3 rounded-lg text-white text-sm outline-none focus:border-amber-500 transition-all placeholder:text-white/20"
+        placeholder="Nome da coluna"
+        value={valor}
+        onChange={e => setValor(e.target.value)}
+      />
+      <button
+        type="button"
+        onClick={() => { if (valor.trim()) { onAdd(valor.trim()); setValor(''); } }}
+        className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-[#0b1220] rounded-lg font-black text-xs uppercase transition"
+      >
+        <Plus size={14} className="inline mr-1" /> Adicionar
+      </button>
+    </div>
+  );
 }
 
 interface LinhaTabelaMediacao {
@@ -256,6 +350,23 @@ const initialServico: Servico = {
     observacao: ''
   };
 
+  // Estado vazio do bloco "Importar negócio já fechado" (só relevante quando
+  // desejaIrDiretoParaOs === true) — fábrica isolada pra não duplicar a
+  // estrutura nas duas inicializações de formData (initialForm/createInitialForm).
+  const createInitialImportarOsData = (): ImportarOsData => ({
+    orcamentoNumero: '',
+    orcamentoVersao: '',
+    orcamentoArquivo: null,
+    propostaNumero: '',
+    propostaVersao: '',
+    propostaArquivo: null,
+    escopoServicos: [],
+    precoItens: [],
+    precoTextoLivre: '',
+    materiais: [{ id: `material-${Date.now()}`, descricao: '', unidade: '', quantidade: '', pesoFator: '', custoUnit: '', valorTotal: '0.00', origemTerceiros: 'Nao', observacao: '' }],
+    terceirizados: [{ id: `terceirizado-${Date.now()}`, descricao: '', unidade: '', quantidade: '', pesoFator: '1', custoUnit: '', valorTotal: '0.00', observacao: '' }],
+  });
+
   const initialForm = {
     // Vazio de propósito: obriga a escolha explícita da empresa (o Nº do Negócio só
     // aparece depois disso, já que a numeração é uma sequência separada por empresa).
@@ -274,6 +385,7 @@ const initialServico: Servico = {
     // "Deseja ir direto para OS?" — pula o quadro do CRM e vai direto pra criação da OS
     // assim que o negócio for salvo (com confirmação antes, ver handleSave).
     desejaIrDiretoParaOs: false,
+    importarOs: createInitialImportarOsData(),
     servicos: [{ ...initialServico, id: `servico-${Date.now()}` }],
     itensAlocacao: [] as ItemAlocacaoForm[],
     fase: 'Pre-Venda' as FaseOS,
@@ -306,6 +418,7 @@ const initialServico: Servico = {
   // "Deseja ir direto para OS?" — pula o quadro do CRM e vai direto pra criação da OS
   // assim que o negócio for salvo (com confirmação antes, ver handleSave).
   desejaIrDiretoParaOs: false,
+  importarOs: createInitialImportarOsData(),
   servicos: [{ ...initialServico, id: `servico-${Date.now()}` }],
   itensAlocacao: [] as ItemAlocacaoForm[],
   fase: 'Pre-Venda' as FaseOS,
@@ -327,9 +440,11 @@ const initialServico: Servico = {
 
   // Sugestão de "Nº do Negócio" pro form de Novo Negócio: próximo número da sequência DA
   // EMPRESA SELECIONADA (maior número já em uso entre os negócios daquele prefixo + 1, nunca
-  // abaixo do piso da empresa, pulando os reservados de uso interno). Só existe depois que o
-  // usuário escolhe a Empresa Prestadora — sem empresa não há como saber qual sequência usar.
-  // O usuário pode digitar por cima — nesse caso o valor digitado é o que vai (ver handleSave).
+  // abaixo do piso da empresa). Só existe depois que o usuário escolhe a Empresa Prestadora —
+  // sem empresa não há como saber qual sequência usar. O usuário pode digitar por cima —
+  // nesse caso o valor digitado é o que vai (ver handleSave).
+  // Nota: 1000 (Linave) e 2000 (Servinave) são números de OS reservados para uso interno
+  // (ver seed_os_interna no backend), não de negócio — a numeração de negócio não pula eles.
   const numeroNegocioSugerido = useMemo(() => {
     if (!formData.empresaPrestadora) return '';
     const prefixo = getPrefixoEmpresa(formData.empresaPrestadora);
@@ -1091,6 +1206,303 @@ const initialServico: Servico = {
     }));
   };
 
+  // ==========================================================
+  // BLOCO "IMPORTAR NEGÓCIO JÁ FECHADO" (toggle "Deseja ir direto para OS?")
+  // Preenche, no próprio Novo Negócio, os dados de Orçamento/Proposta de um
+  // negócio fechado fora do sistema, pra cair direto na criação da OS já
+  // consolidada — ver handleSave para a sequência de criação no backend.
+  // ==========================================================
+
+  const handleSelecionarArquivoImportarOs = (tipo: 'orcamento' | 'proposta', file: File | null) => {
+    const documento: DocumentoNegocio | null = file ? {
+      id: `doc-importar-${tipo}-${Date.now()}`,
+      nome: file.name,
+      tipo: file.type || 'application/octet-stream',
+      tamanho: file.size,
+      dataUpload: new Date().toISOString(),
+      file,
+    } : null;
+    setFormData(prev => ({
+      ...prev,
+      importarOs: {
+        ...prev.importarOs,
+        [tipo === 'orcamento' ? 'orcamentoArquivo' : 'propostaArquivo']: documento,
+      },
+    }));
+  };
+
+  // --- A - Escopo Básico de Serviços (mesmo padrão de PropostaView.tsx) ---
+  const criarLinhaEscopoImportarOs = (colunas: string[]): ImportarEscopoLinha => ({
+    id: `linha-importar-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    valores: colunas.reduce((acc, coluna) => ({ ...acc, [coluna]: '' }), {} as Record<string, string>),
+  });
+
+  const adicionarServicoImportarOs = () => {
+    const colunasPadrao = ['Descrição'];
+    const novo: ImportarEscopoServico = {
+      id: `escopo-importar-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      titulo: `${formData.importarOs.escopoServicos.length + 1}. Novo Serviço`,
+      descricaoServico: '',
+      colunas: colunasPadrao,
+      linhas: [criarLinhaEscopoImportarOs(colunasPadrao)],
+      textosDepois: [],
+    };
+    setFormData(prev => ({
+      ...prev,
+      importarOs: { ...prev.importarOs, escopoServicos: [...prev.importarOs.escopoServicos, novo] },
+    }));
+  };
+
+  const removerServicoImportarOs = (escopoId: string) => {
+    setFormData(prev => ({
+      ...prev,
+      importarOs: { ...prev.importarOs, escopoServicos: prev.importarOs.escopoServicos.filter(e => e.id !== escopoId) },
+    }));
+  };
+
+  const atualizarTituloServicoImportarOs = (escopoId: string, titulo: string) => {
+    setFormData(prev => ({
+      ...prev,
+      importarOs: {
+        ...prev.importarOs,
+        escopoServicos: prev.importarOs.escopoServicos.map(e => e.id === escopoId ? { ...e, titulo } : e),
+      },
+    }));
+  };
+
+  const atualizarDescricaoServicoImportarOs = (escopoId: string, descricaoServico: string) => {
+    setFormData(prev => ({
+      ...prev,
+      importarOs: {
+        ...prev.importarOs,
+        escopoServicos: prev.importarOs.escopoServicos.map(e => e.id === escopoId ? { ...e, descricaoServico } : e),
+      },
+    }));
+  };
+
+  const adicionarColunaServicoImportarOs = (escopoId: string, nomeColuna: string) => {
+    const nome = nomeColuna.trim();
+    if (!nome) return;
+    setFormData(prev => ({
+      ...prev,
+      importarOs: {
+        ...prev.importarOs,
+        escopoServicos: prev.importarOs.escopoServicos.map(escopo => {
+          if (escopo.id !== escopoId) return escopo;
+          if (escopo.colunas.some(c => c.toLowerCase() === nome.toLowerCase())) return escopo;
+          return {
+            ...escopo,
+            colunas: [...escopo.colunas, nome],
+            linhas: escopo.linhas.map(linha => ({ ...linha, valores: { ...linha.valores, [nome]: '' } })),
+          };
+        }),
+      },
+    }));
+  };
+
+  const removerColunaServicoImportarOs = (escopoId: string, coluna: string) => {
+    setFormData(prev => ({
+      ...prev,
+      importarOs: {
+        ...prev.importarOs,
+        escopoServicos: prev.importarOs.escopoServicos.map(escopo => {
+          if (escopo.id !== escopoId) return escopo;
+          const novosValores = (linha: ImportarEscopoLinha) => {
+            const v = { ...linha.valores };
+            delete v[coluna];
+            return v;
+          };
+          return {
+            ...escopo,
+            colunas: escopo.colunas.filter(c => c !== coluna),
+            linhas: escopo.linhas.map(linha => ({ ...linha, valores: novosValores(linha) })),
+          };
+        }),
+      },
+    }));
+  };
+
+  const adicionarItemServicoImportarOs = (escopoId: string) => {
+    setFormData(prev => ({
+      ...prev,
+      importarOs: {
+        ...prev.importarOs,
+        escopoServicos: prev.importarOs.escopoServicos.map(escopo =>
+          escopo.id === escopoId
+            ? { ...escopo, linhas: [...escopo.linhas, criarLinhaEscopoImportarOs(escopo.colunas)] }
+            : escopo
+        ),
+      },
+    }));
+  };
+
+  const removerItemServicoImportarOs = (escopoId: string, linhaId: string) => {
+    setFormData(prev => ({
+      ...prev,
+      importarOs: {
+        ...prev.importarOs,
+        escopoServicos: prev.importarOs.escopoServicos.map(escopo =>
+          escopo.id === escopoId
+            ? { ...escopo, linhas: escopo.linhas.filter(l => l.id !== linhaId) }
+            : escopo
+        ),
+      },
+    }));
+  };
+
+  const atualizarCelulaServicoImportarOs = (escopoId: string, linhaId: string, coluna: string, valor: string) => {
+    setFormData(prev => ({
+      ...prev,
+      importarOs: {
+        ...prev.importarOs,
+        escopoServicos: prev.importarOs.escopoServicos.map(escopo => {
+          if (escopo.id !== escopoId) return escopo;
+          return {
+            ...escopo,
+            linhas: escopo.linhas.map(l => l.id === linhaId ? { ...l, valores: { ...l.valores, [coluna]: valor } } : l),
+          };
+        }),
+      },
+    }));
+  };
+
+  const adicionarTextoServicoImportarOs = (escopoId: string) => {
+    setFormData(prev => ({
+      ...prev,
+      importarOs: {
+        ...prev.importarOs,
+        escopoServicos: prev.importarOs.escopoServicos.map(e =>
+          e.id === escopoId ? { ...e, textosDepois: [...e.textosDepois, ''] } : e
+        ),
+      },
+    }));
+  };
+
+  const atualizarTextoServicoImportarOs = (escopoId: string, index: number, valor: string) => {
+    setFormData(prev => ({
+      ...prev,
+      importarOs: {
+        ...prev.importarOs,
+        escopoServicos: prev.importarOs.escopoServicos.map(e => {
+          if (e.id !== escopoId) return e;
+          const arr = [...e.textosDepois];
+          arr[index] = valor;
+          return { ...e, textosDepois: arr };
+        }),
+      },
+    }));
+  };
+
+  const removerTextoServicoImportarOs = (escopoId: string, index: number) => {
+    setFormData(prev => ({
+      ...prev,
+      importarOs: {
+        ...prev.importarOs,
+        escopoServicos: prev.importarOs.escopoServicos.map(e => {
+          if (e.id !== escopoId) return e;
+          const arr = [...e.textosDepois];
+          arr.splice(index, 1);
+          return { ...e, textosDepois: arr };
+        }),
+      },
+    }));
+  };
+
+  // --- B - Preço (mesmo cálculo de PropostaView.tsx: quantidade × valorUnitario × dias) ---
+  const totalItemPrecoImportarOs = (it: Partial<ImportarPrecoItem>) =>
+    (Number(it.quantidade) || 0) * (Number(it.valorUnitario) || 0) * (Number(it.dias) || 0);
+
+  const adicionarItemPrecoImportarOs = () => {
+    const novo: ImportarPrecoItem = {
+      id: `preco-importar-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      descricao: '',
+      quantidade: 1,
+      unidade: 'serv.',
+      valorUnitario: 0,
+      dias: 1,
+      total: 0,
+    };
+    setFormData(prev => ({ ...prev, importarOs: { ...prev.importarOs, precoItens: [...prev.importarOs.precoItens, novo] } }));
+  };
+
+  const removerItemPrecoImportarOs = (id: string) => {
+    setFormData(prev => ({
+      ...prev,
+      importarOs: { ...prev.importarOs, precoItens: prev.importarOs.precoItens.filter(it => it.id !== id) },
+    }));
+  };
+
+  const atualizarItemPrecoImportarOs = (id: string, campo: 'descricao' | 'quantidade' | 'unidade' | 'valorUnitario' | 'dias', valor: string) => {
+    setFormData(prev => ({
+      ...prev,
+      importarOs: {
+        ...prev.importarOs,
+        precoItens: prev.importarOs.precoItens.map(it => {
+          if (it.id !== id) return it;
+          const atualizado = { ...it } as ImportarPrecoItem;
+          if (campo === 'descricao' || campo === 'unidade') {
+            (atualizado as any)[campo] = valor;
+          } else {
+            const limpo = valor.replace(/[^0-9.,]/g, '').replace(',', '.');
+            (atualizado as any)[campo] = parseFloat(limpo) || 0;
+          }
+          atualizado.total = totalItemPrecoImportarOs(atualizado);
+          return atualizado;
+        }),
+      },
+    }));
+  };
+
+  // --- Consumíveis e Materiais / Serviços Terceirizados (mesmo cálculo de OrcamentosView.tsx) ---
+  const recalcularMaterialImportarOs = (item: ImportarMaterial): ImportarMaterial => {
+    const total = (parseFloat(item.quantidade) || 0) * (parseFloat(item.pesoFator) || 0) * (parseFloat(item.custoUnit) || 0);
+    return { ...item, valorTotal: total.toFixed(2) };
+  };
+
+  const recalcularTerceirizadoImportarOs = (item: ImportarTerceirizado): ImportarTerceirizado => {
+    const pesoFator = (parseFloat(item.pesoFator) || 0) <= 0 ? 1 : parseFloat(item.pesoFator);
+    const total = (parseFloat(item.quantidade) || 0) * pesoFator * (parseFloat(item.custoUnit) || 0);
+    return { ...item, valorTotal: total.toFixed(2) };
+  };
+
+  const adicionarMaterialImportarOs = () => {
+    const novo: ImportarMaterial = { id: `material-importar-${Date.now()}`, descricao: '', unidade: '', quantidade: '', pesoFator: '', custoUnit: '', valorTotal: '0.00', origemTerceiros: 'Nao', observacao: '' };
+    setFormData(prev => ({ ...prev, importarOs: { ...prev.importarOs, materiais: [...prev.importarOs.materiais, novo] } }));
+  };
+
+  const removerMaterialImportarOs = (id: string) => {
+    setFormData(prev => ({ ...prev, importarOs: { ...prev.importarOs, materiais: prev.importarOs.materiais.filter(i => i.id !== id) } }));
+  };
+
+  const atualizarMaterialImportarOs = (id: string, changes: Partial<ImportarMaterial>) => {
+    setFormData(prev => ({
+      ...prev,
+      importarOs: {
+        ...prev.importarOs,
+        materiais: prev.importarOs.materiais.map(item => item.id === id ? recalcularMaterialImportarOs({ ...item, ...changes }) : item),
+      },
+    }));
+  };
+
+  const adicionarTerceirizadoImportarOs = () => {
+    const novo: ImportarTerceirizado = { id: `terceirizado-importar-${Date.now()}`, descricao: '', unidade: '', quantidade: '', pesoFator: '1', custoUnit: '', valorTotal: '0.00', observacao: '' };
+    setFormData(prev => ({ ...prev, importarOs: { ...prev.importarOs, terceirizados: [...prev.importarOs.terceirizados, novo] } }));
+  };
+
+  const removerTerceirizadoImportarOs = (id: string) => {
+    setFormData(prev => ({ ...prev, importarOs: { ...prev.importarOs, terceirizados: prev.importarOs.terceirizados.filter(i => i.id !== id) } }));
+  };
+
+  const atualizarTerceirizadoImportarOs = (id: string, changes: Partial<ImportarTerceirizado>) => {
+    setFormData(prev => ({
+      ...prev,
+      importarOs: {
+        ...prev.importarOs,
+        terceirizados: prev.importarOs.terceirizados.map(item => item.id === id ? recalcularTerceirizadoImportarOs({ ...item, ...changes }) : item),
+      },
+    }));
+  };
+
   const normalizarOrcamentosDaObra = (obra: any) => {
     const orcamentos = obra?.orcamentos || [];
     if (orcamentos.length > 0) {
@@ -1433,13 +1845,25 @@ const initialServico: Servico = {
       return toast.error("Adicione pelo menos um item de equipamento na aba Alocação.");
     }
 
+    // "Deseja ir direto para OS?" — exige que o bloco de importação (Escopo A) tenha
+    // pelo menos um serviço com algo preenchido, senão criaríamos uma proposta vazia.
+    if (formData.desejaIrDiretoParaOs) {
+      const temServicoPreenchido = formData.importarOs.escopoServicos.some(escopo =>
+        escopo.descricaoServico.trim() || escopo.linhas.some(linha => Object.values(linha.valores).some(v => v.trim()))
+      );
+      if (!temServicoPreenchido) {
+        return toast.error('Preencha pelo menos um serviço no "A - Escopo Básico de Serviços" antes de criar o negócio direto para OS.');
+      }
+    }
+
     // "Deseja ir direto para OS?" — confirma a intenção antes de criar o negócio. Se o
-    // usuário recuar aqui, o negócio ainda é criado normalmente, só sem o redirecionamento.
+    // usuário recuar aqui, o negócio ainda é criado normalmente, só sem o redirecionamento
+    // e sem o orçamento/proposta serem gerados a partir do bloco de importação.
     let navegarParaOsAoConcluir = formData.desejaIrDiretoParaOs;
     if (navegarParaOsAoConcluir) {
       navegarParaOsAoConcluir = await confirmDialog({
         title: 'Deseja ir direto para OS?',
-        message: 'Ao confirmar, assim que o negócio for salvo você será levado direto para a criação da Ordem de Serviço.',
+        message: 'Ao confirmar, o orçamento e a proposta informados abaixo serão criados automaticamente e, assim que o negócio for salvo, você será levado direto para a criação da Ordem de Serviço já pré-preenchida.',
         confirmText: 'Sim, ir para OS',
       });
     }
@@ -1494,7 +1918,15 @@ const initialServico: Servico = {
         observacoes: s.observacoes || ''
       })),
 
-      itens_alocacao: itensAlocacaoPayload
+      itens_alocacao: itensAlocacaoPayload,
+
+      // Identidade de quem criou o negócio (usuário interno logado) — separada de
+      // `solicitante`/`email`/`telefone` acima, que são o CONTATO DO CLIENTE preenchido
+      // à mão no formulário. Só usada pelo sino de notificações pra avisar quem criou
+      // quando o negócio muda de categoria.
+      criado_por_nome: userSession?.nome || '',
+      criado_por_cpf: userSession?.cpf || '',
+      criado_por_email: userSession?.email || '',
     };
 
     try {
@@ -1551,6 +1983,100 @@ const initialServico: Servico = {
             if (falhas > 0) toast.error(`${falhas} documento(s) não puderam ser enviados.`);
           }
 
+          // "Deseja ir direto para OS?" confirmado — cria, na sequência, o orçamento
+          // (finalizado) e a proposta (já aceita) a partir do bloco de importação, marca
+          // o negócio como "Em Andamento" (mesmo efeito que a aprovação manual do cliente
+          // provocaria) e busca o negócio hidratado pra alimentar a tela de OS já
+          // pré-preenchida. Se algo falhar aqui, o negócio já criado continua existindo
+          // normalmente — só não navegamos automaticamente para a OS.
+          let obraHidratadaParaOs: any = null;
+          if (navegarParaOsAoConcluir && dadosNegocio.id) {
+            try {
+              const negocioIdNum = Number(dadosNegocio.id);
+              const clienteIdNum = Number(dadosNegocio.cliente || formData.clienteId);
+
+              if (formData.importarOs.orcamentoArquivo?.file) {
+                await uploadDocumento(formData.importarOs.orcamentoArquivo.file, {
+                  vinculoTipo: 'negocio',
+                  vinculoId: dadosNegocio.id,
+                  categoria: 'orcamento_importado',
+                });
+              }
+              if (formData.importarOs.propostaArquivo?.file) {
+                await uploadDocumento(formData.importarOs.propostaArquivo.file, {
+                  vinculoTipo: 'negocio',
+                  vinculoId: dadosNegocio.id,
+                  categoria: 'proposta_importada',
+                });
+              }
+
+              const orcamentoPayload = buildOrcamentoPayload(
+                {
+                  margem: 0,
+                  oh: 0,
+                  impostos: 0,
+                  impostosLocacao: 0,
+                  quantidadeItensProduzidos: 1,
+                  atividadesMacro: [],
+                  maoDeObra: [],
+                  materiais: formData.importarOs.materiais,
+                  terceirizados: formData.importarOs.terceirizados,
+                  atividades: [],
+                  itensAlocacao: [],
+                  observacoes: '',
+                },
+                null,
+                negocioIdNum,
+                clienteIdNum,
+              );
+              await createOrcamento({
+                ...orcamentoPayload,
+                finalizar: true,
+                numeroOrcamento: formData.importarOs.orcamentoNumero,
+                versao: formData.importarOs.orcamentoVersao,
+              });
+
+              const totalPropostaImportada = formData.importarOs.precoItens.reduce((s, it) => s + (Number(it.total) || 0), 0);
+              await criarProposta({
+                cliente: clienteIdNum,
+                negocio: negocioIdNum,
+                numeroProposta: formData.importarOs.propostaNumero || numeroNegocioFinal,
+                status: 'aceita',
+                referencias: '',
+                saudacao: '',
+                assunto: '',
+                textoAbertura: '',
+                responsabilidadeContratada: '',
+                responsabilidadeContratante: '',
+                preco: totalPropostaImportada,
+                condicoesGerais: '',
+                condicoesPagamento: '',
+                prazo: '',
+                efetivoPrevisto: '',
+                encerramento: '',
+                escopoBasicoServicos: formData.importarOs.escopoServicos,
+                precoItens: formData.importarOs.precoItens,
+                precoColunasOcultas: [],
+              });
+
+              // Mesmo efeito colateral que a aprovação manual do cliente causaria
+              // (ver PropostaView.tsx) — sem isso o negócio ficaria com orçamento/proposta
+              // prontos mas preso em "Planejamento" e não apareceria pronto em "Fazer OS".
+              await atualizarNegocio(dadosNegocio.id, { categoria: 'Em Andamento', status: 'Em andamento' });
+
+              // Busca o negócio já hidratado com orçamento/proposta reais (a cópia local
+              // criada logo abaixo, em negocioFormatado, não tem esses dados ainda).
+              const negocioFresco = await getNegocioPorId(dadosNegocio.id);
+              if (negocioFresco) {
+                obraHidratadaParaOs = mapNegocioToObra(negocioFresco, {});
+              }
+            } catch (errImportacao: any) {
+              console.error('Erro ao importar orçamento/proposta do negócio:', errImportacao);
+              toast.error('O negócio foi criado, mas não foi possível gerar o orçamento/proposta automaticamente. Complete-os manualmente em Orçar Negócios e Fazer Proposta.');
+              obraHidratadaParaOs = null;
+            }
+          }
+
           // 3. Monta o objeto de forma totalmente segura ANTES de fechar a tela
           const negocioFormatado = {
             id: dadosNegocio.numero_customizado || numeroNegocioFinal
@@ -1587,14 +2113,18 @@ const initialServico: Servico = {
           // Atualiza o Kanban imediatamente
           setNegociosBackend(prev => [...prev, negocioFormatado]);
 
-          // Atualiza a memória global para a tela de Orçamentos enxergar!
-          saveEntity('obras', [...(obras || []), negocioFormatado]);
+          // Atualiza a memória global para a tela de Orçamentos enxergar! Quando o
+          // orçamento/proposta foram importados com sucesso (obraHidratadaParaOs), usa a
+          // versão já hidratada do backend no lugar da versão "crua" — é ela que a tela de
+          // OS precisa pra pré-preencher o formulário corretamente.
+          saveEntity('obras', [...(obras || []), obraHidratadaParaOs || negocioFormatado]);
 
-          // "Deseja ir direto para OS?" confirmado — pula o quadro do CRM e vai
-          // direto pra tela de criação de OS (mesmo padrão de navegação cross-módulo
-          // já usado nesta tela para "orcamentos" e "clientes").
-          if (navegarParaOsAoConcluir) {
-            window.dispatchEvent(new CustomEvent('mudarTelaERP', { detail: 'fazerOs' }));
+          // "Deseja ir direto para OS?" confirmado E o orçamento/proposta foram criados
+          // com sucesso — pula o quadro do CRM e vai direto pra tela de criação de OS já
+          // mirando no negócio recém-importado (mesmo padrão de navegação cross-módulo já
+          // usado nesta tela para "orcamentos" e "clientes", agora carregando o obraId).
+          if (navegarParaOsAoConcluir && obraHidratadaParaOs) {
+            window.dispatchEvent(new CustomEvent('mudarTelaERP', { detail: { section: 'fazerOs', obraId: obraHidratadaParaOs.id } }));
           }
 
         } catch (error: any) {
@@ -2020,6 +2550,11 @@ const obrasOrdenadas = useMemo(() => {
 
   const inputClass = "w-full bg-[#0b1220] border border-white/10 p-3 rounded-lg text-white text-sm outline-none focus:border-amber-500 transition-all placeholder:text-white/20";
   const labelClass = "text-[9px] font-black text-white/40 uppercase tracking-widest ml-1 mb-1.5 block";
+  const cellInputClass = "w-full bg-[#101f3d] border border-white/10 p-2 rounded text-white text-xs outline-none focus:border-amber-500";
+
+  const totalPrecoImportarOs = formData.importarOs.precoItens.reduce((s, it) => s + (Number(it.total) || 0), 0);
+  const totalMateriaisImportarOs = formData.importarOs.materiais.reduce((s, it) => s + (parseFloat(it.valorTotal) || 0), 0);
+  const totalTerceirizadosImportarOs = formData.importarOs.terceirizados.reduce((s, it) => s + (parseFloat(it.valorTotal) || 0), 0);
 
   return (
     <div className="p-12 space-y-8 animate-in fade-in duration-500">
@@ -2639,10 +3174,361 @@ const obrasOrdenadas = useMemo(() => {
                     role="switch"
                     aria-checked={formData.desejaIrDiretoParaOs}
                     onClick={() => setFormData({ ...formData, desejaIrDiretoParaOs: !formData.desejaIrDiretoParaOs })}
-                    className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${formData.desejaIrDiretoParaOs ? 'bg-emerald-500' : 'bg-white/15'}`}
+                    className={`relative h-7 w-12 shrink-0 overflow-hidden rounded-full transition-colors ${formData.desejaIrDiretoParaOs ? 'bg-emerald-500' : 'bg-white/15'}`}
                   >
-                    <span className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${formData.desejaIrDiretoParaOs ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                    <span className={`absolute left-0.5 top-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${formData.desejaIrDiretoParaOs ? 'translate-x-5' : 'translate-x-0'}`} />
                   </button>
+                </div>
+              </div>
+              )}
+
+              {/* BLOCO "IMPORTAR NEGÓCIO JÁ FECHADO" — só quando o toggle "Deseja ir
+                  direto para OS?" está ligado. Permite trazer pro sistema um negócio
+                  cujo orçamento e proposta já foram feitos fora dele (papel/PDF/planilha),
+                  e cair direto na criação da OS já com tudo pré-preenchido. */}
+              {novoNegocioTab === 'dados' && formData.desejaIrDiretoParaOs && temServico(formData.modalidade) && (
+              <div className="space-y-6">
+
+                {/* DOCUMENTOS PARA A OS */}
+                <div className="bg-gradient-to-r from-blue-500/10 to-cyan-500/10 rounded-2xl border border-blue-500/20 p-6">
+                  <h3 className="text-lg font-black text-white uppercase mb-4">Documentos para a OS</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    {[
+                      { tipo: 'orcamento' as const, titulo: 'Orçamento Feito', numero: formData.importarOs.orcamentoNumero, versao: formData.importarOs.orcamentoVersao, arquivo: formData.importarOs.orcamentoArquivo },
+                      { tipo: 'proposta' as const, titulo: 'Proposta Feita', numero: formData.importarOs.propostaNumero, versao: formData.importarOs.propostaVersao, arquivo: formData.importarOs.propostaArquivo },
+                    ].map(card => (
+                      <div key={card.tipo} className="bg-[#0b1220] border border-white/10 rounded-xl p-4">
+                        <p className="text-xs font-black text-white uppercase tracking-wide mb-3">{card.titulo}</p>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className={labelClass}>Nº {card.tipo === 'orcamento' ? 'do Orçamento' : 'da Proposta'}</label>
+                            <input
+                              className={inputClass}
+                              placeholder={card.tipo === 'orcamento' ? 'Ex: 2345/26' : 'Ex: 5678/26'}
+                              value={card.numero}
+                              onChange={e => setFormData(prev => ({ ...prev, importarOs: { ...prev.importarOs, [card.tipo === 'orcamento' ? 'orcamentoNumero' : 'propostaNumero']: e.target.value } }))}
+                            />
+                          </div>
+                          <div>
+                            <label className={labelClass}>Versão</label>
+                            <input
+                              className={inputClass}
+                              placeholder="Ex: v1.0"
+                              value={card.versao}
+                              onChange={e => setFormData(prev => ({ ...prev, importarOs: { ...prev.importarOs, [card.tipo === 'orcamento' ? 'orcamentoVersao' : 'propostaVersao']: e.target.value } }))}
+                            />
+                          </div>
+                        </div>
+                        <label className="mt-3 flex items-center justify-between gap-3 border border-dashed border-white/20 rounded-lg px-3 py-2.5 cursor-pointer hover:border-blue-400/50 transition">
+                          <span className="text-xs text-white/70 font-semibold">
+                            {card.tipo === 'orcamento' ? 'Anexar Orçamento Feito' : 'Anexar Proposta Feita'}
+                          </span>
+                          <span className="text-[11px] text-white/40 truncate max-w-[140px]">{card.arquivo?.nome || 'Nenhum arquivo'}</span>
+                          <input
+                            type="file"
+                            className="hidden"
+                            accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+                            onChange={e => handleSelecionarArquivoImportarOs(card.tipo, e.target.files?.[0] || null)}
+                          />
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* A - ESCOPO BÁSICO DE SERVIÇOS */}
+                <div className="bg-[#101f3d] rounded-2xl border border-white/5 p-6">
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-black text-white uppercase">A - Escopo Básico de Serviços</h3>
+                    <button type="button" onClick={adicionarServicoImportarOs} className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-[#0b1220] rounded-lg font-black text-xs uppercase transition">
+                      <Plus size={14} className="inline mr-1" /> Adicionar Serviço
+                    </button>
+                  </div>
+
+                  {formData.importarOs.escopoServicos.length === 0 && (
+                    <p className="text-white/40 text-sm">Nenhum serviço adicionado. Clique em "Adicionar Serviço".</p>
+                  )}
+
+                  <div className="space-y-4">
+                    {formData.importarOs.escopoServicos.map(escopo => (
+                      <div key={escopo.id} className="bg-[#081225] border border-white/10 rounded-xl p-4">
+                        <div className="flex gap-3 items-center mb-3">
+                          <input
+                            className={`${cellInputClass} font-black`}
+                            value={escopo.titulo}
+                            onChange={e => atualizarTituloServicoImportarOs(escopo.id, e.target.value)}
+                          />
+                          <span className="text-[11px] text-white/50 font-black whitespace-nowrap">{escopo.linhas.length} ITEM(NS)</span>
+                        </div>
+
+                        <label className={labelClass}>Descrição do serviço</label>
+                        <textarea
+                          className={`${inputClass} min-h-[70px]`}
+                          value={escopo.descricaoServico}
+                          onChange={e => atualizarDescricaoServicoImportarOs(escopo.id, e.target.value)}
+                          placeholder="Descreva o serviço"
+                        />
+
+                        <div className="mt-3">
+                          <label className={labelClass}>Colunas da planilha</label>
+                          <ColunaAdder onAdd={(nome) => adicionarColunaServicoImportarOs(escopo.id, nome)} />
+                          <div className="flex flex-wrap gap-2 mt-2">
+                            {escopo.colunas.map(coluna => (
+                              <span key={coluna} className="inline-flex items-center gap-2 bg-[#142348] border border-[#3d5f9d] text-[#dce7ff] rounded-full px-3 py-1 text-[11px]">
+                                {coluna}
+                                {escopo.colunas.length > 1 && (
+                                  <button type="button" onClick={() => removerColunaServicoImportarOs(escopo.id, coluna)} className="text-red-300 hover:text-red-200">
+                                    <X size={12} />
+                                  </button>
+                                )}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="overflow-x-auto mt-3">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="bg-white/5 border-b border-white/10">
+                                <th className="px-2 py-2 text-left text-white font-black w-10">Item</th>
+                                {escopo.colunas.map(coluna => (
+                                  <th key={coluna} className="px-2 py-2 text-left text-white font-black">{coluna}</th>
+                                ))}
+                                <th className="px-2 py-2 w-8" />
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {escopo.linhas.map((linha, idx) => (
+                                <tr key={linha.id} className="border-b border-white/5">
+                                  <td className="px-2 py-2 text-white/60 text-center">{idx + 1}</td>
+                                  {escopo.colunas.map(coluna => (
+                                    <td key={coluna} className="px-2 py-2">
+                                      <input
+                                        className={cellInputClass}
+                                        value={linha.valores[coluna] || ''}
+                                        onChange={e => atualizarCelulaServicoImportarOs(escopo.id, linha.id, coluna, e.target.value)}
+                                      />
+                                    </td>
+                                  ))}
+                                  <td className="px-2 py-2 text-center">
+                                    <button type="button" onClick={() => removerItemServicoImportarOs(escopo.id, linha.id)} className="text-red-300 p-1">
+                                      <X size={13} />
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        <div className="flex justify-between items-center mt-3 flex-wrap gap-2">
+                          <button type="button" onClick={() => adicionarItemServicoImportarOs(escopo.id)} className="px-3 py-1.5 bg-[#3a58ff] text-white rounded-lg font-black text-[11px] uppercase">
+                            <Plus size={12} className="inline mr-1" /> Adicionar Item
+                          </button>
+                          <button type="button" onClick={() => removerServicoImportarOs(escopo.id)} className="px-3 py-1.5 bg-[#ef1424] text-white rounded-lg font-black text-[11px] uppercase">
+                            Remover Serviço
+                          </button>
+                        </div>
+
+                        <div className="mt-4">
+                          <label className={labelClass}>Textos após a tabela</label>
+                          {escopo.textosDepois.map((texto, idx) => (
+                            <div key={idx} className="grid grid-cols-[1fr_auto] gap-2 mt-2">
+                              <textarea
+                                className={`${inputClass} min-h-[60px]`}
+                                value={texto}
+                                onChange={e => atualizarTextoServicoImportarOs(escopo.id, idx, e.target.value)}
+                                placeholder="Texto complementar do escopo"
+                              />
+                              <button type="button" onClick={() => removerTextoServicoImportarOs(escopo.id, idx)} className="px-3 bg-[#ef1424] text-white rounded-lg font-black text-[11px] uppercase h-fit self-start">
+                                Remover
+                              </button>
+                            </div>
+                          ))}
+                          <button type="button" onClick={() => adicionarTextoServicoImportarOs(escopo.id)} className="mt-2 px-3 py-1.5 bg-emerald-500 text-[#0b1220] rounded-lg font-black text-[11px] uppercase">
+                            <Plus size={12} className="inline mr-1" /> Adicionar Texto
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* B - PREÇO */}
+                <div className="bg-[#081225] border border-[#253550] rounded-2xl p-6">
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-black text-white uppercase">B - Preço</h3>
+                    <button type="button" onClick={adicionarItemPrecoImportarOs} className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-[#0b1220] rounded-lg font-black text-xs uppercase transition">
+                      <Plus size={14} className="inline mr-1" /> Adicionar Item
+                    </button>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="bg-white/5 border-b border-white/10">
+                          <th className="px-2 py-2 text-left text-white font-black w-10">Item</th>
+                          <th className="px-2 py-2 text-left text-white font-black">Descrição</th>
+                          <th className="px-2 py-2 text-left text-white font-black w-20">Quant.</th>
+                          <th className="px-2 py-2 text-left text-white font-black w-20">Unid.</th>
+                          <th className="px-2 py-2 text-left text-white font-black w-28">Vl. Unit. R$</th>
+                          <th className="px-2 py-2 text-left text-white font-black w-16">Dias</th>
+                          <th className="px-2 py-2 text-left text-white font-black w-32">Valor total R$</th>
+                          <th className="px-2 py-2 w-8" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {formData.importarOs.precoItens.length === 0 && (
+                          <tr><td colSpan={8} className="px-2 py-3 text-white/40">Nenhum item. Clique em "Adicionar Item".</td></tr>
+                        )}
+                        {formData.importarOs.precoItens.map((it, idx) => (
+                          <tr key={it.id} className="border-b border-white/5">
+                            <td className="px-2 py-2 text-white/60 text-center">{idx + 1}</td>
+                            <td className="px-2 py-2"><input className={cellInputClass} value={it.descricao} onChange={e => atualizarItemPrecoImportarOs(it.id, 'descricao', e.target.value)} placeholder="Descrição" /></td>
+                            <td className="px-2 py-2"><input type="number" min="0" className={cellInputClass} value={String(it.quantidade)} onChange={e => atualizarItemPrecoImportarOs(it.id, 'quantidade', e.target.value)} /></td>
+                            <td className="px-2 py-2"><input className={cellInputClass} value={it.unidade} onChange={e => atualizarItemPrecoImportarOs(it.id, 'unidade', e.target.value)} placeholder="serv." /></td>
+                            <td className="px-2 py-2"><input className={cellInputClass} value={String(it.valorUnitario)} onChange={e => atualizarItemPrecoImportarOs(it.id, 'valorUnitario', e.target.value)} placeholder="0,00" /></td>
+                            <td className="px-2 py-2"><input type="number" min="0" className={cellInputClass} value={String(it.dias)} onChange={e => atualizarItemPrecoImportarOs(it.id, 'dias', e.target.value)} /></td>
+                            <td className="px-2 py-2 text-white font-black whitespace-nowrap">R$ {(Number(it.total) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                            <td className="px-2 py-2 text-center"><button type="button" onClick={() => removerItemPrecoImportarOs(it.id)} className="text-red-300 p-1"><X size={13} /></button></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="text-right mt-3 text-xs text-white/70">
+                    Subtotal Serviços: <span className="text-white font-black">R$ {totalPrecoImportarOs.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="flex justify-end mt-2 pt-3 border-t border-white/10">
+                    <div className="text-right">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-white/50">Total da Proposta</p>
+                      <p className="text-emerald-400 font-black text-xl">R$ {totalPrecoImportarOs.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4">
+                    <label className={labelClass}>Texto livre do preço</label>
+                    <textarea
+                      className={`${inputClass} min-h-[70px]`}
+                      value={formData.importarOs.precoTextoLivre}
+                      onChange={e => setFormData(prev => ({ ...prev, importarOs: { ...prev.importarOs, precoTextoLivre: e.target.value } }))}
+                      placeholder="Observações, condições, detalhes comerciais ou qualquer texto complementar do preço"
+                    />
+                  </div>
+                </div>
+
+                {/* C - CONSUMÍVEIS E MATERIAIS */}
+                <div className="bg-[#101f3d] rounded-2xl border border-white/5 p-6">
+                  <div className="flex justify-between items-center mb-2">
+                    <div>
+                      <h3 className="text-lg font-black text-white uppercase">C - Consumíveis e Materiais</h3>
+                      <p className="text-white/50 text-xs mt-1">Itens em uma única aba com indicação de terceiros</p>
+                    </div>
+                    <button type="button" onClick={adicionarMaterialImportarOs} className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-[#0b1220] rounded-lg font-black text-xs uppercase transition">
+                      <Plus size={14} className="inline mr-1" /> Adicionar Item
+                    </button>
+                  </div>
+                  <div className="overflow-x-auto mt-3">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="bg-white/5 border-b border-white/10">
+                          <th className="px-2 py-2 text-left text-white font-black">Descrição</th>
+                          <th className="px-2 py-2 text-left text-white font-black">Unidade</th>
+                          <th className="px-2 py-2 text-left text-white font-black">Quantidade</th>
+                          <th className="px-2 py-2 text-left text-white font-black">Peso / Fator</th>
+                          <th className="px-2 py-2 text-left text-white font-black">Custo Unit.</th>
+                          <th className="px-2 py-2 text-left text-white font-black">Valor Total</th>
+                          <th className="px-2 py-2 text-left text-white font-black">Terceiros?</th>
+                          <th className="px-2 py-2 text-left text-white font-black">Observação</th>
+                          <th className="px-2 py-2 w-8" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {formData.importarOs.materiais.map(item => (
+                          <tr key={item.id} className="border-b border-white/5">
+                            <td className="px-2 py-2"><input className={cellInputClass} value={item.descricao} onChange={e => atualizarMaterialImportarOs(item.id, { descricao: e.target.value })} /></td>
+                            <td className="px-2 py-2"><input className={cellInputClass} value={item.unidade} onChange={e => atualizarMaterialImportarOs(item.id, { unidade: e.target.value })} /></td>
+                            <td className="px-2 py-2"><input type="number" className={cellInputClass} value={item.quantidade} onChange={e => atualizarMaterialImportarOs(item.id, { quantidade: e.target.value })} /></td>
+                            <td className="px-2 py-2"><input type="number" className={cellInputClass} value={item.pesoFator} onChange={e => atualizarMaterialImportarOs(item.id, { pesoFator: e.target.value })} /></td>
+                            <td className="px-2 py-2"><input type="number" className={cellInputClass} value={item.custoUnit} onChange={e => atualizarMaterialImportarOs(item.id, { custoUnit: e.target.value })} /></td>
+                            <td className="px-2 py-2"><input type="number" className={`${cellInputClass} bg-white/5 cursor-not-allowed`} value={item.valorTotal} readOnly disabled /></td>
+                            <td className="px-2 py-2">
+                              <select className={cellInputClass} value={item.origemTerceiros} onChange={e => atualizarMaterialImportarOs(item.id, { origemTerceiros: e.target.value as 'Sim' | 'Nao' })}>
+                                <option value="Nao">Não</option>
+                                <option value="Sim">Sim</option>
+                              </select>
+                            </td>
+                            <td className="px-2 py-2"><input className={cellInputClass} value={item.observacao} onChange={e => atualizarMaterialImportarOs(item.id, { observacao: e.target.value })} /></td>
+                            <td className="px-2 py-2 text-center">
+                              {formData.importarOs.materiais.length > 1 && (
+                                <button type="button" onClick={() => removerMaterialImportarOs(item.id)} className="text-red-300 p-1"><X size={13} /></button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="flex justify-end mt-3">
+                    <div className="bg-[#0b1220] border border-white/10 rounded-lg px-4 py-2.5">
+                      <p className="text-white/60 text-[10px] font-black uppercase tracking-widest">Subtotal Consumíveis + Materiais</p>
+                      <p className="text-amber-400 font-black text-lg text-right">R$ {totalMateriaisImportarOs.toFixed(2)}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* D - SERVIÇOS TERCEIRIZADOS */}
+                <div className="bg-[#101f3d] rounded-2xl border border-white/5 p-6">
+                  <div className="flex justify-between items-center mb-2">
+                    <div>
+                      <h3 className="text-lg font-black text-white uppercase">D - Serviços Terceirizados</h3>
+                      <p className="text-white/50 text-xs mt-1">Levante o custo de terceiros necessários para a execução</p>
+                    </div>
+                    <button type="button" onClick={adicionarTerceirizadoImportarOs} className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-[#0b1220] rounded-lg font-black text-xs uppercase transition">
+                      <Plus size={14} className="inline mr-1" /> Adicionar Terceirizado
+                    </button>
+                  </div>
+                  <div className="overflow-x-auto mt-3">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="bg-white/5 border-b border-white/10">
+                          <th className="px-2 py-2 text-left text-white font-black">Descrição</th>
+                          <th className="px-2 py-2 text-left text-white font-black">Unidade</th>
+                          <th className="px-2 py-2 text-left text-white font-black">Quantidade</th>
+                          <th className="px-2 py-2 text-left text-white font-black">Peso / Fator</th>
+                          <th className="px-2 py-2 text-left text-white font-black">Custo Unit.</th>
+                          <th className="px-2 py-2 text-left text-white font-black">Valor Total</th>
+                          <th className="px-2 py-2 text-left text-white font-black">Observação</th>
+                          <th className="px-2 py-2 w-8" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {formData.importarOs.terceirizados.map(item => (
+                          <tr key={item.id} className="border-b border-white/5">
+                            <td className="px-2 py-2"><input className={cellInputClass} value={item.descricao} onChange={e => atualizarTerceirizadoImportarOs(item.id, { descricao: e.target.value })} /></td>
+                            <td className="px-2 py-2"><input className={cellInputClass} value={item.unidade} onChange={e => atualizarTerceirizadoImportarOs(item.id, { unidade: e.target.value })} /></td>
+                            <td className="px-2 py-2"><input type="number" className={cellInputClass} value={item.quantidade} onChange={e => atualizarTerceirizadoImportarOs(item.id, { quantidade: e.target.value })} /></td>
+                            <td className="px-2 py-2"><input type="number" className={cellInputClass} value={item.pesoFator} onChange={e => atualizarTerceirizadoImportarOs(item.id, { pesoFator: e.target.value })} /></td>
+                            <td className="px-2 py-2"><input type="number" className={cellInputClass} value={item.custoUnit} onChange={e => atualizarTerceirizadoImportarOs(item.id, { custoUnit: e.target.value })} /></td>
+                            <td className="px-2 py-2"><input type="number" className={`${cellInputClass} bg-white/5 cursor-not-allowed`} value={item.valorTotal} readOnly disabled /></td>
+                            <td className="px-2 py-2"><input className={cellInputClass} value={item.observacao} onChange={e => atualizarTerceirizadoImportarOs(item.id, { observacao: e.target.value })} /></td>
+                            <td className="px-2 py-2 text-center">
+                              {formData.importarOs.terceirizados.length > 1 && (
+                                <button type="button" onClick={() => removerTerceirizadoImportarOs(item.id)} className="text-red-300 p-1"><X size={13} /></button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="flex justify-end mt-3">
+                    <div className="bg-[#0b1220] border border-white/10 rounded-lg px-4 py-2.5">
+                      <p className="text-white/60 text-[10px] font-black uppercase tracking-widest">Subtotal Serviços Terceirizados</p>
+                      <p className="text-amber-400 font-black text-lg text-right">R$ {totalTerceirizadosImportarOs.toFixed(2)}</p>
+                    </div>
+                  </div>
                 </div>
               </div>
               )}

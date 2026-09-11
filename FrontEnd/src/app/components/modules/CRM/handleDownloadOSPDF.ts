@@ -74,9 +74,14 @@ export const handleDownloadOSPDF = ({
   const margin = 10;
   let y = margin;
 
+  // A altura total do cabeçalho (caixa externa) agora depende de quanto as linhas de
+  // CLIENTE/EMBARCAÇÃO/PROJETO/LOCAL crescem ao quebrar texto longo — por isso a borda externa
+  // só é fechada (doc.rect) depois do laço abaixo, com a altura real já calculada. Antes ela
+  // era desenhada aqui com altura fixa (35mm), o que fazia a borda inferior cortar o texto do
+  // LOCAL quando ele precisava de mais de uma linha.
+  const headerBoxTopY = y;
   doc.setDrawColor(0);
   doc.setLineWidth(0.3);
-  doc.rect(margin, y, pageWidth - 2 * margin, 35);
   doc.line(margin + 50, y, margin + 50, y + 15);
   doc.line(margin + 130, y, margin + 130, y + 15);
   doc.line(margin, y + 15, pageWidth - margin, y + 15);
@@ -105,18 +110,32 @@ export const handleDownloadOSPDF = ({
   doc.text(osPrincipal.cc || 'Não inf.', margin + 142, y + 10);
   y += 15;
 
-  const rowH = 5;
-  doc.line(margin, y + rowH, pageWidth - margin, y + rowH);
-  doc.line(margin, y + rowH * 2, pageWidth - margin, y + rowH * 2);
-  doc.line(margin, y + rowH * 3, pageWidth - margin, y + rowH * 3);
-  doc.line(margin + 100, y, margin + 100, y + 20);
+  // Cabeçalho de dados (CLIENTE/EMBARCAÇÃO/PROJETO/LOCAL à esquerda, datas/OS/Encarregado à
+  // direita): altura de cada linha agora é CALCULADA a partir do texto (campos longos, como um
+  // endereço extenso em LOCAL, quebram em várias linhas em vez de estourar por cima do texto da
+  // coluna vizinha). As divisórias (linhas horizontais/vertical) só são desenhadas DEPOIS de
+  // saber a altura real de cada linha — por isso o bloco inteiro virou um laço, não mais
+  // posições fixas.
+  const rowMinH = 5;
+  const rowLineH = 3.3;
+  const rowPadTop = 3.5;
+  const rowPadBottom = 2.5;
+  const colDividerX = margin + 100;
+  const leftValueX = margin + 27;
+  const rightValueX = margin + 127;
+  const leftValueMaxW = colDividerX - leftValueX - 2;
+  const rightValueMaxW = (pageWidth - margin) - rightValueX - 2;
 
   doc.setFontSize(8);
-  const printDado = (lbl: string, val: string, vx: number, vy: number) => {
+  // Desenha um par label/valor (quebrando o valor em várias linhas se precisar) e devolve a
+  // altura que ele ocupou, para a linha da tabela usar a maior altura entre as duas colunas.
+  const printDadoWrapped = (lbl: string, val: string, vx: number, vTopY: number, maxW: number): number => {
     doc.setFont('Helvetica', 'bold');
-    doc.text(lbl, vx, vy);
+    doc.text(lbl, vx, vTopY + rowPadTop);
     doc.setFont('Helvetica', 'normal');
-    doc.text(val || ' ', vx + 25, vy);
+    const linhas = doc.splitTextToSize(val || ' ', maxW) as string[];
+    linhas.forEach((linha, i) => doc.text(linha, vx + 25, vTopY + rowPadTop + i * rowLineH));
+    return Math.max(linhas.length * rowLineH + rowPadTop + rowPadBottom - rowLineH, rowMinH);
   };
 
   const dataInicio = osPrincipal.dataInicioPrevisto || obra?.dataPrevistaInicio;
@@ -127,21 +146,24 @@ export const handleDownloadOSPDF = ({
   const embarcacaoOS = (Array.isArray(obra?.servicos) ? (obra.servicos.find((s: any) => s?.embarcacao)?.embarcacao) : '') || osPrincipal.embarcacao || '';
   const projetoTexto = `${obra?.nome || ''}${idProjetoForPrint ? ' • ' + idProjetoForPrint : ''}`;
 
-  printDado('CLIENTE:', cliente?.razaoSocial || '', margin + 2, y + 3.5);
-  printDado('Início Previsto:', dataInicio ? formatDateBR(dataInicio) : '', margin + 102, y + 3.5);
-  y += rowH;
+  const linhasCabecalho: Array<[string, string, string, string]> = [
+    ['CLIENTE:', cliente?.razaoSocial || '', 'Início Previsto:', dataInicio ? formatDateBR(dataInicio) : ''],
+    ['EMBARCAÇÃO:', embarcacaoOS || localOS, 'Térm. Previsto:', dataTermino ? formatDateBR(dataTermino) : ''],
+    ['PROJETO:', projetoTexto, 'OS Nº:', osPrincipal.ordemServicoNumero || ''],
+    ['LOCAL:', localOS, 'Encarregado:', osPrincipal.supervisorEncarregado || ''],
+  ];
 
-  printDado('EMBARCAÇÃO:', embarcacaoOS || localOS, margin + 2, y + 3.5);
-  printDado('Térm. Previsto:', dataTermino ? formatDateBR(dataTermino) : '', margin + 102, y + 3.5);
-  y += rowH;
-
-  printDado('PROJETO:', projetoTexto, margin + 2, y + 3.5);
-  printDado('OS Nº:', osPrincipal.ordemServicoNumero || '', margin + 102, y + 3.5);
-  y += rowH;
-
-  printDado('LOCAL:', localOS, margin + 2, y + 3.5);
-  printDado('Encarregado:', osPrincipal.supervisorEncarregado || '', margin + 102, y + 3.5);
-  y += rowH;
+  linhasCabecalho.forEach(([lblEsq, valEsq, lblDir, valDir], idx) => {
+    const hEsq = printDadoWrapped(lblEsq, valEsq, margin + 2, y, leftValueMaxW);
+    const hDir = printDadoWrapped(lblDir, valDir, margin + 102, y, rightValueMaxW);
+    const rowH = Math.max(hEsq, hDir);
+    doc.line(margin + 100, y, margin + 100, y + rowH);
+    y += rowH;
+    // Sem linha depois da última fileira (LOCAL/Encarregado) — mesmo visual de antes, que só
+    // fechava embaixo com o respiro de 5mm antes do próximo bloco (DESCRIÇÃO DO SERVIÇO).
+    if (idx < linhasCabecalho.length - 1) doc.line(margin, y, pageWidth - margin, y);
+  });
+  doc.rect(margin, headerBoxTopY, pageWidth - 2 * margin, y - headerBoxTopY);
   y += 5;
 
   // Cita a proposta de origem (número + versão), para deixar claro de qual documento o

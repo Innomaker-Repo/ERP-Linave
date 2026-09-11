@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf';
 import type { PedidoCompraResumo } from './comprasLocal';
+import { formatNumeroOsDisplay } from '../../../../services/ordensServico';
 
 const money = (value: number) => (value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
@@ -25,7 +26,7 @@ export const handleDownloadPedidoCompraPDF = (pedido: PedidoCompraResumo) => {
     ['Fornecedor', pedido.fornecedor || '-'],
     ['CNPJ', pedido.fornecedorCnpj || '-'],
     ['Solicitação de origem', pedido.solicitacaoId || '-'],
-    ['OS / Centro de Custo', pedido.centroCusto || '-'],
+    ['OS / Centro de Custo', formatNumeroOsDisplay(pedido.centroCusto) || '-'],
     ['Data', pedido.data ? new Date(pedido.data).toLocaleDateString('pt-BR') : new Date().toLocaleDateString('pt-BR')],
     ['Solicitante', pedido.solicitante || '-'],
     ['Departamento', pedido.departamento || '-'],

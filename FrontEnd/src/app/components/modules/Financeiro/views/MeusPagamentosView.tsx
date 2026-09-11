@@ -115,7 +115,7 @@ export function MeusPagamentosView() {
             <select
               value={solicitanteFiltro}
               onChange={(e) => setSolicitanteFiltro(e.target.value)}
-              className="h-14 w-full appearance-none rounded-xl border border-white/10 bg-white/5 px-4 text-white text-sm outline-none focus:border-amber-500 cursor-pointer"
+              className="h-14 w-full appearance-none rounded-xl border border-white/10 bg-white/5 px-4 text-white text-sm outline-none focus:border-amber-500 cursor-pointer [&>option]:bg-[#101f3d] [&>option]:text-white"
             >
               <option value="">Todos os usuários</option>
               {solicitantes.map((s) => (
@@ -142,9 +142,14 @@ export function MeusPagamentosView() {
           <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Aprovadas</p>
           <p className="mt-1 text-2xl font-black text-emerald-300">{concluidas.length}</p>
         </div>
-        <div className="rounded-2xl border border-white/10 bg-[#101f3d] px-4 py-3">
+        <div className="rounded-2xl border border-white/10 bg-[#101f3d] px-4 py-3 min-w-0">
           <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Total pago</p>
-          <p className="mt-1 text-2xl font-black text-white">{totalPago ? money(totalPago) : '—'}</p>
+          <p
+            className="mt-1 truncate text-lg font-black text-white"
+            title={totalPago ? money(totalPago) : undefined}
+          >
+            {totalPago ? money(totalPago) : '—'}
+          </p>
         </div>
       </div>
 

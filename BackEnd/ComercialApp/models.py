@@ -125,6 +125,15 @@ class Negocio(models.Model):
     arquivo_documento = models.FileField(upload_to='documentos_negocios/', null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    # Identidade estável (cpf/e-mail) de quem CRIOU o negócio, gravada automaticamente a
+    # partir da sessão logada no momento da criação — usada só pelo sino de notificações
+    # pra saber quem avisar quando o negócio muda de categoria/status. Não confundir com
+    # `solicitante`/`email` acima, que são o CONTATO DO CLIENTE. Negócios criados antes
+    # deste campo existir ficam em branco e simplesmente não geram notificação.
+    criado_por_nome = models.CharField(max_length=150, null=True, blank=True)
+    criado_por_cpf = models.CharField(max_length=20, null=True, blank=True)
+    criado_por_email = models.EmailField(max_length=254, null=True, blank=True)
+
     def __str__(self):
         cliente = self.cliente.razao_social if self.cliente else "Sem cliente"
         return f"{self.nome_negocio} - {cliente}"
@@ -524,10 +533,19 @@ class OrdemServico(models.Model):
         blank=True
     )
     
+    # Identidade estável (cpf/e-mail) de quem CRIOU a OS, gravada automaticamente a partir
+    # da sessão logada no momento da criação — usada só pelo sino de notificações pra saber
+    # quem avisar quando a OS muda de status. `supervisor_encarregado` acima continua sendo
+    # texto livre (sem cpf/e-mail), então não entra nessa notificação por enquanto. OS
+    # criadas antes deste campo existir ficam em branco e simplesmente não notificam.
+    criado_por_nome = models.CharField(max_length=150, null=True, blank=True)
+    criado_por_cpf = models.CharField(max_length=20, null=True, blank=True)
+    criado_por_email = models.EmailField(max_length=254, null=True, blank=True)
+
     # Auditoria
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
     def __str__(self):
         return f"OS {self.numero_os} - {self.cliente.razao_social} - {self.get_status_os_display()}"
     
@@ -937,6 +955,9 @@ class Documento(models.Model):
         ('negocio', 'Documento do Negócio'),
         ('cliente_assinado', 'Documento assinado pelo cliente'),
         ('os_assinatura', 'Assinatura/aprovação de OS'),
+        ('orcamento_importado', 'Orçamento anexado na importação do negócio'),
+        ('proposta_importada', 'Proposta anexada na importação do negócio'),
+        ('almoxarifado_imagem', 'Imagem de item do almoxarifado'),
         ('fin_anexo', 'Anexo financeiro'),
         ('fin_comprovante', 'Comprovante de pagamento'),
         ('fin_documento', 'Documento de compra (NF entrada/boleto)'),

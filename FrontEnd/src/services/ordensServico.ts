@@ -95,11 +95,42 @@ export const getEmbarcacaoDaOs = (os: any, obras: any = []) => {
   return String(daObra || os?.equipamento || os?.embarcacao || '').trim();
 };
 
-// Rótulo canônico de OS para dropdowns, cards e cabeçalhos.
+// As duas OS de uso interno (café, papel, etc. — fora do CRM/Orçamento/Proposta/Medição,
+// ver seed_os_interna no backend) têm número fixo e reservado: 1000 pra Linave, 2000 pra
+// Servinave. Só essas duas OS têm número puro (sem prefixo/ano) em todo o sistema, então o
+// número sozinho já identifica qual delas é — não precisa checar `usoInterno`.
+const ROTULO_OS_USO_INTERNO: Record<string, string> = {
+  '1000': 'OS-1000-Linave',
+  '2000': 'OS-2000-Servinave',
+};
+
+// Transforma o número cru de uma OS no rótulo a exibir: pras duas reservadas, sempre
+// "OS-1000-Linave"/"OS-2000-Servinave"; pras demais, o próprio número (ex.: "LN-0003/26").
+// Usar em QUALQUER lugar que mostre o número de uma OS como texto — dropdown, badge, card,
+// tabela — pra manter o mesmo rótulo em todo o sistema.
+export const formatNumeroOsDisplay = (numero: any) => {
+  const chave = String(numero ?? '').trim();
+  return ROTULO_OS_USO_INTERNO[chave] || chave;
+};
+
+// Pros lugares que já escrevem o prefixo "OS: " na frente do número (chips/badges): pra uma
+// OS normal continua "OS: LN-0003/26", mas pras duas reservadas o rótulo já é autoexplicativo
+// ("OS-1000-Linave"), então não repete o prefixo ("OS: OS-1000-Linave" ficaria redundante).
+export const formatOsChipLabel = (numero: any) => {
+  const bruto = String(numero ?? '').trim();
+  const exibido = formatNumeroOsDisplay(bruto);
+  return exibido === bruto ? `OS: ${exibido}` : exibido;
+};
+
+// Rótulo canônico de OS para dropdowns, cards e cabeçalhos: "<número> — <embarcação>" (regra
+// única do ERP, ver comentário acima). Pras duas OS reservadas não existe embarcação, então
+// vira só o rótulo fixo delas.
 export const formatOsLabel = (os: any, obras: any = []) => {
   const numero = getOsNumero(os) || 'OS';
+  const numeroExibido = formatNumeroOsDisplay(numero);
+  if (ROTULO_OS_USO_INTERNO[numero]) return numeroExibido;
   const embarcacao = getEmbarcacaoDaOs(os, obras);
-  return embarcacao ? `${numero} — ${embarcacao}` : numero;
+  return embarcacao ? `${numeroExibido} — ${embarcacao}` : numeroExibido;
 };
 
 const normalizeOs = (item: any): OrdemServicoResumo => ({

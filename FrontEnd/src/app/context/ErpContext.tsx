@@ -1028,8 +1028,14 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let mounted = true;
+    // Evita rodar hidratações sobrepostas (ex.: o intervalo dispara bem na hora em que
+    // a aba também ganhou foco) — a mais nova espera a anterior terminar em vez de
+    // empilhar requisições redundantes.
+    let emAndamento = false;
 
     const hydrateWorkspace = async () => {
+      if (emAndamento) return;
+      emAndamento = true;
       // Todos os dados vêm do SQL (sem blob de workspace). O estado já inicia com os
       // defaults (createInitialData(null)); aqui só hidratamos as coleções do backend.
       try {
@@ -1069,7 +1075,10 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
       } catch (error) {
         console.error('Erro ao carregar dados SQL (clientes/fornecedores/financeiro/compras)', error);
       } finally {
+        emAndamento = false;
         if (mounted) {
+          // Idempotente nas re-hidratações em segundo plano (loading já é false) — só
+          // encerra de fato a tela de carregamento na primeira chamada, no login.
           setLoading(false);
         }
       }
@@ -1086,27 +1095,27 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
 
     void hydrateWorkspace();
 
+    // Mantém as coleções sincronizadas entre usuários diferentes sem precisar de F5.
+    // Antes só o financeiro tinha esse tratamento (era o ponto mais sentido: pagamento
+    // criado por um usuário só aparecia pro outro depois de recarregar a página) —
+    // agora vale pra tudo que vem do SQL (negócios/OS, compras, financeiro, medições,
+    // almoxarifado, clientes/fornecedores):
+    //  - ao voltar o foco na aba (trocou de aba/app e retornou);
+    //  - a cada 45s enquanto a aba estiver visível, pro caso comum de ficar com a aba
+    //    aberta e em foco por muito tempo vendo outro usuário mexer nos mesmos dados.
+    // Isso não é tempo real (pra isso precisaria de WebSocket/Channels no backend
+    // avisando o frontend na hora), mas fecha a maior parte do "só atualiza com F5".
+    const refetchSeVisivel = () => {
+      if (document.visibilityState === 'visible') void hydrateWorkspace();
+    };
+    window.addEventListener('focus', refetchSeVisivel);
+    const intervalId = window.setInterval(refetchSeVisivel, 45000);
+
     return () => {
       mounted = false;
+      window.removeEventListener('focus', refetchSeVisivel);
+      window.clearInterval(intervalId);
     };
-  }, [userSession?.email]);
-
-  // `financeiro` só era buscado uma vez, no login — quem ficasse com a aba aberta via
-  // sempre a mesma foto (de horas atrás), mesmo com outros usuários aprovando/pagando/
-  // criando solicitações nesse meio-tempo. Ao voltar pra aba, busca o estado mais recente
-  // sem exigir F5. Não precisa de polling constante: focus já cobre o caso comum (trocou
-  // de aba/app e voltou).
-  useEffect(() => {
-    if (!userSession) return;
-    const atualizarFinanceiro = () => {
-      getFinanceiro()
-        .then((fresh) => {
-          if (Array.isArray(fresh)) setData((prev: any) => ({ ...prev, financeiro: fresh }));
-        })
-        .catch(() => { /* mantém o que já está em memória se a busca falhar */ });
-    };
-    window.addEventListener('focus', atualizarFinanceiro);
-    return () => window.removeEventListener('focus', atualizarFinanceiro);
   }, [userSession?.email]);
 
   const showTestAlert = (operacao: string) => {
@@ -1231,33 +1240,37 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     if (collection === 'financeiro') {
       // Financeiro é persistido no SQL via replace-all (preserva o shape FinRecord),
       // então useFin e todas as telas do Financeiro seguem inalterados.
+      //
+      // Importante: só atualiza o estado local DEPOIS de confirmar que o backend aceitou
+      // o replace-all, e o erro PROPAGA (sem try/catch aqui) em vez de só ir pro console.
+      // Antes, o estado local mudava otimisticamente e qualquer falha do backend — rede
+      // caindo, ou uma rejeição de verdade (ex.: o guard-rail que bloqueia um replace-all
+      // que encolheria demais o Financeiro) — ficava invisível: a tela mostrava "salvou",
+      // um F5 revelava que não salvou nada. Quem chama saveEntity('financeiro', ...) agora
+      // precisa tratar essa rejeição e avisar o usuário (ver comFinanceiroAtual em useFin.ts).
+      await syncFinanceiro(Array.isArray(newData) ? newData : []);
       setData((prevData: any) => ({ ...prevData, financeiro: newData }));
-      try {
-        await syncFinanceiro(Array.isArray(newData) ? newData : []);
-      } catch (error) {
-        console.error('Erro ao sincronizar financeiro no backend', error);
-      }
       return;
     }
 
     if (collection === 'compras') {
       // Requisições de compra persistidas no SQL (replace-all), shape preservado.
+      //
+      // Mesmo cuidado do Financeiro (ver comentário acima): só atualiza o estado local
+      // DEPOIS de confirmar que o backend aceitou, e o erro PROPAGA em vez de só ir pro
+      // console — senão uma gravação com a lista desatualizada (outra pessoa mexeu em
+      // Compras entretanto) falhava/perdia dado em silêncio, e a etapa "Enviar para
+      // aprovação" parecia funcionar mas o item nunca chegava na aba Aprovações. Quem
+      // chama saveEntity('compras', ...) agora precisa tratar essa rejeição e avisar o
+      // usuário (ver comComprasAtual em comprasSeguro.ts).
+      await syncCompras(Array.isArray(newData) ? newData : []);
       setData((prevData: any) => ({ ...prevData, compras: newData }));
-      try {
-        await syncCompras(Array.isArray(newData) ? newData : []);
-      } catch (error) {
-        console.error('Erro ao sincronizar compras no backend', error);
-      }
       return;
     }
 
     if (collection === 'comprasHistorico') {
+      await syncComprasHistorico(Array.isArray(newData) ? newData : []);
       setData((prevData: any) => ({ ...prevData, comprasHistorico: newData }));
-      try {
-        await syncComprasHistorico(Array.isArray(newData) ? newData : []);
-      } catch (error) {
-        console.error('Erro ao sincronizar histórico de compras no backend', error);
-      }
       return;
     }
 

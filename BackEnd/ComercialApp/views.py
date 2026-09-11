@@ -643,6 +643,34 @@ def _financeiro_contagem_atual():
     return sum(m.objects.count() for m in modelos)
 
 
+# Campos de ContaPagar visíveis pra quem não tem nenhuma permissão de Financeiro — só o
+# suficiente pra "Itens para Adicionar" (Almoxarifado) saber se o documento de compra já
+# foi anexado (contaTemDocumento no frontend usa exatamente esses campos). Fornecedor,
+# valor, natureza, observações e comprovantes ficam de fora.
+_FINANCEIRO_CAMPOS_CONTAPAGAR_PUBLICOS = {'id', 'tipo', 'status', 'documento', 'anexos'}
+
+
+def _sem_permissao_financeira(user):
+    permissoes = getattr(user, 'permissoes', None)
+    if not isinstance(permissoes, dict):
+        return True
+    return not any(permissoes.get(chave) is True for chave in FINANCEIRO)
+
+
+def _financeiro_restringir_para_leitor_sem_acesso(dados):
+    """Some com `solicitacao` (nome do solicitante, fornecedor, valor, motivo de reprovação)
+    e reduz `contaPagar` aos campos públicos — pra quem lê o Financeiro só por causa de outro
+    módulo (Compras, Almoxarifado, Dashboard), sem ter nenhuma permissão de Financeiro em si.
+    """
+    restantes = [r for r in dados if r.get('tipo') != 'solicitacao']
+    for r in restantes:
+        if r.get('tipo') == 'contaPagar':
+            for campo in list(r.keys()):
+                if campo not in _FINANCEIRO_CAMPOS_CONTAPAGAR_PUBLICOS:
+                    del r[campo]
+    return restantes
+
+
 @api_view(['GET', 'POST', 'PUT'])
 @permission_classes([permissao_modulo(*FINANCEIRO, *COMPRAS_GESTAO)])
 def financeiro_data(request):
@@ -656,7 +684,10 @@ def financeiro_data(request):
     from .financeiro_sync import read_all, replace_all
 
     if request.method == 'GET':
-        return Response(read_all(), status=status.HTTP_200_OK)
+        dados = read_all()
+        if not escreve_em_tudo(request.user) and _sem_permissao_financeira(request.user):
+            dados = _financeiro_restringir_para_leitor_sem_acesso(dados)
+        return Response(dados, status=status.HTTP_200_OK)
 
     payload = request.data
     if isinstance(payload, dict):

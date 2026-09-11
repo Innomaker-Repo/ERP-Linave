@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Anchor, Cable, CheckCircle2, ChevronDown, ChevronUp, ClipboardList, Gauge, Hammer, Layers3, MapPin, Microscope, Package, Plus, Search, Table2, Trash2, X, Zap } from 'lucide-react';
+import { Anchor, Cable, CheckCircle2, ChevronDown, ChevronUp, ClipboardList, Download, Gauge, Hammer, Layers3, MapPin, Microscope, Package, Plus, Search, Table2, Trash2, X, Zap } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { Badge } from '../../../modules/shared/ui/badge';
 import { Input } from '../../../modules/shared/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../modules/shared/ui/select';
@@ -9,6 +10,7 @@ import { boldOS } from '../../../utils/osHighlight';
 import { getOrdensServico, getOsOptionLabel, getOsOptionValue, getOsStableValue, type OrdemServicoResumo, isOsAprovada, formatOsLabel } from '../../../../services/ordensServico';
 import api from '../../../../services/api';
 import { gerarRomaneioPdf, loadRomaneioLogoBase64 } from './romaneioPdf';
+import { uploadDocumento, excluirDocumento } from '../../../../services/documentosService';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../ui/feedback';
 
@@ -116,9 +118,22 @@ const generateItemId = (prefix: string, index: number) => {
   return `${base}-${String(index + 1).padStart(3, '0')}`;
 };
 
+// Lê o valor de uma célula pela chave EXATA da coluna (ex.: "dataAluguel", "serviceOS") e,
+// se não achar, cai pra versão normalizada (minúscula, sem acento/símbolo) — linhas salvas
+// antes da correção abaixo (quando `makeRow` normalizava as CHAVES por engano, não só os
+// valores) ficaram gravadas com a chave em minúsculo (ex.: "dataaluguel") e, sem esse
+// fallback, voltariam a aparecer em branco mesmo já tendo o dado salvo.
+const valorDaCelula = (values: Record<string, string> | undefined, columnKey: string): string =>
+  (values?.[columnKey] ?? values?.[normalizeKey(columnKey)] ?? '');
+
 const makeRow = (values: Record<string, string>, prefix: string, index: number, rowId?: string): StockRow => {
+  // As chaves já chegam exatamente iguais à de `column.key` (do formulário de registro ou dos
+  // dados de exemplo, que usam os mesmos nomes das colunas) — só os VALORES passam por
+  // `cleanValue` (espaço/trim). Normalizar as chaves aqui (minúsculo, sem símbolo) quebrava a
+  // leitura em `row.values[column.key]` pra toda coluna com letra maiúscula (dataAluguel,
+  // dataDevolucao, serviceOS, numeroSerial, dataCalibracaoAfericao...), que é case-sensitive.
   const normalizedValues = Object.fromEntries(
-    Object.entries(values).map(([key, value]) => [normalizeKey(key), cleanValue(value)])
+    Object.entries(values).map(([key, value]) => [key, cleanValue(value)])
   );
 
   if (!normalizedValues.material && normalizedValues.nome) {
@@ -218,6 +233,34 @@ const getTableIconConfig = (tableName: string): { Icon: LucideIcon; badgeClass: 
 const STATUS_OPTIONS = ['Disponível', 'Alocado', 'Em manutenção'];
 const STATUS_DEFAULT = 'Disponível';
 
+// Sentinel do filtro "Todos os tipos" no campo Tipo (categoria Equipamentos) — mostra os
+// 6 subtipos de equipamento combinados numa única lista, com colunas comuns a todos eles.
+const ALL_TYPES_VALUE = '__todos__';
+const EQUIPAMENTOS_TODOS_TIPOS_COLUMNS: StockColumn[] = [
+  { key: '__tipo__', label: 'Tipo' },
+  { key: 'material', label: 'Material' },
+  { key: 'unid', label: 'Unid.', align: 'center' },
+  { key: 'qtd', label: 'Qtd.', align: 'center' },
+  { key: 'peso', label: 'Peso', align: 'center' },
+  { key: 'status', label: 'STATUS', align: 'center' },
+  { key: 'localizacao', label: 'Local' },
+  { key: 'serviceOS', label: 'Serviço (OS)' },
+];
+
+// Categoria "Todos": junta linhas de TODAS as tabelas (Materiais + os 6 subtipos de
+// Equipamentos + os 2 de Alugados) numa única lista — cada tabela tem colunas próprias
+// (Alugados não tem "material"/"status", por exemplo), então aqui só entram as colunas que
+// fazem sentido pra maioria; `__tipo__` mostra de qual tabela a linha veio, pra não perder
+// essa informação na mistura.
+const TODAS_CATEGORIAS_COLUMNS: StockColumn[] = [
+  { key: '__tipo__', label: 'Tabela' },
+  { key: 'material', label: 'Material' },
+  { key: 'status', label: 'STATUS', align: 'center' },
+  { key: 'peso', label: 'Peso', align: 'center' },
+  { key: 'localizacao', label: 'Local' },
+  { key: 'serviceOS', label: 'Serviço (OS)' },
+];
+
 // Normaliza qualquer valor (inclusive legado) para um dos 3 status fixos.
 const normalizeStatus = (status?: string): string => {
   const n = normalizeKey(status || '');
@@ -235,6 +278,22 @@ const normalizeStatus = (status?: string): string => {
 
 const isNegativeStatus = (_tableName: string, status: string) => normalizeKey(status).includes('manut');
 const isPositiveStatus = (_tableName: string, status: string) => normalizeKey(status).includes('dispon');
+
+// Tabelas de item alugado (de fornecedor) que ganham "Data de Devolução" — usado tanto pra
+// destacar a linha em vermelho quanto pro alerta no sino de notificações.
+const TABELAS_ALUGADOS = new Set(['Alugados - Gases', 'Alugados - Equipamentos']);
+
+// "Data de Devolução" (YYYY-MM-DD) já passou? Mesma lógica de `isOld` em finData.ts
+// (Contas a Receber), duplicada aqui de propósito pra não criar um import cruzado
+// Almoxarifado -> Financeiro só por causa de uma comparação de data trivial.
+const isDataDevolucaoAtrasada = (tableName: string, dataDevolucao?: string): boolean => {
+  if (!TABELAS_ALUGADOS.has(tableName) || !dataDevolucao) return false;
+  const data = new Date(`${dataDevolucao}T00:00:00`);
+  if (Number.isNaN(data.getTime())) return false;
+  const hoje = new Date();
+  hoje.setHours(0, 0, 0, 0);
+  return data < hoje;
+};
 
 const getStatusTone = (status: string, _tableName?: string) => {
   const n = normalizeKey(status);
@@ -291,7 +350,7 @@ const STOCK_TABLES: StockTable[] = [
   makeTable(
     'EQUIPAMENTOS ELETRICOS',
     [
-      { key: 'item', label: 'Item' }, { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
+      { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
       { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'peso', label: 'Peso', align: 'center' }, { key: 'patrimonio', label: 'Patrimônio' }, { key: 'dataEntradaPlanilha', label: 'Data(ENTRADA NA PLANILHA)', align: 'center' },
       { key: 'modelo', label: 'Modelo' }, { key: 'numeroSerial', label: 'N° Serial' }, { key: 'tag', label: 'TAG' },
       { key: 'marca', label: 'Marca' }, { key: 'dataCalibracaoAfericao', label: 'Data da Calibração/Aferição', align: 'center' }, { key: 'validadeCalibracaoAfericao', label: 'Validade da Calibração/Aferição', align: 'center' },
@@ -307,7 +366,7 @@ const STOCK_TABLES: StockTable[] = [
   makeTable(
     'EXTENSÃO-CABOS',
     [
-      { key: 'item', label: 'Item' }, { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
+      { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
       { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'peso', label: 'Peso', align: 'center' }, { key: 'patrimonio', label: 'Patrimônio' }, { key: 'dataEntradaPlanilha', label: 'Data(ENTRADA NA PLANILHA)', align: 'center' },
       { key: 'metros', label: 'METROS', align: 'center' }, { key: 'bitola', label: '(BITOLA)', align: 'center' }, { key: 'tag', label: 'TAG' },
       { key: 'marca', label: 'Marca' }, { key: 'dataCalibracaoAfericao', label: 'Data da Calibração/Aferição', align: 'center' }, { key: 'validadeCalibracaoAfericao', label: 'Validade da Calibração/Aferição', align: 'center' },
@@ -323,7 +382,7 @@ const STOCK_TABLES: StockTable[] = [
   makeTable(
     'BOMBA HIDROJATO',
     [
-      { key: 'item', label: 'Item' }, { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
+      { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
       { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'peso', label: 'Peso', align: 'center' }, { key: 'patrimonioIdentificacao', label: 'Patrimônio/Identificação' }, { key: 'dataEntradaPlanilha', label: 'Data(ENTRADA NA PLANILHA)', align: 'center' },
       { key: 'identificacao', label: 'IDENTIFICAÇÃO' }, { key: 'certificacao', label: 'CERTIFICAÇÃO' }, { key: 'marca', label: 'Marca' },
       { key: 'dataCalibracaoAfericao', label: 'Data da Calibração/Aferição', align: 'center' }, { key: 'validadeCalibracaoAfericao', label: 'Validade da Calibração/Aferição', align: 'center' }, { key: 'status', label: 'STATUS', align: 'center' },
@@ -337,7 +396,7 @@ const STOCK_TABLES: StockTable[] = [
   makeTable(
     'INSTRUMENTOS',
     [
-      { key: 'item', label: 'Item' }, { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
+      { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
       { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'peso', label: 'Peso', align: 'center' }, { key: 'patrimonio', label: 'Patrimônio' }, { key: 'dataEntradaPlanilha', label: 'Data(ENTRADA NA PLANILHA)', align: 'center' },
       { key: 'identificacao', label: 'INDENTIFICAÇÃO' }, { key: 'certificacao', label: 'CERTIFICAÇÃO' }, { key: 'marca', label: 'Marca' },
       { key: 'dataCalibracaoAfericao', label: 'Data da Calibração/Aferição', align: 'center' }, { key: 'validadeCalibracaoAfericao', label: 'Validade da Calibração/Aferição', align: 'center' }, { key: 'status', label: 'STATUS', align: 'center' },
@@ -351,7 +410,7 @@ const STOCK_TABLES: StockTable[] = [
   makeTable(
     'FERRAMENTAS',
     [
-      { key: 'item', label: 'Item' }, { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
+      { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
       { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'peso', label: 'Peso', align: 'center' }, { key: 'patrimonio', label: 'Patrimônio' }, { key: 'dataEntradaPlanilha', label: 'Data(ENTRADA NA PLANILHA)', align: 'center' },
       { key: 'modelo', label: 'Modelo' }, { key: 'numeroSerial', label: 'N° Serial' }, { key: 'marca', label: 'Marca' },
       { key: 'status', label: 'STATUS', align: 'center' }, { key: 'observacao', label: 'Observação' }, { key: 'localizacao', label: 'Local' },
@@ -365,7 +424,7 @@ const STOCK_TABLES: StockTable[] = [
   makeTable(
     'TALHAS',
     [
-      { key: 'item', label: 'Item' }, { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
+      { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
       { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'peso', label: 'Peso', align: 'center' }, { key: 'patrimonio', label: 'Patrimônio' }, { key: 'dataEntradaPlanilha', label: 'Data(ENTRADA NA PLANILHA)', align: 'center' },
       { key: 'modelo', label: 'Modelo' }, { key: 'numeroSerial', label: 'N° Serial' }, { key: 'marca', label: 'Marca' },
       { key: 'dataCalibracaoAfericao', label: 'Data da Calibração/Aferição', align: 'center' }, { key: 'validadeCalibracaoAfericao', label: 'Validade da Calibração/Aferição', align: 'center' },
@@ -380,7 +439,7 @@ const STOCK_TABLES: StockTable[] = [
   makeTable(
     'Controle de ferramentas',
     [
-      { key: 'item', label: 'Item' }, { key: 'material', label: 'FERRAMENTA' }, { key: 'tagNumeroSeriePatrimonio', label: 'TAG/NUMERO SÉRIE/PATRIMÔNIO' },
+      { key: 'material', label: 'FERRAMENTA' }, { key: 'tagNumeroSeriePatrimonio', label: 'TAG/NUMERO SÉRIE/PATRIMÔNIO' },
       { key: 'retiradoPor', label: 'RETIRADO POR' }, { key: 'assinaturaRetirada', label: 'ASSINATURA (RETIRADA)' }, { key: 'dataRetirada', label: 'DATA (RETIRADA)', align: 'center' },
       { key: 'condicaoFerramentaRetirada', label: 'CONDIÇÃO DA FERRAMENTA (RETIRADA)' }, { key: 'lvSeAplicavel', label: 'LV (SE APLICÁVEL)' }, { key: 'dataDevolucao', label: 'DATA (DEVOLUCAO)', align: 'center' },
       { key: 'assinaturaDevolucao', label: 'ASSINATURA (DEVOLUÇÃO)' }, { key: 'status', label: 'STATUS', align: 'center' }, { key: 'condicaoFerramentaDevolucao', label: 'CONDIÇÃO DA FERRAMENTA (DEVOLUÇÃO)' },
@@ -394,25 +453,26 @@ const STOCK_TABLES: StockTable[] = [
   makeTable(
     'Materiais',
     [
-      { key: 'item', label: 'Item' }, { key: 'material', label: 'Descrição' }, { key: 'quantidade', label: 'Quantidade', align: 'center' },
-      { key: 'peso', label: 'Peso', align: 'center' },
+      { key: 'material', label: 'Descrição' }, { key: 'quantidade', label: 'Quantidade', align: 'center' },
+      { key: 'peso', label: 'Peso', align: 'center' }, { key: 'status', label: 'STATUS', align: 'center' },
       { key: 'localizacao', label: 'Local' }, { key: 'serviceOS', label: 'Serviço (OS)' }
     ], [], false
   ),
   makeTable(
     'Alugados - Gases',
     [
-      { key: 'item', label: 'Item' },
       { key: 'fornecedor', label: 'Fornecedor' },
       ...INITIAL_GAS_TYPES.map(g => ({ key: `gas${normalizeKey(g)}`, label: g, align: 'center' as const })),
       { key: 'total', label: 'TOTAL', align: 'center' },
+      { key: 'dataDevolucao', label: 'Data de Devolução', align: 'center' },
       { key: 'actions', label: '', align: 'right' }
     ], [], false
   ),
   makeTable(
     'Alugados - Equipamentos',
     [
-      { key: 'item', label: 'Item' }, { key: 'equipamento', label: 'Nome do Equipamento' }, { key: 'dataAluguel', label: 'Data de Aluguel', align: 'center' },
+      { key: 'equipamento', label: 'Nome do Equipamento' }, { key: 'dataAluguel', label: 'Data de Aluguel', align: 'center' },
+      { key: 'dataDevolucao', label: 'Data de Devolução', align: 'center' },
       { key: 'descricao', label: 'Descrição' }, { key: 'peso', label: 'Peso', align: 'center' }, { key: 'localizacao', label: 'Local' }, { key: 'serviceOS', label: 'Serviço (OS)' }
     ], [], false
   )
@@ -429,8 +489,27 @@ const CANONICAL_COLUMNS_BY_TABLE = new Map<string, StockColumn[]>(
 // quaisquer colunas extras que o usuário tenha criado. A tabela de gases tem colunas
 // dinâmicas (tipos de gás) → mantém as persistidas como estão.
 const reconcileTableColumns = (table: StockTable): StockColumn[] => {
-  const persisted = Array.isArray(table.columns) ? table.columns : [];
-  if (normalizeKey(table.name) === 'alugadosgases') return [...persisted];
+  // "item" saiu de vez da grade (era só o id automático do registro, já exibido em
+  // nenhum lugar útil) — filtrado aqui mesmo pra tabelas JÁ PERSISTIDAS com essa coluna
+  // antiga também pararem de mostrá-la, não só as novas.
+  const persisted = (Array.isArray(table.columns) ? table.columns : []).filter((column) => column.key !== 'item');
+  if (normalizeKey(table.name) === 'alugadosgases') {
+    // Colunas de tipo de gás são dinâmicas (o usuário pode cadastrar novos tipos em tempo
+    // de uso) — por isso a tabela de gases não usa o merge genérico abaixo (que reordenaria
+    // tudo pelas colunas canônicas primeiro). Em vez de ignorar completamente as colunas
+    // canônicas novas (ex.: "Data de Devolução", adicionada depois que esta tabela já tinha
+    // sido persistida), insere só as que ainda faltam, na posição logo antes de "actions"
+    // (ou no fim, se não houver coluna de ações) — preserva a ordem/posição das colunas de
+    // gás já existentes.
+    const persistedKeys = new Set(persisted.map((column) => column.key));
+    const faltantes = (CANONICAL_COLUMNS_BY_TABLE.get(table.name) || [])
+      .filter((column) => !persistedKeys.has(column.key) && !column.key.startsWith('gas'));
+    if (faltantes.length === 0) return [...persisted];
+    const resultado = [...persisted];
+    const posicaoActions = resultado.findIndex((column) => column.key === 'actions');
+    resultado.splice(posicaoActions >= 0 ? posicaoActions : resultado.length, 0, ...faltantes);
+    return resultado;
+  }
   const canonical = CANONICAL_COLUMNS_BY_TABLE.get(table.name);
   if (!canonical) return [...persisted]; // tabela custom/desconhecida: mantém como está
   const canonicalKeys = new Set(canonical.map((column) => column.key));
@@ -455,7 +534,10 @@ const createRegisterValues = (table?: StockTable, baseValues: Record<string, str
   const columns = table?.columns || sharedColumns;
 
   columns.forEach((column) => {
-    const previous = baseValues[column.key] || baseValues[normalizeKey(column.label)] || '';
+    // `normalizeKey(column.key)` (não só `column.label`) cobre linhas salvas antes da correção
+    // de `makeRow`, que gravava a chave em minúsculo (ex.: "dataaluguel" em vez de "dataAluguel")
+    // — sem isso, editar uma linha antiga dessas reabria o campo em branco.
+    const previous = baseValues[column.key] || baseValues[normalizeKey(column.key)] || baseValues[normalizeKey(column.label)] || '';
 
     if (column.key === 'item') {
       values[column.key] = previous || generateItemId(table?.name || 'item', table?.rows.length ?? 0);
@@ -504,16 +586,24 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     rows: []
   })));
   
-  const [selectedCategory, setSelectedCategory] = useState<'Materiais' | 'Equipamentos' | 'Alugados'>('Materiais');
+  const [selectedCategory, setSelectedCategory] = useState<'Todos' | 'Materiais' | 'Equipamentos' | 'Alugados'>('Materiais');
   const [selectedType, setSelectedType] = useState<string>('');
   const [filtro, setFiltro] = useState<string>(searchQuery || '');
   const [selectedOsFilter, setSelectedOsFilter] = useState<string>('');
+  const [selectedStatusFilter, setSelectedStatusFilter] = useState<string>('');
   
   const [isRegisterOpen, setIsRegisterOpen] = useState(false);
   const [registerTableName, setRegisterTableName] = useState<string>(tables[0]?.name || '');
   const [registerValues, setRegisterValues] = useState<Record<string, string>>(() => createRegisterValues(tables[0]));
   const [activeRowTarget, setActiveRowTarget] = useState<{ tableName: string; rowId: string } | null>(null);
   const [editingRowTarget, setEditingRowTarget] = useState<{ tableName: string; rowId: string } | null>(null);
+
+  // Imagem de cada item (1 por item), guardada à parte de `tables` — se ficasse dentro de
+  // `row.values`, "Editar item" reconstrói os values só a partir das colunas do formulário
+  // (ver handleSaveRegister) e apagaria a imagem na primeira edição. Chave = StockRow.id.
+  const [imagensPorItem, setImagensPorItem] = useState<Record<string, { url: string; backendId?: number; nome?: string }>>({});
+  const [isUploadingImagem, setIsUploadingImagem] = useState(false);
+  const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
 
   const [gasTypes, setGasTypes] = useState<string[]>(INITIAL_GAS_TYPES);
   const [newGasName, setNewGasName] = useState('');
@@ -656,6 +746,10 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
         }
       }
 
+      if (almoxerifado.imagensPorItem && typeof almoxerifado.imagensPorItem === 'object') {
+        setImagensPorItem(almoxerifado.imagensPorItem);
+      }
+
       hasHydratedPersistedState.current = true;
       return;
     }
@@ -673,9 +767,10 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       baixasHistorico,
       alocacoesHistorico,
       romaneiosHistorico,
-      selectedForRomaneio: Array.from(selectedForRomaneio)
+      selectedForRomaneio: Array.from(selectedForRomaneio),
+      imagensPorItem
     });
-  }, [tables, gasTypes, allocations, baixasHistorico, alocacoesHistorico, romaneiosHistorico, selectedForRomaneio]);
+  }, [tables, gasTypes, allocations, baixasHistorico, alocacoesHistorico, romaneiosHistorico, selectedForRomaneio, imagensPorItem]);
 
   const handleRemoveGas = (gasToRemove: string) => {
     setGasTypes((prev) => prev.filter((g) => g !== gasToRemove));
@@ -717,7 +812,6 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       prevTables.map((table) => {
         if (table.name === 'Alugados - Gases') {
           const baseCols: StockColumn[] = [
-            { key: 'item', label: 'Item' },
             { key: 'fornecedor', label: 'Fornecedor' }
           ];
           const gasCols: StockColumn[] = gasTypes.map((g) => ({
@@ -727,7 +821,8 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
           }));
           const endCols: StockColumn[] = [
             { key: 'total', label: 'TOTAL', align: 'center' },
-            { key: 'actions', label: '', align: 'right' } 
+            { key: 'dataDevolucao', label: 'Data de Devolução', align: 'center' },
+            { key: 'actions', label: '', align: 'right' }
           ];
           return { ...table, columns: [...baseCols, ...gasCols, ...endCols] };
         }
@@ -737,6 +832,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   }, [gasTypes]);
 
   const categoryMap = {
+    'Todos': [],
     'Materiais': [],
     'Equipamentos': ['EQUIPAMENTOS ELETRICOS', 'EXTENSÃO-CABOS', 'BOMBA HIDROJATO', 'INSTRUMENTOS', 'FERRAMENTAS', 'TALHAS'],
     'Alugados': ['Gases', 'Equipamentos']
@@ -745,7 +841,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   useEffect(() => {
     if (!selectedType && selectedCategory === 'Materiais') {
       setSelectedType('Materiais');
-    } else if (!selectedType && selectedCategory !== 'Materiais') {
+    } else if (!selectedType && selectedCategory !== 'Materiais' && selectedCategory !== 'Todos') {
       const types = categoryMap[selectedCategory] as string[];
       if (types.length > 0) {
         setSelectedType(types[0]);
@@ -765,16 +861,25 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     const types = categoryMap[selectedCategory] as string[];
     if (selectedCategory === 'Materiais') {
       setSelectedType('Materiais');
+    } else if (selectedCategory === 'Todos') {
+      setSelectedType('');
     } else if (types.length > 0 && !types.includes(selectedType)) {
       setSelectedType(types[0]);
     }
   }, [selectedCategory]);
 
   const getVisibleTables = () => {
+    if (selectedCategory === 'Todos') return tables;
     if (selectedCategory === 'Materiais') return tables.filter(t => t.name === 'Materiais');
-    if (selectedCategory === 'Equipamentos') return tables.filter(t => t.name === selectedType);
+    if (selectedCategory === 'Equipamentos') {
+      if (selectedType === ALL_TYPES_VALUE) {
+        const tipos = categoryMap['Equipamentos'] as string[];
+        return tables.filter(t => tipos.includes(t.name));
+      }
+      return tables.filter(t => t.name === selectedType);
+    }
     if (selectedCategory === 'Alugados') {
-      return selectedType === 'Gases' 
+      return selectedType === 'Gases'
         ? tables.filter(t => t.name === 'Alugados - Gases')
         : tables.filter(t => t.name === 'Alugados - Equipamentos');
     }
@@ -782,7 +887,27 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   };
 
   const visibleTables = getVisibleTables();
-  const selectedTable = useMemo(() => visibleTables[0] || { name: 'Vazio', columns: [], rows: [] }, [visibleTables]);
+  // "Todos os tipos" (Equipamentos): junta as linhas dos 6 subtipos num único pseudo-table,
+  // com um conjunto de colunas comuns a todos eles — os demais usos de `selectedTable`
+  // (contagem, botão "Registrar Item", filtros) continuam funcionando sem mudança porque
+  // `visibleRows`/`visibleColumns` só dependem desta estrutura, nunca de um nome de tabela real.
+  const selectedTable = useMemo(() => {
+    if (selectedCategory === 'Todos') {
+      return {
+        name: 'Todos',
+        columns: TODAS_CATEGORIAS_COLUMNS,
+        rows: visibleTables.flatMap((table) => table.rows),
+      };
+    }
+    if (selectedCategory === 'Equipamentos' && selectedType === ALL_TYPES_VALUE) {
+      return {
+        name: 'Todos os tipos',
+        columns: EQUIPAMENTOS_TODOS_TIPOS_COLUMNS,
+        rows: visibleTables.flatMap((table) => table.rows),
+      };
+    }
+    return visibleTables[0] || { name: 'Vazio', columns: [], rows: [] };
+  }, [visibleTables, selectedCategory, selectedType]);
   
   const visibleColumns = useMemo(() => {
     const cols = [...selectedTable.columns];
@@ -827,13 +952,54 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       })();
 
       const matchesQuery = !query || (() => {
-      const matchesColumns = visibleColumns.some((column) => (row.values[column.key] || '').toLowerCase().includes(query));
+      const matchesColumns = visibleColumns.some((column) => valorDaCelula(row.values, column.key).toLowerCase().includes(query));
       return matchesColumns || row.searchText.includes(query);
       })();
 
-      return matchesQuery && matchesOsFilter;
+      const matchesStatusFilter = !selectedStatusFilter || normalizeStatus(row.values.status) === selectedStatusFilter;
+
+      return matchesQuery && matchesOsFilter && matchesStatusFilter;
     });
-  }, [allocations, availableOS, filtro, selectedOsFilter, selectedTable.rows, visibleColumns]);
+  }, [allocations, availableOS, filtro, selectedOsFilter, selectedStatusFilter, selectedTable.rows, visibleColumns]);
+
+  // Exporta exatamente o que está sendo exibido (respeitando categoria/tipo/busca/OS/status
+  // já aplicados) — cada categoria/subtipo tem seu próprio conjunto de colunas (equipamento
+  // tem calibração/patrimônio/etc., material não), então as colunas da planilha vêm direto
+  // de `visibleColumns`, a mesma fonte que já define as colunas da tabela na tela.
+  const handleBaixarPlanilha = () => {
+    if (visibleRows.length === 0) {
+      toast.error('Não há itens para exportar com os filtros atuais.');
+      return;
+    }
+
+    const colunasExport = visibleColumns.filter((coluna) => coluna.key !== '__select__' && coluna.key !== 'actions');
+    const cabecalho = colunasExport.map((coluna) => coluna.label || coluna.key);
+    const linhas = visibleRows.map((row) =>
+      colunasExport.map((coluna) => (coluna.key === '__tipo__' ? row.tableName : valorDaCelula(row.values, coluna.key)))
+    );
+
+    const planilha = XLSX.utils.aoa_to_sheet([cabecalho, ...linhas]);
+    const workbook = XLSX.utils.book_new();
+    const nomeAba = (selectedCategory === 'Equipamentos' && selectedType === ALL_TYPES_VALUE ? 'Todos os tipos' : (selectedType || selectedCategory))
+      .replace(/[:\\/?*[\]]/g, '-')
+      .slice(0, 31) || 'Estoque';
+    XLSX.utils.book_append_sheet(workbook, planilha, nomeAba);
+
+    const identificadorArquivo = selectedCategory === 'Todos'
+      ? 'todas-as-categorias'
+      : selectedCategory === 'Equipamentos'
+      ? (selectedType === ALL_TYPES_VALUE ? 'todos-os-tipos' : selectedType)
+      : selectedCategory === 'Alugados'
+      ? `alugados-${selectedType}`
+      : 'materiais';
+    const nomeArquivo = `estoque-${identificadorArquivo}`
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '');
+
+    XLSX.writeFile(workbook, `${nomeArquivo}.xlsx`);
+    toast.success(`Planilha gerada com ${visibleRows.length} item(ns).`);
+  };
 
   const publicRows = useMemo(() => {
     const query = publicSearch.toLowerCase().trim();
@@ -1003,6 +1169,61 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     setActiveRowTarget(null);
   };
 
+  // Imagem do item exibido em "Detalhes do item" — 1 por item, sobe pro mesmo
+  // repositório de documentos (disco) já usado pelo resto do sistema, e a URL fica em
+  // `imagensPorItem` (guardado à parte de `tables`, ver comentário no useState).
+  const handleUploadImagemAtivo = async (file: File) => {
+    if (!activeRowTarget) return;
+    const isImagem = file.type.startsWith('image/');
+    if (!isImagem) {
+      toast.error('Selecione um arquivo de imagem (PNG, JPG, etc.).');
+      return;
+    }
+
+    const rowId = activeRowTarget.rowId;
+    const anterior = imagensPorItem[rowId];
+    setIsUploadingImagem(true);
+    try {
+      const documento = await uploadDocumento(file, {
+        vinculoTipo: 'almoxarifado',
+        vinculoId: rowId,
+        categoria: 'almoxarifado_imagem',
+      });
+      setImagensPorItem((prev) => ({
+        ...prev,
+        [rowId]: { url: documento.url, backendId: documento.backendId, nome: documento.nome },
+      }));
+      if (anterior?.backendId) {
+        excluirDocumento(anterior.backendId).catch(() => { /* imagem antiga órfã não é crítico */ });
+      }
+      toast.success('Imagem adicionada.');
+    } catch (error) {
+      console.error('Erro ao subir imagem do item:', error);
+      toast.error('Não foi possível enviar a imagem. Tente novamente.');
+    } finally {
+      setIsUploadingImagem(false);
+    }
+  };
+
+  const handleRemoverImagemAtivo = async () => {
+    if (!activeRowTarget) return;
+    const rowId = activeRowTarget.rowId;
+    const atual = imagensPorItem[rowId];
+    if (!atual) return;
+    setImagensPorItem((prev) => {
+      const next = { ...prev };
+      delete next[rowId];
+      return next;
+    });
+    if (atual.backendId) {
+      try {
+        await excluirDocumento(atual.backendId);
+      } catch {
+        // segue mesmo se falhar — a referência local já foi removida
+      }
+    }
+  };
+
   const openBaixaModal = (row: StockRow) => {
     const currentOs = cleanValue(row.values.serviceOS);
     const matchedOs = availableOS.find((ordemServico: any) => {
@@ -1110,7 +1331,10 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     if (selectedCategory === 'Materiais') {
       tableToUse = tables.find(t => t.name === 'Materiais');
     } else if (selectedCategory === 'Equipamentos') {
-      tableToUse = tables.find(t => t.name === selectedType);
+      // "Todos os tipos" não é uma tabela de verdade — um novo item sempre precisa
+      // pertencer a um subtipo específico, então cai no primeiro da categoria.
+      const tipoAlvo = selectedType === ALL_TYPES_VALUE ? (categoryMap['Equipamentos'] as string[])[0] : selectedType;
+      tableToUse = tables.find(t => t.name === tipoAlvo);
     } else if (selectedCategory === 'Alugados') {
       if (selectedType === 'Gases') {
         tableToUse = tables.find(t => t.name === 'Alugados - Gases');
@@ -1826,7 +2050,15 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       );
     }
 
-    const value = row.values[column.key] || '—';
+    if (column.key === '__tipo__') {
+      return (
+        <span className="inline-flex items-center rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-cyan-200">
+          {row.tableName}
+        </span>
+      );
+    }
+
+    const value = valorDaCelula(row.values, column.key) || '—';
     const rowIsNegative = isNegativeStatus(row.tableName, row.values.status || '');
     const textTone = rowIsNegative ? 'text-red-100' : 'text-white/80';
 
@@ -1835,6 +2067,17 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
         <Badge variant="outline" className={`rounded-full border px-3 py-1 shadow-sm ${getStatusTone(value, row.tableName)}`}>
           {value}
         </Badge>
+      );
+    }
+
+    if (column.key === 'dataDevolucao' && isDataDevolucaoAtrasada(row.tableName, valorDaCelula(row.values, 'dataDevolucao'))) {
+      return (
+        <span className="inline-flex items-center gap-2 font-bold text-red-300">
+          {value}
+          <Badge variant="outline" className="rounded-full border border-red-500/30 bg-red-500/15 px-2 py-0.5 text-[10px] uppercase tracking-wide text-red-300">
+            Atrasado
+          </Badge>
+        </span>
       );
     }
 
@@ -1889,6 +2132,17 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       );
     }
 
+    if (column.key === 'dataDevolucao' || column.key === 'dataAluguel') {
+      return (
+        <Input
+          type="date"
+          value={value}
+          onChange={(event) => handleRegisterChange(column.key, event.target.value)}
+          className={`${baseClass} h-12`}
+        />
+      );
+    }
+
     if (isTextarea) {
       return (
         <textarea
@@ -1930,12 +2184,15 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       <div className="mx-8 mt-6 grid grid-cols-1 gap-5 rounded-[24px] border border-white/5 bg-gradient-to-r from-white/[0.03] to-transparent p-6 shadow-xl backdrop-blur-md xl:grid-cols-[1fr_1fr_2fr_auto] xl:items-end">
         <div className="space-y-2">
           <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">Categoria</label>
-          <Select value={selectedCategory} onValueChange={(val) => setSelectedCategory(val as 'Materiais' | 'Equipamentos' | 'Alugados')}>
+          <Select value={selectedCategory} onValueChange={(val) => setSelectedCategory(val as 'Todos' | 'Materiais' | 'Equipamentos' | 'Alugados')}>
             <SelectTrigger className="relative h-12 w-full rounded-xl border border-white/5 bg-[#0b1220]/80 pl-11 pr-4 text-white shadow-sm transition focus:border-amber-400 focus:ring-1 focus:ring-amber-400 hover:border-white/20">
               <Package size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-amber-400" />
               <SelectValue placeholder="Selecione" className="text-sm font-semibold" />
             </SelectTrigger>
             <SelectContent className="border border-white/10 bg-[#0b1220]/95 text-white shadow-2xl backdrop-blur">
+              <SelectItem value="Todos" className="cursor-pointer rounded-lg px-3 py-2 text-sm font-bold text-amber-300 focus:bg-white/10 focus:text-amber-200">
+                Todos
+              </SelectItem>
               <SelectItem value="Materiais" className="cursor-pointer rounded-lg px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
                 Materiais
               </SelectItem>
@@ -1958,6 +2215,11 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                 <SelectValue placeholder="Selecione" className="text-sm font-semibold" />
               </SelectTrigger>
               <SelectContent className="border border-white/10 bg-[#0b1220]/95 text-white shadow-2xl backdrop-blur">
+                {selectedCategory === 'Equipamentos' && (
+                  <SelectItem value={ALL_TYPES_VALUE} className="cursor-pointer rounded-lg px-3 py-2 text-sm font-bold text-cyan-300 focus:bg-white/10 focus:text-cyan-200">
+                    Todos os tipos
+                  </SelectItem>
+                )}
                 {(categoryMap[selectedCategory] as string[]).map((type) => (
                   <SelectItem key={type} value={type} className="cursor-pointer rounded-lg px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
                     {type}
@@ -1974,7 +2236,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
 
         <div className="space-y-2">
           <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">Busca e Filtro</label>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_200px]">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_200px_200px]">
             <div className="relative">
               <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40" />
               <Input
@@ -2000,6 +2262,26 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                     className="cursor-pointer rounded-lg px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white"
                   >
                     {osDisplayLabel(ordemServico)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select value={selectedStatusFilter || '__all__'} onValueChange={(value) => setSelectedStatusFilter(value === '__all__' ? '' : value)}>
+              <SelectTrigger className="h-12 w-full rounded-xl border border-white/5 bg-[#0b1220]/80 px-4 text-white shadow-sm transition hover:border-white/20">
+                <SelectValue placeholder="Filtrar por status" />
+              </SelectTrigger>
+              <SelectContent className="border border-white/10 bg-[#0b1220] text-white shadow-2xl">
+                <SelectItem value="__all__" className="cursor-pointer rounded-lg px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
+                  Todos os status
+                </SelectItem>
+                {STATUS_OPTIONS.map((status) => (
+                  <SelectItem
+                    key={status}
+                    value={status}
+                    className="cursor-pointer rounded-lg px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white"
+                  >
+                    {status}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -2061,14 +2343,27 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       <div className="flex items-center justify-between gap-4 px-8 pt-6">
         <div className="flex items-center gap-2 rounded-full border border-white/5 bg-white/5 px-4 py-1.5 text-[11px] font-bold uppercase tracking-wider text-white/60 shadow-sm">
           <Layers3 size={14} className="text-amber-400" />
-          {selectedCategory === 'Materiais'
+          {selectedCategory === 'Todos'
+            ? 'Visualizando Todas as categorias'
+            : selectedCategory === 'Materiais'
             ? 'Visualizando Materiais'
             : selectedCategory === 'Equipamentos'
-            ? `Equipamentos / ${selectedType}`
+            ? `Equipamentos / ${selectedType === ALL_TYPES_VALUE ? 'Todos os tipos' : selectedType}`
             : `Alugados / ${selectedType}`}
         </div>
-        <div className="rounded-full border border-white/5 bg-white/5 px-4 py-1.5 text-[11px] font-bold uppercase tracking-wider text-white/50 shadow-sm">
-          Exibindo {visibleRows.length} de {selectedTable.rows.length} registros
+        <div className="flex items-center gap-3">
+          <div className="rounded-full border border-white/5 bg-white/5 px-4 py-1.5 text-[11px] font-bold uppercase tracking-wider text-white/50 shadow-sm">
+            Exibindo {visibleRows.length} de {selectedTable.rows.length} registros
+          </div>
+          <button
+            type="button"
+            onClick={handleBaixarPlanilha}
+            title="Baixa em Excel os itens exibidos com os filtros atuais"
+            className="inline-flex h-9 items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/15 px-4 text-[11px] font-bold uppercase tracking-wider text-emerald-200 shadow-sm transition hover:bg-emerald-500/25 hover:text-white"
+          >
+            <Download size={14} />
+            Baixar planilha
+          </button>
         </div>
       </div>
 
@@ -2080,7 +2375,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                 <Package size={28} className="text-white/30" />
               </div>
               <p className="font-bold text-white/60">Nenhum registro encontrado</p>
-              <p className="mt-2 text-sm text-white/35">{boldOS('Ajuste a busca, o filtro de OS ou troque o tipo.')}</p>
+              <p className="mt-2 text-sm text-white/35">{boldOS('Ajuste a busca, o filtro de OS, o filtro de status ou troque o tipo.')}</p>
             </div>
           </div>
         ) : (
@@ -2102,6 +2397,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                 <tbody className="divide-y divide-white/5">
                   {visibleRows.map((row) => {
                     const rowIsNegative = isNegativeStatus(row.tableName, row.values.status || '');
+                    const rowIsAtrasada = isDataDevolucaoAtrasada(row.tableName, valorDaCelula(row.values, 'dataDevolucao'));
                     const isExpanded = expandedGasRows.has(row.id);
 
                     return (
@@ -2116,7 +2412,13 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                               openRowDetails(row);
                             }
                           }}
-                          className={`cursor-pointer transition-colors ${rowIsNegative ? 'bg-red-500/[0.03] hover:bg-red-500/10' : 'hover:bg-white/5'}`}
+                          className={`cursor-pointer transition-colors ${
+                            rowIsAtrasada
+                              ? 'bg-red-500/15 hover:bg-red-500/25'
+                              : rowIsNegative
+                                ? 'bg-red-500/[0.03] hover:bg-red-500/10'
+                                : 'hover:bg-white/5'
+                          }`}
                         >
                           {visibleColumns.map((column) => (
                             <td
@@ -2925,12 +3227,71 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                 )}
               </div>
 
+              {/* IMAGEM DO ITEM — miniatura clicável (abre em tamanho cheio) + adicionar/trocar/remover */}
+              <div className="mb-8 rounded-xl border border-white/5 bg-[#0b1220]/40 p-5 shadow-inner">
+                <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-white/40">Imagem do item</p>
+                {imagensPorItem[activeRow.row.id] ? (
+                  <div className="flex items-center gap-4">
+                    <button
+                      type="button"
+                      onClick={() => setLightboxImageUrl(imagensPorItem[activeRow.row.id].url)}
+                      className="group relative h-24 w-24 shrink-0 overflow-hidden rounded-lg border border-white/10 shadow-sm"
+                      title="Ver imagem inteira"
+                    >
+                      <img
+                        src={imagensPorItem[activeRow.row.id].url}
+                        alt={imagensPorItem[activeRow.row.id].nome || 'Imagem do item'}
+                        className="h-full w-full object-cover transition group-hover:opacity-80"
+                      />
+                    </button>
+                    <div className="flex flex-col gap-2">
+                      <label className="cursor-pointer rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-center text-[11px] font-bold uppercase tracking-wider text-white/70 transition hover:bg-white/10">
+                        {isUploadingImagem ? 'Enviando...' : 'Trocar imagem'}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          disabled={isUploadingImagem}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) void handleUploadImagemAtivo(file);
+                            e.target.value = '';
+                          }}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handleRemoverImagemAtivo}
+                        className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-red-300 transition hover:bg-red-500/20"
+                      >
+                        Remover
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <label className="flex h-24 w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-white/15 bg-white/[0.02] text-xs font-bold uppercase tracking-wider text-white/40 transition hover:border-cyan-400/40 hover:text-cyan-300">
+                    {isUploadingImagem ? 'Enviando...' : '+ Adicionar imagem'}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      disabled={isUploadingImagem}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) void handleUploadImagemAtivo(file);
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+                )}
+              </div>
+
               <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
                 {activeRow.table.columns.filter(col => col.key !== 'actions').map((column) => (
                   <div key={column.key} className="rounded-xl border border-white/5 bg-[#0b1220]/40 p-5 shadow-inner">
                     <p className="text-[10px] font-bold uppercase tracking-widest text-white/40">{column.label}</p>
                     <p className={`mt-2.5 whitespace-pre-wrap text-[13px] font-medium leading-relaxed ${column.align === 'center' ? 'text-center' : ''} ${column.align === 'right' ? 'text-right' : ''} ${isNegativeStatus(activeRow.row.tableName, activeRow.row.values.status || '') ? 'text-red-300' : 'text-white/90'}`}>
-                      {activeRow.row.values[column.key] || '—'}
+                      {valorDaCelula(activeRow.row.values, column.key) || '—'}
                     </p>
                   </div>
                 ))}
@@ -2962,6 +3323,29 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
               </button>
             </div>
           </aside>
+        </div>
+      )}
+
+      {/* IMAGEM EM TAMANHO CHEIO */}
+      {lightboxImageUrl && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/85 p-8 backdrop-blur-sm"
+          onClick={() => setLightboxImageUrl(null)}
+        >
+          <button
+            type="button"
+            aria-label="Fechar imagem"
+            onClick={() => setLightboxImageUrl(null)}
+            className="absolute right-6 top-6 rounded-full bg-white/10 p-2.5 text-white transition hover:bg-white/20"
+          >
+            <X size={22} />
+          </button>
+          <img
+            src={lightboxImageUrl}
+            alt="Imagem do item em tamanho cheio"
+            className="max-h-full max-w-full rounded-xl object-contain shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
         </div>
       )}
     </div>

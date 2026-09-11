@@ -77,14 +77,13 @@ export const DEPARTMENTS: NavDepartment[] = [
       { id: 'meusPagamentos', label: 'Meus Pagamentos', icon: Receipt },
       { id: 'finAprovacoes', label: 'Aprovações', icon: CheckCircle2 },
       { id: 'finPagar', label: 'Contas a Pagar', icon: Banknote },
-      { id: 'finNfe', label: 'NFe', icon: ScrollText },
+      { id: 'finNfe', label: 'NFe / Recibo de Locação', icon: ScrollText },
       { id: 'finReceber', label: 'Contas a Receber', icon: Wallet },
       { id: 'finPrevisao', label: 'Previsão de Receita', icon: TrendingUp },
       // Gestão
       { id: 'finBancos', label: 'Bancos', icon: Landmark },
       { id: 'finHistorico', label: 'Histórico', icon: History },
       { id: 'finCustoOs', label: boldOS('Custo por OS'), icon: ClipboardList },
-      { id: 'finReciboLocacao', label: 'Fazer Recibo de Locação', icon: ScrollText },
     ]
   },
   {
@@ -95,7 +94,8 @@ export const DEPARTMENTS: NavDepartment[] = [
       { id: 'compras', label: 'Compras / Requisições', icon: ShoppingCart },
       { id: 'minhasCompras', label: 'Minhas Compras', icon: ShoppingBag },
       { id: 'kanbanCompras', label: 'Kanban de Compras', icon: LayoutGrid },
-      { id: 'aprovacoesCompras', label: 'Aprovações', icon: Clock },
+      { id: 'aprovarComercial', label: 'Aprovar Com.', icon: Clock },
+      { id: 'aprovarFinanceiro', label: 'Aprovar Fin.', icon: Clock },
       { id: 'historicoCompras', label: 'Histórico de Compras', icon: History },
       { id: 'fornecedores', label: 'Fornecedores', icon: Factory },
     ]

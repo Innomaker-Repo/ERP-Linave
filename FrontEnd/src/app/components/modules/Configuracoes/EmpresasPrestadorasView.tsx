@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Building2, Edit2, Plus, Save, Trash2, X } from 'lucide-react';
 import { useErp } from '../../../context/ErpContext';
 import { renomearEmpresaPrestadora } from '../../../../services/comercial';
+import { comFinanceiroAtual } from '../../../../services/financeiroSeguro';
 import { toast } from 'sonner';
 
 interface EmpresaPrestadora {
@@ -224,7 +225,6 @@ export function EmpresasPrestadorasView() {
         .filter((r): r is { de: string; para: string } => r !== null);
 
       if (renomeacoes.length > 0) {
-        let financeiroAtualizado = financeiro;
         for (const { de, para } of renomeacoes) {
           try {
             // eslint-disable-next-line no-await-in-loop
@@ -233,14 +233,20 @@ export function EmpresasPrestadorasView() {
             console.error(`Falha ao propagar renomeação de "${de}" para "${para}" em negócios/medições:`, erro);
             toast.error(`"${de}" foi renomeada, mas não consegui atualizar os negócios/medições já criados. Tente salvar de novo.`);
           }
-          // Ordem de Serviço e Orçamento/Proposta não guardam empresa própria — exibem a
-          // do negócio vinculado, então já acompanham a mudança feita acima.
-          financeiroAtualizado = financeiroAtualizado.map((r: any) => (r.empresa === de ? { ...r, empresa: para } : r));
         }
-        if (financeiroAtualizado !== financeiro) {
-          // eslint-disable-next-line no-await-in-loop
-          await saveEntity('financeiro', financeiroAtualizado);
-        }
+        // Ordem de Serviço e Orçamento/Proposta não guardam empresa própria — exibem a
+        // do negócio vinculado, então já acompanham a mudança feita acima. Base sempre
+        // buscada fresca do servidor (nunca o `financeiro` do contexto, que pode estar
+        // desatualizado) — ver comFinanceiroAtual em services/financeiroSeguro.ts.
+        await comFinanceiroAtual(async (base) => {
+          let financeiroAtualizado = base;
+          for (const { de, para } of renomeacoes) {
+            financeiroAtualizado = financeiroAtualizado.map((r: any) => (r.empresa === de ? { ...r, empresa: para } : r));
+          }
+          if (financeiroAtualizado !== base) {
+            await saveEntity('financeiro', financeiroAtualizado);
+          }
+        });
       }
 
       await saveConfig({

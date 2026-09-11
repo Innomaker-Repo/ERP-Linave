@@ -3,6 +3,7 @@ import { Bell, CheckCircle2, Package2 } from 'lucide-react';
 import { useErp } from '../../../context/ErpContext';
 import { contaTemDocumento } from '../Financeiro/finData';
 import type { CompraHistoricoRegistro } from '../Compras/comprasLocal';
+import { comComprasAtual } from '../../../../services/comprasSeguro';
 
 // Esta tela consome diretamente o Histórico de Compras (fonte única). Cada item de
 // natureza ITEM marcado como "comprado" no kanban entra aqui como pendente; ao clicar
@@ -34,19 +35,24 @@ export function ItensParaAdicionarView({ searchQuery }: { searchQuery: string })
     return contaTemDocumento(conta);
   };
 
-  const handleConfirm = (recordId: string) => {
-    const all = Array.isArray(comprasHistorico) ? comprasHistorico : [];
-    const updated = all.map((r: any) =>
-      r?.id === recordId
-        ? {
-            ...r,
-            purchaseState: 'estoque',
-            estoqueOkEm: new Date().toISOString(),
-            estoqueOkPor: userSession?.username || userSession?.nome || userSession?.email || 'sistema',
-          }
-        : r,
-    );
-    void saveEntity?.('comprasHistorico', updated);
+  const handleConfirm = async (recordId: string) => {
+    // Grava em cima do histórico mais recente do servidor (não do `comprasHistorico` do
+    // contexto, que pode estar desatualizado) — evita perder uma confirmação feita por
+    // outra pessoa nesse meio-tempo.
+    await comComprasAtual(async ({ comprasHistorico: all }) => {
+      const updated = all.map((r: any) =>
+        r?.id === recordId
+          ? {
+              ...r,
+              purchaseState: 'estoque',
+              estoqueOkEm: new Date().toISOString(),
+              estoqueOkPor: userSession?.username || userSession?.nome || userSession?.email || 'sistema',
+            }
+          : r,
+      );
+      await saveEntity?.('comprasHistorico', updated);
+      return true;
+    });
   };
 
   const filteredItems = registros.filter((item) => {

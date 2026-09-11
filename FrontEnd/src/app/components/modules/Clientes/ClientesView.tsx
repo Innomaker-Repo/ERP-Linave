@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { UserPlus, Save, X, Edit2, Trash2, Building2, User, MapPin, Phone, Calendar, UserCheck, History, Eye, FileText } from 'lucide-react';
 import { useErp } from '../../../context/ErpContext';
 import { getClientes, createCliente, updateCliente, deleteCliente, renomearClienteCascata } from '../../../../services/clientes';
+import { comFinanceiroAtual } from '../../../../services/financeiroSeguro';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../ui/feedback';
 import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
@@ -162,18 +163,18 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
             toast.error('Cliente renomeado, mas não consegui atualizar as medições já criadas. Tente salvar de novo.');
           }
           // NFe/Contas usam `cliente`; Recibo de Locação usa `clienteNome` — cobre os dois.
-          const financeiroAtual = Array.isArray(financeiro) ? financeiro : [];
-          const temNoFinanceiro = financeiroAtual.some(
-            (r: any) => r.cliente === razaoSocialOriginal || r.clienteNome === razaoSocialOriginal
-          );
-          if (temNoFinanceiro) {
-            const financeiroAtualizado = financeiroAtual.map((r: any) => ({
+          await comFinanceiroAtual(async (base) => {
+            const temNoFinanceiro = base.some(
+              (r: any) => r.cliente === razaoSocialOriginal || r.clienteNome === razaoSocialOriginal
+            );
+            if (!temNoFinanceiro) return;
+            const financeiroAtualizado = base.map((r: any) => ({
               ...r,
               ...(r.cliente === razaoSocialOriginal ? { cliente: novaRazaoSocial } : {}),
               ...(r.clienteNome === razaoSocialOriginal ? { clienteNome: novaRazaoSocial } : {}),
             }));
             await saveEntity('financeiro', financeiroAtualizado);
-          }
+          });
           toast.info('Recarregando para atualizar negócios, OS e financeiro com o novo nome...');
           setTimeout(() => window.location.reload(), 1500);
         }

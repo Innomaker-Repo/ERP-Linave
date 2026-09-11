@@ -12,6 +12,7 @@ import { MoneyInput } from '../finUi';
 import { isEmpresaLinave } from '../../../../utils/company';
 import { handleDownloadCustoHhPDF } from '../custoHhPdf';
 import { useErp } from '../../../../context/ErpContext';
+import { comFinanceiroAtual } from '../../../../../services/financeiroSeguro';
 
 const round2 = (n: number) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 const proximoDia = (iso: string) => {
@@ -158,12 +159,13 @@ export function AlocarHhView({ osNumero, selected, outrosCustos = [] }: { osNume
         createdAt: registro?.createdAt || new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
-      const resto = (Array.isArray(financeiro) ? financeiro : []).filter((r: any) => !(r?.tipo === 'hhAlocacao' && String(r?.os) === String(osNumero)));
-      await saveEntity('financeiro', [rec, ...resto]);
+      const resultado = await comFinanceiroAtual(async (base) => {
+        const resto = base.filter((r: any) => !(r?.tipo === 'hhAlocacao' && String(r?.os) === String(osNumero)));
+        await saveEntity('financeiro', [rec, ...resto]);
+        return true;
+      });
+      if (!resultado) return; // comFinanceiroAtual já avisou o usuário do erro
       toast.success(`Alocação de H.H salva (${money(totalHH)}).`);
-    } catch (e) {
-      console.error('Erro ao salvar alocação de H.H:', e);
-      toast.error('Erro ao salvar a alocação de H.H.');
     } finally {
       setSalvando(false);
     }

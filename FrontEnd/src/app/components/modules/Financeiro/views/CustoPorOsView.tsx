@@ -3,7 +3,8 @@ import { Trash2, ClipboardList, CalendarClock, Lock, Plus, Save, Download } from
 import { FinCard, Toolbar, Kpi, DataTable, Th, Td, EmptyRow, boldOS, Input, MoneyInput, Select, Btn } from '../finUi';
 import { money, br, num, download } from '../finData';
 import { useErp } from '../../../../context/ErpContext';
-import { findObraDaOs, formatOsLabel, getEmbarcacaoDaOs, getOsNumero } from '../../../../../services/ordensServico';
+import { comFinanceiroAtual } from '../../../../../services/financeiroSeguro';
+import { findObraDaOs, formatNumeroOsDisplay, formatOsLabel, getEmbarcacaoDaOs, getOsNumero } from '../../../../../services/ordensServico';
 import { AlocarHhView } from './AlocarHhView';
 import { toast } from 'sonner';
 
@@ -361,13 +362,14 @@ export function CustoPorOsView() {
         createdAt: sheetRecord?.createdAt || new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
-      const resto = (Array.isArray(financeiro) ? financeiro : []).filter((r: any) => !(r?.tipo === 'custoOsSheet' && String(r?.os) === osNumero));
-      await saveEntity('financeiro', [rec, ...resto]);
+      const resultado = await comFinanceiroAtual(async (base) => {
+        const resto = base.filter((r: any) => !(r?.tipo === 'custoOsSheet' && String(r?.os) === osNumero));
+        await saveEntity('financeiro', [rec, ...resto]);
+        return true;
+      });
+      if (!resultado) return; // comFinanceiroAtual já avisou o usuário do erro
       setSujo(false);
       toast.success('Planilha de custo da OS salva.');
-    } catch (e) {
-      console.error('Erro ao salvar custo por OS:', e);
-      toast.error('Erro ao salvar a planilha de custo.');
     } finally {
       setSalvando(false);
     }
@@ -382,7 +384,7 @@ export function CustoPorOsView() {
     const categorias = [...ORDEM_CATEGORIAS, ...Array.from(new Set(ativas.map((l) => l.categoria))).filter((c) => !ORDEM_CATEGORIAS.includes(c))];
 
     const out: string[][] = [];
-    out.push(['Custo por OS', selected?.numero || '']);
+    out.push(['Custo por OS', formatNumeroOsDisplay(selected?.numero) || '']);
     out.push(['Embarcação', selected?.embarcacao || '']);
     out.push(['Cliente', selected?.cliente || '']);
     out.push(['Gerado em', new Date().toLocaleString('pt-BR')]);
@@ -475,13 +477,16 @@ export function CustoPorOsView() {
   }, [ultimoOrcamento]);
 
   // Real por categoria = planilha (medição com as modificações + manuais) + o timesheet, que
-  // entra inteiro na categoria "Mão de obra".
+  // entra inteiro na categoria "Mão de obra". Usa `linhasVisiveis` (já filtrado pelo período
+  // "de/até" acima) — não `linhas` bruto — senão esta tabela ficava com um total diferente do
+  // KPI "Custo total (período)" e do "Real" mostrados na mesma tela sempre que o filtro de
+  // período estivesse ativo (os dois deviam bater e não batiam).
   const realPorCategoria = useMemo<Record<string, number>>(() => {
     const map: Record<string, number> = {};
-    linhas.filter((l) => !l.removido).forEach((l) => { map[l.categoria] = round2((map[l.categoria] || 0) + num(l.valor)); });
+    linhasVisiveis.forEach((l) => { map[l.categoria] = round2((map[l.categoria] || 0) + num(l.valor)); });
     if (totalHH > 0) map['Mão de obra'] = round2((map['Mão de obra'] || 0) + totalHH);
     return map;
-  }, [linhas, totalHH]);
+  }, [linhasVisiveis, totalHH]);
 
   const comparativo = useMemo(() => {
     const extras = Object.keys(realPorCategoria).filter((c) => !ORDEM_CATEGORIAS.includes(c));
@@ -548,7 +553,7 @@ export function CustoPorOsView() {
 
           {/* Cabeçalho da OS */}
           <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-4">
-            <Kpi label={boldOS('OS')} value={selected.numero} />
+            <Kpi label={boldOS('OS')} value={formatNumeroOsDisplay(selected.numero)} />
             <Kpi label="Embarcação" value={selected.embarcacao} />
             <Kpi label="Custo total (período)" value={money(totalCusto)} />
             <Kpi label="Status" value={fechada ? 'Fechada' : 'Aberta'} />

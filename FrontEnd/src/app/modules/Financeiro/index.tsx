@@ -6,13 +6,12 @@ import { SolicitacaoView } from '../../components/modules/Financeiro/views/Solic
 import { MeusPagamentosView } from '../../components/modules/Financeiro/views/MeusPagamentosView';
 import { AprovacoesView } from '../../components/modules/Financeiro/views/AprovacoesView';
 import { ContasPagarView } from '../../components/modules/Financeiro/views/ContasPagarView';
-import { NfeView } from '../../components/modules/Financeiro/views/NfeView';
+import { NfeReciboView } from '../../components/modules/Financeiro/views/NfeReciboView';
 import { ContasReceberView } from '../../components/modules/Financeiro/views/ContasReceberView';
 import { PrevisaoView } from '../../components/modules/Financeiro/views/PrevisaoView';
 import { BancosView } from '../../components/modules/Financeiro/views/BancosView';
 import { HistoricoView } from '../../components/modules/Financeiro/views/HistoricoView';
 import { CustoPorOsView } from '../../components/modules/Financeiro/views/CustoPorOsView';
-import { ReciboLocacaoView } from '../../components/modules/Financeiro/views/ReciboLocacaoView';
 
 interface FinanceiroModuleProps {
   activeItem: string;
@@ -29,14 +28,18 @@ const VIEWS: Record<string, React.ComponentType> = {
   meusPagamentos: MeusPagamentosView,
   aprovacoes: AprovacoesView,
   pagar: ContasPagarView,
-  nfe: NfeView,
+  nfe: NfeReciboView,
   receber: ContasReceberView,
   previsao: PrevisaoView,
   bancos: BancosView,
   historico: HistoricoView,
   custoOs: CustoPorOsView,
-  reciboLocacao: ReciboLocacaoView,
 };
+
+// "Solicitação de Pagamento" é um formulário de criação, não uma lista — os filtros
+// globais (Empresa/Banco/Período) não têm nada para filtrar ali e só ocupavam espaço
+// no topo da tela.
+const VIEWS_SEM_FILTROS = new Set(['solicitacao']);
 
 export function FinanceiroModule({ activeItem, onNavigate }: FinanceiroModuleProps) {
   const Active = VIEWS[activeItem] || DashboardView;
@@ -44,7 +47,7 @@ export function FinanceiroModule({ activeItem, onNavigate }: FinanceiroModulePro
     <FinNavProvider onNavigate={onNavigate}>
       <FinFiltersProvider view={activeItem}>
         <div className="space-y-5">
-          <FinFiltersBar view={activeItem} />
+          {!VIEWS_SEM_FILTROS.has(activeItem) && <FinFiltersBar view={activeItem} />}
           <Active />
         </div>
       </FinFiltersProvider>

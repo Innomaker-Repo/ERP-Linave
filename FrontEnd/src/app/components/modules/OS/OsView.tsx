@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useErp, getPrefixoEmpresa, gerarIdProjetoDeNegocio } from '../../../context/ErpContext';
+import { formatNumeroOsDisplay } from '../../../../services/ordensServico';
 import { Plus, X, Check, Clock, Zap, Download, Eye, FileText, Pencil } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -306,6 +307,12 @@ interface OsFormData {
 
 interface OSViewProps {
   searchQuery: string;
+  // Id do negócio (obraId) que esta tela deve abrir sozinha assim que ele aparecer em
+  // `obrasEmAndamento` — vem do fluxo "Deseja ir direto para OS?" do Novo Negócio
+  // (App.tsx repassa via ComercialModule). `onAutoAbrirConsumido` avisa o chamador pra
+  // limpar o pendente, senão a OS reabriria sozinha a cada vez que esta tela remontasse.
+  autoAbrirObraId?: string | null;
+  onAutoAbrirConsumido?: () => void;
 }
 
 const A_SER_INCLUIDO_DEFAULT: OsFormData['aSerIncluido'] = {
@@ -474,8 +481,8 @@ const criarInitialOsData = (): OsFormData => ({
   }
 });
 
-export function OsView({ searchQuery }: OSViewProps) {
-  const { obras, clientes, os, saveEntity } = useErp();
+export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: OSViewProps) {
+  const { obras, clientes, os, saveEntity, userSession } = useErp() as any;
   const [showFormNovaOS, setShowFormNovaOS] = useState(false);
   const [showDetalhesOS, setShowDetalhesOS] = useState(false);
   const [selectedOS, setSelectedOS] = useState<OsFormData | null>(null);
@@ -776,6 +783,22 @@ export function OsView({ searchQuery }: OSViewProps) {
     }));
   };
 
+  // Abre sozinha a criação de OS pro negócio recém-importado via "Deseja ir direto para
+  // OS?" (Novo Negócio), assim que ele aparecer em `obrasEmAndamento` — mesmo par de
+  // chamadas que o botão "Criar OS" por linha já faz (handleObraChange + abrir modal).
+  useEffect(() => {
+    if (!autoAbrirObraId) return;
+    const obraAlvo = obrasEmAndamento.find((item: any) => item.id === autoAbrirObraId);
+    if (!obraAlvo) return;
+    setEditandoOsBackendId(null);
+    setDiasPrevistos(0);
+    setFormData(criarInitialOsData());
+    handleObraChange(obraAlvo.id);
+    setShowFormNovaOS(true);
+    onAutoAbrirConsumido?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoAbrirObraId, obrasEmAndamento.length]);
+
   // Abre o formulário "fazer OS" já preenchido com uma OS existente, em modo edição.
   const handleEditarOS = (osItem: any) => {
     setEditandoOsBackendId(osItem?.backendId ?? null);
@@ -924,7 +947,14 @@ export function OsView({ searchQuery }: OSViewProps) {
         if (editando) {
           await atualizarOrdemServico(editandoOsBackendId as number, payload);
         } else {
-          await criarOrdemServico(payload);
+          // Identidade de quem criou a OS — só gravada na criação (nunca no PATCH de
+          // edição), pro sino de notificações saber quem avisar quando o status mudar.
+          await criarOrdemServico({
+            ...payload,
+            criado_por_nome: userSession?.nome || '',
+            criado_por_cpf: userSession?.cpf || '',
+            criado_por_email: userSession?.email || '',
+          });
         }
       } catch (err: any) {
         const detail = err?.response?.data ? JSON.stringify(err.response.data) : String(err);
@@ -1175,7 +1205,7 @@ export function OsView({ searchQuery }: OSViewProps) {
       y += rowH;
 
       printDado('PROJETO:', projetoTexto, margin + 2, y + 3.5);
-      printDado('OS Nº:', osPrincipal.ordemServicoNumero || '', margin + 102, y + 3.5);
+      printDado('OS Nº:', formatNumeroOsDisplay(osPrincipal.ordemServicoNumero) || '', margin + 102, y + 3.5);
       y += rowH;
 
       printDado('LOCAL:', localOS, margin + 2, y + 3.5);
@@ -1535,7 +1565,7 @@ export function OsView({ searchQuery }: OSViewProps) {
                 <h2 className="text-2xl font-black text-white uppercase">Ordem de Serviço Consolidada</h2>
                 <div className="mt-3 flex flex-wrap items-center gap-3">
                   <span className="inline-flex items-center rounded-full border border-cyan-400/30 bg-cyan-500/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.2em] text-cyan-300">
-                    ID da OS: {formData.ordemServicoNumero || 'Selecione uma obra'}
+                    ID da OS: {formatNumeroOsDisplay(formData.ordemServicoNumero) || 'Selecione uma obra'}
                   </span>
                 </div>
               </div>
@@ -1985,7 +2015,7 @@ export function OsView({ searchQuery }: OSViewProps) {
             <div className="sticky top-0 z-40 bg-gradient-to-r from-orange-500/40 to-amber-500/40 backdrop-blur-md p-8 border-b border-white/10 flex justify-between items-center">
               <div>
                 <h2 className="text-3xl font-black text-white">{boldOS('Detalhes da OS Consolidada')}</h2>
-                <p className="text-white/60 text-base mt-2">{selectedOS.ordemServicoNumero}</p>
+                <p className="text-white/60 text-base mt-2">{formatNumeroOsDisplay(selectedOS.ordemServicoNumero)}</p>
               </div>
               <button onClick={() => setShowDetalhesOS(false)} className="p-2 bg-white/5 rounded-full hover:bg-white/10">
                 <X size={24} className="text-white/60" />

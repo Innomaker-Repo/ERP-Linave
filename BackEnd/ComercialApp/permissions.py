@@ -31,7 +31,7 @@ PRODUCAO = ('obras',)
 FINANCEIRO = ('finDashboard', 'finSolicitacao', 'finAprovacoes', 'finPagar',
               'finNfe', 'finReceber', 'finPrevisao', 'finBancos', 'finHistorico',
               'finCustoOs', 'finReciboLocacao')
-COMPRAS_GESTAO = ('kanbanCompras', 'aprovacoesCompras', 'historicoCompras', 'fornecedores')
+COMPRAS_GESTAO = ('kanbanCompras', 'aprovarComercial', 'aprovarFinanceiro', 'historicoCompras', 'fornecedores')
 SUPRIMENTOS = ('estoquePublico', 'estoque', 'itensAdicionar', 'historicoBaixa',
                'historicoRomaneio', 'alocadosPorOS')
 

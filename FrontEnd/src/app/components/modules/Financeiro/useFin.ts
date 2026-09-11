@@ -7,9 +7,8 @@
  *   - departamentos via saveListas.
  * =======================================================================================*/
 import { useMemo } from 'react';
-import { toast } from 'sonner';
 import { useErp } from '../../../context/ErpContext';
-import api from '../../../../services/api';
+import { comFinanceiroAtual } from '../../../../services/financeiroSeguro';
 import {
   mapOsToFinanceiro, obraFinalizada, docsMediacao, negocioValor, empresaFromCC, todayStr, days, num,
   upsertContaReceberPorMedicao, garantirOcorrenciasContasFixas, proximaOcorrenciaAposPagamento, CP_STATUS,
@@ -144,37 +143,11 @@ export function useFin() {
 
   // ----- Escrita (infra pronta) -----
   // Toda escrita aqui é replace-all: o array final substitui a tabela inteira no servidor.
-  // `financeiro` (acima) é só o que foi carregado no LOGIN — se o usuário está logado há
-  // horas, pode estar bem atrás do que outros usuários já gravaram nesse meio-tempo. Usar
-  // essa cópia como base apagaria silenciosamente as mudanças deles. Por isso toda função
-  // de escrita busca o estado mais recente do servidor primeiro, e só then monta o array
-  // final em cima dele — reduz a janela de corrida de "desde o login" pra "essa ação".
-  //
-  // Importante: NÃO usa getFinanceiro() (services/financeiroService.ts) — aquela função é
-  // pra leitura de tela e, de propósito, transforma qualquer falha em `[]` (aceitável quando
-  // é só exibição). Aqui uma falha vale muito mais: se o array vier vazio por causa de um erro
-  // de rede, e não porque o Financeiro está genuinamente vazio, a escrita seguinte manda só o
-  // registro novo pro replace-all — apagando o histórico inteiro (foi exatamente isso que
-  // aconteceu). Por isso a busca é feita direto aqui, sem capturar o erro: se falhar, propaga.
-  const financeiroAtual = async (): Promise<FinRecord[]> => {
-    const response = await api.get('financeiro/');
-    return Array.isArray(response.data) ? response.data : [];
-  };
-
-  // Envolve uma escrita que depende do estado atual do Financeiro. Se `financeiroAtual()`
-  // falhar, ABORTA sem chamar saveEntity — nada é salvo nem apagado — e avisa o usuário, em
-  // vez de deixar a escrita seguir com uma base incompleta (a causa raiz do apagão anterior).
-  const comFinanceiroAtual = async <T,>(fn: (base: FinRecord[]) => Promise<T>): Promise<T | undefined> => {
-    let base: FinRecord[];
-    try {
-      base = await financeiroAtual();
-    } catch (error) {
-      console.error('Erro ao buscar o estado atual do Financeiro:', error);
-      toast.error('Não foi possível confirmar os dados atuais do Financeiro. Tente novamente.');
-      return undefined;
-    }
-    return fn(base);
-  };
+  // `comFinanceiroAtual` (services/financeiroSeguro.ts, compartilhada com outras telas que
+  // também escrevem em `financeiro` fora deste hook) busca o estado mais recente do servidor
+  // primeiro — nunca usa o `financeiro` do contexto (carregado no login) como base — e aborta
+  // com aviso ao usuário se a busca ou a gravação falharem, em vez de seguir com dado
+  // incompleto (a causa raiz de um apagão real de dados que já aconteceu).
 
   // Acrescenta um registro à coleção `financeiro`.
   const addRecord = async (record: FinRecord) => {

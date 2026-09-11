@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { formatDateBR } from '../../../utils/formatDate';
 import { boldOS } from '../../../utils/osHighlight';
+import { formatNumeroOsDisplay } from '../../../../services/ordensServico';
 import { gerarIdOrcamento, gerarIdProjeto, extrairIdProjetoDoNumero, extrairComponentesDoId, gerarIdProjetoDeNegocio } from '../../../context/ErpContext';
 import { Plus, X, DollarSign, FileText, Trash2, Lock, Eye, Download, RefreshCw } from 'lucide-react';
 import jsPDF from 'jspdf';
@@ -1986,7 +1987,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
               <span className="text-white/40 text-xs font-bold uppercase tracking-widest">{boldOS('Filtrar por OS')}</span>
               <select value={filtroOs} onChange={(e) => setFiltroOs(e.target.value)} className="bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-white text-xs">
                 <option value="">Todas as OS</option>
-                {osDisponiveis.map((n: any) => <option key={n} value={n}>{n}</option>)}
+                {osDisponiveis.map((n: any) => <option key={n} value={n}>{formatNumeroOsDisplay(n)}</option>)}
               </select>
               {filtroOs && <button onClick={() => setFiltroOs('')} className="text-white/40 text-xs underline">limpar</button>}
             </div>

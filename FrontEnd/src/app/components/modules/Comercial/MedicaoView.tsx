@@ -10,7 +10,7 @@ import { atualizarOrdemServico, getNegocioPorId } from '../../../../services/com
 import { mapNegocioToObra } from '../../../../services/obrasMapper';
 import { handleDownloadMedicaoPDF } from '../CRM/handleDownloadMedicaoPDF';
 import { genFinId, todayStr, FORMAS_PAGAMENTO, construirReciboDeMedicao } from '../Financeiro/finData';
-import { getFinanceiro } from '../../../../services/financeiroService';
+import { comFinanceiroAtual } from '../../../../services/financeiroSeguro';
 import { temServico, temLocacao } from '../../../utils/modalidade';
 import { formatDateBR } from '../../../utils/formatDate';
 import { boldOS } from '../../../utils/osHighlight';
@@ -427,6 +427,12 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
     return osDoMed?.descricaoGeralServico || osDoMed?.projeto || '';
   };
 
+  // Uma medição pode ter itens de serviço e/ou de locação — cada parte segue pro documento
+  // certo: serviço → NFe; locação → Recibo de Locação (Nota de Débito, na Linave). Usado tanto
+  // pra decidir o popup automático quanto pra mostrar/esconder os botões manuais no histórico.
+  const medTemServico = (m: any) => (Array.isArray(m?.itens) ? m.itens : []).some((l: any) => (l.categoria || 'servico') !== 'locacao');
+  const medTemLocacao = (m: any) => (Array.isArray(m?.itens) ? m.itens : []).some((l: any) => (l.categoria || 'servico') === 'locacao');
+
   // Medições que já têm uma solicitação de NFe enviada (tipo `nfeReq` vinculado por
   // medicaoId) — usado para bloquear o reenvio duplicado depois que "Solicitar NFe" já
   // foi clicado uma vez, independente do status atual da solicitação (aguardando ou já
@@ -435,6 +441,16 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
     const set = new Set<string>();
     (Array.isArray(financeiro) ? financeiro : []).forEach((r: any) => {
       if (r?.tipo === 'nfeReq' && r?.medicaoId) set.add(String(r.medicaoId));
+    });
+    return set;
+  }, [financeiro]);
+
+  // Mesma ideia, para o Recibo de Locação (tipo `reciboLocacao` vinculado por medicaoId) —
+  // bloqueia o reenvio duplicado do "Solicitar Recibo de Locação".
+  const medicoesComReciboSolicitado = useMemo(() => {
+    const set = new Set<string>();
+    (Array.isArray(financeiro) ? financeiro : []).forEach((r: any) => {
+      if (r?.tipo === 'reciboLocacao' && r?.medicaoId) set.add(String(r.medicaoId));
     });
     return set;
   }, [financeiro]);
@@ -465,14 +481,33 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
     });
   };
 
-  // Ao aprovar uma medição com itens de LOCAÇÃO, cria automaticamente uma solicitação de
-  // recibo de locação (aparece na aba "Fazer Recibo de Locação" do Financeiro, pré-preenchida).
-  const criarSolicitacaoRecibo = async (med: any) => {
-    const fin = Array.isArray(financeiro) ? financeiro : [];
-    // Numeração por OS + herança do cabeçalho do recibo anterior ficam no helper compartilhado.
-    const rec = construirReciboDeMedicao(fin, med);
-    if (!rec) return; // medição sem itens de locação
-    await saveEntity('financeiro', [rec, ...fin]);
+  // Cria a solicitação de recibo de locação a partir da medição (aparece na aba "NFe / Recibo
+  // de Locação" → Recibo de Locação, pré-preenchida). É uma ação EXPLÍCITA — "Solicitar Recibo
+  // de Locação" no histórico —, simétrica ao "Solicitar NFe": não roda mais sozinha na
+  // aprovação. Rechecagem contra o servidor logo antes de gravar, mesmo padrão do
+  // `handleSolicitarNfe`, pra não duplicar se o botão for clicado duas vezes/por duas abas.
+  const criarSolicitacaoRecibo = async (med: any): Promise<'criada' | 'duplicada' | 'sem-locacao' | undefined> => {
+    return comFinanceiroAtual(async (fin) => {
+      const jaExiste = fin.some((r: any) => r?.tipo === 'reciboLocacao' && String(r?.medicaoId || '') === String(med.id));
+      if (jaExiste) return 'duplicada';
+      // Numeração por OS + herança do cabeçalho do recibo anterior ficam no helper compartilhado.
+      const rec = construirReciboDeMedicao(fin, med);
+      if (!rec) return 'sem-locacao';
+      await saveEntity('financeiro', [rec, ...fin]);
+      return 'criada';
+    });
+  };
+
+  const handleSolicitarRecibo = async (med: any) => {
+    if (medicoesComReciboSolicitado.has(String(med.id))) {
+      toast.error('Recibo de locação já solicitado para esta medição.');
+      return;
+    }
+    const resultado = await criarSolicitacaoRecibo(med);
+    if (resultado === 'duplicada') { toast.error('Recibo de locação já solicitado para esta medição.'); return; }
+    if (resultado === 'sem-locacao') { toast.error('Esta medição não tem itens de locação.'); return; }
+    if (!resultado) return; // comFinanceiroAtual já avisou o usuário do erro
+    toast.success('Recibo de locação solicitado — disponível em Financeiro → NFe / Recibo de Locação.');
   };
 
   const handleStatus = async (medicao: any, status: 'aprovada' | 'recusada') => {
@@ -483,12 +518,10 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
       toast.success(status === 'aprovada' ? 'Medição aprovada.' : 'Medição recusada.');
       if (status === 'aprovada') {
         const med = { ...medicao, ...(atualizada || {}) };
-        // Gera cada documento só quando há a parte correspondente na medição:
-        //  - NFe  → parte de SERVIÇO (itens com categoria !== 'locacao');
-        //  - Recibo → parte de LOCAÇÃO (criarSolicitacaoRecibo já retorna cedo se não houver).
-        const temItemServico = (Array.isArray(med.itens) ? med.itens : []).some((l: any) => (l.categoria || 'servico') !== 'locacao');
-        if (temItemServico) abrirSolicitacaoNfe(med);
-        await criarSolicitacaoRecibo(med);
+        // A aprovação só abre o popup de NFe (quando há parte de serviço) — Recibo de Locação
+        // (quando há parte de locação) agora é uma ação manual, ver "Solicitar Recibo de
+        // Locação" no histórico, simétrica ao "Solicitar NFe".
+        if (medTemServico(med)) abrirSolicitacaoNfe(med);
       }
     } catch (error) {
       console.error('Erro ao atualizar status da medição:', error);
@@ -545,50 +578,53 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
     if (!nfePopup || !nfeForm) return;
     setSolicitandoNfe(true);
     try {
-      // Rechecagem contra o servidor (não o `financeiro` do login, que pode estar
-      // desatualizado) logo antes de gravar — evita duplicar a solicitação se o popup
-      // ficou aberto enquanto outra aba/usuário já solicitou a NFe desta medição.
-      const financeiroFresco = await getFinanceiro().catch(() => (Array.isArray(financeiro) ? financeiro : []));
-      const jaSolicitada = (Array.isArray(financeiroFresco) ? financeiroFresco : []).some(
-        (r: any) => r?.tipo === 'nfeReq' && String(r?.medicaoId || '') === String(nfePopup.id),
-      );
-      if (jaSolicitada) {
+      const resultado = await comFinanceiroAtual(async (fin) => {
+        // Rechecagem contra o servidor logo antes de gravar — evita duplicar a solicitação
+        // se o popup ficou aberto enquanto outra aba/usuário já solicitou a NFe desta medição.
+        const jaSolicitada = fin.some(
+          (r: any) => r?.tipo === 'nfeReq' && String(r?.medicaoId || '') === String(nfePopup.id),
+        );
+        if (jaSolicitada) return 'duplicada' as const;
+
+        const nfeReq = {
+          id: genFinId('SNF'),
+          tipo: 'nfeReq',
+          status: 'Aguardando emissão',
+          empresa: nfeForm.empresa,
+          os: nfeForm.os,
+          cliente: nfePopup.cliente,
+          valor: parseDecimal(nfeForm.valor || 0),
+          forma: nfeForm.forma,
+          dataEmitir: nfeForm.dataEmitir,
+          tipoNfe: nfeForm.tipoNfe,
+          // Guarda a URL (/media/...), não o nome: as telas do Financeiro só transformam o
+          // anexo em link quando o valor casa com /^(https?:|\/media\/)/. Com o nome puro o
+          // documento aparecia como texto morto, sem como baixar.
+          anexos: [...(nfeForm.docsCliente || []), ...(nfeForm.docsNf || [])].map((d: any) => d?.url || d?.nome).filter(Boolean),
+          documentosCliente: nfeForm.docsCliente || [],   // Item 5
+          notasFiscaisEmitidas: nfeForm.docsNf || [],      // Item 7
+          contrato: nfeForm.os,
+          descricao: nfeForm.descricao,
+          observacao: nfeForm.observacao,
+          medicaoId: nfePopup.id,
+          medicaoNumero: nfePopup.numeroMedicao,
+          createdAt: new Date().toISOString(),
+        };
+        await saveEntity('financeiro', [nfeReq, ...fin]);
+        return 'criada' as const;
+      });
+
+      if (resultado === 'duplicada') {
         toast.error('NFe já solicitada para esta medição.');
         setNfePopup(null);
         setNfeForm(null);
         return;
       }
-      const nfeReq = {
-        id: genFinId('SNF'),
-        tipo: 'nfeReq',
-        status: 'Aguardando emissão',
-        empresa: nfeForm.empresa,
-        os: nfeForm.os,
-        cliente: nfePopup.cliente,
-        valor: parseDecimal(nfeForm.valor || 0),
-        forma: nfeForm.forma,
-        dataEmitir: nfeForm.dataEmitir,
-        tipoNfe: nfeForm.tipoNfe,
-        // Guarda a URL (/media/...), não o nome: as telas do Financeiro só transformam o
-        // anexo em link quando o valor casa com /^(https?:|\/media\/)/. Com o nome puro o
-        // documento aparecia como texto morto, sem como baixar.
-        anexos: [...(nfeForm.docsCliente || []), ...(nfeForm.docsNf || [])].map((d: any) => d?.url || d?.nome).filter(Boolean),
-        documentosCliente: nfeForm.docsCliente || [],   // Item 5
-        notasFiscaisEmitidas: nfeForm.docsNf || [],      // Item 7
-        contrato: nfeForm.os,
-        descricao: nfeForm.descricao,
-        observacao: nfeForm.observacao,
-        medicaoId: nfePopup.id,
-        medicaoNumero: nfePopup.numeroMedicao,
-        createdAt: new Date().toISOString(),
-      };
-      await saveEntity('financeiro', [nfeReq, ...(Array.isArray(financeiroFresco) ? financeiroFresco : [])]);
+      if (!resultado) return; // comFinanceiroAtual já avisou o usuário do erro
+
       toast.success('Solicitação de NFe enviada ao Financeiro (aba NFe).');
       setNfePopup(null);
       setNfeForm(null);
-    } catch (error) {
-      console.error('Erro ao solicitar NFe:', error);
-      toast.error('Erro ao enviar a solicitação de NFe.');
     } finally {
       setSolicitandoNfe(false);
     }
@@ -820,10 +856,23 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
                   )}
                   {m.status === 'aprovada' && (
                     <>
-                      {medicoesComNfeSolicitada.has(String(m.id)) ? (
-                        <span className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-white/40 text-xs font-bold flex items-center gap-1"><Send size={13} /> NFe já solicitada</span>
-                      ) : (
-                        <button onClick={() => abrirSolicitacaoNfe(m)} className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-xs font-bold flex items-center gap-1"><Send size={13} /> Solicitar NFe</button>
+                      {/* Serviço → NFe; Locação → Recibo de Locação. Só aparece o botão da parte
+                          que a medição realmente tem (uma medição pode ter as duas partes, e aí
+                          mostra os dois — cada um gera sua própria conta a receber ao ser
+                          emitido/gerado, do jeito que já funciona em cada tela). */}
+                      {medTemServico(m) && (
+                        medicoesComNfeSolicitada.has(String(m.id)) ? (
+                          <span className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-white/40 text-xs font-bold flex items-center gap-1"><Send size={13} /> NFe já solicitada</span>
+                        ) : (
+                          <button onClick={() => abrirSolicitacaoNfe(m)} className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-xs font-bold flex items-center gap-1"><Send size={13} /> Solicitar NFe</button>
+                        )
+                      )}
+                      {medTemLocacao(m) && (
+                        medicoesComReciboSolicitado.has(String(m.id)) ? (
+                          <span className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-white/40 text-xs font-bold flex items-center gap-1"><Send size={13} /> Recibo já solicitado</span>
+                        ) : (
+                          <button onClick={() => handleSolicitarRecibo(m)} className="px-3 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-200 text-xs font-bold flex items-center gap-1"><Send size={13} /> Solicitar Recibo de Locação</button>
+                        )
                       )}
                       <span className="px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-bold flex items-center gap-1"><CheckCircle2 size={13} /> Libera finalização</span>
                     </>

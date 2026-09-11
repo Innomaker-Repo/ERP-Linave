@@ -44,13 +44,13 @@ function getAbaForSection(section: string): { aba: string; item: string } {
     'finBancos': { aba: 'financeiro', item: 'bancos' },
     'finHistorico': { aba: 'financeiro', item: 'historico' },
     'finCustoOs': { aba: 'financeiro', item: 'custoOs' },
-    'finReciboLocacao': { aba: 'financeiro', item: 'reciboLocacao' },
-    
+
     // Compras
     'compras': { aba: 'compras', item: 'compras' },
     'minhasCompras': { aba: 'compras', item: 'minhasCompras' },
     'kanbanCompras': { aba: 'compras', item: 'kanbanCompras' },
-    'aprovacoesCompras': { aba: 'compras', item: 'aprovacoesCompras' },
+    'aprovarComercial': { aba: 'compras', item: 'aprovarComercial' },
+    'aprovarFinanceiro': { aba: 'compras', item: 'aprovarFinanceiro' },
     'historicoCompras': { aba: 'compras', item: 'historicoCompras' },
     'fornecedores': { aba: 'compras', item: 'fornecedores' },
     
@@ -78,10 +78,24 @@ export default function App() {
   const [activeSection, setActiveSection] = useState('home');
   const [searchQuery, setSearchQuery] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Id de negócio (obraId) que a tela de OS deve abrir sozinha assim que montar — usado
+  // pelo fluxo de "Deseja ir direto para OS?" do Novo Negócio, que já cria o
+  // negócio/orçamento/proposta e só precisa apontar a OS pro registro certo.
+  const [pendingOsObraId, setPendingOsObraId] = useState<string | null>(null);
 
-  //  Escuta o evento customizado para mudar a tela a partir de qualquer componente
+  //  Escuta o evento customizado para mudar a tela a partir de qualquer componente.
+  // `detail` aceita tanto o formato antigo (string com o nome da seção) quanto
+  // `{ section, obraId }`, quando a navegação precisa carregar um alvo junto.
   useEffect(() => {
-    const handleNavegacao = (e: any) => setActiveSection(e.detail);
+    const handleNavegacao = (e: any) => {
+      const detalhe = e.detail;
+      if (detalhe && typeof detalhe === 'object') {
+        setActiveSection(detalhe.section);
+        setPendingOsObraId(detalhe.obraId || null);
+      } else {
+        setActiveSection(detalhe);
+      }
+    };
     window.addEventListener('mudarTelaERP', handleNavegacao);
     return () => window.removeEventListener('mudarTelaERP', handleNavegacao);
   }, []);
@@ -147,7 +161,14 @@ export default function App() {
               case 'producao':
                 return <ProducaoModule activeItem={item} searchQuery={searchQuery} />;
               case 'comercial':
-                return <ComercialModule activeItem={item} searchQuery={searchQuery} />;
+                return (
+                  <ComercialModule
+                    activeItem={item}
+                    searchQuery={searchQuery}
+                    autoAbrirOsObraId={item === 'fazerOs' ? pendingOsObraId : null}
+                    onAutoAbrirOsConsumido={() => setPendingOsObraId(null)}
+                  />
+                );
               case 'financeiro':
                 return <FinanceiroModule activeItem={item} searchQuery={searchQuery} onNavigate={setActiveSection} />;
               case 'compras':

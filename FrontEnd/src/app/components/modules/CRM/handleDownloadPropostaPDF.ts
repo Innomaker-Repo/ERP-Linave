@@ -93,11 +93,13 @@ export const handleDownloadPropostaPDF = (
     const pageHeight = doc.internal.pageSize.getHeight();
     const margin = 20;
     const usableWidth = pageWidth - margin * 2;
-    // Faixa reservada ao rodapé da Linave (endereço) — nenhum conteúdo/tabela é desenhado nela.
-    const footerReserve = isLinave ? 32 : margin;
+    // Faixa reservada ao rodapé — nenhum conteúdo/tabela é desenhado nela. A Linave reserva
+    // mais espaço (endereço + marca d'água); a Servinave só precisa do respiro pro logo do
+    // rodapé (ver drawBottomLogo).
+    const footerReserve = isLinave ? 32 : 26;
     const linaveFooterLines = [
-      'W.L.M Linave Servicos Navais e Offshore',
-      'Rua Visconde de Itaborai, 24 - Centro - Niteroi - RJ',
+      'W.L.M Linave Serviços Navais e Offshore',
+      'Rua Visconde de Itaboraí, 24 - Centro - Niterói - RJ',
       'CEP 24.030-091',
       '+55 (21) 99129-3251 / 3629-1439',
     ];
@@ -166,9 +168,9 @@ export const handleDownloadPropostaPDF = (
         doc.setFont('Arial', 'normal');
         doc.setFontSize(9);
         currentY += 5;
-        doc.text("Rua Miguel de Lemos, 44 Fundos - Ponta D'areia", margin, currentY);
+        doc.text("Rua Miguel de Lemos, 44 Fundos - Ponta D'Areia", margin, currentY);
         currentY += 5;
-        doc.text('Cep: 24040-260 - Niteroi - RJ', margin, currentY);
+        doc.text('CEP: 24040-260 - Niterói - RJ', margin, currentY);
         currentY += 5;
         doc.text('Tel: +55 (21) 2620-1850', margin, currentY);
         currentY += 5;
@@ -223,11 +225,18 @@ export const handleDownloadPropostaPDF = (
     };
 
     const dataAtual = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
-    writeText(`Niteroi, ${dataAtual}`, 11, false, 'right', 0, 1);
+    writeText(`Niterói, ${dataAtual}`, 11, false, 'right', 0, 1);
     writeText(`Proposta ${propostaForm.numeroProposta || '001/26'}`, 11, true, 'right', 0, 15);
 
     writeText('À', 11, false, 'left', 0, 2);
-    writeText(propostaForm.cliente || cliente?.razaoSocial || 'CLIENTE', 11, true, 'left', 0, 10);
+    // Prioriza o objeto de cliente já resolvido (por id) — `propostaForm.cliente` às vezes é
+    // legado/gravado como o id numérico bruto do cliente em vez do nome, o que fazia a proposta
+    // sair com um número solto (ex.: "2") no lugar da razão social.
+    const nomeClienteTextoCru = typeof propostaForm.cliente === 'string' ? propostaForm.cliente.trim() : '';
+    const nomeClienteValido = nomeClienteTextoCru && !/^\d+$/.test(nomeClienteTextoCru) ? nomeClienteTextoCru : '';
+    const nomeCliente = cliente?.razaoSocial || cliente?.razao_social || cliente?.nomeFantasia || cliente?.nome_fantasia
+      || nomeClienteValido || 'CLIENTE';
+    writeText(nomeCliente, 11, true, 'left', 0, 10);
 
     if (propostaForm.contato) writeText(`ATT.: ${propostaForm.contato}`, 11, true, 'left', 0, 2);
     const refTexto = propostaForm.referencia || propostaForm.referencias;
@@ -243,57 +252,49 @@ export const handleDownloadPropostaPDF = (
       y += 10;
     }
 
-    writeText('A - Escopo - Proposta Tecnica', 11, true, 'left', 0, 6);
-
+    // As seções de A a H só existem quando têm conteúdo — quando uma fica de fora, a letra
+    // dela também sai da sequência (nunca "pula" uma letra), tanto aqui quanto no Sumário.
     const itensEscopo = normalizarEscopoBasico(propostaForm.escopoBasicoServicos || propostaForm.escopoA);
-    itensEscopo.forEach((item: any, index: number) => {
-      if (item.titulo) {
-        writeText(`${index + 1}. ${item.titulo}`, 11, true, 'left', 5, 3);
-      }
-
-      item.textosAntes.forEach((texto: string) => {
-        writeText(texto, 11, false, 'justify', 10, 3);
-      });
-
-      if (item.tabela.length > 0) {
-        ensureSpace(20);
-        const head = [item.tabela[0].map((coluna: any) => coluna.chave)];
-        const body = item.tabela.map((linha: any[]) => {
-          const mapaLinha = new Map(linha.map((coluna: any) => [coluna.chave, coluna.valor]));
-          return head[0].map((chave: string) => mapaLinha.get(chave) || '');
-        });
-        autoTable(doc, {
-          startY: y,
-          head,
-          body,
-          theme: 'grid',
-          margin: { left: margin + 10, right: margin, top: headerBottom, bottom: footerReserve },
-          headStyles: { fillColor: [230, 230, 230], textColor: [0, 0, 0], fontStyle: 'bold', fontSize: 9 },
-          styles: { fontSize: 9, cellPadding: 2, textColor: [0, 0, 0] },
-        });
-        y = (doc as any).lastAutoTable.finalY + 5;
-      }
-
-      item.textosDepois.forEach((texto: string) => {
-        writeText(texto, 11, false, 'justify', 10, 3);
-      });
-
-      y += 2;
-    });
-
-    if (propostaForm.responsabilidadeContratada) {
-      writeText('B - Responsabilidade da Contratada:', 11, true, 'left', 0, 4);
-      writeText(propostaForm.responsabilidadeContratada, 11, false, 'left', 5, 8);
-    }
-
-    if (propostaForm.responsabilidadeContratante) {
-      writeText('C - Responsabilidade da Contratante:', 11, true, 'left', 0, 4);
-      writeText(propostaForm.responsabilidadeContratante, 11, false, 'left', 5, 8);
-    }
-
     const itensPreco = Array.isArray(propostaForm.precoItens) ? propostaForm.precoItens : [];
-    if (propostaForm.preco || itensPreco.length > 0) {
-      writeText('D - Preco:', 11, true, 'left', 0, 4);
+
+    const renderizarEscopo = () => {
+      itensEscopo.forEach((item: any, index: number) => {
+        if (item.titulo) {
+          writeText(`${index + 1}. ${item.titulo}`, 11, true, 'left', 5, 3);
+        }
+
+        item.textosAntes.forEach((texto: string) => {
+          writeText(texto, 11, false, 'justify', 10, 3);
+        });
+
+        if (item.tabela.length > 0) {
+          ensureSpace(20);
+          const head = [item.tabela[0].map((coluna: any) => coluna.chave)];
+          const body = item.tabela.map((linha: any[]) => {
+            const mapaLinha = new Map(linha.map((coluna: any) => [coluna.chave, coluna.valor]));
+            return head[0].map((chave: string) => mapaLinha.get(chave) || '');
+          });
+          autoTable(doc, {
+            startY: y,
+            head,
+            body,
+            theme: 'grid',
+            margin: { left: margin + 10, right: margin, top: headerBottom, bottom: footerReserve },
+            headStyles: { fillColor: [230, 230, 230], textColor: [0, 0, 0], fontStyle: 'bold', fontSize: 9 },
+            styles: { fontSize: 9, cellPadding: 2, textColor: [0, 0, 0] },
+          });
+          y = (doc as any).lastAutoTable.finalY + 5;
+        }
+
+        item.textosDepois.forEach((texto: string) => {
+          writeText(texto, 11, false, 'justify', 10, 3);
+        });
+
+        y += 2;
+      });
+    };
+
+    const renderizarPreco = () => {
       if (itensPreco.length > 0) {
         // Tabela D dividida em Serviço e Locação (só sai a que tem itens).
         const grupos = [
@@ -358,27 +359,41 @@ export const handleDownloadPropostaPDF = (
       } else {
         y += 4;
       }
+    };
+
+    // Cada seção só some/aparece de acordo com `temConteudo`; a letra é recalculada abaixo
+    // varrendo só as que sobraram, então nunca fica um buraco na sequência A, B, C...
+    const todasAsSecoes = [
+      { titulo: 'Escopo - Proposta Técnica', semDoisPontos: true, temConteudo: itensEscopo.length > 0, renderizar: renderizarEscopo, margemAbaixoTitulo: 6 },
+      { titulo: 'Responsabilidade da Contratada', semDoisPontos: false, temConteudo: Boolean(propostaForm.responsabilidadeContratada), renderizar: () => writeText(propostaForm.responsabilidadeContratada, 11, false, 'left', 5, 8), margemAbaixoTitulo: 4 },
+      { titulo: 'Responsabilidade da Contratante', semDoisPontos: false, temConteudo: Boolean(propostaForm.responsabilidadeContratante), renderizar: () => writeText(propostaForm.responsabilidadeContratante, 11, false, 'left', 5, 8), margemAbaixoTitulo: 4 },
+      { titulo: 'Preço', semDoisPontos: false, temConteudo: Boolean(propostaForm.preco) || itensPreco.length > 0, renderizar: renderizarPreco, margemAbaixoTitulo: 4 },
+      { titulo: 'Condições Gerais', semDoisPontos: false, temConteudo: Boolean(propostaForm.condicoesGerais), renderizar: () => writeText(propostaForm.condicoesGerais, 11, false, 'left', 5, 8), margemAbaixoTitulo: 4 },
+      { titulo: 'Prazo', semDoisPontos: false, temConteudo: Boolean(propostaForm.prazo), renderizar: () => writeText(propostaForm.prazo, 11, false, 'left', 5, 8), margemAbaixoTitulo: 4 },
+      { titulo: 'Efetivo Previsto', semDoisPontos: false, temConteudo: Boolean(propostaForm.efetivoPrevisto), renderizar: () => writeText(propostaForm.efetivoPrevisto, 11, false, 'left', 5, 8), margemAbaixoTitulo: 4 },
+      { titulo: 'Condições de Pagamento', semDoisPontos: false, temConteudo: Boolean(propostaForm.condicoesPagamento), renderizar: () => writeText(propostaForm.condicoesPagamento, 11, false, 'left', 5, 12), margemAbaixoTitulo: 4 },
+    ];
+
+    const secoesComConteudo = todasAsSecoes
+      .filter((secao) => secao.temConteudo)
+      .map((secao, index) => ({ ...secao, letra: String.fromCharCode(65 + index) }));
+
+    // Sumário: lista só as seções que realmente vão sair no corpo, com a letra já
+    // recalculada — por isso nunca aparece um "buraco" tipo "F ... H" sem o G. Só o rótulo
+    // (letra + título), sem o conteúdo da seção.
+    if (secoesComConteudo.length > 0) {
+      writeText('Sumário', 13, true, 'left', 0, 6);
+      secoesComConteudo.forEach((secao) => {
+        writeText(`${secao.letra} - ${secao.titulo}${secao.semDoisPontos ? '' : ':'}`, 11, false, 'left', 5, 2);
+      });
+      doc.addPage();
+      y = drawHeader();
     }
 
-    if (propostaForm.condicoesGerais) {
-      writeText('E - Condicoes Gerais:', 11, true, 'left', 0, 4);
-      writeText(propostaForm.condicoesGerais, 11, false, 'left', 5, 8);
-    }
-
-    if (propostaForm.prazo) {
-      writeText('F - Prazo:', 11, true, 'left', 0, 4);
-      writeText(propostaForm.prazo, 11, false, 'left', 5, 8);
-    }
-
-    if (propostaForm.efetivoPrevisto) {
-      writeText('G - Efetivo previsto:', 11, true, 'left', 0, 4);
-      writeText(propostaForm.efetivoPrevisto, 11, false, 'left', 5, 8);
-    }
-
-    if (propostaForm.condicoesPagamento) {
-      writeText('H - Condicoes de Pagamento:', 11, true, 'left', 0, 4);
-      writeText(propostaForm.condicoesPagamento, 11, false, 'left', 5, 12);
-    }
+    secoesComConteudo.forEach((secao) => {
+      writeText(`${secao.letra} - ${secao.titulo}${secao.semDoisPontos ? '' : ':'}`, 11, true, 'left', 0, secao.margemAbaixoTitulo);
+      secao.renderizar();
+    });
 
     writeText(propostaForm.encerramento || 'Atenciosamente,', 11, false, 'left', 0, 6);
     const assinaturaPadrao = propostaForm.assinaturaNome || propostaForm.empresaNome || (isLinave ? 'Linave' : 'Servinave Reparos Navais');

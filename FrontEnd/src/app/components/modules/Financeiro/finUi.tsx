@@ -348,12 +348,15 @@ export function FinFilters() {
 
 // ---------- Modal ----------
 export function FinModal({
-  title, hint, onClose, wide, children,
-}: { title: string; hint?: string; onClose: () => void; wide?: boolean; children: React.ReactNode }) {
+  title, hint, onClose, wide, full, children,
+}: { title: string; hint?: string; onClose: () => void; wide?: boolean; full?: boolean; children: React.ReactNode }) {
+  // `full` = quase a largura inteira da tela (96vw) — para modais com tabela larga (ex.:
+  // Contas fixas), onde `wide` (max-w-4xl) ainda obrigava a rolar a tabela na horizontal.
+  const larguraCls = full ? 'max-w-[96vw]' : wide ? 'max-w-4xl' : 'max-w-2xl';
   return (
     <div className="fixed inset-0 z-[1000] grid place-items-center bg-black/60 p-4" onClick={onClose}>
       <div
-        className={`w-full ${wide ? 'max-w-4xl' : 'max-w-2xl'} max-h-[92vh] overflow-auto rounded-[24px] border border-white/10 bg-[#101f3d] shadow-2xl shadow-black/40`}
+        className={`w-full ${larguraCls} max-h-[92vh] overflow-auto rounded-[24px] border border-white/10 bg-[#101f3d] shadow-2xl shadow-black/40`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4 border-b border-white/10 px-6 py-4">
