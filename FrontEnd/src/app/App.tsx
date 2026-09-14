@@ -61,6 +61,7 @@ function getAbaForSection(section: string): { aba: string; item: string } {
     'historicoBaixa': { aba: 'almoxerifado', item: 'historicoBaixa' },
     'historicoRomaneio': { aba: 'almoxerifado', item: 'historicoRomaneio' },
     'alocadosPorOS': { aba: 'almoxerifado', item: 'alocadosPorOS' },
+    'manutencao': { aba: 'almoxerifado', item: 'manutencao' },
     
     // Configurações
     'usuarios': { aba: 'config', item: 'usuarios' },

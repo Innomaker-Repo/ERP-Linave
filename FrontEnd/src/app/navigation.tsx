@@ -4,7 +4,7 @@ import {
   House, Users, Anchor, ClipboardList,
   ShoppingCart, DollarSign, Settings, Factory,
   HeartHandshake, Clock, FileText, Zap, CheckCircle2, Trash2, LayoutGrid, Package2, History,
-  FilePlus, Banknote, ScrollText, Wallet, TrendingUp, Landmark, Ruler, UserCog, ShoppingBag, Building2, Receipt
+  FilePlus, Banknote, ScrollText, Wallet, TrendingUp, Landmark, Ruler, UserCog, ShoppingBag, Building2, Receipt, Wrench
 } from 'lucide-react';
 
 /* =========================================================================================
@@ -111,6 +111,7 @@ export const DEPARTMENTS: NavDepartment[] = [
       { id: 'historicoBaixa', label: 'Histórico de Baixa', icon: Trash2 },
       { id: 'historicoRomaneio', label: 'Histórico de Romaneio', icon: ClipboardList },
       { id: 'alocadosPorOS', label: boldOS('Alocados por OS'), icon: ClipboardList },
+      { id: 'manutencao', label: 'Manutenção', icon: Wrench },
     ]
   },
   {

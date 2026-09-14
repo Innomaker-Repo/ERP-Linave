@@ -13,6 +13,10 @@ import { gerarRomaneioPdf, loadRomaneioLogoBase64 } from './romaneioPdf';
 import { uploadDocumento, excluirDocumento } from '../../../../services/documentosService';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../ui/feedback';
+import {
+  EntradaManutencaoModal, criarEntradaManutencao, gerarIdManutencao, itemEstaEmManutencao, itemPossuiManutencao,
+  type ManutencaoHistoricoItem,
+} from './manutencaoShared';
 
 interface StockColumn {
   key: string;
@@ -598,6 +602,14 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   const [activeRowTarget, setActiveRowTarget] = useState<{ tableName: string; rowId: string } | null>(null);
   const [editingRowTarget, setEditingRowTarget] = useState<{ tableName: string; rowId: string } | null>(null);
 
+  // "Este item possui manutenção?" — não é uma StockColumn (evitaria poluir a grade de
+  // todas as tabelas com mais uma coluna). Fica num estado próprio do formulário, igual
+  // a outros campos especiais de renderRegisterField, e vira `row.values.possuiManutencao`
+  // ('sim'/'não') só na hora de montar o payload em handleSaveRegister.
+  const [registerHasManutencao, setRegisterHasManutencao] = useState(false);
+  const [manutencaoHistorico, setManutencaoHistorico] = useState<ManutencaoHistoricoItem[]>([]);
+  const [manutencaoEntradaAlvo, setManutencaoEntradaAlvo] = useState<{ row: StockRow; numeroManutencao: string } | null>(null);
+
   // Imagem de cada item (1 por item), guardada à parte de `tables` — se ficasse dentro de
   // `row.values`, "Editar item" reconstrói os values só a partir das colunas do formulário
   // (ver handleSaveRegister) e apagaria a imagem na primeira edição. Chave = StockRow.id.
@@ -739,6 +751,9 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       if (Array.isArray(almoxerifado.romaneiosHistorico)) {
         setRomaneiosHistorico(almoxerifado.romaneiosHistorico);
       }
+      if (Array.isArray(almoxerifado.manutencaoHistorico)) {
+        setManutencaoHistorico(almoxerifado.manutencaoHistorico);
+      }
       if (Array.isArray(almoxerifado.selectedForRomaneio)) {
         try {
           setSelectedForRomaneio(new Set(almoxerifado.selectedForRomaneio));
@@ -767,10 +782,11 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       baixasHistorico,
       alocacoesHistorico,
       romaneiosHistorico,
+      manutencaoHistorico,
       selectedForRomaneio: Array.from(selectedForRomaneio),
       imagensPorItem
     });
-  }, [tables, gasTypes, allocations, baixasHistorico, alocacoesHistorico, romaneiosHistorico, selectedForRomaneio, imagensPorItem]);
+  }, [tables, gasTypes, allocations, baixasHistorico, alocacoesHistorico, romaneiosHistorico, manutencaoHistorico, selectedForRomaneio, imagensPorItem]);
 
   const handleRemoveGas = (gasToRemove: string) => {
     setGasTypes((prev) => prev.filter((g) => g !== gasToRemove));
@@ -1320,6 +1336,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     setEditingRowTarget({ tableName: activeRow.table.name, rowId: activeRow.row.id });
     setRegisterTableName(activeRow.table.name);
     setRegisterValues(createRegisterValues(activeRow.table, activeRow.row.values));
+    setRegisterHasManutencao(itemPossuiManutencao(activeRow.row));
     setIsRegisterOpen(true);
     setActiveRowTarget(null);
   };
@@ -1347,6 +1364,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     
     setRegisterTableName(tableToUse.name);
     setRegisterValues(createRegisterValues(tableToUse));
+    setRegisterHasManutencao(false);
     setIsRegisterOpen(true);
   };
 
@@ -1418,6 +1436,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     }
 
     payload.item = payload.item || generateItemId(table.name, table.rows.length);
+    payload.possuiManutencao = registerHasManutencao ? 'sim' : 'não';
 
     const existingRowIndex = editingRowTarget && editingRowTarget.tableName === table.name
       ? table.rows.findIndex((row) => row.id === editingRowTarget.rowId)
@@ -1441,6 +1460,60 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     setActiveRowTarget(wasEditing ? { tableName: table.name, rowId: nextRow.id } : null);
   };
 
+  // Trocar o Status pra "Em manutenção" no formulário de edição abre o modal guiado (foto +
+  // motivo + responsável) em vez de mudar o valor direto — auto-contido, igual ao fluxo de
+  // Baixa: confirmar grava o histórico e atualiza a linha direto em `tables`, sem depender
+  // do botão "Salvar alterações" do formulário (que pode ter outras edições pendentes).
+  const abrirEntradaManutencaoDoFormulario = () => {
+    if (!editingRowTarget) return;
+    const table = tables.find((t) => t.name === editingRowTarget.tableName);
+    const row = table?.rows.find((r) => r.id === editingRowTarget.rowId);
+    if (!row) return;
+    setManutencaoEntradaAlvo({ row, numeroManutencao: gerarIdManutencao() });
+  };
+
+  const confirmarEntradaManutencao = async (dados: {
+    data: string; motivo: string; responsavel: string; observacao: string; fotoUrl: string; fotoBackendId?: number;
+  }) => {
+    if (!manutencaoEntradaAlvo) return;
+    const { row, numeroManutencao } = manutencaoEntradaAlvo;
+
+    const entrada: ManutencaoHistoricoItem = {
+      ...criarEntradaManutencao({
+        row,
+        data: dados.data,
+        motivo: dados.motivo,
+        responsavel: dados.responsavel,
+        observacao: dados.observacao,
+        fotoUrl: dados.fotoUrl,
+        fotoBackendId: dados.fotoBackendId,
+        origem: 'edicaoItem',
+      }),
+      id: numeroManutencao,
+    };
+    setManutencaoHistorico((previous) => [entrada, ...previous]);
+
+    setTables((previous) => previous.map((table) => {
+      if (table.name !== row.tableName) return table;
+      return {
+        ...table,
+        rows: table.rows.map((r) => {
+          if (r.id !== row.id) return r;
+          const nextValues = { ...r.values, status: 'Em manutenção' };
+          return { ...r, values: nextValues, searchText: Object.values(nextValues).join(' ').toLowerCase() };
+        }),
+      };
+    }));
+
+    setManutencaoEntradaAlvo(null);
+    // Fecha o formulário de edição junto — evita misturar essa mudança de status (já
+    // aplicada direto) com outros campos que o usuário possa ter editado e não salvado.
+    setIsRegisterOpen(false);
+    setEditingRowTarget(null);
+    setActiveRowTarget(null);
+    toast.success('Item enviado para manutenção.');
+  };
+
   const handleSaveAllocation = () => {
     const { supplierRowId, gasName, quantity, local, serviceOS } = allocateForm;
 
@@ -1451,8 +1524,13 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
 
     const tableGases = tables.find(t => t.name === 'Alugados - Gases');
     const supplierRow = tableGases?.rows.find(r => r.id === supplierRowId);
-    
+
     if (!supplierRow) return;
+
+    if (itemEstaEmManutencao(supplierRow)) {
+      toast.error('Este fornecedor está em manutenção e não pode ser alocado.');
+      return;
+    }
 
     const { osLabel, osLocal } = resolveSelectedOsData(serviceOS);
     const effectiveLocal = osLocal || local;
@@ -1942,13 +2020,20 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     if (column.key === '__select__') {
       const key = `${row.tableName}::${row.id}`;
       const checked = selectedForRomaneio.has(key);
+      const emManutencao = itemEstaEmManutencao(row);
       return (
         <div className="flex items-center justify-center">
           <input
             type="checkbox"
             checked={checked}
+            disabled={emManutencao}
+            title={emManutencao ? 'Item em manutenção não pode entrar em romaneio' : undefined}
             onChange={(e) => {
               e.stopPropagation();
+              if (emManutencao) {
+                toast.error('Este item está em manutenção e não pode entrar em romaneio.');
+                return;
+              }
               setSelectedForRomaneio((prev) => {
                 const next = new Set(prev);
                 if (checked) next.delete(key);
@@ -1957,7 +2042,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
               });
             }}
             onClick={(e) => e.stopPropagation()}
-            className="h-4 w-4 rounded border-white/20 bg-black/20 accent-emerald-500 transition-all cursor-pointer"
+            className="h-4 w-4 rounded border-white/20 bg-black/20 accent-emerald-500 transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-30"
           />
         </div>
       );
@@ -2004,6 +2089,10 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
+                  if (itemEstaEmManutencao(row)) {
+                    toast.error('Este item está em manutenção e não pode ser alocado.');
+                    return;
+                  }
                   setEquipAllocateForm({
                     rowId: row.id,
                     tableName: row.tableName,
@@ -2013,7 +2102,8 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                   });
                   setIsEquipAllocateModalOpen(true);
                 }}
-                className="inline-flex items-center gap-1 rounded-lg border border-red-500/30 bg-red-500/15 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-red-300 transition hover:bg-red-500/25 hover:text-white"
+                disabled={itemEstaEmManutencao(row)}
+                className="inline-flex items-center gap-1 rounded-lg border border-red-500/30 bg-red-500/15 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-red-300 transition hover:bg-red-500/25 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <MapPin size={14} />
                 Alocar
@@ -2098,9 +2188,25 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     }
 
     if (column.key === 'status') {
-      const statusOptions = getStatusOptionsForTable(table.name);
+      // "Em manutenção" só aparece pra itens cadastrados com a caixinha "possui manutenção"
+      // marcada — sem isso, qualquer item ganhava a opção mesmo sem o fluxo de entrada fazer
+      // sentido pra ele (ex.: nunca vai ter foto/motivo registrado).
+      const statusOptions = getStatusOptionsForTable(table.name)
+        .filter((option) => registerHasManutencao || !normalizeKey(option).includes('manut'));
       return (
-        <Select value={value} onValueChange={(nextValue) => handleRegisterChange(column.key, nextValue)}>
+        <Select
+          value={value}
+          onValueChange={(nextValue) => {
+            const indoParaManutencao = normalizeKey(nextValue).includes('manut') && !normalizeKey(value).includes('manut');
+            // Só abre o fluxo guiado (com foto/motivo) se o item já existe — um item recém
+            // cadastrado ainda não tem linha/rowId pra anexar a foto e o histórico.
+            if (indoParaManutencao && editingRowTarget) {
+              abrirEntradaManutencaoDoFormulario();
+              return;
+            }
+            handleRegisterChange(column.key, nextValue);
+          }}
+        >
           <SelectTrigger className={`${baseClass} h-12 justify-between`}>
             <SelectValue placeholder="Selecione o status" />
           </SelectTrigger>
@@ -2599,6 +2705,19 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                       {currentRegisterTable.columns.length} campos
                     </div>
                 </div>
+
+                <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] p-5 shadow-inner">
+                  <input
+                    type="checkbox"
+                    checked={registerHasManutencao}
+                    onChange={(e) => setRegisterHasManutencao(e.target.checked)}
+                    className="h-4 w-4 rounded border-white/20 bg-black/20 accent-amber-500 transition-all cursor-pointer"
+                  />
+                  <div>
+                    <p className="text-sm font-bold text-white">Este item possui manutenção?</p>
+                    <p className="text-[11px] text-white/50">Marque para liberar o status "Em manutenção" para este item, com histórico de entrada/saída.</p>
+                  </div>
+                </label>
               </div>
 
               <div className="rounded-xl border border-white/5 bg-white/[0.02] p-6 shadow-inner">
@@ -3347,6 +3466,17 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
             onClick={(e) => e.stopPropagation()}
           />
         </div>
+      )}
+
+      {/* ENTRADA EM MANUTENÇÃO */}
+      {manutencaoEntradaAlvo && (
+        <EntradaManutencaoModal
+          row={manutencaoEntradaAlvo.row}
+          categoriaLabel={manutencaoEntradaAlvo.row.tableName}
+          numeroManutencao={manutencaoEntradaAlvo.numeroManutencao}
+          onClose={() => setManutencaoEntradaAlvo(null)}
+          onConfirm={confirmarEntradaManutencao}
+        />
       )}
     </div>
   );

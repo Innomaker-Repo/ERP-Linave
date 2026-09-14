@@ -319,7 +319,7 @@ export function NfeView() {
     <FinCard>
       <Toolbar
         title="Solicitações e Emissão de NFe"
-        hint="A medição aprovada (negócio finalizado) gera a solicitação automaticamente. Os cálculos de impostos abrem ao Emitir NFe."
+        hint={'Solicite a NFe pelo popup da Medição aprovada ou pelo botão "Solicitar NFe". Os cálculos de impostos abrem ao Emitir NFe.'}
         actions={<Btn variant="amber" onClick={() => setSolicitando(true)}><Plus size={15} /> Solicitar NFe</Btn>}
       />
       <AlertBar>
@@ -349,11 +349,11 @@ export function NfeView() {
         minWidth={1200}
         head={<>
           <Th>Solicitação</Th><Th>{boldOS('OS')}</Th><Th>Empresa</Th><Th>Cliente</Th><Th>Valor</Th>
-          <Th>Origem</Th><Th>Data emitir</Th><Th>Tipo</Th><Th>Nº da NF</Th><Th>Emissão</Th><Th>Status</Th><Th>Anexos</Th><Th>Ação</Th>
+          <Th>Data emitir</Th><Th>Tipo</Th><Th>Nº da NF</Th><Th>Emissão</Th><Th>Status</Th><Th>Anexos</Th><Th>Ação</Th>
         </>}
       >
         {solicitacoes.length === 0 ? (
-          <EmptyRow cols={13} text="Nenhuma solicitação de NFe (finalize um negócio com medição para gerar)" />
+          <EmptyRow cols={12} text={'Nenhuma solicitação de NFe (use o botão "Solicitar NFe" ou peça pela Medição)'} />
         ) : solicitacoes.map((r) => {
           const nota = notaPorSolicitacao.get(r.id);
           const semNumero = Boolean(nota) && !String(nota.numero || '').trim();
@@ -368,7 +368,6 @@ export function NfeView() {
             <Td><CompanyTag empresa={String(r.empresa)} /></Td>
             <Td className="text-white">{r.cliente}</Td>
             <Td className="font-bold text-white">{money(num(r.valor))}</Td>
-            <Td><Pill tone={r.derived ? 'info' : 'neutral'}>{r.derived ? 'Medição' : 'Manual'}</Pill></Td>
             {/* !text-rose-300: a base text-white/80 do Td vence a cor condicional em especificidade
                 igual no Tailwind v4 — precisa do modificador important para a cor vermelha aparecer. */}
             <Td className={emitirAtrasado ? 'font-bold text-rose-300!' : ''}>{br(r.dataEmitir)}</Td>
@@ -402,27 +401,23 @@ export function NfeView() {
                         <Hash size={12} /> {semNumero ? 'Informar nº' : 'Editar nº'}
                       </Btn>
                     )}
-                    {/* Ainda não emitida (não veio da medição/obra): dá para ajustar o prazo planejado. */}
-                    {!r.derived && r.status === 'Aguardando emissão' && (
+                    {/* Ainda não emitida: dá para ajustar o prazo planejado. */}
+                    {r.status === 'Aguardando emissão' && (
                       <Btn small variant="secondary" onClick={() => abrirEdicaoData(r)}>
                         <CalendarClock size={12} /> Alterar data
                       </Btn>
                     )}
                   </>
                 )}
-                {/* Solicitações derivadas de negócio finalizado não são registros salvos —
-                    são calculadas a partir da obra, então não há o que excluir aqui. */}
-                {!r.derived && (
-                  <DeleteBtn
-                    titulo="Excluir solicitação de NFe"
-                    descricao={
-                      r.status === 'Emitida e arquivada'
-                        ? `${r.id} — ${r.cliente} — ${money(num(r.valor))}\n\nA nota já foi emitida. Excluir remove apenas a SOLICITAÇÃO: a NFe emitida e a conta a receber gerada continuam existindo e precisam ser excluídas nas telas delas, se for o caso.`
-                        : `${r.id} — ${r.cliente} — ${money(num(r.valor))}\n\nA solicitação sairá da fila de emissão.`
-                    }
-                    onConfirm={() => deleteRecord(r.id)}
-                  />
-                )}
+                <DeleteBtn
+                  titulo="Excluir solicitação de NFe"
+                  descricao={
+                    r.status === 'Emitida e arquivada'
+                      ? `${r.id} — ${r.cliente} — ${money(num(r.valor))}\n\nA nota já foi emitida. Excluir remove apenas a SOLICITAÇÃO: a NFe emitida e a conta a receber gerada continuam existindo e precisam ser excluídas nas telas delas, se for o caso.`
+                      : `${r.id} — ${r.cliente} — ${money(num(r.valor))}\n\nA solicitação sairá da fila de emissão.`
+                  }
+                  onConfirm={() => deleteRecord(r.id)}
+                />
               </div>
             </Td>
           </tr>

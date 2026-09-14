@@ -10,7 +10,7 @@ import { useMemo } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { comFinanceiroAtual } from '../../../../services/financeiroSeguro';
 import {
-  mapOsToFinanceiro, obraFinalizada, docsMediacao, negocioValor, empresaFromCC, todayStr, days, num,
+  mapOsToFinanceiro, todayStr, days, num,
   upsertContaReceberPorMedicao, garantirOcorrenciasContasFixas, proximaOcorrenciaAposPagamento, CP_STATUS,
   type OS, type Empresa, type FinTipo, type NfeSolicitacao, type ImpostosNfe,
 } from './finData';
@@ -74,12 +74,17 @@ export function useFin() {
 
   const records = (tipo: FinTipo): FinRecord[] => financeiro.filter((r) => r.tipo === tipo);
 
-  // ----- NFe: solicitações (medição aprovada → solicitação de NFe) -----
-  // Deriva, a partir dos negócios finalizados/medidos, as solicitações de NFe "Aguardando
-  // emissão" (leitura real). Some quando a NFe correspondente já foi emitida e arquivada.
+  // ----- NFe: solicitações (leitura real, só registros de verdade) -----
+  // A medição aprovada NÃO gera solicitação de NFe automaticamente — a solicitação é
+  // feita manualmente no popup da Medição ou pelo botão "Solicitar NFe" (evita a
+  // duplicidade "automática + manual"). Existia aqui também um fallback que DERIVAVA uma
+  // solicitação "fantasma" (id `SNF-<id do negócio>`, nunca gravada em `financeiro`) para
+  // todo negócio finalizado/arquivado sem medição própria — removido: além de duplicar a
+  // linha de negócios que já tinham pedido manual, o id derivado (ex.: "SNF-LN-0002/26")
+  // não existe no banco, então não dava pra rastrear, editar ou excluir feito registro de
+  // verdade. Negócio antigo finalizado que ainda precise de NFe deve ser solicitado pelo
+  // botão "Solicitar NFe" (cria um registro real, com id e histórico).
   const nfeSolicitacoes: NfeSolicitacao[] = useMemo(() => {
-    const obras = Array.isArray(ctx.obras) ? ctx.obras : [];
-    const osList = Array.isArray(ctx.os) ? ctx.os : [];
     const emitidasSources = new Set(
       financeiro.filter((r) => r.tipo === 'nfe').map((r) => r.sourceId).filter(Boolean),
     );
@@ -91,35 +96,7 @@ export function useFin() {
       .filter((r) => r.tipo === 'nfe' && r.sourceId)
       .forEach((r) => anexosEmitidos.set(String(r.sourceId), Array.isArray(r.anexos) ? r.anexos : []));
 
-    // A medição aprovada NÃO gera mais solicitação de NFe automaticamente — a solicitação é
-    // feita manualmente no popup da Medição (evita a duplicidade "automática + manual").
-    // Aqui só deriva o fluxo antigo de obra finalizada/arquivada (sem medição própria).
-    const derived: NfeSolicitacao[] = obras.filter((o: any) => obraFinalizada(o)).map((obra: any) => {
-      const osLinked = osList.find((o: any) => String(o?.obraId) === String(obra?.id));
-      const osVm = osLinked ? mapOsToFinanceiro(osLinked, obra) : null;
-      const id = `SNF-${obra?.id}`;
-      const numeroOs = osVm?.numero || String(obra?.cc || obra?.id || '—');
-      return {
-        id,
-        os: numeroOs,
-        empresa: osVm?.empresa || empresaFromCC(numeroOs),
-        cliente: osVm?.cliente || obra?.cliente || 'Cliente não informado',
-        valor: osVm?.valor || negocioValor(obra),
-        forma: '',
-        dataEmitir: String(obra?.dataArquivamento || '').slice(0, 10) || todayStr,
-        tipoNfe: 'NFe Serviço',
-        status: emitidasSources.has(id) ? 'Emitida e arquivada' : 'Aguardando emissão',
-        // URL do documento (não o nome): é o que torna o anexo clicável/baixável na tela.
-        anexos: [
-          ...docsMediacao(obra).map((d: any) => d?.url || d?.conteudo || d?.nome).filter(Boolean),
-          ...(anexosEmitidos.get(id) || []),
-        ],
-        contrato: numeroOs,
-        derived: true,
-      };
-    });
-
-    const manual: NfeSolicitacao[] = financeiro
+    return financeiro
       .filter((r) => r.tipo === 'nfeReq')
       .map((r) => ({
         id: r.id,
@@ -133,13 +110,10 @@ export function useFin() {
         status: emitidasSources.has(r.id) ? 'Emitida e arquivada' : (r.status || 'Aguardando emissão'),
         anexos: [...(r.anexos || []), ...(anexosEmitidos.get(r.id) || [])],
         contrato: r.contrato || r.os || '',
-        derived: false,
         medicaoId: r.medicaoId || '',
         medicaoNumero: r.medicaoNumero || '',
       }));
-
-    return [...derived, ...manual];
-  }, [ctx.obras, ctx.os, financeiro]);
+  }, [financeiro]);
 
   // ----- Escrita (infra pronta) -----
   // Toda escrita aqui é replace-all: o array final substitui a tabela inteira no servidor.

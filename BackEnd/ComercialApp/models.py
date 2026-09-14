@@ -958,6 +958,8 @@ class Documento(models.Model):
         ('orcamento_importado', 'Orçamento anexado na importação do negócio'),
         ('proposta_importada', 'Proposta anexada na importação do negócio'),
         ('almoxarifado_imagem', 'Imagem de item do almoxarifado'),
+        ('almoxarifado_manutencao_entrada', 'Foto de entrada em manutenção'),
+        ('almoxarifado_manutencao_saida', 'Foto de saída da manutenção'),
         ('fin_anexo', 'Anexo financeiro'),
         ('fin_comprovante', 'Comprovante de pagamento'),
         ('fin_documento', 'Documento de compra (NF entrada/boleto)'),

@@ -88,9 +88,9 @@ export function SolicitacaoView() {
     setForm(formVazio(empresas[0] || 'Linave', nomeUsuarioLogado));
   };
 
-  // Todos os campos do formulário são obrigatórios (inclusive pelo menos 1 anexo) — sem
-  // isso a solicitação chegava incompleta pra quem aprova (sem descrição, sem forma de
-  // pagamento definida, sem OS vinculada...) e só se descobria o que faltava depois.
+  // Todos os campos são obrigatórios (inclusive pelo menos 1 anexo), exceto a OS emitida —
+  // sem isso a solicitação chegava incompleta pra quem aprova (sem descrição, sem forma de
+  // pagamento definida...) e só se descobria o que faltava depois.
   const camposFaltando = (): string[] => {
     const faltando: string[] = [];
     if (!form.empresa) faltando.push('Empresa');

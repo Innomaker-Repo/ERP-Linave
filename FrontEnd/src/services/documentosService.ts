@@ -24,6 +24,8 @@ export type DocumentoCategoria =
   | 'orcamento_importado'
   | 'proposta_importada'
   | 'almoxarifado_imagem'
+  | 'almoxarifado_manutencao_entrada'
+  | 'almoxarifado_manutencao_saida'
   | 'fin_anexo'
   | 'fin_comprovante'
   | 'fin_documento'

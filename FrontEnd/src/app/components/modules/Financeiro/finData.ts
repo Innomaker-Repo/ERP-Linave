@@ -473,7 +473,6 @@ export interface NfeSolicitacao {
   status: string;
   anexos: string[];
   contrato: string;
-  derived: boolean;
   medicaoId?: string;      // vínculo com a medição (para mesclar NF + recibo no recebível)
   medicaoNumero?: string;
 }

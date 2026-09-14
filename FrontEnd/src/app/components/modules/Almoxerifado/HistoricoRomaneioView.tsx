@@ -1,10 +1,11 @@
 import React, { useMemo, useState } from 'react';
-import { ClipboardList, Download, History, RotateCcw, Search, X } from 'lucide-react';
+import { ClipboardList, Download, History, RotateCcw, Search, Wrench, X } from 'lucide-react';
 import { useErp } from '../../../context/ErpContext';
 import { Badge } from '../../../modules/shared/ui/badge';
 import { Input } from '../../../modules/shared/ui/input';
 import { gerarRomaneioPdf, loadRomaneioLogoBase64 } from './romaneioPdf';
 import { toast } from 'sonner';
+import { criarEntradaManutencao, itemPossuiManutencao, type ManutencaoHistoricoItem } from './manutencaoShared';
 
 interface RomaneioHistoricoItemRow {
   tableName: string;
@@ -82,6 +83,12 @@ export function HistoricoRomaneioView({ searchQuery }: HistoricoRomaneioViewProp
   const [returnTarget, setReturnTarget] = useState<RomaneioHistoricoItem | null>(null);
   const [returnMaterialQty, setReturnMaterialQty] = useState<Record<string, string>>({});
   const [returnGasQty, setReturnGasQty] = useState<Record<string, Record<string, string>>>({});
+  // Itens inteiros (equipamentos) marcados pra voltar já em manutenção, e o motivo — um só,
+  // compartilhado entre todos os itens marcados nessa devolução (evita travar uma devolução
+  // em lote atrás de um motivo por item; foto/detalhe ficam pra completar depois na tela de
+  // Manutenção — ver comentário em manutencaoShared.tsx sobre a origem 'romaneio').
+  const [retornarEmManutencao, setRetornarEmManutencao] = useState<Record<string, boolean>>({});
+  const [motivoManutencaoRetorno, setMotivoManutencaoRetorno] = useState('');
 
   const itemKey = (item: RomaneioHistoricoItemRow) => `${item.tableName}::${item.rowId}`;
 
@@ -151,6 +158,8 @@ export function HistoricoRomaneioView({ searchQuery }: HistoricoRomaneioViewProp
     setReturnTarget(null);
     setReturnMaterialQty({});
     setReturnGasQty({});
+    setRetornarEmManutencao({});
+    setMotivoManutencaoRetorno('');
   };
 
   // Regera e baixa o documento (modelo FLN 026) de um romaneio já feito.
@@ -188,6 +197,8 @@ export function HistoricoRomaneioView({ searchQuery }: HistoricoRomaneioViewProp
 
     try {
       const previousTables = Array.isArray(almoxerifado?.tables) ? almoxerifado.tables : [];
+      const novosManutencao: ManutencaoHistoricoItem[] = [];
+      const dataRetorno = new Date().toISOString().slice(0, 10);
       const nextTables = previousTables.map((table: any) => {
         const tableItems = romaneio.items.filter((item) => item.tableName === table.name);
         if (tableItems.length === 0) return table;
@@ -216,6 +227,16 @@ export function HistoricoRomaneioView({ searchQuery }: HistoricoRomaneioViewProp
           } else {
             // Item inteiro (equipamento/alugado): restaura o estado anterior ao romaneio.
             values = { ...item.snapshotBefore };
+            if (retornarEmManutencao[itemKey(item)]) {
+              values.status = 'Em manutenção';
+              novosManutencao.push(criarEntradaManutencao({
+                row: { id: row.id, tableName: table.name, values },
+                data: dataRetorno,
+                motivo: motivoManutencaoRetorno.trim() || 'Retornou do Romaneio em manutenção',
+                responsavel: cleanValue(userSession?.nome || userSession?.email || 'Usuário'),
+                origem: 'romaneio',
+              }));
+            }
           }
 
           return { ...row, values, searchText: buildSearchText(values) };
@@ -305,6 +326,9 @@ export function HistoricoRomaneioView({ searchQuery }: HistoricoRomaneioViewProp
       const previousAlocacoesHistorico = Array.isArray(almoxerifado?.alocacoesHistorico)
         ? almoxerifado.alocacoesHistorico
         : [];
+      const previousManutencaoHistorico = Array.isArray(almoxerifado?.manutencaoHistorico)
+        ? almoxerifado.manutencaoHistorico
+        : [];
 
       await saveEntity('almoxerifado', {
         ...(almoxerifado || {}),
@@ -312,6 +336,7 @@ export function HistoricoRomaneioView({ searchQuery }: HistoricoRomaneioViewProp
         tables: nextTables,
         romaneiosHistorico: nextRomaneios,
         alocacoesHistorico: [...novosEventos, ...previousAlocacoesHistorico],
+        manutencaoHistorico: [...novosManutencao, ...previousManutencaoHistorico],
       });
 
       closeReturnModal();
@@ -503,11 +528,39 @@ export function HistoricoRomaneioView({ searchQuery }: HistoricoRomaneioViewProp
                         )}
                       </div>
                     ) : (
-                      <p className="mt-3 text-right text-[11px] text-white/40">Será devolvido por inteiro.</p>
+                      <div className="mt-3 flex items-center justify-between gap-2">
+                        <p className="text-[11px] text-white/40">Será devolvido por inteiro.</p>
+                        {itemPossuiManutencao({ id: item.rowId, tableName: item.tableName, values: item.snapshotBefore }) && (
+                          <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-1.5">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(retornarEmManutencao[key])}
+                              onChange={(e) => setRetornarEmManutencao((prev) => ({ ...prev, [key]: e.target.checked }))}
+                              className="h-4 w-4 rounded border-white/20 bg-black/20 accent-amber-500"
+                            />
+                            <span className="flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider text-amber-200">
+                              <Wrench size={11} /> Retornar em manutenção
+                            </span>
+                          </label>
+                        )}
+                      </div>
                     )}
                   </div>
                 );
               })}
+
+              {Object.values(retornarEmManutencao).some(Boolean) && (
+                <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-4">
+                  <label className="mb-1.5 block text-[11px] font-black uppercase tracking-widest text-amber-200">Motivo da manutenção (aplicado aos itens marcados)</label>
+                  <textarea
+                    value={motivoManutencaoRetorno}
+                    onChange={(e) => setMotivoManutencaoRetorno(e.target.value)}
+                    placeholder="Ex.: Retornou com defeito identificado em campo..."
+                    className="w-full min-h-[70px] resize-y rounded-lg border border-white/10 bg-[#0b1220]/80 px-3 py-2 text-sm text-white outline-none focus:border-amber-400"
+                  />
+                  <p className="mt-1.5 text-[10px] text-white/40">Foto e mais detalhes podem ser completados depois na tela de Manutenção.</p>
+                </div>
+              )}
             </div>
 
             <div className="flex justify-end gap-3 border-t border-white/5 bg-[#131f37] p-6">

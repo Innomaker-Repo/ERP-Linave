@@ -4,6 +4,7 @@ import { HistoricoBaixaView } from '../../components/modules/Almoxerifado/Histor
 import { HistoricoRomaneioView } from '../../components/modules/Almoxerifado/HistoricoRomaneioView';
 import { AlocadosPorOSView } from '../../components/modules/Almoxerifado/AlocadosPorOSView';
 import { ItensParaAdicionarView } from '../../components/modules/Almoxerifado/ItensParaAdicionarView';
+import { ManutencaoView } from '../../components/modules/Almoxerifado/ManutencaoView';
 
 interface AlmoxerifadoModuleProps {
   activeItem: string;
@@ -22,6 +23,8 @@ export function AlmoxerifadoModule({ activeItem, searchQuery }: AlmoxerifadoModu
       return <HistoricoRomaneioView searchQuery={searchQuery} />;
     case 'alocadosPorOS':
       return <AlocadosPorOSView searchQuery={searchQuery} />;
+    case 'manutencao':
+      return <ManutencaoView searchQuery={searchQuery} />;
     case 'estoque':
     default:
       return <EstoqueView searchQuery={searchQuery} />;
