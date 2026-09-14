@@ -164,12 +164,17 @@ export function useFin() {
     await ctx.criarSolicitacaoFinanceiro(record);
   };
 
-  // Atualiza registros financeiros por função de mapeamento.
-  const updateRecords = async (mapFn: (r: FinRecord) => FinRecord) => {
-    await comFinanceiroAtual(async (base) => {
+  // Atualiza registros financeiros por função de mapeamento. Devolve se a gravação
+  // realmente aconteceu — comFinanceiroAtual engole erro (403 de permissão, rede caída
+  // etc.) e só avisa por toast, então quem chama precisa saber que falhou pra não seguir
+  // como se tivesse dado certo (ex.: fechar um formulário de edição que não foi salvo).
+  const updateRecords = async (mapFn: (r: FinRecord) => FinRecord): Promise<boolean> => {
+    const resultado = await comFinanceiroAtual(async (base) => {
       const next = base.map(mapFn);
       await ctx.saveEntity('financeiro', next);
+      return true;
     });
+    return resultado === true;
   };
 
   // Atualiza um registro específico por id (merge de campos).
@@ -244,11 +249,10 @@ export function useFin() {
   // Reenvia uma solicitação reprovada: o próprio solicitante corrige os dados e ela volta
   // para a fila de aprovação, como se fosse enviada agora — sem precisar criar um registro novo
   // (mantém o mesmo id e o anexo já enviado, a menos que troque).
-  const reenviarSolicitacao = async (id: string, patch: Partial<FinRecord>) => {
-    await updateRecords((r) => (r.id === id
+  const reenviarSolicitacao = async (id: string, patch: Partial<FinRecord>): Promise<boolean> =>
+    updateRecords((r) => (r.id === id
       ? { ...r, ...patch, status: 'Aguardando aprovação', motivoReprovacao: '' }
       : r));
-  };
 
   // Rótulo do recebível gerado pela nota. O número é opcional na emissão (nem sempre já
   // saiu do emissor), então a referência precisa continuar legível sem ele.

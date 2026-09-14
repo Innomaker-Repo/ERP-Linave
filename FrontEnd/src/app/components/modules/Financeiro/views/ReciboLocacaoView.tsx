@@ -14,14 +14,23 @@ import { ReciboLocacaoFormModal, formInicialRecibo, linhaItem } from './ReciboLo
  * botão "Preencher/Editar" das linhas "R/L" na tabela de NFe (ver NfeView.tsx).
  * =======================================================================================*/
 
+const STATUS_FILTROS_RECIBO = ['Todos', 'Pendente', 'Emitido'] as const;
+type StatusFiltroRecibo = typeof STATUS_FILTROS_RECIBO[number];
+
 export function ReciboLocacaoView() {
   const { financeiro, saveEntity, config, os, medicoes } = useErp() as any;
   const [form, setForm] = useState<any>(null);
+  const [statusFiltro, setStatusFiltro] = useState<StatusFiltroRecibo>('Todos');
 
-  const recibos = useMemo(
+  const todosOsRecibos = useMemo(
     () => (Array.isArray(financeiro) ? financeiro : []).filter((r: any) => r?.tipo === 'reciboLocacao'),
     [financeiro],
   );
+  const recibos = useMemo(() => {
+    if (statusFiltro === 'Todos') return todosOsRecibos;
+    const alvo = statusFiltro === 'Emitido' ? 'emitido' : 'pendente';
+    return todosOsRecibos.filter((r: any) => (r.status === 'emitido' ? 'emitido' : 'pendente') === alvo);
+  }, [todosOsRecibos, statusFiltro]);
 
   // OS que já receberam medição APROVADA — origem do dropdown de "Novo recibo".
   const osComMedicaoAprovada = useMemo(() => {
@@ -32,7 +41,7 @@ export function ReciboLocacaoView() {
     return (Array.isArray(os) ? os : []).filter((o: any) => aprovadas.has(String(o.backendId)));
   }, [os, medicoes]);
 
-  const editar = (r: any) => setForm({ ...formInicialRecibo(recibos, r.empresa, config), ...r, itens: (Array.isArray(r.itens) && r.itens.length ? r.itens : [linhaItem()]).map((i: any) => ({ ...linhaItem(), ...i })) });
+  const editar = (r: any) => setForm({ ...formInicialRecibo(todosOsRecibos, r.empresa, config), ...r, itens: (Array.isArray(r.itens) && r.itens.length ? r.itens : [linhaItem()]).map((i: any) => ({ ...linhaItem(), ...i })) });
 
   // "Novo recibo" a partir de uma OS: se a OS já tem recibo (criado pela medição), abre o existente
   // (não duplica — o número só incrementa com nova medição). Senão, monta a partir da última medição
@@ -51,10 +60,10 @@ export function ReciboLocacaoView() {
     const rec = ultimaMed ? construirReciboDeMedicao(fin, ultimaMed) : null;
 
     if (rec) {
-      setForm({ ...formInicialRecibo(recibos, rec.empresa, config), ...rec, itens: (Array.isArray(rec.itens) && rec.itens.length ? rec.itens : [linhaItem()]).map((i: any) => ({ ...linhaItem(), ...i })) });
+      setForm({ ...formInicialRecibo(todosOsRecibos, rec.empresa, config), ...rec, itens: (Array.isArray(rec.itens) && rec.itens.length ? rec.itens : [linhaItem()]).map((i: any) => ({ ...linhaItem(), ...i })) });
     } else {
       setForm({
-        ...formInicialRecibo(recibos, osObj?.empresaPrestadora || 'Servinave', config),
+        ...formInicialRecibo(todosOsRecibos, osObj?.empresaPrestadora || 'Servinave', config),
         ordemServicoBackendId: osBackendId,
         ordemServicoNumero: osObj?.ordemServicoNumero || '',
         numero: proximoNumeroReciboLocacao(fin, osBackendId),
@@ -100,8 +109,28 @@ export function ReciboLocacaoView() {
           ))}
         </select>
       </div>
+
+      <div className="mb-4 flex flex-wrap items-center gap-1.5">
+        <span className="mr-1 text-[10px] font-black uppercase tracking-widest text-white/30">Status</span>
+        {STATUS_FILTROS_RECIBO.map((s) => (
+          <button
+            key={s}
+            onClick={() => setStatusFiltro(s)}
+            className={`rounded-full border px-3 py-1 text-[11px] font-bold transition-all active:scale-95 ${
+              statusFiltro === s
+                ? 'border-amber-400/60 bg-amber-500/20 text-amber-200 shadow-sm shadow-amber-500/10'
+                : 'border-white/10 bg-white/5 text-white/55 hover:border-white/20 hover:text-white/80'
+            }`}
+          >
+            {s}
+          </button>
+        ))}
+      </div>
+
       {recibos.length === 0 ? (
-        <p className="text-white/40 text-sm bg-[#0b1220] rounded-xl border border-white/5 p-6">Nenhum recibo. Crie um novo ou aprove uma medição de locação.</p>
+        <p className="text-white/40 text-sm bg-[#0b1220] rounded-xl border border-white/5 p-6">
+          {statusFiltro === 'Todos' ? 'Nenhum recibo. Crie um novo ou aprove uma medição de locação.' : `Nenhum recibo com status "${statusFiltro}".`}
+        </p>
       ) : (
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           {recibos.map((r: any) => (
@@ -116,7 +145,7 @@ export function ReciboLocacaoView() {
               </div>
               <div className="flex gap-2 mt-3">
                 <button onClick={() => editar(r)} className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[11px] font-black uppercase flex items-center gap-1"><Pencil size={12} /> Preencher / editar</button>
-                <button onClick={() => gerarReciboLocacaoPDF(dadosPdf({ ...formInicialRecibo(recibos, r.empresa, config), ...r }))} className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-[11px] font-black uppercase flex items-center gap-1"><Download size={12} /> PDF</button>
+                <button onClick={() => gerarReciboLocacaoPDF(dadosPdf({ ...formInicialRecibo(todosOsRecibos, r.empresa, config), ...r }))} className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-[11px] font-black uppercase flex items-center gap-1"><Download size={12} /> PDF</button>
                 <button onClick={() => excluir(r)} className="px-3 py-1.5 rounded-lg bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300 text-[11px] font-black uppercase flex items-center gap-1"><Trash2 size={12} /></button>
               </div>
             </div>

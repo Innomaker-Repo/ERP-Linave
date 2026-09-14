@@ -1,8 +1,41 @@
 import React, { useMemo, useState } from 'react';
-import { CheckCircle2, Clock3, FilePlus, Pencil, Search, Users, Wallet } from 'lucide-react';
+import { CheckCircle2, Clock3, FilePlus, Paperclip, Pencil, Search, Users, Wallet } from 'lucide-react';
 import { useErp } from '../../../../context/ErpContext';
 import { useFinNavigate, FIN_SECTIONS } from '../finNav';
 import { matchesSolicitante, money, num, br } from '../finData';
+
+// Documentos anexados na solicitação (NF, boleto, recibo...) precisam continuar acessíveis
+// daqui — este é o único lugar onde o colaborador comum (sem acesso a Aprovações/Contas a
+// Pagar) acompanha as próprias solicitações, então sem isso o anexo enviado ficava "preso"
+// sem nenhuma forma de reconsultar.
+function AnexosDaSolicitacao({ anexos }: { anexos?: string[] }) {
+  const lista = Array.isArray(anexos) ? anexos : [];
+  if (!lista.length) return null;
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+      <Paperclip size={12} className="text-white/30" />
+      {lista.map((a, i) => {
+        const ehUrl = /^(https?:|\/media\/)/.test(String(a));
+        const nome = ehUrl ? decodeURIComponent(String(a).split('/').pop() || 'documento') : String(a);
+        return ehUrl ? (
+          <a
+            key={i}
+            href={a}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-[11px] font-bold text-amber-200 hover:bg-amber-500/20"
+          >
+            📄 {nome}
+          </a>
+        ) : (
+          <span key={i} className="rounded-full border border-white/10 bg-white/5 px-2.5 py-0.5 text-[11px] font-bold text-white/60">
+            📄 {nome}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
 
 /* =========================================================================================
  * MEUS PAGAMENTOS — espelho de "Minhas Compras" (Compras/comprasLocal), só que pra
@@ -22,6 +55,16 @@ const pagoTone = (status: string) =>
     ? 'border-emerald-500/30 bg-emerald-500/15 text-emerald-200'
     : 'border-amber-500/30 bg-amber-500/15 text-amber-200';
 
+// "Pago" não é um status próprio da solicitação (só existe na Conta a Pagar gerada por
+// ela) — precisa olhar as duas pontas pra dar pra filtrar por ele aqui.
+const STATUS_FILTROS_PAGAMENTOS = ['Todos', 'Aguardando aprovação', 'Reprovado', 'Aprovado', 'Pago'] as const;
+type StatusFiltroPagamentos = typeof STATUS_FILTROS_PAGAMENTOS[number];
+const statusEfetivo = (r: any, contaPagar: any): StatusFiltroPagamentos => {
+  if (r.status === 'Aprovado') return contaPagar?.status === 'Pago' ? 'Pago' : 'Aprovado';
+  if (r.status === 'Reprovado') return 'Reprovado';
+  return 'Aguardando aprovação';
+};
+
 export function MeusPagamentosView() {
   const { userSession, financeiro, setPendingEditSolicitacaoId } = useErp() as any;
   const navegar = useFinNavigate();
@@ -29,6 +72,7 @@ export function MeusPagamentosView() {
 
   const [filtro, setFiltro] = useState('');
   const [solicitanteFiltro, setSolicitanteFiltro] = useState(''); // só admin/gerente
+  const [statusFiltro, setStatusFiltro] = useState<StatusFiltroPagamentos>('Todos');
 
   const solicitacoes = useMemo(
     () => (Array.isArray(financeiro) ? financeiro : []).filter((r: any) => r?.tipo === 'solicitacao'),
@@ -58,19 +102,21 @@ export function MeusPagamentosView() {
   const emAndamento = useMemo(() => {
     return escopar(solicitacoes)
       .filter((r: any) => (r.status || 'Aguardando aprovação') !== 'Aprovado')
+      .filter((r: any) => statusFiltro === 'Todos' || statusEfetivo(r, null) === statusFiltro)
       .filter((r: any) => buscaEm([r.fornecedor, r.documento, r.solicitante, r.vinculoValor]))
       .sort((a: any, b: any) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [solicitacoes, isAdmin, solicitanteFiltro, termo, userSession]);
+  }, [solicitacoes, isAdmin, solicitanteFiltro, statusFiltro, termo, userSession]);
 
   const concluidas = useMemo(() => {
     return escopar(solicitacoes)
       .filter((r: any) => r.status === 'Aprovado')
       .filter((r: any) => buscaEm([r.fornecedor, r.documento, r.solicitante, r.vinculoValor]))
       .map((r: any) => ({ ...r, contaPagar: contaPagarDe(r.id) }))
+      .filter((r: any) => statusFiltro === 'Todos' || statusEfetivo(r, r.contaPagar) === statusFiltro)
       .sort((a: any, b: any) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [solicitacoes, isAdmin, solicitanteFiltro, termo, userSession, financeiro]);
+  }, [solicitacoes, isAdmin, solicitanteFiltro, statusFiltro, termo, userSession, financeiro]);
 
   const totalPago = concluidas.reduce((s: number, r: any) => s + (r.contaPagar?.status === 'Pago' ? num(r.contaPagar.valorPago ?? r.valor) : 0), 0);
 
@@ -153,6 +199,23 @@ export function MeusPagamentosView() {
         </div>
       </div>
 
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="mr-1 text-[10px] font-black uppercase tracking-widest text-white/30">Status</span>
+        {STATUS_FILTROS_PAGAMENTOS.map((s) => (
+          <button
+            key={s}
+            onClick={() => setStatusFiltro(s)}
+            className={`rounded-full border px-3 py-1 text-[11px] font-bold transition-all active:scale-95 ${
+              statusFiltro === s
+                ? 'border-amber-400/60 bg-amber-500/20 text-amber-200 shadow-sm shadow-amber-500/10'
+                : 'border-white/10 bg-white/5 text-white/55 hover:border-white/20 hover:text-white/80'
+            }`}
+          >
+            {s}
+          </button>
+        ))}
+      </div>
+
       <div className="flex flex-col gap-8 overflow-auto pb-4">
         {/* ===== EM ANDAMENTO ===== */}
         <section className="flex flex-col gap-4">
@@ -189,6 +252,7 @@ export function MeusPagamentosView() {
                     {r.status === 'Reprovado' && r.motivoReprovacao && (
                       <p className="mt-1 text-rose-300 text-xs">Motivo: {r.motivoReprovacao}</p>
                     )}
+                    <AnexosDaSolicitacao anexos={r.anexos} />
                   </div>
                   <div className="flex items-center gap-3">
                     <div className="text-right">
@@ -243,6 +307,7 @@ export function MeusPagamentosView() {
                       Doc: {r.documento || '—'}
                       {r.contaPagar?.status === 'Pago' && r.contaPagar?.dataPagamento && ` • Pago em ${br(r.contaPagar.dataPagamento)}`}
                     </p>
+                    <AnexosDaSolicitacao anexos={r.anexos} />
                   </div>
                   <div className="text-right">
                     <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Valor</p>

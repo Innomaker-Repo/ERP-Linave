@@ -20,6 +20,9 @@ import { toast } from 'sonner';
 // foram removidos daqui pra não nascer mais solicitação fora dessas 2 categorias.
 const TIPOS_NFE = ['NFe Serviço', 'Nota de débito'];
 
+const STATUS_FILTROS_NFE = ['Todos', 'Aguardando emissão', 'Emitida e arquivada'] as const;
+type StatusFiltroNfe = typeof STATUS_FILTROS_NFE[number];
+
 // Regra do tipo de documento por empresa: SERVIÇO — Linave emite NFe normal; Servinave emite
 // Nota de Débito (N/D) pro mesmo serviço. LOCAÇÃO (guardada como "Nota de débito" no dado) —
 // qualquer prestadora emite Recibo de Locação (R/L), não depende mais de qual empresa é.
@@ -88,7 +91,8 @@ export function NfeView() {
   } = useFin();
   const { config } = useErp() as any;
   const { match } = useFinFilters();
-  const solicitacoes = nfeSolicitacoes.filter(match);
+  const [statusFiltro, setStatusFiltro] = useState<StatusFiltroNfe>('Todos');
+  const solicitacoes = nfeSolicitacoes.filter(match).filter((r) => statusFiltro === 'Todos' || r.status === statusFiltro);
 
   // ---- Ponte solicitação de NFe (tipoNfe "Nota de débito", exibida como "R/L") ↔ Recibo de
   // Locação de verdade: quem pediu quer que uma solicitação identificada como Recibo abra o
@@ -323,6 +327,24 @@ export function NfeView() {
         O <strong className="font-black">número da NFe é opcional</strong> na emissão — informe depois pelo botão da
         linha arquivada, e a conta a receber é atualizada junto.
       </AlertBar>
+
+      <div className="mb-4 flex flex-wrap items-center gap-1.5">
+        <span className="mr-1 text-[10px] font-black uppercase tracking-widest text-white/30">Status</span>
+        {STATUS_FILTROS_NFE.map((s) => (
+          <button
+            key={s}
+            onClick={() => setStatusFiltro(s)}
+            className={`rounded-full border px-3 py-1 text-[11px] font-bold transition-all active:scale-95 ${
+              statusFiltro === s
+                ? 'border-amber-400/60 bg-amber-500/20 text-amber-200 shadow-sm shadow-amber-500/10'
+                : 'border-white/10 bg-white/5 text-white/55 hover:border-white/20 hover:text-white/80'
+            }`}
+          >
+            {s}
+          </button>
+        ))}
+      </div>
+
       <DataTable
         minWidth={1200}
         head={<>

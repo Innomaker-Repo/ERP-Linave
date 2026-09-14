@@ -9,6 +9,9 @@ import { useFinFilters } from '../finFilters';
 const normalizar = (v: any): string =>
   String(v || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 
+const STATUS_FILTROS_APROVACAO = ['Todos', 'Aguardando aprovação', 'Aprovado', 'Reprovado'] as const;
+type StatusFiltroAprovacao = typeof STATUS_FILTROS_APROVACAO[number];
+
 // Leitura real: solicitações guardadas na coleção `financeiro` (tipo 'solicitacao').
 // Aprovar transforma a solicitação em Conta a Pagar (escrita via saveEntity).
 export function AprovacoesView() {
@@ -18,12 +21,14 @@ export function AprovacoesView() {
   // Banco/Período) — funciona em cima do que já passou por eles, então acha a solicitação do
   // fornecedor não importa qual empresa esteja selecionada lá em cima (ou nenhuma).
   const [buscaFornecedor, setBuscaFornecedor] = useState('');
+  const [statusFiltro, setStatusFiltro] = useState<StatusFiltroAprovacao>('Todos');
   const rows = useMemo(() => {
     const termo = normalizar(buscaFornecedor);
     return records('solicitacao')
       .filter(match)
-      .filter((r) => !termo || normalizar(r.fornecedor).includes(termo));
-  }, [records, match, buscaFornecedor]);
+      .filter((r) => !termo || normalizar(r.fornecedor).includes(termo))
+      .filter((r) => statusFiltro === 'Todos' || (r.status || 'Aguardando aprovação') === statusFiltro);
+  }, [records, match, buscaFornecedor, statusFiltro]);
   // Autorizar (aprovar/reprovar) é ato de gerência — usuário comum só solicita.
   const isGerencia = ['ADMIN', 'GERENTE'].includes(String(userSession?.role || '').toUpperCase());
   const [busy, setBusy] = useState('');
@@ -76,6 +81,23 @@ export function AprovacoesView() {
         )}
       </div>
 
+      <div className="mb-4 flex flex-wrap items-center gap-1.5">
+        <span className="mr-1 text-[10px] font-black uppercase tracking-widest text-white/30">Status</span>
+        {STATUS_FILTROS_APROVACAO.map((s) => (
+          <button
+            key={s}
+            onClick={() => setStatusFiltro(s)}
+            className={`rounded-full border px-3 py-1 text-[11px] font-bold transition-all active:scale-95 ${
+              statusFiltro === s
+                ? 'border-amber-400/60 bg-amber-500/20 text-amber-200 shadow-sm shadow-amber-500/10'
+                : 'border-white/10 bg-white/5 text-white/55 hover:border-white/20 hover:text-white/80'
+            }`}
+          >
+            {s}
+          </button>
+        ))}
+      </div>
+
       <DataTable
         minWidth={1100}
         head={<>
@@ -86,7 +108,13 @@ export function AprovacoesView() {
         {rows.length === 0 ? (
           <EmptyRow
             cols={8}
-            text={buscaFornecedor ? `Nenhuma solicitação encontrada para "${buscaFornecedor}"` : 'Nenhuma solicitação enviada'}
+            text={
+              buscaFornecedor
+                ? `Nenhuma solicitação encontrada para "${buscaFornecedor}"`
+                : statusFiltro !== 'Todos'
+                  ? `Nenhuma solicitação com status "${statusFiltro}"`
+                  : 'Nenhuma solicitação enviada'
+            }
           />
         ) : rows.map((r) => (
           <tr key={r.id} className="transition-colors hover:bg-white/5">

@@ -96,7 +96,6 @@ export function SolicitacaoView() {
     if (!form.empresa) faltando.push('Empresa');
     if (!form.solicitante.trim()) faltando.push('Solicitante');
     if (!form.tipo) faltando.push('Tipo (reembolso/adiantamento)');
-    if (!form.vinculoValor) faltando.push('OS emitida');
     if (!form.fornecedor.trim()) faltando.push('Fornecedor / beneficiário');
     if (!form.documento.trim()) faltando.push('Documento');
     if (!num(form.valor)) faltando.push('Valor');
@@ -163,16 +162,28 @@ export function SolicitacaoView() {
       };
 
       if (editandoId) {
-        await reenviarSolicitacao(editandoId, dados);
+        // reenviarSolicitacao pode falhar (ex.: sem permissão do módulo Financeiro) e
+        // já avisa por toast sozinho (comFinanceiroAtual) — sem checar o retorno aqui,
+        // a tela dizia "Reenviada" e fechava a edição mesmo sem ter salvo nada.
+        const ok = await reenviarSolicitacao(editandoId, dados);
+        if (!ok) return;
         setOk('reenviada');
+        toast.success('Solicitação reenviada para aprovação com sucesso.');
         cancelarEdicao();
       } else {
         await addSolicitacao({ id: idAlvo, tipo: 'solicitacao', status: 'Aguardando aprovação', ...dados });
         setOk('criada');
+        toast.success('Solicitação enviada para aprovação com sucesso.');
         setForm((p) => ({ ...p, fornecedor: '', documento: '', valor: '', forma: '', descricao: '' }));
         setAnexos([]);
       }
       setTimeout(() => setOk(''), 3000);
+    } catch (error: any) {
+      // addSolicitacao (criação) propaga erro em vez de engolir — sem isso, um 403/409/
+      // erro de rede fazia o botão "Enviar" voltar ao normal sem nenhum aviso, como se
+      // o clique não tivesse feito nada.
+      const mensagem = error?.response?.data?.error;
+      toast.error(typeof mensagem === 'string' ? mensagem : 'Não foi possível enviar a solicitação. Verifique sua conexão e tente novamente.');
     } finally {
       setSalvando(false);
     }
@@ -207,7 +218,7 @@ export function SolicitacaoView() {
           <Field label={req('Tipo (reembolso/adiantamento)')} span={3}>
             <Select value={form.tipo} onChange={(e) => set('tipo', e.target.value)}>{TIPOS_REEMBOLSO.map((t) => <option key={t}>{t}</option>)}</Select>
           </Field>
-          <Field label={req(boldOS('OS emitida'))} span={3}>
+          <Field label={boldOS('OS emitida')} span={3}>
             <Select value={form.vinculoValor} onChange={(e) => set('vinculoValor', e.target.value)}>
               <option value="">{oss.length ? 'Selecione...' : 'Nenhuma OS no ERP'}</option>
               {oss.map((o, i) => <option key={`${o.numero}-${i}`} value={o.numero}>{o.numero} - {o.cliente}</option>)}
@@ -242,7 +253,20 @@ export function SolicitacaoView() {
           <Field label={req('Anexar documento / imagem')} span={12}>
             <FileInput label="Anexar NF, boleto, recibo, PDF ou foto" value={anexos} onChange={setAnexos} />
             {editandoId && anexosExistentes.length > 0 && anexos.length === 0 && (
-              <p className="mt-1.5 text-xs text-white/40">Mantendo {anexosExistentes.length} anexo(s) já enviado(s). Anexe um novo arquivo acima só se quiser substituir.</p>
+              <div className="mt-1.5">
+                <p className="text-xs text-white/40">Mantendo {anexosExistentes.length} anexo(s) já enviado(s). Anexe um novo arquivo acima só se quiser substituir.</p>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {anexosExistentes.map((a, i) => {
+                    const ehUrl = /^(https?:|\/media\/)/.test(String(a));
+                    const nome = ehUrl ? decodeURIComponent(String(a).split('/').pop() || 'documento') : String(a);
+                    return ehUrl ? (
+                      <a key={i} href={a} target="_blank" rel="noopener noreferrer" className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-[11px] font-bold text-amber-200 hover:bg-amber-500/20">📄 {nome}</a>
+                    ) : (
+                      <span key={i} className="rounded-full border border-white/10 bg-white/5 px-2.5 py-0.5 text-[11px] font-bold text-white/60">📄 {nome}</span>
+                    );
+                  })}
+                </div>
+              </div>
             )}
           </Field>
           <Field label={req('Descrição')} span={12}><Textarea value={form.descricao} onChange={(e) => set('descricao', e.target.value)} placeholder="Detalhes da solicitação..." /></Field>
