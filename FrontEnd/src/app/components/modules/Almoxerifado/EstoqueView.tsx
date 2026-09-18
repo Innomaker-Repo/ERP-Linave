@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Anchor, Cable, CheckCircle2, ChevronDown, ChevronUp, ClipboardList, Download, Gauge, Hammer, Layers3, MapPin, Microscope, Package, Plus, Search, Table2, Trash2, X, Zap } from 'lucide-react';
+import { Anchor, Cable, CheckCircle2, ChevronDown, ChevronUp, ClipboardList, Container, Download, Gauge, Hammer, Layers3, Link2, MapPin, Microscope, Package, Plus, Search, Table2, Trash2, X, Zap } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { Badge } from '../../../modules/shared/ui/badge';
@@ -225,8 +225,12 @@ const getTableIconConfig = (tableName: string): { Icon: LucideIcon; badgeClass: 
       return { Icon: Hammer, badgeClass: 'bg-orange-500/15 ring-orange-500/20', iconClass: 'text-orange-300' };
     case 'talhas':
       return { Icon: Anchor, badgeClass: 'bg-emerald-500/15 ring-emerald-500/20', iconClass: 'text-emerald-300' };
+    case 'eslingas':
+      return { Icon: Link2, badgeClass: 'bg-lime-500/15 ring-lime-500/20', iconClass: 'text-lime-300' };
     case 'controledeferramentas':
       return { Icon: ClipboardList, badgeClass: 'bg-pink-500/15 ring-pink-500/20', iconClass: 'text-pink-300' };
+    case 'caixametalicaskid':
+      return { Icon: Container, badgeClass: 'bg-slate-500/15 ring-slate-500/20', iconClass: 'text-slate-300' };
     default:
       return { Icon: Table2, badgeClass: 'bg-cyan-500/15 ring-cyan-500/20', iconClass: 'text-cyan-300' };
   }
@@ -441,6 +445,17 @@ const STOCK_TABLES: StockTable[] = [
     ], false
   ),
   makeTable(
+    'ESLINGAS',
+    [
+      { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
+      { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'peso', label: 'Peso', align: 'center' }, { key: 'patrimonio', label: 'Patrimônio' }, { key: 'dataEntradaPlanilha', label: 'Data(ENTRADA NA PLANILHA)', align: 'center' },
+      { key: 'modelo', label: 'Modelo' }, { key: 'capacidadeCarga', label: 'Capacidade de Carga', align: 'center' }, { key: 'marca', label: 'Marca' },
+      { key: 'dataCalibracaoAfericao', label: 'Data da Calibração/Aferição', align: 'center' }, { key: 'validadeCalibracaoAfericao', label: 'Validade da Calibração/Aferição', align: 'center' },
+      { key: 'status', label: 'STATUS', align: 'center' }, { key: 'observacao', label: 'Observação' }, { key: 'localizacao', label: 'Local' },
+      { key: 'serviceOS', label: 'Serviço (OS)' }, { key: 'unidade', label: 'Unidade', align: 'center' }
+    ], [], false
+  ),
+  makeTable(
     'Controle de ferramentas',
     [
       { key: 'material', label: 'FERRAMENTA' }, { key: 'tagNumeroSeriePatrimonio', label: 'TAG/NUMERO SÉRIE/PATRIMÔNIO' },
@@ -460,6 +475,16 @@ const STOCK_TABLES: StockTable[] = [
       { key: 'material', label: 'Descrição' }, { key: 'quantidade', label: 'Quantidade', align: 'center' },
       { key: 'peso', label: 'Peso', align: 'center' }, { key: 'status', label: 'STATUS', align: 'center' },
       { key: 'localizacao', label: 'Local' }, { key: 'serviceOS', label: 'Serviço (OS)' }
+    ], [], false
+  ),
+  makeTable(
+    'Caixa Metálica / Skid',
+    [
+      { key: 'material', label: 'Descrição' }, { key: 'unid', label: 'Unid.', align: 'center' },
+      { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'peso', label: 'Peso', align: 'center' }, { key: 'patrimonio', label: 'Patrimônio' },
+      { key: 'modelo', label: 'Modelo' }, { key: 'marca', label: 'Marca' },
+      { key: 'status', label: 'STATUS', align: 'center' }, { key: 'observacao', label: 'Observação' }, { key: 'localizacao', label: 'Local' },
+      { key: 'serviceOS', label: 'Serviço (OS)' }, { key: 'unidade', label: 'Unidade', align: 'center' }
     ], [], false
   ),
   makeTable(
@@ -590,7 +615,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     rows: []
   })));
   
-  const [selectedCategory, setSelectedCategory] = useState<'Todos' | 'Materiais' | 'Equipamentos' | 'Alugados'>('Materiais');
+  const [selectedCategory, setSelectedCategory] = useState<'Todos' | 'Materiais' | 'Equipamentos' | 'Alugados' | 'Caixa Metálica / Skid'>('Materiais');
   const [selectedType, setSelectedType] = useState<string>('');
   const [filtro, setFiltro] = useState<string>(searchQuery || '');
   const [selectedOsFilter, setSelectedOsFilter] = useState<string>('');
@@ -720,17 +745,21 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
 
     if (almoxerifado && typeof almoxerifado === 'object') {
       if (Array.isArray(almoxerifado.tables)) {
-        setTables(
-          almoxerifado.tables.map((table: StockTable) => ({
-            ...table,
-            // Reconcilia com as colunas canônicas para incorporar colunas novas (ex.: "peso")
-            // em dados persistidos antes da mudança, sem perder linhas/colunas customizadas.
-            columns: reconcileTableColumns(table),
-            rows: Array.isArray(table.rows)
-              ? table.rows.map((row) => ({ ...row, values: normalizeRowValues(row.values) }))
-              : []
-          }))
-        );
+        const persistidas = almoxerifado.tables.map((table: StockTable) => ({
+          ...table,
+          // Reconcilia com as colunas canônicas para incorporar colunas novas (ex.: "peso")
+          // em dados persistidos antes da mudança, sem perder linhas/colunas customizadas.
+          columns: reconcileTableColumns(table),
+          rows: Array.isArray(table.rows)
+            ? table.rows.map((row) => ({ ...row, values: normalizeRowValues(row.values) }))
+            : []
+        }));
+        // Categoria/subtipo NOVO no código (ex.: "Eslingas", "Caixa Metálica / Skid") que a
+        // instância ainda não tinha salvo — sem isso, o blob persistido pisava no default e a
+        // tabela nova nunca aparecia pra quem já usava o Almoxarifado antes dela existir.
+        const nomesPersistidos = new Set(persistidas.map((t: StockTable) => t.name));
+        const novasDoCodigo = STOCK_TABLES.filter((t) => !nomesPersistidos.has(t.name));
+        setTables([...persistidas, ...novasDoCodigo]);
       }
 
       if (Array.isArray(almoxerifado.gasTypes)) {
@@ -850,13 +879,14 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   const categoryMap = {
     'Todos': [],
     'Materiais': [],
-    'Equipamentos': ['EQUIPAMENTOS ELETRICOS', 'EXTENSÃO-CABOS', 'BOMBA HIDROJATO', 'INSTRUMENTOS', 'FERRAMENTAS', 'TALHAS'],
-    'Alugados': ['Gases', 'Equipamentos']
+    'Equipamentos': ['EQUIPAMENTOS ELETRICOS', 'EXTENSÃO-CABOS', 'BOMBA HIDROJATO', 'INSTRUMENTOS', 'FERRAMENTAS', 'TALHAS', 'ESLINGAS'],
+    'Alugados': ['Gases', 'Equipamentos'],
+    'Caixa Metálica / Skid': []
   };
 
   useEffect(() => {
-    if (!selectedType && selectedCategory === 'Materiais') {
-      setSelectedType('Materiais');
+    if (!selectedType && (selectedCategory === 'Materiais' || selectedCategory === 'Caixa Metálica / Skid')) {
+      setSelectedType(selectedCategory);
     } else if (!selectedType && selectedCategory !== 'Materiais' && selectedCategory !== 'Todos') {
       const types = categoryMap[selectedCategory] as string[];
       if (types.length > 0) {
@@ -875,8 +905,8 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
 
   useEffect(() => {
     const types = categoryMap[selectedCategory] as string[];
-    if (selectedCategory === 'Materiais') {
-      setSelectedType('Materiais');
+    if (selectedCategory === 'Materiais' || selectedCategory === 'Caixa Metálica / Skid') {
+      setSelectedType(selectedCategory);
     } else if (selectedCategory === 'Todos') {
       setSelectedType('');
     } else if (types.length > 0 && !types.includes(selectedType)) {
@@ -887,6 +917,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   const getVisibleTables = () => {
     if (selectedCategory === 'Todos') return tables;
     if (selectedCategory === 'Materiais') return tables.filter(t => t.name === 'Materiais');
+    if (selectedCategory === 'Caixa Metálica / Skid') return tables.filter(t => t.name === 'Caixa Metálica / Skid');
     if (selectedCategory === 'Equipamentos') {
       if (selectedType === ALL_TYPES_VALUE) {
         const tipos = categoryMap['Equipamentos'] as string[];
@@ -1007,7 +1038,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       ? (selectedType === ALL_TYPES_VALUE ? 'todos-os-tipos' : selectedType)
       : selectedCategory === 'Alugados'
       ? `alugados-${selectedType}`
-      : 'materiais';
+      : selectedCategory;
     const nomeArquivo = `estoque-${identificadorArquivo}`
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
@@ -1347,6 +1378,8 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     
     if (selectedCategory === 'Materiais') {
       tableToUse = tables.find(t => t.name === 'Materiais');
+    } else if (selectedCategory === 'Caixa Metálica / Skid') {
+      tableToUse = tables.find(t => t.name === 'Caixa Metálica / Skid');
     } else if (selectedCategory === 'Equipamentos') {
       // "Todos os tipos" não é uma tabela de verdade — um novo item sempre precisa
       // pertencer a um subtipo específico, então cai no primeiro da categoria.
@@ -2008,6 +2041,9 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       doc.save(`romaneio-${effectiveOsLabel || romaneioOsId}.pdf`);
     } catch (e) {
       console.error('Erro ao gerar pdf do romaneio', e);
+      // A baixa do estoque já foi gravada acima (setRomaneiosHistorico) mesmo se o PDF falhar
+      // — sem o toast, o usuário achava que também tinha saído o documento, sem nenhum aviso.
+      toast.error('Romaneio registrado, mas não foi possível gerar o PDF. Baixe de novo pelo Histórico de Romaneio.');
     }
 
     setSelectedForRomaneio(new Set());
@@ -2049,7 +2085,9 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     }
     if (column.key === 'actions') {
       const isGasTable = row.tableName === 'Alugados - Gases';
-      const isEquipamentosCategory = selectedCategory === 'Equipamentos';
+      // Caixa Metálica/Skid entra no mesmo fluxo de alocação por unidade inteira dos
+      // Equipamentos (são itens retornáveis, não consumíveis como Materiais).
+      const isEquipamentosCategory = selectedCategory === 'Equipamentos' || selectedCategory === 'Caixa Metálica / Skid';
       const isAlocado = normalizeKey(row.values.status || '') === 'alocado';
       const hasServiceAllocation = Boolean(cleanValue(row.values.serviceOS));
       const isExpanded = expandedGasRows.has(row.id);
@@ -2290,7 +2328,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       <div className="mx-8 mt-6 grid grid-cols-1 gap-5 rounded-[24px] border border-white/5 bg-gradient-to-r from-white/[0.03] to-transparent p-6 shadow-xl backdrop-blur-md xl:grid-cols-[1fr_1fr_2fr_auto] xl:items-end">
         <div className="space-y-2">
           <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">Categoria</label>
-          <Select value={selectedCategory} onValueChange={(val) => setSelectedCategory(val as 'Todos' | 'Materiais' | 'Equipamentos' | 'Alugados')}>
+          <Select value={selectedCategory} onValueChange={(val) => setSelectedCategory(val as 'Todos' | 'Materiais' | 'Equipamentos' | 'Alugados' | 'Caixa Metálica / Skid')}>
             <SelectTrigger className="relative h-12 w-full rounded-xl border border-white/5 bg-[#0b1220]/80 pl-11 pr-4 text-white shadow-sm transition focus:border-amber-400 focus:ring-1 focus:ring-amber-400 hover:border-white/20">
               <Package size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-amber-400" />
               <SelectValue placeholder="Selecione" className="text-sm font-semibold" />
@@ -2307,6 +2345,9 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
               </SelectItem>
               <SelectItem value="Alugados" className="cursor-pointer rounded-lg px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
                 Alugados
+              </SelectItem>
+              <SelectItem value="Caixa Metálica / Skid" className="cursor-pointer rounded-lg px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
+                Caixa Metálica / Skid
               </SelectItem>
             </SelectContent>
           </Select>
@@ -2453,6 +2494,8 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
             ? 'Visualizando Todas as categorias'
             : selectedCategory === 'Materiais'
             ? 'Visualizando Materiais'
+            : selectedCategory === 'Caixa Metálica / Skid'
+            ? 'Visualizando Caixa Metálica / Skid'
             : selectedCategory === 'Equipamentos'
             ? `Equipamentos / ${selectedType === ALL_TYPES_VALUE ? 'Todos os tipos' : selectedType}`
             : `Alugados / ${selectedType}`}

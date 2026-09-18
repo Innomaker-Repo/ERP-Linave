@@ -66,7 +66,7 @@ export const handleDownloadMedicaoPDF = async (
       text: string, align: 'left' | 'center' | 'right' = 'left',
       bold = false, border = true, valign: 'top' | 'middle' = 'middle'
     ) => {
-      doc.setFont('Arial', bold ? 'bold' : 'normal');
+      doc.setFont('helvetica', bold ? 'bold' : 'normal');
       doc.setTextColor(0, 0, 0);
 
       if (border) doc.rect(x, y, width, height);
@@ -74,9 +74,13 @@ export const handleDownloadMedicaoPDF = async (
 
       const padding = 2;
       const textWidth = width - padding * 2;
-      const lines = doc.splitTextToSize(String(text), textWidth);
-      
+      // O tamanho da fonte tem que estar fixado ANTES do primeiro splitTextToSize — sem isso,
+      // a contagem de linhas usava o tamanho que sobrou da última célula desenhada (podia ser
+      // 7, 8 ou 9), e a decisão de reduzir a fonte ficava inconsistente conforme a ordem das
+      // chamadas, quebrando/estourando texto de forma imprevisível.
       let fontSize = 9;
+      doc.setFontSize(fontSize);
+      const lines = doc.splitTextToSize(String(text), textWidth);
       let displayLines = lines;
 
       if (lines.length > 3) {
@@ -121,7 +125,11 @@ export const handleDownloadMedicaoPDF = async (
       ? '34.282.247/0001-60'
       : (documentoMediacaoForm.empresaCnpj || documentoMediacaoForm.cnpjPrestadora || '');
     // CNPJ do CLIENTE (coluna da direita). `cnpj` legado também carregava o do cliente.
-    const cnpjCliente = documentoMediacaoForm.clienteCnpj || documentoMediacaoForm.cnpj || '';
+    // Cai para o `cliente` resolvido pela tela quando o formulário da medição está sem esses
+    // campos preenchidos/desatualizado — antes só lia do form e saía com cliente/CNPJ em branco
+    // mesmo com o objeto `cliente` certo disponível.
+    const nomeCliente = documentoMediacaoForm.cliente || cliente?.razaoSocial || cliente?.razao_social || '';
+    const cnpjCliente = documentoMediacaoForm.clienteCnpj || documentoMediacaoForm.cnpj || cliente?.cpfCnpj || cliente?.documento || '';
     
     const logoUrl = isLinave ? '/image2.jpg' : '/image1.png';
     let logoImg: HTMLImageElement | null = null;
@@ -147,7 +155,7 @@ export const handleDownloadMedicaoPDF = async (
     }
 
     doc.rect(x + colLogoW, y, colTitleW, row0Height);
-    doc.setFont('Arial', 'bold');
+    doc.setFont('helvetica', 'bold');
     doc.setFontSize(11);
     doc.text(nomeHeader, x + colLogoW + (colTitleW / 2), y + 9, { align: 'center' });
 
@@ -165,28 +173,28 @@ export const handleDownloadMedicaoPDF = async (
       isLabelBoldEsq = true, isValueBoldEsq = true
     ) => {
       doc.rect(x, y, col1W, rowHeight);
-      doc.setFont('Arial', isLabelBoldEsq ? 'bold' : 'normal');
+      doc.setFont('helvetica', isLabelBoldEsq ? 'bold' : 'normal');
       doc.setFontSize(9);
       doc.text(labelEsq, x + 2, y + 4.2);
       
       doc.rect(x + col1W, y, col2W, rowHeight);
-      doc.setFont('Arial', isValueBoldEsq ? 'bold' : 'normal');
+      doc.setFont('helvetica', isValueBoldEsq ? 'bold' : 'normal');
       let splitEsq = doc.splitTextToSize(String(valorEsq || ''), col2W - 4);
       doc.text(splitEsq, x + col1W + 2, y + (splitEsq.length > 1 ? 2.6 : 4.2));
 
       doc.rect(x + col1W + col2W, y, col3W, rowHeight);
-      doc.setFont('Arial', 'bold');
+      doc.setFont('helvetica', 'bold');
       doc.text(labelDir, x + col1W + col2W + 2, y + 4.2);
 
       doc.rect(x + col1W + col2W + col3W, y, col4W, rowHeight);
-      doc.setFont('Arial', 'normal');
+      doc.setFont('helvetica', 'normal');
       let splitDir = doc.splitTextToSize(String(valorDir || ''), col4W - 4);
       doc.text(splitDir, x + col1W + col2W + col3W + 2, y + (splitDir.length > 1 ? 2.6 : 4.2));
 
       y += rowHeight;
     };
 
-    drawRowFields('Empresa:', razaoSocialPrestadora, 'Cliente:', documentoMediacaoForm.cliente || '', true, true);
+    drawRowFields('Empresa:', razaoSocialPrestadora, 'Cliente:', nomeCliente, true, true);
     drawRowFields('CNPJ:', cnpjPrestadora, 'CNPJ:', cnpjCliente, true, false);
     drawRowFields('Data emissao:', formatarDataParaBr(documentoMediacaoForm.dataEmissao) || '', 'Embarcaçao:', documentoMediacaoForm.embarcacao || '', true, false);
     drawRowFields('Negócio / Nr. BM:', `${numeroNegocio}${documentoMediacaoForm.numeroBM ? ` • BM ${documentoMediacaoForm.numeroBM}` : ''}`, 'Periodo:', documentoMediacaoForm.periodo || '', true, false);
@@ -196,7 +204,7 @@ export const handleDownloadMedicaoPDF = async (
     // Cita a proposta de origem (número + versão), para deixar claro de qual documento os
     // itens abaixo foram medidos — mesma citação já aplicada na Ordem de Serviço.
     if (ultimaProposta?.numeroProposta) {
-      doc.setFont('Arial', 'italic');
+      doc.setFont('helvetica', 'italic');
       doc.setFontSize(8);
       doc.setTextColor(70, 70, 70);
       const versaoTxt = ultimaProposta.versao ? ` versão ${ultimaProposta.versao}` : '';
@@ -210,17 +218,24 @@ export const handleDownloadMedicaoPDF = async (
     // ===== 3. TABELA DE ITENS =====
     const colWidths = [12, 78, 20, 15, 30, 35];
     const headerHeight = 8;
-    x = margin;
-    doc.setFont('Arial', 'bold');
-    doc.setFontSize(9);
-    
-    ['Ítem', 'Descrição dos Serviços', 'Quantid.', 'Unid.', 'Valor unit. R$', 'Valor total (R$)'].forEach((header, i) => {
-      doc.rect(x, y, colWidths[i], headerHeight);
-      doc.text(header, x + colWidths[i] / 2, y + 5.5, { align: 'center' });
-      x += colWidths[i];
-    });
+    const tableHeaders = ['Ítem', 'Descrição dos Serviços', 'Quantid.', 'Unid.', 'Valor unit. R$', 'Valor total (R$)'];
 
-    y += headerHeight;
+    // Extraída pra função porque a tabela pode quebrar de página no meio (itens, cabeçalho de
+    // grupo ou subtotal) — sem redesenhar o cabeçalho, as páginas de continuação saíam sem
+    // saber o que cada coluna significa.
+    const drawTableHeader = () => {
+      let hx = margin;
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9);
+      tableHeaders.forEach((header, i) => {
+        doc.rect(hx, y, colWidths[i], headerHeight);
+        doc.text(header, hx + colWidths[i] / 2, y + 5.5, { align: 'center' });
+        hx += colWidths[i];
+      });
+      y += headerHeight;
+    };
+
+    drawTableHeader();
 
     // Itens separados: SERVIÇO (mão de obra, materiais, terceirizados) e LOCAÇÃO, cada grupo
     // com seu subtotal; o total geral vem no rodapé. Espelha a tela de medição e a proposta.
@@ -233,19 +248,19 @@ export const handleDownloadMedicaoPDF = async (
 
     // Desenha uma linha de item. Devolve o total (R$) da linha.
     const drawItemRow = (linha: any, numero: number): number => {
-      doc.setFont('Arial', 'normal');
+      doc.setFont('helvetica', 'normal');
       doc.setFontSize(8);
       const lines = doc.splitTextToSize(linha.descricao || '', colWidths[1] - 4);
       const itemRowHeight = Math.max(8, lines.length * 4 + 4);
-      if (y + itemRowHeight > pageHeight - 60) { doc.addPage(); y = margin; }
+      if (y + itemRowHeight > pageHeight - 60) { doc.addPage(); y = margin; drawTableHeader(); }
       const bx = margin;
       const total = parseBrFloat(linha.total);
       drawCellWithAutoWrap(bx, y, colWidths[0], itemRowHeight, String(linha.item || numero), 'center');
       drawCellWithAutoWrap(bx + colWidths[0], y, colWidths[1], itemRowHeight, linha.descricao || '');
       drawCellWithAutoWrap(bx + colWidths[0] + colWidths[1], y, colWidths[2], itemRowHeight, formatNumber(linha.quantidadeProduzida), 'center');
-      drawCellWithAutoWrap(bx + 110, y, colWidths[3], itemRowHeight, linha.unidade || '', 'center');
-      drawCellWithAutoWrap(bx + 125, y, colWidths[4], itemRowHeight, formatCurrency(linha.valorUnitario), 'right');
-      drawCellWithAutoWrap(bx + 155, y, colWidths[5], itemRowHeight, formatCurrency(total), 'right');
+      drawCellWithAutoWrap(bx + colWidths[0] + colWidths[1] + colWidths[2], y, colWidths[3], itemRowHeight, linha.unidade || '', 'center');
+      drawCellWithAutoWrap(bx + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3], y, colWidths[4], itemRowHeight, formatCurrency(linha.valorUnitario), 'right');
+      drawCellWithAutoWrap(bx + somaFirst, y, colWidths[5], itemRowHeight, formatCurrency(total), 'right');
       y += itemRowHeight;
       return total;
     };
@@ -253,10 +268,10 @@ export const handleDownloadMedicaoPDF = async (
     // Faixa de título do grupo (SERVIÇOS / LOCAÇÃO).
     const drawGroupHeader = (label: string) => {
       const h = 7;
-      if (y + h > pageHeight - 60) { doc.addPage(); y = margin; }
+      if (y + h > pageHeight - 60) { doc.addPage(); y = margin; drawTableHeader(); }
       doc.setFillColor(225, 225, 225);
       doc.rect(margin, y, somaFirst + lastW, h, 'FD');
-      doc.setFont('Arial', 'bold');
+      doc.setFont('helvetica', 'bold');
       doc.setFontSize(9);
       doc.setTextColor(0, 0, 0);
       doc.text(label, margin + 2, y + 4.8);
@@ -266,7 +281,7 @@ export const handleDownloadMedicaoPDF = async (
     // Linha de subtotal (rótulo à direita + valor na coluna de total).
     const drawSubtotalRow = (rotulo: string, valor: number) => {
       const h = 8;
-      if (y + h > pageHeight - 60) { doc.addPage(); y = margin; }
+      if (y + h > pageHeight - 60) { doc.addPage(); y = margin; drawTableHeader(); }
       drawCellWithAutoWrap(margin, y, somaFirst, h, rotulo, 'right', true);
       drawCellWithAutoWrap(margin + somaFirst, y, lastW, h, `R$ ${formatCurrency(valor)}`, 'right', true);
       y += h;
@@ -298,12 +313,12 @@ export const handleDownloadMedicaoPDF = async (
     }
 
     x = margin;
-    doc.setFont('Arial', 'bold');
+    doc.setFont('helvetica', 'bold');
     doc.setFontSize(11);
     doc.text(`Valor total desta medição: R$ ${formatCurrency(totalGeral)}`, x, y);
     
     y += 25;
-    doc.setFont('Arial', 'normal');
+    doc.setFont('helvetica', 'normal');
     doc.setFontSize(10);
     doc.text('Aprovado por:', x, y);
     
@@ -326,7 +341,7 @@ export const handleDownloadMedicaoPDF = async (
     doc.line(x + sigWidth + spacing, lineY, x + sigWidth + spacing + sigWidth, lineY); 
     
     // --- TÍTULOS FIXOS (ABAIXO DA LINHA) ---
-    doc.setFont('Arial', 'bold');
+    doc.setFont('helvetica', 'bold');
     doc.setFontSize(8);
     doc.text('Representante do Cliente', x + sigWidth / 2, lineY + 4, { align: 'center' });
     

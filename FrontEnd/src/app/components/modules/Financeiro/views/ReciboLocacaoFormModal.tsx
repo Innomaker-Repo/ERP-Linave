@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
-import { Download } from 'lucide-react';
-import { FinModal, boldOS } from '../finUi';
-import { money, upsertContaReceberPorMedicao } from '../finData';
+import { Download, UploadCloud } from 'lucide-react';
+import { toast } from 'sonner';
+import { FinModal, boldOS, FileInput } from '../finUi';
+import { money, upsertContaReceberPorMedicao, isLinaveEmpresa } from '../finData';
 import { useErp } from '../../../../context/ErpContext';
 import { comFinanceiroAtual } from '../../../../../services/financeiroSeguro';
 import { gerarReciboLocacaoPDF } from '../reciboLocacaoPdf';
+import { uploadDocumento } from '../../../../../services/documentosService';
 
 /* =========================================================================================
  * Formulário de Recibo de Locação — extraído de ReciboLocacaoView.tsx pra ser reaproveitado
@@ -13,11 +15,6 @@ import { gerarReciboLocacaoPDF } from '../reciboLocacaoPdf';
  * A lista em cards de ReciboLocacaoView.tsx continua lá — só a parte de EDITAR virou modal
  * compartilhado (antes era um "swap" inteiro da tela, sem overlay).
  * =======================================================================================*/
-
-export const isLinaveEmpresa = (empresa?: any) => {
-  const s = String(empresa || '').toLowerCase();
-  return s.includes('linave') || s.includes('wlm') || s.includes('w.l.m');
-};
 
 // O emitente (razão social, CNPJ, inscrições, banco) E o logo do recibo dependem da EMPRESA
 // PRESTADORA (Linave × Servinave), definida lá na criação do serviço/OS. Presets abaixo.
@@ -109,6 +106,11 @@ export function ReciboLocacaoFormModal({ reciboInicial, onClose, onSaved }: Reci
   const { saveEntity, config } = useErp() as any;
   const [form, setForm] = useState<any>(reciboInicial);
   const [salvando, setSalvando] = useState(false);
+  // Documento já emitido fora do sistema (ex.: recibo assinado à mão, versão final revisada).
+  // Se o usuário anexar algo aqui, ele soma ao PDF que o sistema gera automaticamente ao
+  // "Gerar recibo" — não substitui, já que o PDF gerado é o que alimenta Contas a Receber
+  // mesmo quando ninguém anexa nada.
+  const [anexoManual, setAnexoManual] = useState<File[]>([]);
 
   const inp = 'w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-white text-sm placeholder:text-white/30';
   const lbl = 'text-white/50 text-[10px] uppercase font-black tracking-widest mb-1 block';
@@ -164,7 +166,21 @@ export function ReciboLocacaoFormModal({ reciboInicial, onClose, onSaved }: Reci
     if (!form) return;
     setSalvando(true);
     try {
-      const recEmitido = { ...form, status: 'emitido' };
+      // 1) Gera o PDF (dispara o download local, como já fazia) e sobe o mesmo arquivo pro
+      //    backend — é o documento que fica disponível depois em Contas a Receber. Documento(s)
+      //    anexados manualmente (recibo já emitido fora do sistema) somam junto.
+      const pdfFile = await gerarReciboLocacaoPDF(dadosPdf({ ...form, status: 'emitido' }));
+      const uploads = await Promise.allSettled([
+        uploadDocumento(pdfFile, { vinculoTipo: 'financeiro', vinculoId: form.id, categoria: 'fin_anexo' }),
+        ...anexoManual.map((file) => uploadDocumento(file, { vinculoTipo: 'financeiro', vinculoId: form.id, categoria: 'fin_anexo' })),
+      ]);
+      const anexosUrls = uploads
+        .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
+        .map((r) => r.value.url);
+      const falhas = uploads.length - anexosUrls.length;
+      if (falhas > 0) toast.error(`${falhas} documento(s) não puderam ser enviados — o recibo continua sendo emitido.`);
+
+      const recEmitido = { ...form, status: 'emitido', anexos: anexosUrls };
       const total = (recEmitido.itens || []).reduce((s: number, i: any) => s + (parseFloat(String(i.total).replace(',', '.')) || 0), 0);
       const resultado = await comFinanceiroAtual(async (base) => {
         const outros = base.filter((r: any) => r?.id !== recEmitido.id);
@@ -185,14 +201,17 @@ export function ReciboLocacaoFormModal({ reciboInicial, onClose, onSaved }: Reci
             valorOriginal: total,
             valorLiquido: total,
             vencimento: recEmitido.dataVencimento,
-            referencia: `${isLinaveEmpresa(recEmitido.empresa) ? 'N/D' : 'R/L'} ${recEmitido.numero}`,
+            // Este formulário só existe para Recibo de Locação — a sigla é SEMPRE R/L, não
+            // importa a empresa prestadora (N/D é exclusivo de serviço faturado pela Servinave,
+            // que segue outro fluxo, o de NFe/Nota de Débito em NfeView.tsx).
+            referencia: `R/L ${recEmitido.numero}`,
+            anexos: anexosUrls,
           });
         }
         await saveEntity('financeiro', next);
         return true;
       });
-      if (!resultado) return; // gravação falhou/abortou — não gera o PDF nem fecha o form
-      await gerarReciboLocacaoPDF(dadosPdf(recEmitido));
+      if (!resultado) return; // gravação falhou/abortou
       onSaved?.(recEmitido);
       onClose();
     } finally {
@@ -285,6 +304,15 @@ export function ReciboLocacaoFormModal({ reciboInicial, onClose, onSaved }: Reci
           </div>
           <p className="text-right text-white/50 text-xs uppercase font-black tracking-widest mt-3">Valor total: <span className="text-emerald-300 text-lg">R$ {money(totalRecibo)}</span></p>
           <div className="mt-3"><label className={lbl}>Observação (OBS)</label><input className={inp} value={form.obs} onChange={(e) => set('obs', e.target.value)} /></div>
+        </section>
+
+        {/* Documento: opcional aqui — "Gerar recibo" já sobe o PDF que o sistema monta e o
+            anexa em Contas a Receber sozinho. Só use isto se já tiver um recibo emitido fora
+            do sistema (ex.: assinado à mão) que precise valer no lugar/junto do PDF gerado. */}
+        <section className="bg-[#0b1220] rounded-xl border border-white/10 p-4">
+          <p className="text-emerald-300 text-xs font-black uppercase mb-1 flex items-center gap-1.5"><UploadCloud size={14} /> Documento já emitido (opcional)</p>
+          <p className="text-white/40 text-[11px] mb-3">Ao gerar, o sistema já anexa o PDF do recibo em Contas a Receber automaticamente. Anexe aqui só se já tiver um documento emitido fora do sistema pra somar junto.</p>
+          <FileInput label="Anexar recibo/NF já emitido" value={anexoManual} onChange={setAnexoManual} />
         </section>
 
         <div className="flex justify-end gap-3 border-t border-white/10 pt-4">

@@ -955,6 +955,7 @@ interface ErpContextData {
   userSession: any;
   setUserSession: (s: any) => void;
   loading: boolean;
+  empresa: any;
   clientes: any[];
   funcionarios: any[];
   obras: any[];

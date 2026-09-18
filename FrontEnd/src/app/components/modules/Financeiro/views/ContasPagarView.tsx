@@ -14,7 +14,7 @@ import {
 import { useFin, type FinRecord } from '../useFin';
 import { useFinFilters } from '../finFilters';
 import { uploadDocumento, listarDocumentos, excluirDocumento } from '../../../../../services/documentosService';
-import { confirmDialog } from '../../../ui/feedback';
+import { confirmDialog, promptDialog } from '../../../ui/feedback';
 import { toast } from 'sonner';
 
 // Deriva um nome de arquivo amigável a partir da URL salva (`anexos`/`comprovantes` guardam
@@ -148,6 +148,28 @@ export function ContasPagarView() {
     setEditId(p.id);
   };
 
+  // Regra: editar ou excluir uma conta sem nº de boleto/NF pede o número na hora — só
+  // segue (e persiste na conta) se o usuário informar; cancelar aborta a ação em silêncio.
+  const garantirDocumento = async (p: FinRecord): Promise<string | null> => {
+    const docAtual = String(p.documento || '').trim();
+    if (docAtual) return docAtual;
+    const digitado = await promptDialog({
+      title: 'Nº do boleto/Nota Fiscal obrigatório',
+      message: 'Esta conta ainda não tem nº de boleto/Nota Fiscal. Informe antes de continuar.',
+      placeholder: 'Nº do boleto/NF',
+      confirmText: 'Confirmar',
+    });
+    const doc = (digitado || '').trim();
+    if (!doc) {
+      toast.error('É obrigatório informar o nº do boleto/Nota Fiscal.');
+      return null;
+    }
+    const st = String(p.status || '');
+    const patch: Record<string, any> = { documento: doc };
+    if (st !== CP_STATUS.pago && st !== CP_STATUS.parcelado) patch.status = CP_STATUS.comDoc;
+    await updateRecord(p.id, patch);
+    return doc;
+  };
 
   const salvarConta = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -554,7 +576,19 @@ export function ContasPagarView() {
             </Td>
             <Td>
               <div className="flex gap-2">
-                {p.type !== 'parent' && <Btn small variant="secondary" onClick={() => abrirEdicao(p)}>Editar</Btn>}
+                {p.type !== 'parent' && (
+                  <Btn
+                    small
+                    variant="secondary"
+                    onClick={async () => {
+                      const doc = await garantirDocumento(p);
+                      if (doc === null) return;
+                      abrirEdicao({ ...p, documento: doc, status: p.status === CP_STATUS.semDoc ? CP_STATUS.comDoc : p.status });
+                    }}
+                  >
+                    Editar
+                  </Btn>
+                )}
                 {p.type === 'single' && p.status !== 'Pago' && p.status !== CP_STATUS.semDoc && <Btn small variant="blue" onClick={() => abrirParcelar(p)}><Split size={12} /> Parcelar</Btn>}
                 {p.type !== 'parent' && p.status !== 'Pago' && <Btn small variant="green" onClick={() => abrirPagamento(p)}><Banknote size={12} /> Pagar</Btn>}
                 {(((p.anexos as string[] | undefined)?.length || 0) + ((p.comprovantes as string[] | undefined)?.length || 0)) > 0 && (
@@ -573,6 +607,7 @@ export function ContasPagarView() {
                       ? '\n\nATENÇÃO: esta conta já foi PAGA. O pagamento e o comprovante saem do histórico financeiro.'
                       : '')
                   }
+                  beforeConfirm={async () => (await garantirDocumento(p)) !== null}
                   onConfirm={() => deleteRecord(p.id)}
                 />
               </div>

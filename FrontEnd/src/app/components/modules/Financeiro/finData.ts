@@ -24,6 +24,7 @@ export const FORMAS_PAGAMENTO = [
 
 // Tipo de reembolso / adiantamento (usado em Solicitação e Contas a Pagar).
 export const TIPOS_REEMBOLSO = [
+  'Reembolso',
   'Viagens',
   'Salário',
   'Adiantamento',
@@ -305,6 +306,15 @@ export const FIN_TITLES: Record<string, [string, string]> = {
 export const recStatus = (r: ContaReceber) =>
   r.recebido ? 'Recebido' : isOld(r.vencimentoRecebimento) ? 'Vencido' : 'A receber';
 
+// A empresa prestadora decide a sigla do documento fiscal em todo o Financeiro: NFe
+// (serviço Linave) / N/D (serviço Servinave) / R/L (locação, qualquer empresa — ver
+// siglaTipoNfe em NfeView.tsx e a regra de referência em useFin.ts/ReciboLocacaoFormModal.tsx).
+// Única definição — NfeView.tsx e ReciboLocacaoFormModal.tsx importam daqui, não duplicam.
+export const isLinaveEmpresa = (empresa?: any): boolean => {
+  const s = String(empresa || '').toLowerCase();
+  return s.includes('linave') || s.includes('wlm') || s.includes('w.l.m');
+};
+
 // ---------- Adaptação de dados reais do ERP ----------
 // O centro de custo / cc das OS usa prefixo LN (Linave) ou VTS (Servinave).
 // 'SN' é o prefixo legado da Servinave (dados antigos) — mantido para retrocompatibilidade.
@@ -580,6 +590,7 @@ export interface AporteReceber {
   baixado?: number;          // valor já recebido na emissão (NFe); semeia o recebimento na criação
   impostos?: ImpostosNfe;    // detalhamento retido na NF que originou este aporte
   emissao?: string;          // data de emissão da NFe (origem 'NFe'), exibida em Contas a Receber
+  anexos?: string[];         // documento(s) da fonte (NFe emitida / recibo de locação gerado)
 }
 
 const _maxData = (a?: string, b?: string): string => {
@@ -601,6 +612,7 @@ export const upsertContaReceberPorMedicao = (financeiro: any[], aporte: AporteRe
     referencia: aporte.referencia || '',
     impostos: aporte.impostos || null,
     emissao: aporte.emissao || '',
+    anexos: aporte.anexos || [],
   };
 
   // Reconstrói o recebível a partir das suas fontes (soma valores, vencimento = o mais distante).
@@ -632,6 +644,9 @@ export const upsertContaReceberPorMedicao = (financeiro: any[], aporte: AporteRe
       medicaoId: aporte.medicaoId || base?.medicaoId || '',
       medicaoNumero: aporte.medicaoNumero || base?.medicaoNumero || '',
       ordemServicoNumero: aporte.ordemServicoNumero || base?.ordemServicoNumero || '',
+      // Documento(s) de cada fonte (NFe emitida / recibo de locação gerado), achatados pra
+      // a tela de Contas a Receber conseguir mostrar/baixar sem precisar voltar na origem.
+      anexos: fontes.flatMap((f) => (Array.isArray(f.anexos) ? f.anexos : [])),
       fontes,
       createdAt: base?.createdAt || new Date().toISOString(),
     };
@@ -668,8 +683,13 @@ export const download = (text: string, filename: string, type = 'text/plain;char
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  // Precisa estar no DOM pro .click() disparar o download em todos os navegadores (Firefox/
+  // Safari podem ignorar o click de um <a> solto, fora da árvore) — e o revoke só depois de um
+  // instante, senão corre risco de invalidar a URL antes do download começar de verdade.
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 
 // ---------- Contas a Pagar: builder puro (única ou mãe+filhas) ----------

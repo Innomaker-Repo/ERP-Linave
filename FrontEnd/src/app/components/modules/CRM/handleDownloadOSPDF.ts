@@ -402,7 +402,7 @@ export const handleDownloadOSPDF = ({
     });
   }
 
-  const pageCount = (doc as any).internal.getNumberOfPages();
+  const pageCount = doc.getNumberOfPages();
   for (let i = 1; i <= pageCount; i++) {
     doc.setPage(i);
     doc.setFontSize(6);
@@ -412,13 +412,20 @@ export const handleDownloadOSPDF = ({
   }
 
   const prefixo = getPrefixoEmpresa(obra?.empresaPrestadora);
-  const nomeArquivo = `OS_${String(osPrincipal.ordemServicoNumero || '001').replace(/[\\/]/g, '-')}.pdf`;
+  const nomeArquivo = `${prefixo}_OS_${String(osPrincipal.ordemServicoNumero || '001').replace(/[\\/]/g, '-')}.pdf`;
   const conteudoDataUrl = doc.output('datauristring');
   doc.save(nomeArquivo);
+
+  // Tamanho real do PDF em bytes: o data URI tem um prefixo "data:...;base64," que não é
+  // conteúdo, e o base64 pode ter padding ("=") no final — sem descontar os dois, o tamanho
+  // reportado ficava sistematicamente maior que o arquivo de verdade.
+  const base64 = conteudoDataUrl.slice(conteudoDataUrl.indexOf(',') + 1);
+  const padding = (base64.match(/=+$/)?.[0] || '').length;
+  const tamanho = Math.max(0, Math.round((base64.length * 3) / 4) - padding);
 
   return {
     nomeArquivo,
     conteudoDataUrl,
-    tamanho: Math.max(0, Math.round((conteudoDataUrl.length * 3) / 4)),
+    tamanho,
   };
 };

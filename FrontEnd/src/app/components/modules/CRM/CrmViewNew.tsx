@@ -4,8 +4,6 @@ import { extrairIdProjetoDoNumero } from '../../../context/ErpContext';
 import { Plus, X, FileText, DollarSign, CheckCircle, Clock, ArrowRight, Edit2, ChevronDown, Zap, AlertCircle, Download, Eye, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../ui/feedback';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable'; // Importação nomeada do plugin
 import { handleDownloadMedicaoPDF } from './handleDownloadMedicaoPDF';
 import { handleDownloadPropostaPDF } from './handleDownloadPropostaPDF';
 import { handleDownloadOrcamentoPDF as gerarOrcamentoPDF } from './handleDownloadOrcamentoPDF';
@@ -1556,7 +1554,7 @@ const initialServico: Servico = {
     });
 
       //  Sincroniza qualquer edição/movimentação com as outras telas
-      saveEntity('obras', (obras || []).map(o => o.id === obraAtualizada.id ? obraAtualizada : o));
+      saveEntity('obras', (obras || []).map((o: any) => o.id === obraAtualizada.id ? obraAtualizada : o));
 
       if (selectedObraDetalhes?.id === obraAtualizada.id) setSelectedObraDetalhes(obraAtualizada);
       if (editingObra?.id === obraAtualizada.id) setEditingObra(obraAtualizada);
@@ -2391,7 +2389,7 @@ const initialServico: Servico = {
   const handleEnviarOS = async () => {
     if (!selectedObraDetalhes) return;
 
-    const osDoNegocio = (os || []).filter(o => o.obraId === selectedObraDetalhes.id);
+    const osDoNegocio = (os || []).filter((o: any) => o.obraId === selectedObraDetalhes.id);
     if (osDoNegocio.length === 0) return;
 
     // Persiste o envio no SQL (atualizar-status) usando o backendId de cada OS.
@@ -3057,9 +3055,6 @@ const obrasOrdenadas = useMemo(() => {
                       onChange={e => {
                         const novaModalidade = e.target.value;
                         setFormData({ ...formData, modalidade: novaModalidade });
-                        // Evita ficar numa aba bloqueada ao trocar de modalidade.
-                        if (novaModalidade === 'locacao' && novoNegocioTab === 'servicos') setNovoNegocioTab('alocacao');
-                        if (novaModalidade === 'servico' && novoNegocioTab === 'alocacao') setNovoNegocioTab('servicos');
                       }}
                     >
                       {MODALIDADES.map((m) => (
@@ -4232,7 +4227,7 @@ const obrasOrdenadas = useMemo(() => {
 
               {/* SECAO OS - Em Andamento e Finalizacao */}
               {['Em Andamento', 'Finalização'].includes(selectedObraDetalhes.categoria) && (() => {
-                const osDoNegocio = (os || []).filter(o => o.obraId === selectedObraDetalhes.id);
+                const osDoNegocio = (os || []).filter((o: any) => o.obraId === selectedObraDetalhes.id);
                 if (osDoNegocio.length === 0) return null;
                 
                 const osEnviada = osDoNegocio.some((o: any) => o.statusEnvio === 'enviada');
@@ -4256,7 +4251,7 @@ const obrasOrdenadas = useMemo(() => {
                     </div>
 
                     <div className="space-y-3">
-                      {osDoNegocio.map((osbatch, idx) => (
+                      {osDoNegocio.map((osbatch: any, idx: number) => (
                         <div key={idx} className="bg-[#0b1220] rounded-lg p-4 border border-white/5 space-y-2">
                           <div className="flex justify-between items-start">
                             <div className="flex-1">
@@ -4993,7 +4988,7 @@ const obrasOrdenadas = useMemo(() => {
 
       {/* MODAL - OS COMPLETA */}
       {showOSFullModal && selectedObraDetalhes && (() => {
-        const osDoNegocio = (os || []).filter(o => o.obraId === selectedObraDetalhes.id);
+        const osDoNegocio = (os || []).filter((o: any) => o.obraId === selectedObraDetalhes.id);
         if (osDoNegocio.length === 0) return null;
         const osPrincipal = osDoNegocio[0];
         const orcamentosBase = Array.isArray(osPrincipal?.orcamentos) && osPrincipal.orcamentos.length > 0
@@ -5304,7 +5299,7 @@ const obrasOrdenadas = useMemo(() => {
 
                 {/* Ordens de Serviço */}
                 <div className="space-y-4">
-                  {osDoNegocio.map((osbatch, idx) => (
+                  {osDoNegocio.map((osbatch: any, idx: number) => (
                     <div key={idx} className="bg-gradient-to-r from-purple-500/10 to-violet-500/10 rounded-xl p-6 border border-purple-500/30 space-y-4">
                       <div className="flex justify-between items-start">
                         <h4 className="text-purple-400 font-black text-lg">OS #{idx + 1}</h4>

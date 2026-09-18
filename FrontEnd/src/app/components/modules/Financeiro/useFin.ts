@@ -10,7 +10,7 @@ import { useMemo } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { comFinanceiroAtual } from '../../../../services/financeiroSeguro';
 import {
-  mapOsToFinanceiro, todayStr, days, num,
+  mapOsToFinanceiro, todayStr, days, num, isLinaveEmpresa,
   upsertContaReceberPorMedicao, garantirOcorrenciasContasFixas, proximaOcorrenciaAposPagamento, CP_STATUS,
   type OS, type Empresa, type FinTipo, type NfeSolicitacao, type ImpostosNfe,
 } from './finData';
@@ -21,6 +21,10 @@ export interface FinRecord {
   empresa?: Empresa | string;
   status?: string;
   createdAt?: string;
+  // Nome de exibição — presente em registros como 'banco' (ver BancosView.tsx); declarado
+  // aqui pra `records('banco') as Array<{ id; nome; empresa? }>` (Contas a Pagar/Receber,
+  // finFilters.tsx) não esbarrar em "Property 'nome' is missing" no cast.
+  nome?: string;
   [key: string]: any;
 }
 
@@ -228,20 +232,25 @@ export function useFin() {
       ? { ...r, ...patch, status: 'Aguardando aprovação', motivoReprovacao: '' }
       : r));
 
-  // Rótulo do recebível gerado pela nota. O número é opcional na emissão (nem sempre já
-  // saiu do emissor), então a referência precisa continuar legível sem ele.
-  const referenciaNfe = (numero?: string) => {
+  // Rótulo do recebível gerado pela nota. Sigla pela empresa prestadora — Linave emite NFe
+  // normal, Servinave emite Nota de Débito (N/D) pro mesmo serviço (locação usa outra sigla,
+  // R/L, tratada só em ReciboLocacaoFormModal.tsx — este caminho é exclusivo de serviço).
+  // O número é opcional na emissão (nem sempre já saiu do emissor), a referência continua
+  // legível sem ele.
+  const referenciaNfe = (numero: string | undefined, empresa: any) => {
     const n = String(numero || '').trim();
-    return n ? `NF ${n}` : 'NF sem número';
+    const sigla = isLinaveEmpresa(empresa) ? 'NFe' : 'N/D';
+    return n ? `${sigla} ${n}` : `${sigla} sem número`;
   };
 
   // Preenche/corrige o número (e a data) de uma NFe já emitida. Atualiza junto a
   // referência da Conta a Receber que ela gerou — sem isso o recebível ficaria marcado
-  // como "NF sem número" para sempre, mesmo depois de o número ser informado.
+  // como "NFe sem número" para sempre, mesmo depois de o número ser informado.
   const atualizarNfeEmitida = async (nfeId: string, patch: { numero?: string; emissao?: string }) => {
     const numero = String(patch.numero ?? '').trim();
-    const referencia = referenciaNfe(numero);
     await comFinanceiroAtual(async (base) => {
+      const nfeAtual = base.find((r) => r.id === nfeId && r.tipo === 'nfe');
+      const referencia = referenciaNfe(numero, nfeAtual?.empresa);
       const next = base.map((r) => {
         if (r.id === nfeId && r.tipo === 'nfe') {
           return { ...r, numero, ...(patch.emissao ? { emissao: patch.emissao } : {}) };
@@ -306,10 +315,11 @@ export function useFin() {
         valorOriginal: payload.original,
         valorLiquido: payload.liquido,
         vencimento: payload.vencimento,
-        referencia: referenciaNfe(payload.numero),
+        referencia: referenciaNfe(payload.numero, sol.empresa),
         baixado: payload.baixado,
         impostos: payload.impostos,
         emissao: payload.emissao,
+        anexos: payload.anexos,
       });
       await ctx.saveEntity('financeiro', next);
     });

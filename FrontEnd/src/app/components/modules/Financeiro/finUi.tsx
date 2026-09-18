@@ -452,7 +452,7 @@ export function ImpostosPanel({ impostos, valorOriginal, valorLiquido }: {
 // nenhuma tela deve chamar a exclusão direto, porque o estado financeiro é persistido
 // por replace-all — o registro removido some do banco na mesma escrita, sem lixeira.
 export function DeleteBtn({
-  onConfirm, titulo, descricao, confirmarTexto = 'Excluir definitivamente', small = true, disabled,
+  onConfirm, titulo, descricao, confirmarTexto = 'Excluir definitivamente', small = true, disabled, beforeConfirm,
 }: {
   onConfirm: () => void | Promise<void>;
   titulo: string;
@@ -460,10 +460,14 @@ export function DeleteBtn({
   confirmarTexto?: string;
   small?: boolean;
   disabled?: boolean;
+  // Roda ANTES do "tem certeza?" — pode abortar a exclusão de forma silenciosa (sem toast de
+  // erro) retornando `false`, ex.: exigir um dado obrigatório e o usuário cancelar o prompt.
+  beforeConfirm?: () => boolean | Promise<boolean>;
 }) {
   const [excluindo, setExcluindo] = useState(false);
 
   const clicar = async () => {
+    if (beforeConfirm && !(await beforeConfirm())) return;
     const ok = await confirmDialog({
       title: titulo,
       message: `${descricao}\n\nEsta ação não pode ser desfeita.`,

@@ -14,6 +14,7 @@ import { getLogoUrlForEmpresa } from '../../../utils/company';
 import { formatDateBR } from '../../../utils/formatDate';
 import { boldOS } from '../../../utils/osHighlight';
 import { ObservacoesNegocio } from '../../ObservacoesNegocio';
+import { handleDownloadOSPDF as gerarOSPdf } from '../CRM/handleDownloadOSPDF';
 
 // ==========================================
 // FUNÇÕES AUXILIARES GERAIS
@@ -178,6 +179,7 @@ interface OsResumoConsolidado {
   orcamento: {
     numeroOrcamento: string;
     versao: string;
+    status: string;
     dataCriacao: string;
     solicitante: string;
     responsavelComercial: string;
@@ -447,6 +449,7 @@ const criarInitialOsData = (): OsFormData => ({
     orcamento: {
       numeroOrcamento: '',
       versao: '',
+      status: '',
       dataCriacao: '',
       solicitante: '',
       responsavelComercial: '',
@@ -1136,13 +1139,17 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
       const margin = 10;
       let y = margin;
       
+      // A altura da caixa externa só é fechada (doc.rect) depois de saber quanto as linhas de
+      // CLIENTE/EMBARCAÇÃO/PROJETO/LOCAL cresceram ao quebrar texto longo — antes ela era
+      // desenhada aqui com 35mm fixos, e a borda inferior cortava o texto do LOCAL quando ele
+      // precisava de mais de uma linha.
+      const headerBoxTopY = y;
       doc.setDrawColor(0);
       doc.setLineWidth(0.3);
-      doc.rect(margin, y, pageWidth - 2 * margin, 35);        
-      doc.line(margin + 50, y, margin + 50, y + 15); 
-      doc.line(margin + 130, y, margin + 130, y + 15); 
-      doc.line(margin, y + 15, pageWidth - margin, y + 15); 
-      
+      doc.line(margin + 50, y, margin + 50, y + 15);
+      doc.line(margin + 130, y, margin + 130, y + 15);
+      doc.line(margin, y + 15, pageWidth - margin, y + 15);
+
       if (logoBase64) {
         const logoFormat = logoBase64.match(/^data:image\/(png|jpe?g)/i)?.[1]?.toLowerCase().includes('png') ? 'PNG' : 'JPEG';
         doc.addImage(logoBase64, logoFormat, margin + 2, y + 2, 46, 11);
@@ -1166,21 +1173,32 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
       doc.setFont('Helvetica', 'normal');
       doc.text(osPrincipal.cc || 'Não inf.', margin + 142, y + 10);
       y += 15;
-      
-      const rowH = 5;
-      doc.line(margin, y + rowH, pageWidth - margin, y + rowH);
-      doc.line(margin, y + rowH * 2, pageWidth - margin, y + rowH * 2);
-      doc.line(margin, y + rowH * 3, pageWidth - margin, y + rowH * 3);
-      doc.line(margin + 100, y, margin + 100, y + 20); 
-      
+
+      // Altura de cada linha CALCULADA a partir do texto (campos longos, como um endereço
+      // extenso em LOCAL, quebram em várias linhas em vez de estourar por cima da coluna
+      // vizinha ou sair da caixa). As divisórias só são desenhadas DEPOIS de saber a altura
+      // real de cada linha.
+      const rowMinH = 5;
+      const rowLineH = 3.3;
+      const rowPadTop = 3.5;
+      const rowPadBottom = 1.5;
+      const leftValueX = margin + 27;
+      const rightValueX = margin + 127;
+      const leftValueMaxW = (margin + 100) - leftValueX - 2;
+      const rightValueMaxW = (pageWidth - margin) - rightValueX - 2;
+
       doc.setFontSize(8);
-      const printDado = (lbl: string, val: string, vx: number, vy: number) => {
+      // Desenha um par label/valor (quebrando o valor em várias linhas se precisar) e devolve
+      // a altura que ele ocupou, para a linha usar a maior altura entre as duas colunas.
+      const printDadoWrapped = (lbl: string, val: string, vx: number, vTopY: number, maxW: number): number => {
         doc.setFont('Helvetica', 'bold');
-        doc.text(lbl, vx, vy);
+        doc.text(lbl, vx, vTopY + rowPadTop);
         doc.setFont('Helvetica', 'normal');
-        doc.text(val || ' ', vx + 25, vy);
+        const linhas = doc.splitTextToSize(val || ' ', maxW) as string[];
+        linhas.forEach((linha, i) => doc.text(linha, vx + 25, vTopY + rowPadTop + i * rowLineH));
+        return Math.max(linhas.length * rowLineH + rowPadTop + rowPadBottom - rowLineH, rowMinH);
       };
-      
+
       const dataInicio = osPrincipal.dataInicioPrevisto || selectedObraDetalhes?.dataPrevistaInicio;
       const dataTermino = osPrincipal.dataTerminoPrevisto || selectedObraDetalhes?.dataPrevistaFinal;
       
@@ -1196,21 +1214,22 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
       const embarcacaoOS = (Array.isArray(selectedObraDetalhes?.servicos) ? (selectedObraDetalhes.servicos.find((s: any) => s?.embarcacao)?.embarcacao) : '') || osPrincipal.embarcacao || '';
       const projetoTexto = `${selectedObraDetalhes?.nome || osPrincipal.projeto || ''}${idProjetoForPrint ? ' • ' + idProjetoForPrint : ''}`;
 
-      printDado('CLIENTE:', cliente?.razaoSocial || cliente?.razao_social || osPrincipal.cliente || '', margin + 2, y + 3.5);
-      printDado('Início Previsto:', dataInicio ? formatDateISO(dataInicio) : '', margin + 102, y + 3.5);
-      y += rowH;
+      const linhasCabecalho: Array<[string, string, string, string]> = [
+        ['CLIENTE:', cliente?.razaoSocial || cliente?.razao_social || osPrincipal.cliente || '', 'Início Previsto:', dataInicio ? formatDateISO(dataInicio) : ''],
+        ['EMBARCAÇÃO:', embarcacaoOS || localOS, 'Térm. Previsto:', dataTermino ? formatDateISO(dataTermino) : ''],
+        ['PROJETO:', projetoTexto, 'OS Nº:', formatNumeroOsDisplay(osPrincipal.ordemServicoNumero) || ''],
+        ['LOCAL:', localOS, 'Encarregado:', osPrincipal.supervisorEncarregado || ''],
+      ];
 
-      printDado('EMBARCAÇÃO:', embarcacaoOS || localOS, margin + 2, y + 3.5);
-      printDado('Térm. Previsto:', dataTermino ? formatDateISO(dataTermino) : '', margin + 102, y + 3.5);
-      y += rowH;
-
-      printDado('PROJETO:', projetoTexto, margin + 2, y + 3.5);
-      printDado('OS Nº:', formatNumeroOsDisplay(osPrincipal.ordemServicoNumero) || '', margin + 102, y + 3.5);
-      y += rowH;
-
-      printDado('LOCAL:', localOS, margin + 2, y + 3.5);
-      printDado('Encarregado:', osPrincipal.supervisorEncarregado || '', margin + 102, y + 3.5);
-      y += rowH;
+      linhasCabecalho.forEach(([lblEsq, valEsq, lblDir, valDir], idx) => {
+        const hEsq = printDadoWrapped(lblEsq, valEsq, margin + 2, y, leftValueMaxW);
+        const hDir = printDadoWrapped(lblDir, valDir, margin + 102, y, rightValueMaxW);
+        const rowH = Math.max(hEsq, hDir);
+        doc.line(margin + 100, y, margin + 100, y + rowH);
+        y += rowH;
+        if (idx < linhasCabecalho.length - 1) doc.line(margin, y, pageWidth - margin, y);
+      });
+      doc.rect(margin, headerBoxTopY, pageWidth - 2 * margin, y - headerBoxTopY);
       y += 5;
 
       // Cita a proposta de origem (número + versão), para deixar claro de qual documento o
@@ -1293,44 +1312,31 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
         try { baseChecks = JSON.parse(baseChecks); } catch(e) { baseChecks = {}; }
       }
 
-      const getCheck = (uiLabel: string, dbKey: string) => {
-        let isChecked = false;
-        try {
-          const checkboxes = document.querySelectorAll('input[type="checkbox"]');
-          for (let i = 0; i < checkboxes.length; i++) {
-            const input = checkboxes[i] as HTMLInputElement;
-            if (input.parentElement && input.parentElement.textContent && input.parentElement.textContent.includes(uiLabel)) {
-              if (input.checked) isChecked = true;
-            }
-          }
-        } catch (e) {}
-
-        if (!isChecked && (baseChecks[dbKey] === true || String(baseChecks[dbKey]) === 'true')) {
-          isChecked = true;
-        }
-        return isChecked;
-      };
+      // Lê só dos dados salvos (aSerIncluido) — antes fazia scraping do DOM (checkboxes
+      // renderizados na tela por texto aproximado), o que dependia de qual tela estava aberta
+      // no momento do download e podia casar com o checkbox errado por substring.
+      const isChecked = (dbKey: string) => baseChecks?.[dbKey] === true || String(baseChecks?.[dbKey]) === 'true';
 
       const chk = (val: boolean) => val ? '[ X ]' : '[   ]';
-      
+
       const listChecks = [
-        { lbl: 'CERTIFICADO DE GÁS FREE', v: getCheck('Certificado de Gás', 'certificadoGas') },
-        { lbl: 'VENTILAÇÃO', v: getCheck('Ventilação', 'ventilacao') },
-        { lbl: 'LIMPEZA ANTES', v: getCheck('Limpeza antes', 'limpezaAntes') },
-        { lbl: 'LIMPEZA APÓS CONCLUSÃO', v: getCheck('Limpeza após', 'limpezaApos') },
-        { lbl: 'ANDAIMES', v: getCheck('Andaimes', 'andaimes') },
-        { lbl: 'APOIO DE GUINDASTE', v: getCheck('Apoio de guindaste', 'apoioGuindastes') },
-        { lbl: 'TRANSPORTE EXTERNO', v: getCheck('Transporte externo', 'transporteExterno') },
-        { lbl: 'TESTE DE PRESSÃO', v: getCheck('Testes de pressão', 'testesPressao') },
-        { lbl: 'PINTURA', v: getCheck('Pintura', 'pintura') },
-        { lbl: 'LP / PM', v: getCheck('LP / PM', 'lpPm') },
-        { lbl: 'TESTE DE ULTRASSOM', v: getCheck('Teste de ultrassom', 'testeUltrassom') },
-        { lbl: 'INSPEÇÃO DIMENSIONAL', v: getCheck('Inspeção dimensional', 'inspecaoDimensional') },
-        { lbl: 'VISUAL DE SOLDA', v: getCheck('Visual de solda', 'visualSolda') },
-        { lbl: 'SOLDADOR CERTIFICADO', v: getCheck('Soldador certificado', 'soldadorCertificado') },
-        { lbl: 'PROCEDIMENTO DE SOLDA', v: getCheck('Procedimento de solda', 'procedimentoSolda') },
-        { lbl: 'CERTIFICAÇÃO DO MATERIAL', v: getCheck('Certificação do material', 'certificacaoMaterial') },
-        { lbl: 'VIGIA DE FOGO', v: getCheck('Vigia de fogo', 'vigiaFogo') }
+        { lbl: 'CERTIFICADO DE GÁS FREE', v: isChecked('certificadoGas') },
+        { lbl: 'VENTILAÇÃO', v: isChecked('ventilacao') },
+        { lbl: 'LIMPEZA ANTES', v: isChecked('limpezaAntes') },
+        { lbl: 'LIMPEZA APÓS CONCLUSÃO', v: isChecked('limpezaApos') },
+        { lbl: 'ANDAIMES', v: isChecked('andaimes') },
+        { lbl: 'APOIO DE GUINDASTE', v: isChecked('apoioGuindastes') },
+        { lbl: 'TRANSPORTE EXTERNO', v: isChecked('transporteExterno') },
+        { lbl: 'TESTE DE PRESSÃO', v: isChecked('testesPressao') },
+        { lbl: 'PINTURA', v: isChecked('pintura') },
+        { lbl: 'LP / PM', v: isChecked('lpPm') },
+        { lbl: 'TESTE DE ULTRASSOM', v: isChecked('testeUltrassom') },
+        { lbl: 'INSPEÇÃO DIMENSIONAL', v: isChecked('inspecaoDimensional') },
+        { lbl: 'VISUAL DE SOLDA', v: isChecked('visualSolda') },
+        { lbl: 'SOLDADOR CERTIFICADO', v: isChecked('soldadorCertificado') },
+        { lbl: 'PROCEDIMENTO DE SOLDA', v: isChecked('procedimentoSolda') },
+        { lbl: 'CERTIFICAÇÃO DO MATERIAL', v: isChecked('certificacaoMaterial') },
+        { lbl: 'VIGIA DE FOGO', v: isChecked('vigiaFogo') }
       ];
       // Itens "a incluir" customizados (sempre marcados, pois foram adicionados de propósito).
       const extrasInc = (Array.isArray((baseChecks as any).extras) ? (baseChecks as any).extras : [])
@@ -1434,7 +1440,7 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
         });
       }
       
-      const pageCount = (doc as any).internal.getNumberOfPages();
+      const pageCount = doc.getNumberOfPages();
       for (let i = 1; i <= pageCount; i++) {
         doc.setPage(i);
         doc.setFontSize(6);
@@ -1442,9 +1448,9 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
         doc.text(`Documento gerado pelo Linave ERP em ${new Date().toLocaleString('pt-BR')}`, margin, pageHeight - 5);
         doc.text(`Pag. ${i} / ${pageCount}`, pageWidth - margin - 15, pageHeight - 5);
       }
-      
+
       const prefixo = getPrefixoEmpresa(selectedObraDetalhes?.empresaPrestadora);
-      doc.save(`OS_${String(osPrincipal.ordemServicoNumero || '001').replace(/[\\/]/g, '-')}.pdf`);
+      doc.save(`${prefixo}_OS_${String(osPrincipal.ordemServicoNumero || '001').replace(/[\\/]/g, '-')}.pdf`);
       
       toast.success('OS baixada em PDF com sucesso!');
     } catch (error) {
@@ -1577,7 +1583,7 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
             </div>
 
             <div className="p-8 space-y-6 max-h-[calc(90vh-180px)] overflow-y-auto">
-              <ObservacoesNegocio servicos={formData.servicos} />
+              <ObservacoesNegocio servicos={formData.resumoConsolidado?.negocio.servicos} />
               <div className="bg-gradient-to-r from-blue-500/10 to-cyan-500/10 rounded-2xl border border-blue-500/20 p-6 space-y-4">
                 <div className="flex items-center justify-between">
                   <h3 className="text-lg font-black text-white uppercase">Dados Principais</h3>

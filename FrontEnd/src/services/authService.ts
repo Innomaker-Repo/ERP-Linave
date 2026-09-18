@@ -89,7 +89,7 @@ export async function login(identifier: string, password: string): Promise<UserS
     });
     user = meRes.data;
   } catch {
-    user = { cpf, nome: cpf, is_superuser: false };
+    user = { cpf: identifier, nome: identifier, is_superuser: false };
   }
 
   const session = buildSession(user);

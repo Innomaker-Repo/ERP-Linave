@@ -101,7 +101,7 @@ export function FuncionariosView({ searchQuery }: { searchQuery: string }) {
         // Recarrega para atualizar a lista com os links novos
         window.location.reload(); 
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
       toast.error(`Erro ao criar: ${error.response?.data?.error || error.message}`);
     } finally {

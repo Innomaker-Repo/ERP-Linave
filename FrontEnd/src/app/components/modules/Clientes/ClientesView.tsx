@@ -142,7 +142,7 @@ export function ClientesView({ searchQuery }: { searchQuery: string }) {
 
     setSaving(true);
     try {
-      let clienteAtualizado;
+      let clienteAtualizado: any;
       
       if (editMode && currentCliente.id && !isNaN(Number(currentCliente.id))) {
         // Atualizar cliente existente no backend

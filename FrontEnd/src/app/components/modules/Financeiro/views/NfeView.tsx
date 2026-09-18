@@ -6,7 +6,7 @@ import {
 } from '../finUi';
 import {
   br, money, num, isOld, todayStr, genFinId, TAX_DEFAULTS, calcNfeLiquido, calcImpostosNfe,
-  FORMAS_PAGAMENTO, type NfeSolicitacao,
+  FORMAS_PAGAMENTO, isLinaveEmpresa, type NfeSolicitacao,
 } from '../finData';
 import { useFin } from '../useFin';
 import { useFinFilters } from '../finFilters';
@@ -26,8 +26,6 @@ type StatusFiltroNfe = typeof STATUS_FILTROS_NFE[number];
 // Regra do tipo de documento por empresa: SERVIÇO — Linave emite NFe normal; Servinave emite
 // Nota de Débito (N/D) pro mesmo serviço. LOCAÇÃO (guardada como "Nota de débito" no dado) —
 // qualquer prestadora emite Recibo de Locação (R/L), não depende mais de qual empresa é.
-const isLinaveEmpresa = (empresa?: any) => String(empresa || '').toLowerCase().includes('linave');
-
 // Sigla usada tanto na coluna "Tipo" quanto como prefixo do nº do documento (mesma regra nos
 // dois lugares, senão as colunas se contradiziam). Só existem 3 valores possíveis: NFe, R/L,
 // N/D — registros antigos com tipoNfe fora dessas 2 naturezas (ex.: "NFe Alocado"/"Outro", de

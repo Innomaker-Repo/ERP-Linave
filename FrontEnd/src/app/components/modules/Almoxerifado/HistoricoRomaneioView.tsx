@@ -162,19 +162,25 @@ export function HistoricoRomaneioView({ searchQuery }: HistoricoRomaneioViewProp
     setMotivoManutencaoRetorno('');
   };
 
-  // Regera e baixa o documento (modelo FLN 026) de um romaneio já feito.
+  // Regera e baixa o documento (modelo FLN 026) de um romaneio já feito. Peso por item e peso
+  // total precisam ser recalculados aqui do mesmo jeito que na emissão original (EstoqueView.tsx)
+  // — sem isso o PDF reimpresso saía com a coluna de peso vazia mesmo quando a original tinha.
   const handleDownloadRomaneio = async (romaneio: RomaneioHistoricoItem) => {
     try {
       const logoBase64 = await loadRomaneioLogoBase64();
+      const itemsPdf = romaneio.items.map((item) => {
+        const pesoUnit = parseFloat(String(item.snapshotBefore?.peso ?? '').replace(',', '.').replace(/[^0-9.]/g, '')) || 0;
+        const pesoLinha = pesoUnit > 0 ? pesoUnit * (Number(item.quantidade) || 0) : 0;
+        return { descricao: item.itemLabel, quantidade: item.quantidade || '1', peso: pesoLinha };
+      });
+      const pesoTotalRomaneio = itemsPdf.reduce((soma, it) => soma + (Number(it.peso) || 0), 0);
       const doc = gerarRomaneioPdf({
         cliente: romaneio.osCliente || '',
         osLabel: romaneio.osLabel || romaneio.osId,
         enderecoEntrega: romaneio.osLocal || '',
         dataEmissao: romaneio.createdAt,
-        items: romaneio.items.map((item) => ({
-          descricao: item.itemLabel,
-          quantidade: item.quantidade || '1',
-        })),
+        items: itemsPdf,
+        pesoTotal: pesoTotalRomaneio,
         logoBase64,
       });
       doc.save(`romaneio-${romaneio.osLabel || romaneio.osId || romaneio.id}.pdf`);

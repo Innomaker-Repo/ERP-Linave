@@ -4,6 +4,8 @@ import { FinCard, Toolbar, DataTable, Th, Td, Btn, StatusTag, CompanyTag, Pill, 
 import { br, money, num } from '../finData';
 import { useFin, type FinRecord } from '../useFin';
 import { useFinFilters } from '../finFilters';
+import { promptDialog } from '../../../ui/feedback';
+import { toast } from 'sonner';
 
 // Sem acento/maiúscula — pra "atlantic" achar "Atlantic Náutica Ltda.".
 const normalizar = (v: any): string =>
@@ -15,7 +17,7 @@ type StatusFiltroAprovacao = typeof STATUS_FILTROS_APROVACAO[number];
 // Leitura real: solicitações guardadas na coleção `financeiro` (tipo 'solicitacao').
 // Aprovar transforma a solicitação em Conta a Pagar (escrita via saveEntity).
 export function AprovacoesView() {
-  const { records, approveSolicitacao, rejectSolicitacao, deleteRecord, userSession } = useFin();
+  const { records, approveSolicitacao, rejectSolicitacao, deleteRecord, updateRecord, userSession } = useFin();
   const { match } = useFinFilters();
   // Busca por fornecedor: um campo próprio desta tela, à parte dos filtros globais (Empresa/
   // Banco/Período) — funciona em cima do que já passou por eles, então acha a solicitação do
@@ -43,7 +45,37 @@ export function AprovacoesView() {
     try { await fn(id); } finally { setBusy(''); }
   };
 
-  const abrirReprovar = (r: FinRecord) => { setMotivo(''); setReprovando(r); };
+  // Regra: aprovar ou reprovar uma solicitação sem nº de boleto/NF pede o número na hora —
+  // só segue (e persiste na solicitação) se o usuário informar; cancelar aborta em silêncio.
+  const garantirDocumento = async (r: FinRecord): Promise<boolean> => {
+    const docAtual = String(r.documento || '').trim();
+    if (docAtual) return true;
+    const digitado = await promptDialog({
+      title: 'Nº do boleto/Nota Fiscal obrigatório',
+      message: 'Esta solicitação ainda não tem nº de boleto/Nota Fiscal. Informe antes de continuar.',
+      placeholder: 'Nº do boleto/NF',
+      confirmText: 'Confirmar',
+    });
+    const doc = (digitado || '').trim();
+    if (!doc) {
+      toast.error('É obrigatório informar o nº do boleto/Nota Fiscal.');
+      return false;
+    }
+    await updateRecord(r.id, { documento: doc });
+    return true;
+  };
+
+  const abrirReprovar = async (r: FinRecord) => {
+    if (!(await garantirDocumento(r))) return;
+    setMotivo('');
+    setReprovando(r);
+  };
+
+  const aprovar = async (r: FinRecord): Promise<boolean> => {
+    if (!(await garantirDocumento(r))) return false;
+    await run(r.id, approveSolicitacao);
+    return true;
+  };
 
   const confirmarReprovar = async () => {
     if (!reprovando) return;
@@ -130,7 +162,7 @@ export function AprovacoesView() {
                 <Btn small variant="secondary" onClick={() => setDetalhe(r)}>Ver mais</Btn>
                 {(r.status === 'Aguardando aprovação' || !r.status) && isGerencia && (
                   <>
-                    <Btn small variant="green" disabled={busy === r.id} onClick={() => run(r.id, approveSolicitacao)}>Aprovar</Btn>
+                    <Btn small variant="green" disabled={busy === r.id} onClick={() => aprovar(r)}>Aprovar</Btn>
                     <Btn small variant="red" disabled={busy === r.id} onClick={() => abrirReprovar(r)}>Reprovar</Btn>
                   </>
                 )}
@@ -198,7 +230,7 @@ export function AprovacoesView() {
           {(detalhe.status === 'Aguardando aprovação' || !detalhe.status) && isGerencia && (
             <div className="mt-5 flex justify-end gap-2">
               <Btn variant="red" disabled={busy === detalhe.id} onClick={() => abrirReprovar(detalhe)}>Reprovar</Btn>
-              <Btn variant="green" disabled={busy === detalhe.id} onClick={() => run(detalhe.id, approveSolicitacao).then(() => setDetalhe(null))}>Aprovar → Conta a Pagar</Btn>
+              <Btn variant="green" disabled={busy === detalhe.id} onClick={() => aprovar(detalhe).then((ok) => { if (ok) setDetalhe(null); })}>Aprovar → Conta a Pagar</Btn>
             </div>
           )}
         </FinModal>

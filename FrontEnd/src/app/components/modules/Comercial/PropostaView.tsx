@@ -1018,7 +1018,8 @@ export function PropostaView() {
     try {
       localStorage.setItem(getRascunhoKey(selectedObra.backendId), JSON.stringify(propostaForm));
       toast.success('Rascunho salvo! Você pode sair e retornar que os dados estarão aqui.');
-    } catch {
+    } catch (err) {
+      console.error('Erro ao salvar rascunho da proposta:', err);
       toast.error('Erro ao salvar rascunho.');
     }
   };
@@ -1027,7 +1028,7 @@ export function PropostaView() {
   // Abre o PDF do orçamento do negócio (última versão) para consulta durante a proposta.
   const visualizarOrcamento = () => {
     if (!selectedObra) return toast.error('Selecione uma obra primeiro.');
-    const orc = Array.isArray(selectedObra.orcamentos) && selectedObra.orcamentos.length ? selectedObra.orcamentos[0] : null;
+    const orc = Array.isArray(selectedObra.orcamentos) && selectedObra.orcamentos.length ? selectedObra.orcamentos[selectedObra.orcamentos.length - 1] : null;
     if (!orc) return toast.error('Nenhum orçamento encontrado para este negócio.');
     try {
       handleDownloadOrcamentoPDF(orc, { razaoSocial: selectedObra.nomeCliente || '' }, selectedObra);
@@ -1094,10 +1095,10 @@ export function PropostaView() {
       const out = doc.getZip().generate({ type: 'blob' });
       saveAs(out, `${propostaForm.numeroProposta || selectedObra.nome || 'proposta'}.docx`);
     } catch (err: any) {
+      // O stack trace vai só pro console (é informação de debug, não pro usuário final ler).
       console.error('Erro gerarDocxTemplate:', err);
       const msg = err?.message ? err.message : String(err);
-      const details = err?.stack ? `\n\nStack:\n${err.stack}` : '';
-      toast.error(`Erro ao gerar DOCX: ${msg}${details}`);
+      toast.error(`Erro ao gerar DOCX: ${msg}`);
     }
   };
 

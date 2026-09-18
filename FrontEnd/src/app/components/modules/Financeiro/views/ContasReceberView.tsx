@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Save, Download, FileText, Eye } from 'lucide-react';
+import { Save, Download, FileText, Eye, Paperclip } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import {
   FinCard, Toolbar, DataTable, Th, Td, Btn, StatusTag, CompanyTag, AlertBar, InfoBar, EmptyRow,
@@ -17,6 +17,34 @@ const status = (r: any) => (r.recebido ? 'Recebido' : isOld(r.vencimentoRecebime
 
 const STATUS_FILTROS = ['Todos', 'A receber', 'Recebido', 'Vencido'] as const;
 type StatusFiltro = typeof STATUS_FILTROS[number];
+
+// Documento(s) do recebível — NFe emitida ou recibo de locação gerado, achatados em
+// `detalhe.anexos` por upsertContaReceberPorMedicao (finData.ts). Link de verdade quando é
+// URL (/media/...); registros antigos sem anexo simplesmente não mostram nada aqui.
+const ehUrlAnexo = (a: any) => /^(https?:|\/media\/)/.test(String(a));
+const nomeAnexo = (a: any) => (ehUrlAnexo(a) ? decodeURIComponent(String(a).split('/').pop() || 'documento') : String(a));
+function DocumentosDoRecebivel({ anexos }: { anexos?: string[] }) {
+  const lista = Array.isArray(anexos) ? anexos : [];
+  if (!lista.length) return null;
+  return (
+    <div className="rounded-xl border border-white/10 bg-[#0b1220] p-4">
+      <p className="mb-1.5 text-[11px] font-black uppercase tracking-widest text-white/40">Documentos</p>
+      <div className="flex flex-wrap gap-2">
+        {lista.map((a, i) => (
+          <a
+            key={i}
+            href={a}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs font-bold text-amber-200 hover:bg-amber-500/20"
+          >
+            <Paperclip size={12} /> {nomeAnexo(a)}
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 // Dropdown de banco (hoisted: componente estável para não remontar os inputs do modal).
 function BancoSelect({ value, onChange, bancos }: { value: string; onChange: (v: string) => void; bancos: Array<{ id: string; nome: string; empresa?: string }> }) {
@@ -245,6 +273,8 @@ export function ContasReceberView() {
               valorOriginal={num(detalhe.valorOriginal ?? detalhe.valor)}
               valorLiquido={num(detalhe.valorLiquido ?? detalhe.valor)}
             />
+
+            <DocumentosDoRecebivel anexos={detalhe.anexos} />
 
             {detalhe.observacao && (
               <div className="rounded-xl border border-white/10 bg-[#0b1220] p-4">

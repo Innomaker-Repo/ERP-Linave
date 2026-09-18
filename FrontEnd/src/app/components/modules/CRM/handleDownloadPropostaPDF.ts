@@ -116,7 +116,7 @@ export const handleDownloadPropostaPDF = (
       doc.setLineWidth(0.3);
       // doc.line(pageWidth - 95, startY - 2.2, rightX, startY - 2.2);
 
-      doc.setFont('Arial', 'normal');
+      doc.setFont('helvetica', 'normal');
       doc.setFontSize(7.5);
       doc.setTextColor(70, 70, 70);
 
@@ -152,20 +152,20 @@ export const handleDownloadPropostaPDF = (
         doc.addImage(logoBase64, logoFormat, margin, currentY, 45, 20);
       }
 
-      doc.setFont('Arial', 'bold');
+      doc.setFont('helvetica', 'bold');
       doc.setFontSize(11);
       currentY += 25;
 
       if (isLinave) {
         doc.text('Engenharia & Serviços Navais', margin, currentY);
-        doc.setFont('Arial', 'normal');
+        doc.setFont('helvetica', 'normal');
         doc.setFontSize(9);
       } else {
         // Cabeçalho padrão para Servinave
         const nomeEmpresa = propostaForm.empresaNome || 'Servinave Reparos Navais';
         doc.text(nomeEmpresa, margin, currentY);
 
-        doc.setFont('Arial', 'normal');
+        doc.setFont('helvetica', 'normal');
         doc.setFontSize(9);
         currentY += 5;
         doc.text("Rua Miguel de Lemos, 44 Fundos - Ponta D'Areia", margin, currentY);
@@ -202,7 +202,7 @@ export const handleDownloadPropostaPDF = (
     ) => {
       if (!text) return;
 
-      doc.setFont('Arial', bold ? 'bold' : 'normal');
+      doc.setFont('helvetica', bold ? 'bold' : 'normal');
       doc.setFontSize(fontSize);
       doc.setTextColor(0, 0, 0);
 
@@ -282,6 +282,10 @@ export const handleDownloadPropostaPDF = (
             margin: { left: margin + 10, right: margin, top: headerBottom, bottom: footerReserve },
             headStyles: { fillColor: [230, 230, 230], textColor: [0, 0, 0], fontStyle: 'bold', fontSize: 9 },
             styles: { fontSize: 9, cellPadding: 2, textColor: [0, 0, 0] },
+            // Sem isso, quando a tabela quebra de página sozinha (autoTable chama addPage
+            // internamente), a(s) página(s) de continuação saíam sem logo/fundo/cabeçalho da
+            // empresa — só a tabela "flutuando" no topo.
+            didDrawPage: () => { drawHeader(); },
           });
           y = (doc as any).lastAutoTable.finalY + 5;
         }
@@ -340,6 +344,7 @@ export const handleDownloadPropostaPDF = (
             headStyles: { fillColor: [230, 230, 230], textColor: [0, 0, 0], fontStyle: 'bold', fontSize: 9 },
             styles: { fontSize: 9, cellPadding: 2, textColor: [0, 0, 0] },
             columnStyles,
+            didDrawPage: () => { drawHeader(); },
           });
           y = (doc as any).lastAutoTable.finalY + 4;
         });
@@ -401,7 +406,7 @@ export const handleDownloadPropostaPDF = (
     writeText(propostaForm.assinaturaCargo || 'Setor Comercial', 11, false, 'left', 0, 10);
 
     if (isLinave) {
-      const totalPages = doc.internal.getNumberOfPages();
+      const totalPages = doc.getNumberOfPages();
       for (let page = 1; page <= totalPages; page += 1) {
         doc.setPage(page);
         drawLinaveFooter();
@@ -412,10 +417,16 @@ export const handleDownloadPropostaPDF = (
     const conteudoDataUrl = doc.output('datauristring');
     doc.save(nomeArquivo);
 
+    // Tamanho real do PDF em bytes, não o tamanho em caracteres do data URI (que inclui o
+    // prefixo "data:...;base64," e infla o valor reportado em ~37%).
+    const base64 = conteudoDataUrl.slice(conteudoDataUrl.indexOf(',') + 1);
+    const padding = (base64.match(/=+$/)?.[0] || '').length;
+    const tamanho = Math.max(0, Math.round((base64.length * 3) / 4) - padding);
+
     return {
       nomeArquivo,
       conteudoDataUrl,
-      tamanho: conteudoDataUrl.length,
+      tamanho,
     };
   } catch (error) {
     console.error('Erro ao gerar PDF de Proposta:', error);

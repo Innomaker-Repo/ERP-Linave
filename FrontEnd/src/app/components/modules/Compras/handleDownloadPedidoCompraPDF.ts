@@ -12,11 +12,12 @@ const money = (value: number) => (value || 0).toLocaleString('pt-BR', { style: '
 export const handleDownloadPedidoCompraPDF = (pedido: PedidoCompraResumo) => {
   const doc = new jsPDF('p', 'mm', 'a4');
   const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
   const margin = 12;
   const tableWidth = pageWidth - margin * 2;
   let y = 16;
 
-  doc.setFont('Arial', 'bold');
+  doc.setFont('helvetica', 'bold');
   doc.setFontSize(16);
   doc.text(`Pedido de Compra ${pedido.numero}`, margin, y);
   y += 9;
@@ -35,15 +36,15 @@ export const handleDownloadPedidoCompraPDF = (pedido: PedidoCompraResumo) => {
   ];
 
   infoLines.forEach(([label, value]) => {
-    doc.setFont('Arial', 'bold');
+    doc.setFont('helvetica', 'bold');
     doc.text(`${label}:`, margin, y);
-    doc.setFont('Arial', 'normal');
+    doc.setFont('helvetica', 'normal');
     doc.text(String(value), margin + 55, y, { maxWidth: tableWidth - 55 });
     y += 6;
   });
 
   y += 3;
-  doc.setFont('Arial', 'bold');
+  doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
   doc.text('Itens', margin, y);
   y += 5;
@@ -67,7 +68,7 @@ export const handleDownloadPedidoCompraPDF = (pedido: PedidoCompraResumo) => {
       doc.setDrawColor(0, 0, 0);
       doc.rect(x, y, c.width, rowHeight, 'S');
       doc.setTextColor(0, 0, 0);
-      doc.setFont('Arial', 'bold');
+      doc.setFont('helvetica', 'bold');
       doc.setFontSize(9);
       doc.text(c.label, x + 1.5, y + rowHeight - 2);
       x += c.width;
@@ -76,7 +77,7 @@ export const handleDownloadPedidoCompraPDF = (pedido: PedidoCompraResumo) => {
   };
 
   drawHeader();
-  doc.setFont('Arial', 'normal');
+  doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
 
   pedido.itens.forEach((item) => {
@@ -84,7 +85,7 @@ export const handleDownloadPedidoCompraPDF = (pedido: PedidoCompraResumo) => {
       doc.addPage();
       y = 16;
       drawHeader();
-      doc.setFont('Arial', 'normal');
+      doc.setFont('helvetica', 'normal');
       doc.setFontSize(9);
     }
 
@@ -92,26 +93,44 @@ export const handleDownloadPedidoCompraPDF = (pedido: PedidoCompraResumo) => {
     const values = [item.descricao || item.nome || '-', String(item.qtd), item.un || '-', money(item.valorUnitario), money(item.valorTotal)];
     scaledCols.forEach((c, index) => {
       doc.rect(x, y, c.width, rowHeight);
-      const text = doc.splitTextToSize(values[index], c.width - 3);
-      doc.text(text[0] || '', x + 1.5, y + rowHeight - 2);
+      // A linha tem altura fixa (1 linha de texto) — em vez de cortar na primeira linha
+      // quebrada e jogar o resto fora sem aviso, trunca pela largura medida com reticências.
+      const maxWidth = c.width - 3;
+      let texto = values[index] || '';
+      if (doc.getTextWidth(texto) > maxWidth) {
+        while (texto.length > 1 && doc.getTextWidth(`${texto}…`) > maxWidth) {
+          texto = texto.slice(0, -1);
+        }
+        texto += '…';
+      }
+      doc.text(texto, x + 1.5, y + rowHeight - 2);
       x += c.width;
     });
     y += rowHeight;
   });
 
+  // Sem essa checagem, um pedido cujo loop de itens terminasse perto do rodapé (y > 270 só
+  // impedia NOVAS linhas de item, não o bloco de total/observações abaixo) tinha o valor total
+  // e/ou as observações desenhados fora da página.
+  const obsLines = pedido.observacoes ? doc.splitTextToSize(pedido.observacoes, tableWidth) : [];
+  const espacoNecessario = 6 + 8 + (obsLines.length > 0 ? 5 + obsLines.length * 5 : 0);
+  if (y + espacoNecessario > pageHeight - margin) {
+    doc.addPage();
+    y = 16;
+  }
+
   y += 6;
-  doc.setFont('Arial', 'bold');
+  doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
   doc.text(`Valor total do pedido: ${money(pedido.valorTotal)}`, margin, y);
   y += 8;
 
-  if (pedido.observacoes) {
-    doc.setFont('Arial', 'bold');
+  if (obsLines.length > 0) {
+    doc.setFont('helvetica', 'bold');
     doc.setFontSize(10);
     doc.text('Observações:', margin, y);
     y += 5;
-    doc.setFont('Arial', 'normal');
-    const obsLines = doc.splitTextToSize(pedido.observacoes, tableWidth);
+    doc.setFont('helvetica', 'normal');
     doc.text(obsLines, margin, y);
   }
 
@@ -119,9 +138,15 @@ export const handleDownloadPedidoCompraPDF = (pedido: PedidoCompraResumo) => {
   const conteudoDataUrl = doc.output('datauristring');
   doc.save(nomeArquivo);
 
+  // Tamanho real do PDF em bytes: descontando o prefixo "data:...;base64," (não é conteúdo) e
+  // o padding "=" do base64, que juntos inflavam o valor reportado.
+  const base64 = conteudoDataUrl.slice(conteudoDataUrl.indexOf(',') + 1);
+  const padding = (base64.match(/=+$/)?.[0] || '').length;
+  const tamanho = Math.max(0, Math.round((base64.length * 3) / 4) - padding);
+
   return {
     nomeArquivo,
     conteudoDataUrl,
-    tamanho: Math.max(0, Math.round((conteudoDataUrl.length * 3) / 4)),
+    tamanho,
   };
 };

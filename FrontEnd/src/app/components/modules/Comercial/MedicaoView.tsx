@@ -1065,7 +1065,16 @@ function Resumo({ label, value, accent }: any) {
   );
 }
 
-function Field({ label, value, onChange, type = 'text', placeholder = '', className = '' }: any) {
+interface FieldProps {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  type?: string;
+  placeholder?: string;
+  className?: string;
+}
+
+function Field({ label, value, onChange, type = 'text', placeholder = '', className = '' }: FieldProps) {
   return (
     <div className={className}>
       <p className="text-white/50 text-xs mb-1 uppercase font-black tracking-widest">{label}</p>
