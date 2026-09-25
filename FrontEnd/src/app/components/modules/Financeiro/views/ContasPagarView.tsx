@@ -7,7 +7,7 @@ import {
 } from '../finUi';
 import {
   br, money, num, todayStr, genFinId, days, FORMAS_PAGAMENTO, TIPOS_REEMBOLSO,
-  NATUREZAS_CONTA_PAGAR, CP_STATUS, documentoDuplicado, bancoLabel,
+  NATUREZAS_CONTA_PAGAR, CP_STATUS, documentoDuplicado, bancoLabel, FORMA_DISPENSA_COMPROVANTE,
   PERIODICIDADES, CATEGORIAS_CONTA_FIXA, avisosContasFixas, contaVencida, contaPaga,
   diasAteVencimento, type AvisoContaFixa,
 } from '../finData';
@@ -754,7 +754,13 @@ export function ContasPagarView() {
 
       {/* MODAL: pagar */}
       {pagando && (
-        <FinModal title={`Pagar ${pagando.id}`} hint="Data real, banco e juros. Comprovante opcional (dá para pagar antes da nota chegar)." onClose={() => setPagando(null)}>
+        <FinModal
+          title={`Pagar ${pagando.id}`}
+          hint={pagando.forma === FORMA_DISPENSA_COMPROVANTE
+            ? 'Data real, banco e juros. Débito automático dispensa comprovante — o banco já registra o débito sozinho.'
+            : 'Data real, banco e juros. Comprovante opcional (dá para pagar antes da nota chegar).'}
+          onClose={() => setPagando(null)}
+        >
           <form className="grid grid-cols-12 gap-4" onSubmit={confirmarPagamento}>
             <Field label="Conta" span={6}><Input value={`${pagando.fornecedor || ''} • ${money(num(pagando.valor))}`} disabled /></Field>
             <Field label="Quando paguei?" span={3}><Input type="date" value={pay.dataPagamento} onChange={(e) => setPayF('dataPagamento', e.target.value)} /></Field>
@@ -775,39 +781,46 @@ export function ContasPagarView() {
               <Field label="Motivo dos juros" span={8}><Input value={pay.motivoJuros} onChange={(e) => setPayF('motivoJuros', e.target.value)} /></Field>
             </>}
 
-            <div className="col-span-12">
-              <label className={labelCls}>Comprovante(s) de pagamento (opcional, pode anexar mais de um)</label>
-              {comprovantesExistentes.length > 0 && (
-                <div className="mb-2 space-y-1.5">
-                  {comprovantesExistentes.map((url) => (
-                    <div key={url} className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-bold text-emerald-200">
-                      <a href={url} target="_blank" rel="noopener noreferrer" className="flex-1 truncate underline decoration-dotted hover:text-emerald-100">
-                        {nomeDoArquivo(url)}
-                      </a>
-                      <label className="flex shrink-0 cursor-pointer items-center gap-1 text-emerald-200/70 hover:text-emerald-100" title="Substituir este comprovante">
-                        <RefreshCw size={12} className={processandoDoc === url ? 'animate-spin' : ''} /> Substituir
-                        <input
-                          type="file"
-                          className="hidden"
+            {pagando.forma === FORMA_DISPENSA_COMPROVANTE ? (
+              <div className="col-span-12 rounded-xl border border-sky-500/20 bg-sky-500/[0.06] p-3 text-xs text-sky-100">
+                Débito automático dispensa comprovante de pagamento — o débito é feito direto pelo banco.
+                {comprovantesExistentes.length > 0 && ' Os comprovantes já anexados anteriormente continuam disponíveis em "Ver documentos".'}
+              </div>
+            ) : (
+              <div className="col-span-12">
+                <label className={labelCls}>Comprovante(s) de pagamento (opcional, pode anexar mais de um)</label>
+                {comprovantesExistentes.length > 0 && (
+                  <div className="mb-2 space-y-1.5">
+                    {comprovantesExistentes.map((url) => (
+                      <div key={url} className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-bold text-emerald-200">
+                        <a href={url} target="_blank" rel="noopener noreferrer" className="flex-1 truncate underline decoration-dotted hover:text-emerald-100">
+                          {nomeDoArquivo(url)}
+                        </a>
+                        <label className="flex shrink-0 cursor-pointer items-center gap-1 text-emerald-200/70 hover:text-emerald-100" title="Substituir este comprovante">
+                          <RefreshCw size={12} className={processandoDoc === url ? 'animate-spin' : ''} /> Substituir
+                          <input
+                            type="file"
+                            className="hidden"
+                            disabled={processandoDoc === url}
+                            onChange={(e) => substituirDocumentoDaConta(pagando!.id, url, 'comprovantes', e.target.files?.[0])}
+                          />
+                        </label>
+                        <button
+                          type="button"
                           disabled={processandoDoc === url}
-                          onChange={(e) => substituirDocumentoDaConta(pagando!.id, url, 'comprovantes', e.target.files?.[0])}
-                        />
-                      </label>
-                      <button
-                        type="button"
-                        disabled={processandoDoc === url}
-                        onClick={() => excluirDocumentoDaConta(pagando!.id, url, 'comprovantes')}
-                        title="Excluir este comprovante"
-                        className="shrink-0 text-emerald-200/60 hover:text-rose-300 disabled:opacity-40"
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <FileInput label="Anexar comprovante(s) (PDF, imagem...)" value={novosComprovantes} onChange={setNovosComprovantes} />
-            </div>
+                          onClick={() => excluirDocumentoDaConta(pagando!.id, url, 'comprovantes')}
+                          title="Excluir este comprovante"
+                          className="shrink-0 text-emerald-200/60 hover:text-rose-300 disabled:opacity-40"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <FileInput label="Anexar comprovante(s) (PDF, imagem...)" value={novosComprovantes} onChange={setNovosComprovantes} />
+              </div>
+            )}
 
             <div className="col-span-12 grid grid-cols-2 gap-3">
               <Kpi label="Valor pago" value={money(num(pay.valorPago))} />

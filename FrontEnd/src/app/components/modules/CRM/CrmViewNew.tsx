@@ -3180,8 +3180,10 @@ const obrasOrdenadas = useMemo(() => {
               {/* BLOCO "IMPORTAR NEGÓCIO JÁ FECHADO" — só quando o toggle "Deseja ir
                   direto para OS?" está ligado. Permite trazer pro sistema um negócio
                   cujo orçamento e proposta já foram feitos fora dele (papel/PDF/planilha),
-                  e cair direto na criação da OS já com tudo pré-preenchido. */}
-              {novoNegocioTab === 'dados' && formData.desejaIrDiretoParaOs && temServico(formData.modalidade) && (
+                  e cair direto na criação da OS já com tudo pré-preenchido. O preenchimento
+                  é o mesmo para as 3 modalidades (Serviço, Locação, Locação + Serviço) — não
+                  depende de temServico/temLocacao. */}
+              {novoNegocioTab === 'dados' && formData.desejaIrDiretoParaOs && (
               <div className="space-y-6">
 
                 {/* DOCUMENTOS PARA A OS */}

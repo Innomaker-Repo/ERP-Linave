@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Anchor, Cable, CheckCircle2, ChevronDown, ChevronUp, ClipboardList, Container, Download, Gauge, Hammer, Layers3, Link2, MapPin, Microscope, Package, Plus, Search, Table2, Trash2, X, Zap } from 'lucide-react';
+import { Anchor, Cable, CheckCircle2, ChevronDown, ChevronUp, ClipboardList, Container, Download, Gauge, Hammer, Layers3, Link2, MapPin, Microscope, Package, Plus, Search, Table2, Trash2, Wrench, X, Zap } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { Badge } from '../../../modules/shared/ui/badge';
@@ -14,7 +14,7 @@ import { uploadDocumento, excluirDocumento } from '../../../../services/document
 import { toast } from 'sonner';
 import { confirmDialog } from '../../ui/feedback';
 import {
-  EntradaManutencaoModal, criarEntradaManutencao, gerarIdManutencao, itemEstaEmManutencao, itemPossuiManutencao,
+  EntradaManutencaoModal, EQUIPAMENTOS_TABLE_NAMES, MANUTENCAO_TABLE_NAMES, criarEntradaManutencao, gerarIdManutencao, itemEstaEmManutencao, itemPossuiManutencao,
   type ManutencaoHistoricoItem,
 } from './manutencaoShared';
 
@@ -606,6 +606,11 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     [obras],
   );
   const hasHydratedPersistedState = useRef(false);
+  // A hidratação inicial chama vários `setXxx` (tables/gasTypes/allocations/...) que o efeito
+  // de auto-save abaixo observa — sem essa trava, todo mount re-salva de volta exatamente o
+  // que acabou de ler (ou, numa corrida em que o contexto ainda não tinha entregue os dados
+  // reais, uma cópia incompleta), o que já causou perda de dados real no Almoxarifado.
+  const skipNextAutoSave = useRef(false);
   const [ordensServicoBackend, setOrdensServicoBackend] = useState<OrdemServicoResumo[]>([]);
   const [publicSearch, setPublicSearch] = useState<string>(searchQuery || '');
 
@@ -627,11 +632,6 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   const [activeRowTarget, setActiveRowTarget] = useState<{ tableName: string; rowId: string } | null>(null);
   const [editingRowTarget, setEditingRowTarget] = useState<{ tableName: string; rowId: string } | null>(null);
 
-  // "Este item possui manutenção?" — não é uma StockColumn (evitaria poluir a grade de
-  // todas as tabelas com mais uma coluna). Fica num estado próprio do formulário, igual
-  // a outros campos especiais de renderRegisterField, e vira `row.values.possuiManutencao`
-  // ('sim'/'não') só na hora de montar o payload em handleSaveRegister.
-  const [registerHasManutencao, setRegisterHasManutencao] = useState(false);
   const [manutencaoHistorico, setManutencaoHistorico] = useState<ManutencaoHistoricoItem[]>([]);
   const [manutencaoEntradaAlvo, setManutencaoEntradaAlvo] = useState<{ row: StockRow; numeroManutencao: string } | null>(null);
 
@@ -686,6 +686,12 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   // Quantidade de baixa por material selecionado (chave `tableName::rowId`).
   const [romaneioQuantities, setRomaneioQuantities] = useState<Record<string, string>>({});
 
+  // Essa tela busca as OS de novo (além do `os` do contexto) pra não perder uma recém-criada
+  // que ainda não chegou no contexto — mas essa busca é assíncrona e começa vazia a CADA mount.
+  // Sem um sinal de "carregando", o Select de "Serviço (OS)" abria vazio pra quem clicasse
+  // rápido demais (ex.: editar um item assim que a tela abre), parecendo quebrado/sumido.
+  const [carregandoOS, setCarregandoOS] = useState(true);
+
   useEffect(() => {
     let mounted = true;
 
@@ -700,6 +706,8 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
         if (mounted) {
           setOrdensServicoBackend([]);
         }
+      } finally {
+        if (mounted) setCarregandoOS(false);
       }
     };
 
@@ -795,6 +803,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       }
 
       hasHydratedPersistedState.current = true;
+      skipNextAutoSave.current = true;
       return;
     }
 
@@ -803,18 +812,26 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
 
   useEffect(() => {
     if (!hasHydratedPersistedState.current) return;
-    void saveEntity('almoxerifado', {
-      version: 2,
-      tables,
-      gasTypes,
-      allocations,
-      baixasHistorico,
-      alocacoesHistorico,
-      romaneiosHistorico,
-      manutencaoHistorico,
-      selectedForRomaneio: Array.from(selectedForRomaneio),
-      imagensPorItem
-    });
+    if (skipNextAutoSave.current) { skipNextAutoSave.current = false; return; }
+    // A hidratação chama vários `setXxx` em sequência (tables, gasTypes, allocations...) que nem
+    // sempre colapsam num commit só — sem debounce, cada assentamento parcial disparava o SEU
+    // PRÓPRIO save (já vimos até 3 POSTs, um deles com estado incompleto). Espera a poeira baixar
+    // e salva só o estado já assentado, nunca um instantâneo no meio do caminho.
+    const timeoutId = window.setTimeout(() => {
+      void saveEntity('almoxerifado', {
+        version: 2,
+        tables,
+        gasTypes,
+        allocations,
+        baixasHistorico,
+        alocacoesHistorico,
+        romaneiosHistorico,
+        manutencaoHistorico,
+        selectedForRomaneio: Array.from(selectedForRomaneio),
+        imagensPorItem
+      });
+    }, 400);
+    return () => window.clearTimeout(timeoutId);
   }, [tables, gasTypes, allocations, baixasHistorico, alocacoesHistorico, romaneiosHistorico, manutencaoHistorico, selectedForRomaneio, imagensPorItem]);
 
   const handleRemoveGas = (gasToRemove: string) => {
@@ -879,7 +896,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   const categoryMap = {
     'Todos': [],
     'Materiais': [],
-    'Equipamentos': ['EQUIPAMENTOS ELETRICOS', 'EXTENSÃO-CABOS', 'BOMBA HIDROJATO', 'INSTRUMENTOS', 'FERRAMENTAS', 'TALHAS', 'ESLINGAS'],
+    'Equipamentos': EQUIPAMENTOS_TABLE_NAMES,
     'Alugados': ['Gases', 'Equipamentos'],
     'Caixa Metálica / Skid': []
   };
@@ -1008,6 +1025,25 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       return matchesQuery && matchesOsFilter && matchesStatusFilter;
     });
   }, [allocations, availableOS, filtro, selectedOsFilter, selectedStatusFilter, selectedTable.rows, visibleColumns]);
+
+  // Chaves selecionáveis pra Romaneio dentre as linhas visíveis (mesmo filtro que decide o
+  // checkbox de cada linha, ver renderCell) — usadas pelo checkbox "selecionar tudo" do
+  // cabeçalho da tabela, que só marca/desmarca o que está na tela agora.
+  const selectableVisibleKeys = useMemo(
+    () => visibleRows.filter((row) => !itemEstaEmManutencao(row)).map((row) => `${row.tableName}::${row.id}`),
+    [visibleRows],
+  );
+  const allVisibleSelected = selectableVisibleKeys.length > 0 && selectableVisibleKeys.every((key) => selectedForRomaneio.has(key));
+  const someVisibleSelected = selectableVisibleKeys.some((key) => selectedForRomaneio.has(key));
+
+  const toggleSelectAllVisible = () => {
+    setSelectedForRomaneio((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) selectableVisibleKeys.forEach((key) => next.delete(key));
+      else selectableVisibleKeys.forEach((key) => next.add(key));
+      return next;
+    });
+  };
 
   // Exporta exatamente o que está sendo exibido (respeitando categoria/tipo/busca/OS/status
   // já aplicados) — cada categoria/subtipo tem seu próprio conjunto de colunas (equipamento
@@ -1367,7 +1403,6 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     setEditingRowTarget({ tableName: activeRow.table.name, rowId: activeRow.row.id });
     setRegisterTableName(activeRow.table.name);
     setRegisterValues(createRegisterValues(activeRow.table, activeRow.row.values));
-    setRegisterHasManutencao(itemPossuiManutencao(activeRow.row));
     setIsRegisterOpen(true);
     setActiveRowTarget(null);
   };
@@ -1397,7 +1432,6 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     
     setRegisterTableName(tableToUse.name);
     setRegisterValues(createRegisterValues(tableToUse));
-    setRegisterHasManutencao(false);
     setIsRegisterOpen(true);
   };
 
@@ -1469,7 +1503,6 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     }
 
     payload.item = payload.item || generateItemId(table.name, table.rows.length);
-    payload.possuiManutencao = registerHasManutencao ? 'sim' : 'não';
 
     const existingRowIndex = editingRowTarget && editingRowTarget.tableName === table.name
       ? table.rows.findIndex((row) => row.id === editingRowTarget.rowId)
@@ -1502,6 +1535,14 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     const table = tables.find((t) => t.name === editingRowTarget.tableName);
     const row = table?.rows.find((r) => r.id === editingRowTarget.rowId);
     if (!row) return;
+    setManutencaoEntradaAlvo({ row, numeroManutencao: gerarIdManutencao() });
+  };
+
+  // Mesmo modal guiado de entrada em manutenção, disparado direto do painel "Detalhes do
+  // item" — não passa pelo formulário de edição, então não depende de `editingRowTarget`.
+  // `confirmarEntradaManutencao` já fecha `activeRowTarget` ao confirmar, o que fecha o
+  // painel de detalhes sozinho.
+  const abrirEntradaManutencaoDaLinha = (row: StockRow) => {
     setManutencaoEntradaAlvo({ row, numeroManutencao: gerarIdManutencao() });
   };
 
@@ -2088,6 +2129,11 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       // Caixa Metálica/Skid entra no mesmo fluxo de alocação por unidade inteira dos
       // Equipamentos (são itens retornáveis, não consumíveis como Materiais).
       const isEquipamentosCategory = selectedCategory === 'Equipamentos' || selectedCategory === 'Caixa Metálica / Skid';
+      // "Alugados - Equipamentos" (equipamento de terceiro alugado) é retornável do mesmo jeito
+      // — precisa do ciclo completo Alocar/Desalocar, não só do botão de Desalocar. Sem isso não
+      // havia NENHUM jeito de alocar esses itens: a linha só mostrava "Desalocar" quando já
+      // alocada e nada quando disponível, e o "Alocar" da Ação Rápida é exclusivo de Gases.
+      const usaFluxoAlocarRetornavel = isEquipamentosCategory || row.tableName === 'Alugados - Equipamentos';
       const isAlocado = normalizeKey(row.values.status || '') === 'alocado';
       const hasServiceAllocation = Boolean(cleanValue(row.values.serviceOS));
       const isExpanded = expandedGasRows.has(row.id);
@@ -2109,7 +2155,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
               Alocados {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             </button>
           )}
-          {isEquipamentosCategory && (
+          {usaFluxoAlocarRetornavel && (
             hasServiceAllocation ? (
               <button
                 type="button"
@@ -2134,7 +2180,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                   setEquipAllocateForm({
                     rowId: row.id,
                     tableName: row.tableName,
-                    equipName: row.values.material || row.values.modelo || row.values.item || 'Equipamento',
+                    equipName: row.values.equipamento || row.values.material || row.values.modelo || row.values.item || 'Equipamento',
                     local: '',
                     osId: ''
                   });
@@ -2149,7 +2195,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
             )
           )}
 
-          {!isEquipamentosCategory && hasServiceAllocation && row.tableName !== 'Alugados - Gases' && (
+          {!usaFluxoAlocarRetornavel && hasServiceAllocation && row.tableName !== 'Alugados - Gases' && (
             <button
               type="button"
               onClick={(e) => {
@@ -2226,11 +2272,10 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     }
 
     if (column.key === 'status') {
-      // "Em manutenção" só aparece pra itens cadastrados com a caixinha "possui manutenção"
-      // marcada — sem isso, qualquer item ganhava a opção mesmo sem o fluxo de entrada fazer
-      // sentido pra ele (ex.: nunca vai ter foto/motivo registrado).
+      // "Em manutenção" só aparece pra tabelas elegíveis (Equipamentos + Materiais) — Alugados
+      // e Caixa Metálica / Skid nunca entram em manutenção (ver MANUTENCAO_TABLE_NAMES).
       const statusOptions = getStatusOptionsForTable(table.name)
-        .filter((option) => registerHasManutencao || !normalizeKey(option).includes('manut'));
+        .filter((option) => MANUTENCAO_TABLE_NAMES.includes(table.name) || !normalizeKey(option).includes('manut'));
       return (
         <Select
           value={value}
@@ -2266,11 +2311,21 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
             <SelectValue placeholder="Selecione uma OS" />
           </SelectTrigger>
           <SelectContent className="border border-white/10 bg-[#0b1220] text-white shadow-2xl">
-            {availableOS.map((ordemServico) => (
-              <SelectItem key={getOsOptionValue(ordemServico)} value={getOsOptionValue(ordemServico)} className="cursor-pointer rounded-lg px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
-                {osDisplayLabel(ordemServico)}
+            {carregandoOS && availableOS.length === 0 ? (
+              <SelectItem value="__carregando__" disabled className="cursor-not-allowed rounded-lg px-3 py-2 text-sm text-white/40">
+                Carregando OS...
               </SelectItem>
-            ))}
+            ) : availableOS.length === 0 ? (
+              <SelectItem value="__none__" disabled className="cursor-not-allowed rounded-lg px-3 py-2 text-sm text-white/40">
+                Nenhuma OS aprovada disponível
+              </SelectItem>
+            ) : (
+              availableOS.map((ordemServico) => (
+                <SelectItem key={getOsOptionValue(ordemServico)} value={getOsOptionValue(ordemServico)} className="cursor-pointer rounded-lg px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
+                  {osDisplayLabel(ordemServico)}
+                </SelectItem>
+              ))
+            )}
           </SelectContent>
         </Select>
       );
@@ -2325,7 +2380,8 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
         </div>
       </div>
 
-      <div className="mx-8 mt-6 grid grid-cols-1 gap-5 rounded-[24px] border border-white/5 bg-gradient-to-r from-white/[0.03] to-transparent p-6 shadow-xl backdrop-blur-md xl:grid-cols-[1fr_1fr_2fr_auto] xl:items-end">
+      <div className="mx-8 mt-6 flex flex-col gap-5 rounded-[24px] border border-white/5 bg-gradient-to-r from-white/[0.03] to-transparent p-6 shadow-xl backdrop-blur-md">
+      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_minmax(260px,320px)] lg:items-end">
         <div className="space-y-2">
           <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">Categoria</label>
           <Select value={selectedCategory} onValueChange={(val) => setSelectedCategory(val as 'Todos' | 'Materiais' | 'Equipamentos' | 'Alugados' | 'Caixa Metálica / Skid')}>
@@ -2382,6 +2438,58 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
         </div>
 
         <div className="space-y-2">
+          <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">Ação Rápida</label>
+          <div className="grid grid-cols-2 gap-2 w-full min-w-[260px]">
+            {selectedTable.name === 'Alugados - Gases' ? (
+              <>
+                <button
+                  type="button"
+                  onClick={openRegisterModal}
+                  className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/15 px-4 text-xs font-bold uppercase tracking-widest text-emerald-200 transition hover:bg-emerald-500/25 hover:text-white shadow-sm"
+                >
+                  <Plus size={16} />
+                  Registrar Item
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsAllocateModalOpen(true)}
+                  className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-red-500/30 bg-red-500/15 px-4 text-xs font-bold uppercase tracking-widest text-red-200 transition hover:bg-red-500/25 hover:text-white shadow-sm"
+                >
+                  <MapPin size={16} />
+                  Alocar
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={openRegisterModal}
+                className="col-span-2 inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/15 px-4 text-xs font-bold uppercase tracking-widest text-emerald-200 transition hover:bg-emerald-500/25 hover:text-white shadow-sm"
+              >
+                <Plus size={16} />
+                Registrar Item
+              </button>
+            )}
+
+            <div className="col-span-2 flex h-12 w-full items-center justify-between rounded-xl border border-white/5 bg-[#0b1220]/60 px-3 overflow-hidden shadow-inner">
+               <div className="text-[10px] font-bold uppercase tracking-widest text-white/40 truncate mr-2">
+                 Selec. <span className="ml-1 rounded-md bg-amber-500/20 px-1.5 py-0.5 text-amber-400">{selectedForRomaneio.size}</span>
+               </div>
+               <button
+                type="button"
+                disabled={selectedForRomaneio.size === 0}
+                onClick={() => setIsRomaneioModalOpen(true)}
+                className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-[10px] font-bold uppercase tracking-widest transition whitespace-nowrap ${selectedForRomaneio.size === 0 ? 'border-transparent bg-white/5 text-white/30' : 'border-amber-500/30 bg-amber-500/15 text-amber-200 hover:bg-amber-500/25 hover:text-white shadow-sm'}`}
+               >
+                 <ClipboardList size={14} />
+                 Romaneio
+               </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div className="space-y-2">
           <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">Busca e Filtro</label>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_200px_200px]">
             <div className="relative">
@@ -2435,56 +2543,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
             </Select>
           </div>
         </div>
-
-        <div className="space-y-2">
-          <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">Ação Rápida</label>
-          <div className="grid grid-cols-2 gap-2 w-full min-w-[260px]">
-            {selectedTable.name === 'Alugados - Gases' ? (
-              <>
-                <button
-                  type="button"
-                  onClick={openRegisterModal}
-                  className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/15 px-4 text-xs font-bold uppercase tracking-widest text-emerald-200 transition hover:bg-emerald-500/25 hover:text-white shadow-sm"
-                >
-                  <Plus size={16} />
-                  Registrar Item
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsAllocateModalOpen(true)}
-                  className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-red-500/30 bg-red-500/15 px-4 text-xs font-bold uppercase tracking-widest text-red-200 transition hover:bg-red-500/25 hover:text-white shadow-sm"
-                >
-                  <MapPin size={16} />
-                  Alocar
-                </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                onClick={openRegisterModal}
-                className="col-span-2 inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/15 px-4 text-xs font-bold uppercase tracking-widest text-emerald-200 transition hover:bg-emerald-500/25 hover:text-white shadow-sm"
-              >
-                <Plus size={16} />
-                Registrar Item
-              </button>
-            )}
-            
-            <div className="col-span-2 flex h-12 w-full items-center justify-between rounded-xl border border-white/5 bg-[#0b1220]/60 px-3 overflow-hidden shadow-inner">
-               <div className="text-[10px] font-bold uppercase tracking-widest text-white/40 truncate mr-2">
-                 Selec. <span className="ml-1 rounded-md bg-amber-500/20 px-1.5 py-0.5 text-amber-400">{selectedForRomaneio.size}</span>
-               </div>
-               <button
-                type="button"
-                disabled={selectedForRomaneio.size === 0}
-                onClick={() => setIsRomaneioModalOpen(true)}
-                className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-[10px] font-bold uppercase tracking-widest transition whitespace-nowrap ${selectedForRomaneio.size === 0 ? 'border-transparent bg-white/5 text-white/30' : 'border-amber-500/30 bg-amber-500/15 text-amber-200 hover:bg-amber-500/25 hover:text-white shadow-sm'}`}
-               >
-                 <ClipboardList size={14} />
-                 Romaneio
-               </button>
-            </div>
-          </div>
-        </div>
+      </div>
       </div>
 
       <div className="flex items-center justify-between gap-4 px-8 pt-6">
@@ -2538,7 +2597,19 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                         key={column.key}
                         className={`px-5 py-4 text-left text-[11px] font-bold uppercase tracking-wider text-white/50 ${column.align === 'center' ? 'text-center' : ''} ${column.align === 'right' ? 'text-right' : ''}`}
                       >
-                        {column.label}
+                        {column.key === '__select__' ? (
+                          <div className="flex items-center justify-center">
+                            <input
+                              type="checkbox"
+                              checked={allVisibleSelected}
+                              ref={(el) => { if (el) el.indeterminate = !allVisibleSelected && someVisibleSelected; }}
+                              disabled={selectableVisibleKeys.length === 0}
+                              onChange={toggleSelectAllVisible}
+                              title={allVisibleSelected ? 'Descelecionar todos os itens exibidos' : 'Selecionar todos os itens exibidos'}
+                              className="h-4 w-4 rounded border-white/20 bg-black/20 accent-emerald-500 cursor-pointer disabled:cursor-not-allowed disabled:opacity-30"
+                            />
+                          </div>
+                        ) : column.label}
                       </th>
                     ))}
                   </tr>
@@ -2565,7 +2636,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                             rowIsAtrasada
                               ? 'bg-red-500/15 hover:bg-red-500/25'
                               : rowIsNegative
-                                ? 'bg-red-500/[0.03] hover:bg-red-500/10'
+                                ? 'bg-red-500/15 hover:bg-red-500/25'
                                 : 'hover:bg-white/5'
                           }`}
                         >
@@ -2748,19 +2819,6 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                       {currentRegisterTable.columns.length} campos
                     </div>
                 </div>
-
-                <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] p-5 shadow-inner">
-                  <input
-                    type="checkbox"
-                    checked={registerHasManutencao}
-                    onChange={(e) => setRegisterHasManutencao(e.target.checked)}
-                    className="h-4 w-4 rounded border-white/20 bg-black/20 accent-amber-500 transition-all cursor-pointer"
-                  />
-                  <div>
-                    <p className="text-sm font-bold text-white">Este item possui manutenção?</p>
-                    <p className="text-[11px] text-white/50">Marque para liberar o status "Em manutenção" para este item, com histórico de entrada/saída.</p>
-                  </div>
-                </label>
               </div>
 
               <div className="rounded-xl border border-white/5 bg-white/[0.02] p-6 shadow-inner">
@@ -2900,7 +2958,11 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                       <SelectValue placeholder="Selecione a OS" />
                     </SelectTrigger>
                     <SelectContent className="border border-white/10 bg-[#0b1220]/95 p-2 text-white shadow-2xl backdrop-blur">
-                      {availableOS.length === 0 ? (
+                      {carregandoOS && availableOS.length === 0 ? (
+                        <SelectItem value="__carregando__" disabled className="cursor-not-allowed rounded-lg px-3 py-3 text-sm text-white/40">
+                          Carregando OS...
+                        </SelectItem>
+                      ) : availableOS.length === 0 ? (
                         <SelectItem value="__none__" disabled className="cursor-not-allowed rounded-lg px-3 py-3 text-sm text-white/40">
                           Nenhuma OS disponível
                         </SelectItem>
@@ -3146,11 +3208,21 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                       <SelectValue placeholder="Selecione a OS..." />
                     </SelectTrigger>
                     <SelectContent className="border border-white/10 bg-[#0b1220] text-white">
-                      {availableOS.map((ordemServico: any) => (
-                        <SelectItem key={ordemServico.id} value={String(ordemServico.id)} className="rounded-lg">
-                          {osDisplayLabel(ordemServico)}
+                      {carregandoOS && availableOS.length === 0 ? (
+                        <SelectItem value="__carregando__" disabled className="cursor-not-allowed rounded-lg text-white/40">
+                          Carregando OS...
                         </SelectItem>
-                      ))}
+                      ) : availableOS.length === 0 ? (
+                        <SelectItem value="__none__" disabled className="cursor-not-allowed rounded-lg text-white/40">
+                          Nenhuma OS aprovada disponível
+                        </SelectItem>
+                      ) : (
+                        availableOS.map((ordemServico: any) => (
+                          <SelectItem key={ordemServico.id} value={String(ordemServico.id)} className="rounded-lg">
+                            {osDisplayLabel(ordemServico)}
+                          </SelectItem>
+                        ))
+                      )}
                     </SelectContent>
                   </Select>
                 </div>
@@ -3483,6 +3555,16 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                 <Trash2 size={14} />
                 Dar baixa
               </button>
+              {itemPossuiManutencao(activeRow.row) && !itemEstaEmManutencao(activeRow.row) && (
+                <button
+                  type="button"
+                  onClick={() => abrirEntradaManutencaoDaLinha(activeRow.row)}
+                  className="inline-flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/15 px-6 py-3 text-xs font-bold uppercase tracking-wider text-amber-200 transition hover:bg-amber-500/25 hover:text-white shadow-sm"
+                >
+                  <Wrench size={14} />
+                  Enviar para manutenção
+                </button>
+              )}
             </div>
           </aside>
         </div>

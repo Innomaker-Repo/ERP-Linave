@@ -491,7 +491,9 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
       const jaExiste = fin.some((r: any) => r?.tipo === 'reciboLocacao' && String(r?.medicaoId || '') === String(med.id));
       if (jaExiste) return 'duplicada';
       // Numeração por OS + herança do cabeçalho do recibo anterior ficam no helper compartilhado.
-      const rec = construirReciboDeMedicao(fin, med);
+      // clienteId (da OS da medição) casa o cliente pelo id — mais confiável que pelo nome.
+      const osDaMedicao = (Array.isArray(os) ? os : []).find((o: any) => String(o.backendId) === String(med.ordemServicoBackendId));
+      const rec = construirReciboDeMedicao(fin, med, clientes, osDaMedicao?.clienteId);
       if (!rec) return 'sem-locacao';
       await saveEntity('financeiro', [rec, ...fin]);
       return 'criada';

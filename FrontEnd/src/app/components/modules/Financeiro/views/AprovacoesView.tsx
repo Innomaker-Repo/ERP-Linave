@@ -200,6 +200,12 @@ export function AprovacoesView() {
             <p><span className="text-white/40">Documento:</span> <span className="text-white/85">{detalhe.documento || '—'}</span></p>
             <p><span className="text-white/40">Forma solicitada:</span> <span className="text-white/85">{detalhe.forma || '—'}</span></p>
             <p><span className="text-white/40">Status:</span> <span className="text-white/85">{detalhe.status || 'Aguardando aprovação'}</span></p>
+            {detalhe.status === 'Aprovado' && (
+              <p><span className="text-white/40">Aprovado por:</span> <span className="text-emerald-200">{detalhe.aprovadoPor || '—'}</span></p>
+            )}
+            {detalhe.status === 'Reprovado' && (
+              <p><span className="text-white/40">Reprovado por:</span> <span className="text-rose-200">{detalhe.reprovadoPor || '—'}</span></p>
+            )}
             {detalhe.status === 'Reprovado' && detalhe.motivoReprovacao && (
               <p><span className="text-white/40">Motivo da reprovação:</span> <span className="text-rose-200">{detalhe.motivoReprovacao}</span></p>
             )}

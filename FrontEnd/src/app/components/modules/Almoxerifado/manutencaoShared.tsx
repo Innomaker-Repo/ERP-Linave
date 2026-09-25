@@ -52,9 +52,19 @@ const normalizeKeyLocal = (value: string): string =>
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '');
 
-// Item só pode entrar em manutenção se foi cadastrado com a caixinha marcada.
+// Mesmas 7 tabelas que a categoria "Equipamentos" agrupa em EstoqueView.tsx — mantido aqui como
+// fonte única pra não duplicar a lista e desalinhar. NÃO é a lista de elegibilidade pra
+// manutenção (ver MANUTENCAO_TABLE_NAMES abaixo) — é só o agrupamento de categoria/tipo.
+export const EQUIPAMENTOS_TABLE_NAMES = ['EQUIPAMENTOS ELETRICOS', 'EXTENSÃO-CABOS', 'BOMBA HIDROJATO', 'INSTRUMENTOS', 'FERRAMENTAS', 'TALHAS', 'ESLINGAS'];
+
+// Tabelas cujos itens podem entrar em manutenção: a categoria Equipamentos inteira, mais
+// Materiais. Alugados e Caixa Metálica / Skid continuam de fora.
+export const MANUTENCAO_TABLE_NAMES = [...EQUIPAMENTOS_TABLE_NAMES, 'Materiais'];
+
+// Item só pode entrar em manutenção se a tabela dele estiver em MANUTENCAO_TABLE_NAMES — não
+// depende mais de um flag por item.
 export const itemPossuiManutencao = (row: ManutencaoRow): boolean =>
-  normalizeKeyLocal(row.values?.possuiManutencao || '') === 'sim';
+  MANUTENCAO_TABLE_NAMES.includes(row.tableName);
 
 // Mesma regra usada em EstoqueView (isNegativeStatus): qualquer status contendo "manut".
 export const itemEstaEmManutencao = (row: ManutencaoRow): boolean =>

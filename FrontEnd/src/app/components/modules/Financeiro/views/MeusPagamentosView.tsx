@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { CheckCircle2, Clock3, FilePlus, Paperclip, Pencil, Search, Users, Wallet } from 'lucide-react';
 import { useErp } from '../../../../context/ErpContext';
 import { useFinNavigate, FIN_SECTIONS } from '../finNav';
-import { matchesSolicitante, money, num, br } from '../finData';
+import { matchesSolicitante, money, num, br, type FaturadoParcela } from '../finData';
 
 // Documentos anexados na solicitação (NF, boleto, recibo...) precisam continuar acessíveis
 // daqui — este é o único lugar onde o colaborador comum (sem acesso a Aprovações/Contas a
@@ -33,6 +33,38 @@ function AnexosDaSolicitacao({ anexos }: { anexos?: string[] }) {
           </span>
         );
       })}
+    </div>
+  );
+}
+
+// Parcelas de uma solicitação Faturado: cada uma já nasceu com seu próprio boleto anexado
+// (tudo enviado de uma vez, na criação — ver SolicitacaoView.tsx), então aqui é só consulta.
+function ParcelasFaturado({ parcelas }: { parcelas: FaturadoParcela[] }) {
+  return (
+    <div className="mt-3 rounded-xl border border-white/5 bg-[#0b1220]/60 p-3">
+      <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-white/40">Parcelas da Nota Fiscal</p>
+      <div className="space-y-1.5">
+        {parcelas.map((p) => {
+          const ehUrl = /^(https?:|\/media\/)/.test(String(p.anexoUrl || ''));
+          return (
+            <div key={p.numero} className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span className="text-white/60">Parcela {p.numero}/{parcelas.length} — vence {br(p.vencimento)} — {money(num(p.valor))}</span>
+              {ehUrl ? (
+                <a
+                  href={p.anexoUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 font-bold text-amber-200 hover:bg-amber-500/20"
+                >
+                  📄 Boleto
+                </a>
+              ) : (
+                <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 font-bold text-white/50">Sem boleto</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -249,8 +281,11 @@ export function MeusPagamentosView() {
                       {isAdmin && <>Solicitante: <span className="text-white/85">{r.solicitante || '—'}</span> • </>}
                       Doc: {r.documento || '—'} • Criado em {br(String(r.createdAt || '').slice(0, 10))}
                     </p>
-                    {r.status === 'Reprovado' && r.motivoReprovacao && (
-                      <p className="mt-1 text-rose-300 text-xs">Motivo: {r.motivoReprovacao}</p>
+                    {r.status === 'Reprovado' && (
+                      <p className="mt-1 text-rose-300 text-xs">
+                        Reprovado por: <span className="font-semibold">{r.reprovadoPor || '—'}</span>
+                        {r.motivoReprovacao && <> • Motivo: {r.motivoReprovacao}</>}
+                      </p>
                     )}
                     <AnexosDaSolicitacao anexos={r.anexos} />
                   </div>
@@ -307,6 +342,7 @@ export function MeusPagamentosView() {
                       Doc: {r.documento || '—'}
                       {r.contaPagar?.status === 'Pago' && r.contaPagar?.dataPagamento && ` • Pago em ${br(r.contaPagar.dataPagamento)}`}
                     </p>
+                    <p className="mt-1 text-emerald-300/80 text-xs">Aprovado por: <span className="font-semibold">{r.aprovadoPor || '—'}</span></p>
                     <AnexosDaSolicitacao anexos={r.anexos} />
                   </div>
                   <div className="text-right">
@@ -314,6 +350,11 @@ export function MeusPagamentosView() {
                     <p className="text-lg font-black text-emerald-300">{money(num(r.valor))}</p>
                   </div>
                 </div>
+                {r.forma === 'Faturado' && Array.isArray(r.faturado?.parcelas) && r.faturado.parcelas.length > 0 && (
+                  <div className="px-6 pb-4">
+                    <ParcelasFaturado parcelas={r.faturado.parcelas} />
+                  </div>
+                )}
               </article>
             ))
           )}

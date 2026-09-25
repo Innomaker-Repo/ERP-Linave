@@ -6,7 +6,7 @@ import {
 } from '../finUi';
 import {
   br, money, num, isOld, todayStr, genFinId, TAX_DEFAULTS, calcNfeLiquido, calcImpostosNfe,
-  FORMAS_PAGAMENTO, isLinaveEmpresa, type NfeSolicitacao,
+  FORMAS_PAGAMENTO, siglaTipoNfe, dadosClienteRecibo, type NfeSolicitacao,
 } from '../finData';
 import { useFin } from '../useFin';
 import { useFinFilters } from '../finFilters';
@@ -16,24 +16,12 @@ import { ReciboLocacaoFormModal, formInicialRecibo, linhaItem } from './ReciboLo
 import { toast } from 'sonner';
 
 // Só existem 2 naturezas de solicitação (o "Tipo" exibido nunca pode sair de 3 valores — ver
-// siglaTipoNfe abaixo): Serviço (NFe Serviço) ou Locação (Nota de débito). "NFe Alocado"/"Outro"
-// foram removidos daqui pra não nascer mais solicitação fora dessas 2 categorias.
+// siglaTipoNfe em finData.ts): Serviço (NFe Serviço) ou Locação (Nota de débito). "NFe
+// Alocado"/"Outro" foram removidos daqui pra não nascer mais solicitação fora dessas 2 categorias.
 const TIPOS_NFE = ['NFe Serviço', 'Nota de débito'];
 
 const STATUS_FILTROS_NFE = ['Todos', 'Aguardando emissão', 'Emitida e arquivada'] as const;
 type StatusFiltroNfe = typeof STATUS_FILTROS_NFE[number];
-
-// Regra do tipo de documento por empresa: SERVIÇO — Linave emite NFe normal; Servinave emite
-// Nota de Débito (N/D) pro mesmo serviço. LOCAÇÃO (guardada como "Nota de débito" no dado) —
-// qualquer prestadora emite Recibo de Locação (R/L), não depende mais de qual empresa é.
-// Sigla usada tanto na coluna "Tipo" quanto como prefixo do nº do documento (mesma regra nos
-// dois lugares, senão as colunas se contradiziam). Só existem 3 valores possíveis: NFe, R/L,
-// N/D — registros antigos com tipoNfe fora dessas 2 naturezas (ex.: "NFe Alocado"/"Outro", de
-// antes dessa regra existir) caem no padrão NFe, nunca mostram o rótulo bruto.
-const siglaTipoNfe = (tipoNfe: string, empresa?: any): string => {
-  if (tipoNfe === 'Nota de débito') return 'R/L';
-  return isLinaveEmpresa(empresa) ? 'NFe' : 'N/D';
-};
 
 // Valor sentinela do dropdown de clientes: libera o campo de texto para um cliente que
 // ainda não está cadastrado (nota avulsa), sem obrigar a cadastrar antes de solicitar.
@@ -74,11 +62,18 @@ function AnexosCell({ anexos }: { anexos: any[] }) {
   );
 }
 
-// Estado inicial do formulário de emissão.
-const emptyNf = () => ({
+// Estado inicial do formulário de emissão. Recibo de Locação usa o MESMO formulário/cálculo
+// que a NFe — a única diferença é que os % de imposto não têm padrão nenhum: não faz sentido
+// aplicar as alíquotas de retenção de serviço (COFINS/CSLL/INSS/IR/PIS/ISS) numa locação, então
+// vêm em branco e quem preenche decide item a item o que se aplica.
+const emptyNf = (semImpostoPadrao = false) => ({
   cliente: '', numero: '', emissao: todayStr, original: '',
-  cofins: String(TAX_DEFAULTS.cofins), csll: String(TAX_DEFAULTS.csll), inss: String(TAX_DEFAULTS.inss),
-  ir: String(TAX_DEFAULTS.ir), pis: String(TAX_DEFAULTS.pis), iss: String(TAX_DEFAULTS.iss),
+  cofins: semImpostoPadrao ? '' : String(TAX_DEFAULTS.cofins),
+  csll: semImpostoPadrao ? '' : String(TAX_DEFAULTS.csll),
+  inss: semImpostoPadrao ? '' : String(TAX_DEFAULTS.inss),
+  ir: semImpostoPadrao ? '' : String(TAX_DEFAULTS.ir),
+  pis: semImpostoPadrao ? '' : String(TAX_DEFAULTS.pis),
+  iss: semImpostoPadrao ? '' : String(TAX_DEFAULTS.iss),
   baixado: '0', vencido: '0', vencimento: todayStr, contrato: '',
 });
 
@@ -92,12 +87,10 @@ export function NfeView() {
   const [statusFiltro, setStatusFiltro] = useState<StatusFiltroNfe>('Todos');
   const solicitacoes = nfeSolicitacoes.filter(match).filter((r) => statusFiltro === 'Todos' || r.status === statusFiltro);
 
-  // ---- Ponte solicitação de NFe (tipoNfe "Nota de débito", exibida como "R/L") ↔ Recibo de
-  // Locação de verdade: quem pediu quer que uma solicitação identificada como Recibo abra o
-  // MESMO formulário/fluxo já usado na aba "Recibo de Locação" (itens, emitente, destinatário),
-  // não o fluxo de "Emitir NFe". `reciboForm` guarda o recibo (existente ou recém-semeado a
-  // partir da solicitação) sendo preenchido; `nfeReqId` no recibo linka de volta pra não
-  // duplicar em cliques seguintes.
+  // ---- Documento de verdade do Recibo de Locação (itens, emitente, destinatário, banco — o
+  // que gera o PDF pelo mesmo template usado na aba "Recibo de Locação"). Independente do fluxo
+  // financeiro de "Gerar Recibo" acima: aqui só se preenche/edita o documento em si e se baixa o
+  // PDF; lá se lança o valor líquido/impostos e se arquiva o anexo pra criar a Conta a Receber.
   const [reciboForm, setReciboForm] = useState<any>(null);
 
   const recibosPorNfeReqId = useMemo(() => {
@@ -115,11 +108,14 @@ export function NfeView() {
     const recibosAtuais = (Array.isArray(financeiro) ? financeiro : []).filter((x: any) => x?.tipo === 'reciboLocacao');
     const base = formInicialRecibo(recibosAtuais, r.empresa, config);
     const valor = num(r.valor);
+    // clienteId da OS (achada pelo número) casa o cliente pelo id — mais confiável que pelo nome.
+    const osDaSolicitacao = oss.find((o) => o.numero === (r.os || r.contrato));
     setReciboForm({
       ...base,
       nfeReqId: r.id,
       ordemServicoNumero: r.os || r.contrato || '',
       clienteNome: r.cliente || '',
+      ...dadosClienteRecibo(clientes, { clienteId: osDaSolicitacao?.clienteId, nomeCliente: r.cliente }),
       dataEmissao: r.dataEmitir || base.dataEmissao,
       status: r.status === 'Emitida e arquivada' ? 'emitido' : 'pendente',
       itens: valor > 0
@@ -128,17 +124,12 @@ export function NfeView() {
     });
   };
 
-  // Mantém a linha da solicitação (valor/status mostrados na tabela) em dia com o que foi
-  // preenchido no recibo — senão a tabela ficava com o valor "antigo" depois de editar.
+  // Mantém a data planejada da solicitação em dia com o que foi preenchido no documento do
+  // recibo — não mexe em `valor`/`status`, que agora seguem o fluxo financeiro de "Gerar Recibo".
   const aoSalvarRecibo = async (recSalvo: any) => {
     const idOrigem = recSalvo?.nfeReqId;
-    if (!idOrigem) return;
-    const total = (recSalvo.itens || []).reduce((s: number, i: any) => s + (parseFloat(String(i.total).replace(',', '.')) || 0), 0);
-    await updateRecord(idOrigem, {
-      ...(total > 0 ? { valor: total } : {}),
-      dataEmitir: recSalvo.dataEmissao || undefined,
-      status: recSalvo.status === 'emitido' ? 'Emitida e arquivada' : 'Aguardando emissão',
-    });
+    if (!idOrigem || !recSalvo?.dataEmissao) return;
+    await updateRecord(idOrigem, { dataEmitir: recSalvo.dataEmissao });
   };
 
   // Nota emitida de cada solicitação (o registro 'nfe' aponta para a origem por sourceId).
@@ -255,10 +246,15 @@ export function NfeView() {
   ] as [string, string][]).map(([nome, pct]) => ({ nome, pct: num(pct), valor: original * num(pct) / 100 }));
   const totalImpostos = impostosLista.reduce((s, i) => s + i.valor, 0);
 
+  // A mesma modal serve pra "Emitir NFe" e "Gerar Recibo" — só o Recibo de Locação abre sem os
+  // % de imposto padrão (ver comentário em emptyNf).
+  const ehRecibo = (sol: Pick<NfeSolicitacao, 'tipoNfe' | 'empresa'>) => siglaTipoNfe(sol.tipoNfe, sol.empresa) === 'R/L';
+  const emitindoEhRecibo = emitindo ? ehRecibo(emitindo) : false;
+
   const abrirEmissao = (sol: NfeSolicitacao) => {
     setEmitindo(sol);
     setNfeAnexos([]);
-    setNf({ ...emptyNf(), cliente: sol.cliente, original: String(sol.valor || ''), vencimento: sol.dataEmitir || todayStr, contrato: sol.contrato || sol.os });
+    setNf({ ...emptyNf(ehRecibo(sol)), cliente: sol.cliente, original: String(sol.valor || ''), vencimento: sol.dataEmitir || todayStr, contrato: sol.contrato || sol.os });
   };
 
   const confirmarEmissao = async (e: React.FormEvent) => {
@@ -358,7 +354,7 @@ export function NfeView() {
           // Ainda não emitida e a data planejada já passou: chama atenção em vermelho.
           const emitirAtrasado = r.status !== 'Emitida e arquivada' && isOld(r.dataEmitir);
           const sigla = siglaTipoNfe(r.tipoNfe, r.empresa);
-          const ehRecibo = sigla === 'R/L';
+          const linhaEhRecibo = sigla === 'R/L';
           return (
           <tr key={r.id} className={`transition-colors hover:bg-white/5 ${semNumero ? 'bg-amber-500/[0.06]' : ''}`}>
             <Td className="font-black text-white">{r.id}</Td>
@@ -382,30 +378,22 @@ export function NfeView() {
             <Td className="whitespace-normal"><AnexosCell anexos={r.anexos} /></Td>
             <Td>
               <div className="flex items-center gap-2">
-                {ehRecibo ? (
-                  // Recibo de Locação: mesmo botão/fluxo da aba dedicada — abre o formulário
-                  // de verdade (itens, emitente, destinatário), não "Emitir NFe".
-                  <Btn small variant="secondary" onClick={() => abrirPreencherRecibo(r)}>
-                    <Pencil size={12} /> Preencher / editar
+                {/* Recibo de Locação usa o MESMO fluxo/modal da NFe (ver abrirEmissao) — só o
+                    rótulo do botão muda, pra deixar claro que aqui é um recibo, não uma nota. */}
+                {r.status === 'Aguardando emissão'
+                  ? <Btn small variant="amber" onClick={() => abrirEmissao(r)}>{linhaEhRecibo ? 'Gerar Recibo' : 'Emitir NFe'}</Btn>
+                  : <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-300"><FileCheck2 size={13} /> Arquivada</span>}
+                {/* Nota/recibo já arquivado: permite preencher/corrigir o número depois. */}
+                {nota && (
+                  <Btn small variant={semNumero ? 'amber' : 'secondary'} onClick={() => abrirEdicaoNota(nota)}>
+                    <Hash size={12} /> {semNumero ? 'Informar nº' : 'Editar nº'}
                   </Btn>
-                ) : (
-                  <>
-                    {r.status === 'Aguardando emissão'
-                      ? <Btn small variant="amber" onClick={() => abrirEmissao(r)}>Emitir NFe</Btn>
-                      : <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-300"><FileCheck2 size={13} /> Arquivada</span>}
-                    {/* Nota já arquivada: permite preencher/corrigir o número depois. */}
-                    {nota && (
-                      <Btn small variant={semNumero ? 'amber' : 'secondary'} onClick={() => abrirEdicaoNota(nota)}>
-                        <Hash size={12} /> {semNumero ? 'Informar nº' : 'Editar nº'}
-                      </Btn>
-                    )}
-                    {/* Ainda não emitida: dá para ajustar o prazo planejado. */}
-                    {r.status === 'Aguardando emissão' && (
-                      <Btn small variant="secondary" onClick={() => abrirEdicaoData(r)}>
-                        <CalendarClock size={12} /> Alterar data
-                      </Btn>
-                    )}
-                  </>
+                )}
+                {/* Ainda não emitido: dá para ajustar o prazo planejado. */}
+                {r.status === 'Aguardando emissão' && (
+                  <Btn small variant="secondary" onClick={() => abrirEdicaoData(r)}>
+                    <CalendarClock size={12} /> Alterar data
+                  </Btn>
                 )}
                 <DeleteBtn
                   titulo="Excluir solicitação de NFe"
@@ -425,10 +413,17 @@ export function NfeView() {
 
       {/* MODAL: Emitir NFe */}
       {emitindo && (
-        <FinModal wide title={`Emitir NFe — ${emitindo.os}`} hint="Preencha os dados da nota. Ao arquivar, cria a Conta a Receber." onClose={() => setEmitindo(null)}>
+        <FinModal
+          wide
+          title={`${emitindoEhRecibo ? 'Gerar Recibo de Locação' : 'Emitir NFe'} — ${emitindo.os}`}
+          hint={emitindoEhRecibo
+            ? 'Preencha os dados do recibo. Os % de imposto vêm em branco — informe só o que se aplica à locação. Ao arquivar, cria a Conta a Receber.'
+            : 'Preencha os dados da nota. Ao arquivar, cria a Conta a Receber.'}
+          onClose={() => setEmitindo(null)}
+        >
           <form className="grid grid-cols-12 gap-4" onSubmit={confirmarEmissao}>
             <Field label="Cliente" span={6}><Input value={nf.cliente} onChange={(e) => setNfField('cliente', e.target.value)} /></Field>
-            <Field label="Nº da NFe (opcional)" span={3}>
+            <Field label={emitindoEhRecibo ? 'Nº do Recibo (opcional)' : 'Nº da NFe (opcional)'} span={3}>
               <Input value={nf.numero} onChange={(e) => setNfField('numero', e.target.value)} placeholder="Pode preencher depois" />
             </Field>
             <Field label="Emissão" span={3}><Input type="date" value={nf.emissao} onChange={(e) => setNfField('emissao', e.target.value)} /></Field>
@@ -472,18 +467,28 @@ export function NfeView() {
               </div>
             </div>
 
-            <Field label="NFe emitida (anexo obrigatório)" span={12}>
-              <FileInput label="Anexar PDF / XML / imagem da NFe emitida" value={nfeAnexos} onChange={setNfeAnexos} />
+            <Field label={emitindoEhRecibo ? 'Recibo gerado (anexo obrigatório)' : 'NFe emitida (anexo obrigatório)'} span={12}>
+              <FileInput
+                label={emitindoEhRecibo ? 'Anexar PDF / imagem do recibo gerado' : 'Anexar PDF / XML / imagem da NFe emitida'}
+                value={nfeAnexos}
+                onChange={setNfeAnexos}
+              />
             </Field>
 
             <div className="col-span-12 flex flex-wrap items-center justify-between gap-2">
-              <Btn type="button" variant="secondary" onClick={() => window.open('https://www.nfse.gov.br/EmissorNacional/Login', '_blank', 'noopener,noreferrer')}>
-                <ExternalLink size={15} /> Emissor Nacional NFSe
-              </Btn>
+              {emitindoEhRecibo ? (
+                <Btn type="button" variant="secondary" onClick={() => abrirPreencherRecibo(emitindo)}>
+                  <Pencil size={15} /> Preencher / editar
+                </Btn>
+              ) : (
+                <Btn type="button" variant="secondary" onClick={() => window.open('https://www.nfse.gov.br/EmissorNacional/Login', '_blank', 'noopener,noreferrer')}>
+                  <ExternalLink size={15} /> Emissor Nacional NFSe
+                </Btn>
+              )}
               <div className="flex gap-2">
                 <Btn type="button" variant="ghost" onClick={() => setEmitindo(null)}>Cancelar</Btn>
                 <Btn type="submit" variant="green" disabled={salvando || nfeAnexos.length === 0}>
-                  <FileCheck2 size={15} /> {salvando ? 'Arquivando...' : 'Emitir, anexar e arquivar'}
+                  <FileCheck2 size={15} /> {salvando ? 'Arquivando...' : (emitindoEhRecibo ? 'Gerar, anexar e arquivar' : 'Emitir, anexar e arquivar')}
                 </Btn>
               </div>
             </div>

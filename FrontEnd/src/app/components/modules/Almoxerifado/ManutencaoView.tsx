@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import { CheckCircle2, Clock3, Eye, Plus, Search, Wrench, X } from 'lucide-react';
+import { CheckCircle2, Clock3, Download, Eye, Filter, Plus, Search, Wrench, X } from 'lucide-react';
 import { toast } from 'sonner';
+import * as XLSX from 'xlsx';
 import { useErp } from '../../../context/ErpContext';
 import {
   EntradaManutencaoModal, SaidaManutencaoModal, criarEntradaManutencao, fecharSaidaManutencao,
@@ -24,11 +25,53 @@ const br = (value?: string): string => {
   return d && m && y ? `${d}/${m}/${y}` : value;
 };
 
+const formatarMoeda = (valor?: string): string => {
+  const num = parseFloat(String(valor || '').replace(',', '.'));
+  return Number.isFinite(num) && num > 0
+    ? `R$ ${num.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : '—';
+};
+
+const ORIGEM_LABEL: Record<ManutencaoHistoricoItem['origem'], string> = {
+  edicaoItem: 'Status trocado ao editar o item no Estoque',
+  telaManutencao: 'Registrado direto na tela de Manutenção',
+  romaneio: 'Retornou de um Romaneio marcado para manutenção',
+};
+
+type FiltroPeriodoModo = 'entrada' | 'saida' | 'ambos';
+
+// Compara só a parte "yyyy-mm-dd" — os inputs de data e os campos entradaData/saidaData já
+// vêm nesse formato, então dá pra comparar como string sem precisar de Date().
+const dataDentroDoPeriodo = (data: string | undefined, de: string, ate: string): boolean => {
+  if (!de && !ate) return true;
+  if (!data) return false;
+  const valor = data.slice(0, 10);
+  if (de && valor < de) return false;
+  if (ate && valor > ate) return false;
+  return true;
+};
+
 export function ManutencaoView({ searchQuery }: { searchQuery?: string }) {
   const { almoxerifado, saveEntity, userSession } = useErp() as any;
   const [aba, setAba] = useState<'emManutencao' | 'historico'>('emManutencao');
   const [busca, setBusca] = useState(searchQuery || '');
   const [categoriaFiltro, setCategoriaFiltro] = useState('');
+
+  // Filtro por período, só na aba Histórico — o usuário escolhe se quer restringir pela data
+  // de entrada, de saída, ou pelas duas ao mesmo tempo (aí precisa bater nos dois períodos).
+  const [filtroPeriodoModo, setFiltroPeriodoModo] = useState<FiltroPeriodoModo>('entrada');
+  const [periodoEntradaDe, setPeriodoEntradaDe] = useState('');
+  const [periodoEntradaAte, setPeriodoEntradaAte] = useState('');
+  const [periodoSaidaDe, setPeriodoSaidaDe] = useState('');
+  const [periodoSaidaAte, setPeriodoSaidaAte] = useState('');
+
+  const periodoFiltroAtivo = Boolean(periodoEntradaDe || periodoEntradaAte || periodoSaidaDe || periodoSaidaAte);
+  const limparPeriodoFiltro = () => {
+    setPeriodoEntradaDe('');
+    setPeriodoEntradaAte('');
+    setPeriodoSaidaDe('');
+    setPeriodoSaidaAte('');
+  };
 
   const [registrarAlvoId, setRegistrarAlvoId] = useState('');
   const [entradaAlvo, setEntradaAlvo] = useState<{ row: StockRowLike; numeroManutencao: string } | null>(null);
@@ -91,10 +134,77 @@ export function ManutencaoView({ searchQuery }: { searchQuery?: string }) {
       .filter((h) => h.status === 'concluida')
       .filter((h) => !termo || h.itemLabel.toLowerCase().includes(termo))
       .filter((h) => !categoriaFiltro || h.tableName === categoriaFiltro)
+      .filter((h) => {
+        const checarEntrada = filtroPeriodoModo === 'entrada' || filtroPeriodoModo === 'ambos';
+        const checarSaida = filtroPeriodoModo === 'saida' || filtroPeriodoModo === 'ambos';
+        if (checarEntrada && !dataDentroDoPeriodo(h.entradaData, periodoEntradaDe, periodoEntradaAte)) return false;
+        if (checarSaida && !dataDentroDoPeriodo(h.saidaData, periodoSaidaDe, periodoSaidaAte)) return false;
+        return true;
+      })
       .sort((a, b) => String(b.saidaData || '').localeCompare(String(a.saidaData || ''))),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [manutencaoHistorico, termo, categoriaFiltro],
+    [manutencaoHistorico, termo, categoriaFiltro, filtroPeriodoModo, periodoEntradaDe, periodoEntradaAte, periodoSaidaDe, periodoSaidaAte],
   );
+
+  // Exporta exatamente o que está na lista já filtrada (busca, categoria e período) — mesmo
+  // princípio do "Baixar planilha" do Almoxarifado (EstoqueView.tsx): a planilha reflete
+  // sempre o que está sendo exibido na tela, nunca o histórico completo sem filtro.
+  const handleBaixarPlanilhaHistorico = () => {
+    if (historicoFechado.length === 0) {
+      toast.error('Não há itens para exportar com os filtros atuais.');
+      return;
+    }
+
+    const cabecalho = [
+      'Nº Manutenção', 'Equipamento', 'Categoria', 'Patrimônio',
+      'Data de Entrada', 'Motivo da Entrada', 'Responsável pelo Registro', 'Observações da Entrada',
+      'Data de Saída', 'Serviço Realizado', 'Peças/Materiais Utilizados', 'Custo da Manutenção',
+      'Responsável pela Manutenção', 'Responsável pela Liberação', 'Observações da Saída', 'Origem',
+    ];
+
+    const linhas = historicoFechado.map((h) => {
+      const row = linhaPorId(h.tableName, h.rowId);
+      return [
+        h.id,
+        h.itemLabel,
+        h.tableName,
+        (row && patrimonioDoItem(row)) || '-',
+        br(h.entradaData),
+        h.entradaMotivo || '',
+        h.entradaResponsavel || '',
+        h.entradaObs || '',
+        br(h.saidaData),
+        h.saidaServico || '',
+        h.saidaPecas || '',
+        h.saidaCusto || '',
+        h.saidaResponsavel || '',
+        h.saidaLiberadoPor || '',
+        h.saidaObs || '',
+        ORIGEM_LABEL[h.origem] || h.origem,
+      ];
+    });
+
+    const planilha = XLSX.utils.aoa_to_sheet([cabecalho, ...linhas]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, planilha, 'Historico Manutencao');
+
+    const partesNome = ['historico-manutencao'];
+    if (categoriaFiltro) partesNome.push(categoriaFiltro);
+    if (filtroPeriodoModo === 'entrada' || filtroPeriodoModo === 'ambos') {
+      if (periodoEntradaDe || periodoEntradaAte) partesNome.push(`entrada-${periodoEntradaDe || 'inicio'}-a-${periodoEntradaAte || 'fim'}`);
+    }
+    if (filtroPeriodoModo === 'saida' || filtroPeriodoModo === 'ambos') {
+      if (periodoSaidaDe || periodoSaidaAte) partesNome.push(`saida-${periodoSaidaDe || 'inicio'}-a-${periodoSaidaAte || 'fim'}`);
+    }
+    const nomeArquivo = partesNome.join('-')
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/(^-|-$)/g, '');
+
+    XLSX.writeFile(workbook, `${nomeArquivo}.xlsx`);
+    toast.success(`Planilha gerada com ${historicoFechado.length} registro(s).`);
+  };
 
   const linhaPorId = (tableName: string, rowId: string): StockRowLike | undefined => {
     const table = tables.find((t: any) => t.name === tableName);
@@ -255,6 +365,103 @@ export function ManutencaoView({ searchQuery }: { searchQuery?: string }) {
         </button>
       </div>
 
+      {aba === 'historico' && (
+        <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="flex items-center gap-2 text-white/40">
+              <Filter size={14} />
+              <span className="text-[10px] font-black uppercase tracking-widest">Filtrar por período</span>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-[10px] font-black uppercase tracking-widest text-white/40">Aplicar em</label>
+              <select
+                value={filtroPeriodoModo}
+                onChange={(e) => setFiltroPeriodoModo(e.target.value as FiltroPeriodoModo)}
+                className="h-11 rounded-xl border border-white/10 bg-[#0b1220]/80 px-3 text-sm text-white outline-none focus:border-amber-500 [&>option]:bg-[#101f3d]"
+              >
+                <option value="entrada">Entrada</option>
+                <option value="saida">Saída</option>
+                <option value="ambos">Entrada e saída</option>
+              </select>
+            </div>
+
+            {(filtroPeriodoModo === 'entrada' || filtroPeriodoModo === 'ambos') && (
+              <div className="flex items-end gap-2">
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-white/40">Entrada de</label>
+                  <input
+                    type="date"
+                    value={periodoEntradaDe}
+                    onChange={(e) => setPeriodoEntradaDe(e.target.value)}
+                    className="h-11 rounded-xl border border-white/10 bg-[#0b1220]/80 px-3 text-sm text-white outline-none focus:border-amber-500"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-white/40">até</label>
+                  <input
+                    type="date"
+                    value={periodoEntradaAte}
+                    onChange={(e) => setPeriodoEntradaAte(e.target.value)}
+                    className="h-11 rounded-xl border border-white/10 bg-[#0b1220]/80 px-3 text-sm text-white outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+            )}
+
+            {(filtroPeriodoModo === 'saida' || filtroPeriodoModo === 'ambos') && (
+              <div className="flex items-end gap-2">
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-white/40">Saída de</label>
+                  <input
+                    type="date"
+                    value={periodoSaidaDe}
+                    onChange={(e) => setPeriodoSaidaDe(e.target.value)}
+                    className="h-11 rounded-xl border border-white/10 bg-[#0b1220]/80 px-3 text-sm text-white outline-none focus:border-amber-500"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-white/40">até</label>
+                  <input
+                    type="date"
+                    value={periodoSaidaAte}
+                    onChange={(e) => setPeriodoSaidaAte(e.target.value)}
+                    className="h-11 rounded-xl border border-white/10 bg-[#0b1220]/80 px-3 text-sm text-white outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+            )}
+
+            {periodoFiltroAtivo && (
+              <button
+                type="button"
+                onClick={limparPeriodoFiltro}
+                className="h-11 rounded-xl border border-white/10 bg-white/5 px-4 text-[11px] font-bold uppercase tracking-widest text-white/60 transition hover:bg-white/10 hover:text-white"
+              >
+                Limpar período
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {aba === 'historico' && (
+        <div className="flex items-center justify-between">
+          <p className="text-[11px] font-bold uppercase tracking-wider text-white/40">
+            Exibindo {historicoFechado.length} registro(s)
+          </p>
+          <button
+            type="button"
+            onClick={handleBaixarPlanilhaHistorico}
+            title="Baixa em Excel o histórico exibido com os filtros atuais"
+            className="inline-flex h-9 items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/15 px-4 text-[11px] font-bold uppercase tracking-wider text-emerald-200 shadow-sm transition hover:bg-emerald-500/25 hover:text-white"
+          >
+            <Download size={14} />
+            Baixar planilha
+          </button>
+        </div>
+      )}
+
       <div className="overflow-auto rounded-[24px] border border-white/10 bg-white/[0.02] shadow-inner">
         {aba === 'emManutencao' ? (
           listaEmManutencao.length === 0 ? (
@@ -402,12 +609,29 @@ export function ManutencaoView({ searchQuery }: { searchQuery?: string }) {
                   {timeline.length === 0 ? (
                     <p className="text-xs text-white/40">Nenhum ciclo de manutenção registrado ainda.</p>
                   ) : (
-                    <div className="space-y-2">
+                    <div className="space-y-3">
                       {timeline.map((h) => (
-                        <div key={h.id} className="rounded-lg border-l-2 border-amber-500 bg-white/[0.02] px-3 py-2 text-[11px] text-white/70">
-                          <p><strong className="text-white">{br(h.entradaData)}</strong> — Entrada: {h.entradaMotivo} (resp. {h.entradaResponsavel})</p>
-                          {h.status === 'concluida' && (
-                            <p className="mt-1 text-emerald-200/80"><strong className="text-emerald-200">{br(h.saidaData)}</strong> — Saída: {h.saidaServico} (resp. {h.saidaResponsavel}, liberado por {h.saidaLiberadoPor})</p>
+                        <div key={h.id} className="rounded-lg border-l-2 border-amber-500 bg-white/[0.02] px-4 py-3 text-sm leading-relaxed text-white/70">
+                          <p className="mb-1 text-[10px] font-black uppercase tracking-widest text-white/30">Nº {h.id}</p>
+
+                          <p className="text-base font-bold text-white">{br(h.entradaData)} — Entrada em manutenção</p>
+                          <p>Motivo: {h.entradaMotivo || '—'}</p>
+                          <p>Responsável pelo registro: {h.entradaResponsavel || '—'}</p>
+                          <p>Observações da entrada: {h.entradaObs || '—'}</p>
+                          <p className="text-white/40">Origem: {ORIGEM_LABEL[h.origem] || h.origem}</p>
+
+                          {h.status === 'concluida' ? (
+                            <div className="mt-2 border-t border-white/10 pt-2 text-emerald-200/80">
+                              <p className="text-base font-bold text-emerald-200">{br(h.saidaData)} — Saída da manutenção</p>
+                              <p>Serviço realizado: {h.saidaServico || '—'}</p>
+                              <p>Peças / materiais utilizados: {h.saidaPecas || '—'}</p>
+                              <p>Custo da manutenção: {formatarMoeda(h.saidaCusto)}</p>
+                              <p>Responsável pela manutenção: {h.saidaResponsavel || '—'}</p>
+                              <p>Responsável pela liberação: {h.saidaLiberadoPor || '—'}</p>
+                              <p>Observações finais: {h.saidaObs || '—'}</p>
+                            </div>
+                          ) : (
+                            <p className="mt-2 border-t border-white/10 pt-2 font-bold text-amber-300/80">Em aberto — aguardando registrar a saída</p>
                           )}
                         </div>
                       ))}

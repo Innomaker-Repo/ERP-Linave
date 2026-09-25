@@ -603,6 +603,29 @@ def configuracoes_data(request):
     return Response({'config': inst.config, 'listas': inst.listas}, status=status.HTTP_200_OK)
 
 
+# Mesma rede de segurança do replace-all do Financeiro (ver comentário acima) — o
+# Almoxarifado é o mesmo padrão de objeto agregado único substituído por inteiro a cada
+# save, e já sofreu exatamente esse tipo de perda: uma tela que espelha o backend em
+# estado local e re-salva sozinha a qualquer mudança pode persistir uma cópia incompleta
+# (hidratação que ainda não terminou, aba antiga) e apagar tables/históricos inteiros.
+ALMOXARIFADO_QUEDA_PISO_MINIMO = 10
+ALMOXARIFADO_QUEDA_FRACAO_MAXIMA = 0.5  # recusa se o total novo for menos da metade do atual
+
+
+def _almoxarifado_contar_itens(obj):
+    """Linhas de todas as tables + entradas de histórico — o que baliza se um payload
+    'encolheu drasticamente' em relação ao que já está salvo."""
+    if not isinstance(obj, dict):
+        return 0
+    tabelas = obj.get('tables') if isinstance(obj.get('tables'), list) else []
+    total_linhas = sum(len(t.get('rows') or []) for t in tabelas if isinstance(t, dict))
+    total_historicos = sum(
+        len(obj.get(chave) or []) if isinstance(obj.get(chave), list) else 0
+        for chave in ('romaneiosHistorico', 'manutencaoHistorico', 'baixasHistorico', 'alocacoesHistorico')
+    )
+    return total_linhas + total_historicos
+
+
 @api_view(['GET', 'POST', 'PUT'])
 @permission_classes([permissao_modulo(*SUPRIMENTOS, *COMPRAS_GESTAO)])
 def almoxarifado_data(request):
@@ -619,7 +642,24 @@ def almoxarifado_data(request):
     payload = request.data
     if isinstance(payload, dict) and set(payload.keys()) == {'data'}:
         payload = payload.get('data')
-    result = almox_replace(payload if isinstance(payload, dict) else {})
+    if not isinstance(payload, dict):
+        payload = {}
+
+    contagem_atual = _almoxarifado_contar_itens(almox_read())
+    contagem_nova = _almoxarifado_contar_itens(payload)
+    if contagem_atual >= ALMOXARIFADO_QUEDA_PISO_MINIMO and contagem_nova < contagem_atual * ALMOXARIFADO_QUEDA_FRACAO_MAXIMA:
+        return Response(
+            {
+                'error': (
+                    f'Operação recusada: o objeto enviado ({contagem_nova} item(ns)/registro(s)) é muito '
+                    f'menor que o total atual salvo ({contagem_atual}). Isso indica uma cópia desatualizada '
+                    f'do Almoxarifado, que apagaria dados. Recarregue a página e tente novamente.'
+                ),
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    result = almox_replace(payload)
     _registrar_log(request, 'atualizacao', 'Almoxarifado', 'Estoque/almoxarifado atualizado.')
     return Response(result, status=status.HTTP_200_OK)
 

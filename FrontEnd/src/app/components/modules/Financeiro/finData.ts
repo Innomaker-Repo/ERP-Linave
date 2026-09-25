@@ -20,7 +20,13 @@ export const FORMAS_PAGAMENTO = [
   'Dinheiro',
   'Boleto bancário',
   'Transferência bancária',
+  'Faturado',
+  'Débito automático',
 ];
+
+// Débito automático é feito direto pelo banco — não existe um comprovante próprio pra
+// anexar (ver modal "Pagar" em ContasPagarView.tsx, que dispensa esse campo pra essa forma).
+export const FORMA_DISPENSA_COMPROVANTE = 'Débito automático';
 
 // Tipo de reembolso / adiantamento (usado em Solicitação e Contas a Pagar).
 export const TIPOS_REEMBOLSO = [
@@ -84,6 +90,10 @@ export interface OS {
   numero: string;
   empresa: Empresa;
   cliente: string;
+  // Id real do cliente (FK vinda da OS) — usado para achar o cadastro completo (CNPJ,
+  // endereço, inscrição estadual) sem depender de comparar o nome como texto, que quebra
+  // com qualquer diferença (prefixo digitado à mão, acento, etc. — ver dadosClienteRecibo).
+  clienteId: string;
   descricao: string;
   valor: number;
   dataTermino: string;
@@ -220,9 +230,9 @@ export interface HistItem {
 
 // ---------- Dados iniciais (mock / seed) ----------
 export const SEED_OS: OS[] = [
-  { numero: 'OS-2408', empresa: 'Linave', cliente: 'CONSTELLATION S/A', descricao: 'Serviço de locação operacional', valor: 28500, dataTermino: days(todayStr, 20), status: 'Em andamento' },
-  { numero: 'OS-2410', empresa: 'Servinave', cliente: 'SOLSTAD OFFSHORE', descricao: 'Serviço offshore', valor: 43603.75, dataTermino: days(todayStr, 35), status: 'Aberta' },
-  { numero: 'OS-2413', empresa: 'Linave', cliente: 'ESTALEIRO MAUÁ', descricao: 'Serviço técnico', valor: 5830, dataTermino: days(todayStr, -5), status: 'Aberta' },
+  { numero: 'OS-2408', empresa: 'Linave', cliente: 'CONSTELLATION S/A', clienteId: '', descricao: 'Serviço de locação operacional', valor: 28500, dataTermino: days(todayStr, 20), status: 'Em andamento' },
+  { numero: 'OS-2410', empresa: 'Servinave', cliente: 'SOLSTAD OFFSHORE', clienteId: '', descricao: 'Serviço offshore', valor: 43603.75, dataTermino: days(todayStr, 35), status: 'Aberta' },
+  { numero: 'OS-2413', empresa: 'Linave', cliente: 'ESTALEIRO MAUÁ', clienteId: '', descricao: 'Serviço técnico', valor: 5830, dataTermino: days(todayStr, -5), status: 'Aberta' },
 ];
 
 export const SEED_DEPTS: Departamento[] = [
@@ -315,6 +325,16 @@ export const isLinaveEmpresa = (empresa?: any): boolean => {
   return s.includes('linave') || s.includes('wlm') || s.includes('w.l.m');
 };
 
+// Sigla do documento por natureza da solicitação — usada na coluna "Tipo" da tela de NFe,
+// como prefixo do número do documento E para decidir a origem do recebível (NFe × Recibo)
+// na Conta a Receber. SERVIÇO segue a empresa prestadora (Linave = NFe, demais = N/D);
+// LOCAÇÃO (guardada como tipoNfe "Nota de débito") sempre gera Recibo de Locação (R/L),
+// não depende de qual prestadora é. Fica aqui (não em NfeView.tsx) pra useFin.ts também usar.
+export const siglaTipoNfe = (tipoNfe: string, empresa?: any): string => {
+  if (tipoNfe === 'Nota de débito') return 'R/L';
+  return isLinaveEmpresa(empresa) ? 'NFe' : 'N/D';
+};
+
 // ---------- Adaptação de dados reais do ERP ----------
 // O centro de custo / cc das OS usa prefixo LN (Linave) ou VTS (Servinave).
 // 'SN' é o prefixo legado da Servinave (dados antigos) — mantido para retrocompatibilidade.
@@ -392,6 +412,7 @@ export const mapOsToFinanceiro = (os: any, obra?: any): OS => {
     numero: numero || '—',
     empresa,
     cliente,
+    clienteId: String(os?.clienteId ?? os?.cliente_id ?? ''),
     descricao: String(os?.descricaoGeralServico ?? os?.descricao_geral_servico ?? os?.descricao ?? os?.projeto ?? ''),
     valor: osValor(os, obra),
     dataTermino: String(os?.dataTerminoPrevisto ?? os?.data_termino_previsto ?? os?.dataTermino ?? '').slice(0, 10),
@@ -527,10 +548,37 @@ const CAMPOS_CABECALHO_RECIBO = [
   'clienteCep', 'clienteCnpj', 'clienteInscEst', 'clienteIncMun', 'obs',
 ] as const;
 
+// Dados do cliente pra "Usuário Final / Destinatário" do Recibo de Locação, a partir do
+// cadastro de Clientes. Prioriza casar por ID (a FK real que a OS carrega, via clienteId de
+// mapOsToFinanceiro/mapOrdemToOs) — é exato e não quebra com qualquer diferença de texto no
+// nome (prefixo digitado à mão, acento, maiúscula...). Casar por nome (razão social) é só
+// fallback, pros poucos lugares que ainda não têm o id em mãos (ex.: medição sem OS resolvida).
+// O cadastro de Cliente só tem UM campo de endereço (sem logradouro/bairro/município/UF/CEP
+// separados), então o valor inteiro cai em "Logradouro" — os demais campos de endereço
+// continuam por preencher à mão.
+export const dadosClienteRecibo = (clientes: any[], params: { clienteId?: string | number; nomeCliente?: string }) => {
+  const lista = Array.isArray(clientes) ? clientes : [];
+  const idAlvo = String(params.clienteId ?? '').trim();
+  const porId = idAlvo ? lista.find((x: any) => String(x?.id ?? '') === idAlvo) : undefined;
+  const nomeAlvo = String(params.nomeCliente || '').trim().toLowerCase();
+  const c = porId || (nomeAlvo
+    ? lista.find((x: any) => String(x?.razaoSocial || x?.razao_social || '').trim().toLowerCase() === nomeAlvo)
+    : undefined);
+  if (!c) return null;
+  return {
+    clienteNome: c.razaoSocial || c.razao_social || '',
+    clienteCnpj: c.cpfCnpj || c.documento || '',
+    clienteInscEst: c.inscricaoEstadual || c.inscricao_estadual || '',
+    clienteLogradouro: c.endereco || c.endereco_completo || '',
+  };
+};
+
 // Monta o objeto do recibo de locação a partir de uma medição aprovada. Devolve null se a medição
 // não tiver itens de locação. Cabeçalho vem do recibo anterior da OS (se houver); itens vêm SEMPRE
 // da medição informada. Reutilizado tanto na aprovação da medição quanto no dropdown de "Novo recibo".
-export const construirReciboDeMedicao = (financeiro: any[], med: any): any | null => {
+// `clienteId` é opcional (o chamador passa quando já tem a OS resolvida em mãos — ver
+// ReciboLocacaoView.tsx/MedicaoView.tsx) — sem ele, cai no fallback por nome de dadosClienteRecibo.
+export const construirReciboDeMedicao = (financeiro: any[], med: any, clientes: any[] = [], clienteId?: string | number): any | null => {
   const itensLoc = (Array.isArray(med?.itens) ? med.itens : []).filter(
     (l: any) => (l?.categoria || 'servico') === 'locacao',
   );
@@ -542,7 +590,13 @@ export const construirReciboDeMedicao = (financeiro: any[], med: any): any | nul
 
   const cabecalho: Record<string, any> = anterior
     ? CAMPOS_CABECALHO_RECIBO.reduce((acc, k) => ({ ...acc, [k]: anterior[k] }), {})
-    : { empresa: med?.empresa || '', clienteNome: med?.cliente || '', clienteCnpj: med?.cnpj || '', obs: '' };
+    : {
+        empresa: med?.empresa || '',
+        obs: '',
+        clienteNome: med?.cliente || '',
+        clienteCnpj: med?.cnpj || '',
+        ...dadosClienteRecibo(clientes, { clienteId, nomeCliente: med?.cliente }),
+      };
 
   return {
     id: `REC-${Date.now()}`,
@@ -946,6 +1000,104 @@ export const primeiroVencimento = (fixa: any): string => {
     if (data >= inicio) return data;
   }
   return inicio;
+};
+
+/* =========================================================================================
+ * FATURADO — Solicitação de Pagamento com UMA Nota Fiscal cujo valor total é dividido em N
+ * parcelas, cada uma com seu PRÓPRIO boleto (todos anexados já na criação — diferente das
+ * Contas Fixas acima, aqui não sobra nada em aberto pra depois). Periodicidade própria
+ * (inclui quinzenal/bimestral/trimestral, que não existem em Contas Fixas), então tipos e
+ * cálculo de data ficam separados de Periodicidade/PERIODICIDADES/proximoVencimento.
+ * =======================================================================================*/
+
+export type PeriodicidadeFaturado = 'mensal' | 'quinzenal' | 'semanal' | 'bimestral' | 'trimestral';
+
+export const PERIODICIDADES_FATURADO: { id: PeriodicidadeFaturado; label: string }[] = [
+  { id: 'mensal', label: 'Mensal' },
+  { id: 'quinzenal', label: 'Quinzenal' },
+  { id: 'semanal', label: 'Semanal' },
+  { id: 'bimestral', label: 'Bimestral' },
+  { id: 'trimestral', label: 'Trimestral' },
+];
+
+export interface FaturadoParcela {
+  numero: number;
+  periodo: string;   // competência, "yyyy-mm"
+  vencimento: string; // "yyyy-mm-dd"
+  valor: number;
+  anexoUrl?: string;
+  contaPagarId?: string;
+}
+
+export interface FaturadoInfo {
+  notaFiscal: { numero: string; valorTotal: number; anexoUrl?: string };
+  periodicidade: PeriodicidadeFaturado;
+  diaVencimento: number;
+  inicio: string;
+  parcelas: FaturadoParcela[];
+  maeContaPagarId?: string;
+}
+
+// Divide um valor total em N parcelas trabalhando em centavos (evita perder centavo na
+// divisão) — o resto vai para as PRIMEIRAS parcelas, uma a uma, até zerar.
+export const calcularValoresParcelas = (valorTotal: number, quantidade: number): number[] => {
+  const n = Math.max(1, Math.floor(quantidade) || 0);
+  const totalCentavos = Math.round((valorTotal || 0) * 100);
+  const base = Math.floor(totalCentavos / n);
+  const resto = totalCentavos % n;
+  const valores: number[] = [];
+  for (let i = 0; i < n; i += 1) {
+    valores.push((base + (i < resto ? 1 : 0)) / 100);
+  }
+  return valores;
+};
+
+// Vencimento dentro do mês/ano de `referenciaIso`, no dia desejado (1-31, truncado pro
+// último dia do mês se o mês for mais curto).
+export const vencimentoNoMesFaturado = (referenciaIso: string, diaDesejado: number): string => {
+  const [ano, mes] = String(referenciaIso || todayStr).slice(0, 7).split('-').map(Number);
+  const ultimoDia = ultimoDiaDoMes(ano, mes - 1);
+  const dia = Math.min(Math.max(Math.floor(diaDesejado) || 1, 1), ultimoDia);
+  return `${ano}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+};
+
+// Um período à frente, a partir de uma data de referência (não necessariamente um vencimento
+// — é a "competência" que avança; o vencimento de cada passo é recalculado à parte, com
+// vencimentoNoMesFaturado, sempre no dia fixo configurado).
+export const proximoPeriodoFaturado = (referenciaIso: string, periodicidade: PeriodicidadeFaturado): string => {
+  if (periodicidade === 'semanal') return days(referenciaIso, 7);
+  if (periodicidade === 'quinzenal') return days(referenciaIso, 15);
+  const mesesAFrente = periodicidade === 'bimestral' ? 2 : periodicidade === 'trimestral' ? 3 : 1;
+  const [ano, mes, dia] = referenciaIso.split('-').map(Number);
+  const idx = ano * 12 + (mes - 1) + mesesAFrente;
+  const a = Math.floor(idx / 12);
+  const m = idx % 12;
+  const ultimoDia = ultimoDiaDoMes(a, m);
+  return `${a}-${String(m + 1).padStart(2, '0')}-${String(Math.min(dia, ultimoDia)).padStart(2, '0')}`;
+};
+
+// Gera a lista fechada de N parcelas (período, vencimento, valor) a partir da NF total e da
+// periodicidade — cada parcela ainda sem anexoUrl (o boleto é anexado depois, por linha).
+export const gerarParcelasFaturado = (params: {
+  periodicidade: PeriodicidadeFaturado;
+  diaVencimento: number;
+  inicio: string;
+  quantidade: number;
+  valorTotal: number;
+}): FaturadoParcela[] => {
+  const valores = calcularValoresParcelas(params.valorTotal, params.quantidade);
+  const parcelas: FaturadoParcela[] = [];
+  let referencia = params.inicio;
+  for (let i = 0; i < valores.length; i += 1) {
+    parcelas.push({
+      numero: i + 1,
+      periodo: referencia.slice(0, 7),
+      vencimento: vencimentoNoMesFaturado(referencia, params.diaVencimento),
+      valor: valores[i],
+    });
+    referencia = proximoPeriodoFaturado(referencia, params.periodicidade);
+  }
+  return parcelas;
 };
 
 // Id determinístico da ocorrência: regra + data. Torna a criação idempotente — se dois

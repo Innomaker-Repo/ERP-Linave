@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Plus, Download, Trash2, Pencil } from 'lucide-react';
 import { FinCard, Toolbar, boldOS } from '../finUi';
-import { money, construirReciboDeMedicao, ultimoReciboLocacaoDaOs, proximoNumeroReciboLocacao } from '../finData';
+import { money, construirReciboDeMedicao, ultimoReciboLocacaoDaOs, proximoNumeroReciboLocacao, dadosClienteRecibo } from '../finData';
 import { useErp } from '../../../../context/ErpContext';
 import { comFinanceiroAtual } from '../../../../../services/financeiroSeguro';
 import { gerarReciboLocacaoPDF } from '../reciboLocacaoPdf';
@@ -18,7 +18,7 @@ const STATUS_FILTROS_RECIBO = ['Todos', 'Pendente', 'Emitido'] as const;
 type StatusFiltroRecibo = typeof STATUS_FILTROS_RECIBO[number];
 
 export function ReciboLocacaoView() {
-  const { financeiro, saveEntity, config, os, medicoes } = useErp() as any;
+  const { financeiro, saveEntity, config, os, medicoes, clientes } = useErp() as any;
   const [form, setForm] = useState<any>(null);
   const [statusFiltro, setStatusFiltro] = useState<StatusFiltroRecibo>('Todos');
 
@@ -57,7 +57,7 @@ export function ReciboLocacaoView() {
       (m: any) => String(m.ordemServicoBackendId) === String(osBackendId) && String(m.status).toLowerCase() === 'aprovada',
     );
     const ultimaMed = medsDaOs.length ? medsDaOs[medsDaOs.length - 1] : null;
-    const rec = ultimaMed ? construirReciboDeMedicao(fin, ultimaMed) : null;
+    const rec = ultimaMed ? construirReciboDeMedicao(fin, ultimaMed, clientes, osObj?.clienteId) : null;
 
     if (rec) {
       setForm({ ...formInicialRecibo(todosOsRecibos, rec.empresa, config), ...rec, itens: (Array.isArray(rec.itens) && rec.itens.length ? rec.itens : [linhaItem()]).map((i: any) => ({ ...linhaItem(), ...i })) });
@@ -67,6 +67,8 @@ export function ReciboLocacaoView() {
         ordemServicoBackendId: osBackendId,
         ordemServicoNumero: osObj?.ordemServicoNumero || '',
         numero: proximoNumeroReciboLocacao(fin, osBackendId),
+        clienteNome: osObj?.cliente || '',
+        ...dadosClienteRecibo(clientes, { clienteId: osObj?.clienteId, nomeCliente: osObj?.cliente }),
       });
     }
   };

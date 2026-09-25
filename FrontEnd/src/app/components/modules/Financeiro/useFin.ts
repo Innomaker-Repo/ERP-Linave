@@ -10,9 +10,9 @@ import { useMemo } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { comFinanceiroAtual } from '../../../../services/financeiroSeguro';
 import {
-  mapOsToFinanceiro, todayStr, days, num, isLinaveEmpresa,
+  mapOsToFinanceiro, todayStr, days, num, isLinaveEmpresa, siglaTipoNfe,
   upsertContaReceberPorMedicao, garantirOcorrenciasContasFixas, proximaOcorrenciaAposPagamento, CP_STATUS,
-  type OS, type Empresa, type FinTipo, type NfeSolicitacao, type ImpostosNfe,
+  type OS, type Empresa, type FinTipo, type NfeSolicitacao, type ImpostosNfe, type FaturadoParcela,
 } from './finData';
 
 export interface FinRecord {
@@ -183,10 +183,49 @@ export function useFin() {
   // Aprova uma solicitação: marca como aprovada e cria a Conta a Pagar correspondente
   // (numa única escrita, para o estado ficar consistente).
   const approveSolicitacao = async (id: string) => {
+    // Quem aprovou — pro solicitante ver em "Meus Pagamentos" (antes só dava pra saber que
+    // tinha sido aprovado, não por quem).
+    const aprovadoPor = ctx.userSession?.nome || ctx.userSession?.email || '';
     await comFinanceiroAtual(async (base) => {
       const sol = base.find((r) => r.id === id);
       if (!sol) return;
       const now = new Date().toISOString();
+
+      // Faturado: em vez de UMA conta a pagar "single", nasce a mãe (a Nota Fiscal, nunca paga
+      // diretamente) + UMA filha por parcela, já prontas pra pagar — mesmo shape que
+      // parcelarConta já usa (type/parentId/parcela/totalParcelas). Diferente de uma conta
+      // parcelada comum, aqui TODAS as parcelas já chegam com boleto (anexado na criação da
+      // solicitação, ver SolicitacaoView.tsx), então todas nascem de uma vez, não uma por mês.
+      if (sol.forma === 'Faturado' && Array.isArray(sol.faturado?.parcelas) && sol.faturado.parcelas.length > 0) {
+        const parcelas: FaturadoParcela[] = sol.faturado.parcelas;
+        const maeId = `CP-${Date.now().toString(36).toUpperCase()}`;
+        const totalFatura = parcelas.reduce((soma, p) => soma + num(p.valor), 0);
+        const camposComuns = {
+          origemSolicitacao: sol.id, tipo: 'contaPagar' as const, empresa: sol.empresa,
+          vinculoTipo: sol.vinculoTipo, vinculoValor: sol.vinculoValor, fornecedor: sol.fornecedor,
+          tipoPagamento: sol.tipoPagamento, natureza: sol.natureza || '', documento: sol.documento,
+          banco: '', forma: sol.forma, descricao: sol.descricao || '',
+          valorPago: 0, jurosPago: 0, comprovantes: [], createdAt: now,
+        };
+        const mae: FinRecord = {
+          ...camposComuns, id: maeId, type: 'parent', parentId: null, parcela: 'Mãe',
+          totalParcelas: parcelas.length, valor: totalFatura, vencimento: parcelas[0].vencimento,
+          status: 'Parcelado', anexos: sol.faturado.notaFiscal?.anexoUrl ? [sol.faturado.notaFiscal.anexoUrl] : [],
+          dataPagamento: '',
+        };
+        const filhas: FinRecord[] = parcelas.map((p, i) => ({
+          ...camposComuns, id: `${maeId}-${String(i + 1).padStart(2, '0')}`, type: 'child', parentId: maeId,
+          parcela: `${i + 1}/${parcelas.length}`, totalParcelas: parcelas.length, valor: num(p.valor),
+          vencimento: p.vencimento, status: 'Aberto', anexos: p.anexoUrl ? [p.anexoUrl] : [], dataPagamento: '',
+        }));
+        const nextParcelas = parcelas.map((p, i) => ({ ...p, contaPagarId: filhas[i].id }));
+        const next = base.map((r) => (r.id === id
+          ? { ...r, status: 'Aprovado', aprovadoPor, faturado: { ...sol.faturado, maeContaPagarId: maeId, parcelas: nextParcelas } }
+          : r));
+        await ctx.saveEntity('financeiro', [mae, ...filhas, ...next]);
+        return;
+      }
+
       const contaPagar: FinRecord = {
         id: `CP-${Date.now().toString(36).toUpperCase()}`,
         tipo: 'contaPagar',
@@ -215,13 +254,16 @@ export function useFin() {
         comprovantes: [],
         createdAt: now,
       };
-      const next = base.map((r) => (r.id === id ? { ...r, status: 'Aprovado' } : r));
+      const next = base.map((r) => (r.id === id ? { ...r, status: 'Aprovado', aprovadoPor } : r));
       await ctx.saveEntity('financeiro', [contaPagar, ...next]);
     });
   };
 
   const rejectSolicitacao = async (id: string, motivo?: string) => {
-    await updateRecords((r) => (r.id === id ? { ...r, status: 'Reprovado', motivoReprovacao: motivo || '' } : r));
+    const reprovadoPor = ctx.userSession?.nome || ctx.userSession?.email || '';
+    await updateRecords((r) => (r.id === id
+      ? { ...r, status: 'Reprovado', motivoReprovacao: motivo || '', reprovadoPor }
+      : r));
   };
 
   // Reenvia uma solicitação reprovada: o próprio solicitante corrige os dados e ela volta
@@ -229,17 +271,15 @@ export function useFin() {
   // (mantém o mesmo id e o anexo já enviado, a menos que troque).
   const reenviarSolicitacao = async (id: string, patch: Partial<FinRecord>): Promise<boolean> =>
     updateRecords((r) => (r.id === id
-      ? { ...r, ...patch, status: 'Aguardando aprovação', motivoReprovacao: '' }
+      ? { ...r, ...patch, status: 'Aguardando aprovação', motivoReprovacao: '', reprovadoPor: '' }
       : r));
 
-  // Rótulo do recebível gerado pela nota. Sigla pela empresa prestadora — Linave emite NFe
-  // normal, Servinave emite Nota de Débito (N/D) pro mesmo serviço (locação usa outra sigla,
-  // R/L, tratada só em ReciboLocacaoFormModal.tsx — este caminho é exclusivo de serviço).
-  // O número é opcional na emissão (nem sempre já saiu do emissor), a referência continua
-  // legível sem ele.
-  const referenciaNfe = (numero: string | undefined, empresa: any) => {
+  // Rótulo do recebível gerado pela nota/recibo. Sigla por natureza (serviço × locação) e
+  // empresa prestadora — ver siglaTipoNfe em finData.ts. O número é opcional na emissão (nem
+  // sempre já saiu do emissor), a referência continua legível sem ele.
+  const referenciaNfe = (numero: string | undefined, empresa: any, tipoNfe?: string) => {
     const n = String(numero || '').trim();
-    const sigla = isLinaveEmpresa(empresa) ? 'NFe' : 'N/D';
+    const sigla = siglaTipoNfe(tipoNfe || '', empresa);
     return n ? `${sigla} ${n}` : `${sigla} sem número`;
   };
 
@@ -250,7 +290,7 @@ export function useFin() {
     const numero = String(patch.numero ?? '').trim();
     await comFinanceiroAtual(async (base) => {
       const nfeAtual = base.find((r) => r.id === nfeId && r.tipo === 'nfe');
-      const referencia = referenciaNfe(numero, nfeAtual?.empresa);
+      const referencia = referenciaNfe(numero, nfeAtual?.empresa, nfeAtual?.tipoNfe);
       const next = base.map((r) => {
         if (r.id === nfeId && r.tipo === 'nfe') {
           return { ...r, numero, ...(patch.emissao ? { emissao: patch.emissao } : {}) };
@@ -284,11 +324,20 @@ export function useFin() {
   ) => {
     const ts = Date.now().toString(36).toUpperCase();
     const now = new Date().toISOString();
+    // Mesma função serve pra emitir NFe (serviço) e gerar Recibo de Locação (o botão "Gerar
+    // Recibo" em NfeView.tsx abre o MESMO modal/fluxo) — só muda a origem no recebível e a
+    // sigla usada na referência, decididas pela natureza da solicitação (sol.tipoNfe).
+    const sigla = siglaTipoNfe(sol.tipoNfe, sol.empresa);
+    const origem: 'NFe' | 'Recibo' = sigla === 'R/L' ? 'Recibo' : 'NFe';
     const nfe: FinRecord = {
       id: `NFE-${ts}`,
       tipo: 'nfe',
       sourceId: sol.id,
       empresa: sol.empresa,
+      // Guardado pra reconstruir a sigla certa (NFe/N-D/R-L) depois, ex.: ao editar o número
+      // já arquivado (atualizarNfeEmitida) — sem isso, um recibo editado mais tarde voltava a
+      // ser rotulado "NFe" só porque o registro em si não sabia sua própria natureza.
+      tipoNfe: sol.tipoNfe,
       cliente: payload.cliente,
       numero: payload.numero,
       emissao: payload.emissao,
@@ -297,7 +346,7 @@ export function useFin() {
       vencimento: payload.vencimento,
       contrato: payload.contrato,
       anexos: payload.anexos || [],
-      // Detalhamento do que foi retido nesta nota (alíquota + valor por imposto).
+      // Detalhamento do que foi retido nesta nota/recibo (alíquota + valor por imposto).
       impostos: payload.impostos || null,
       createdAt: now,
     };
@@ -310,12 +359,12 @@ export function useFin() {
         ordemServicoNumero: sol.os || '',
         empresa: sol.empresa,
         cliente: payload.cliente,
-        origem: 'NFe',
+        origem,
         fonteId: nfe.id,
         valorOriginal: payload.original,
         valorLiquido: payload.liquido,
         vencimento: payload.vencimento,
-        referencia: referenciaNfe(payload.numero, sol.empresa),
+        referencia: referenciaNfe(payload.numero, sol.empresa, sol.tipoNfe),
         baixado: payload.baixado,
         impostos: payload.impostos,
         emissao: payload.emissao,
@@ -497,7 +546,8 @@ export function useFin() {
     setPendingEditSolicitacaoId: ctx.setPendingEditSolicitacaoId,
     // escrita
     addRecord, addSolicitacao, updateRecords, updateRecord, deleteRecord, contarDependentes,
-    addDepartamento, approveSolicitacao, rejectSolicitacao, reenviarSolicitacao, emitirNfe, atualizarNfeEmitida,
+    addDepartamento, approveSolicitacao, rejectSolicitacao, reenviarSolicitacao,
+    emitirNfe, atualizarNfeEmitida,
     parcelarConta, pagarConta,
     // contas fixas (recorrentes)
     sincronizarContasFixas, salvarContaFixa, excluirContaFixa, ocorrenciasFuturasDaFixa,
