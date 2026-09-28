@@ -13,6 +13,7 @@ import { isEmpresaLinave } from '../../../../utils/company';
 import { handleDownloadCustoHhPDF } from '../custoHhPdf';
 import { useErp } from '../../../../context/ErpContext';
 import { comFinanceiroAtual } from '../../../../../services/financeiroSeguro';
+import { ScrollXTop } from '../../../ui/scrollXTop';
 
 const round2 = (n: number) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 const proximoDia = (iso: string) => {
@@ -246,7 +247,7 @@ export function AlocarHhView({ osNumero, selected, outrosCustos = [] }: { osNume
         </div>
         <p className="text-white/30 text-[10px] mb-2">Cada dia tem 3 campos: <span className="text-white/60 font-bold">N</span> (normal), <span className="text-white/60 font-bold">0,5</span> (HE 50%) e <span className="text-white/60 font-bold">1,0</span> (HE 100%).</p>
 
-        <div className="overflow-x-auto">
+        <ScrollXTop>
           <table className="text-xs border-collapse">
             <thead>
               <tr className="bg-white/5 text-white/70">
@@ -305,7 +306,7 @@ export function AlocarHhView({ osNumero, selected, outrosCustos = [] }: { osNume
             </tbody>
           </table>
           <datalist id="cargos-hh">{CARGOS_HH.map((c) => <option key={c} value={c} />)}</datalist>
-        </div>
+        </ScrollXTop>
       </div>
 
       {/* Resumo por cargo */}

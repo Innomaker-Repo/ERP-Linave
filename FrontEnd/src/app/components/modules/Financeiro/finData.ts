@@ -96,8 +96,17 @@ export interface OS {
   clienteId: string;
   descricao: string;
   valor: number;
+  // Split do valor total (item D do orçamento) por natureza — só ambos > 0 numa OS "Locação +
+  // Serviço" de verdade; numa OS de natureza única, um dos dois vem 0 e o outro = valor.
+  // Usado em "Solicitar NFe e Recibo" (NfeView.tsx) pra auto-preencher os 2 campos de valor.
+  valorServico: number;
+  valorLocacao: number;
   dataTermino: string;
   status: string;
+  // Modalidade do negócio de origem ('servico' | 'locacao' | 'locacao_servico') — usada em
+  // "Solicitar NFe e Recibo" (NfeView.tsx) pra saber se a OS precisa de 2 solicitações
+  // separadas (Serviço + Locação) em vez de só uma. Ver utils/modalidade.ts.
+  modalidade?: string;
 }
 
 export interface Departamento {
@@ -229,12 +238,6 @@ export interface HistItem {
 }
 
 // ---------- Dados iniciais (mock / seed) ----------
-export const SEED_OS: OS[] = [
-  { numero: 'OS-2408', empresa: 'Linave', cliente: 'CONSTELLATION S/A', clienteId: '', descricao: 'Serviço de locação operacional', valor: 28500, dataTermino: days(todayStr, 20), status: 'Em andamento' },
-  { numero: 'OS-2410', empresa: 'Servinave', cliente: 'SOLSTAD OFFSHORE', clienteId: '', descricao: 'Serviço offshore', valor: 43603.75, dataTermino: days(todayStr, 35), status: 'Aberta' },
-  { numero: 'OS-2413', empresa: 'Linave', cliente: 'ESTALEIRO MAUÁ', clienteId: '', descricao: 'Serviço técnico', valor: 5830, dataTermino: days(todayStr, -5), status: 'Aberta' },
-];
-
 export const SEED_DEPTS: Departamento[] = [
   { nome: 'Comercial', empresa: 'Ambas', email: 'comercial@linave.com' },
   { nome: 'Financeiro', empresa: 'Ambas', email: 'financeiro@linave.com' },
@@ -317,7 +320,7 @@ export const recStatus = (r: ContaReceber) =>
   r.recebido ? 'Recebido' : isOld(r.vencimentoRecebimento) ? 'Vencido' : 'A receber';
 
 // A empresa prestadora decide a sigla do documento fiscal em todo o Financeiro: NFe
-// (serviço Linave) / N/D (serviço Servinave) / R/L (locação, qualquer empresa — ver
+// (serviço, qualquer empresa) / N/D (locação Linave) / R/L (locação Servinave — ver
 // siglaTipoNfe em NfeView.tsx e a regra de referência em useFin.ts/ReciboLocacaoFormModal.tsx).
 // Única definição — NfeView.tsx e ReciboLocacaoFormModal.tsx importam daqui, não duplicam.
 export const isLinaveEmpresa = (empresa?: any): boolean => {
@@ -325,14 +328,16 @@ export const isLinaveEmpresa = (empresa?: any): boolean => {
   return s.includes('linave') || s.includes('wlm') || s.includes('w.l.m');
 };
 
-// Sigla do documento por natureza da solicitação — usada na coluna "Tipo" da tela de NFe,
-// como prefixo do número do documento E para decidir a origem do recebível (NFe × Recibo)
-// na Conta a Receber. SERVIÇO segue a empresa prestadora (Linave = NFe, demais = N/D);
-// LOCAÇÃO (guardada como tipoNfe "Nota de débito") sempre gera Recibo de Locação (R/L),
-// não depende de qual prestadora é. Fica aqui (não em NfeView.tsx) pra useFin.ts também usar.
+// Sigla do documento por natureza da solicitação + empresa prestadora — usada na coluna
+// "Tipo" da tela de NFe, como prefixo do número do documento E para decidir a origem do
+// recebível (NFe × Recibo) na Conta a Receber. As 4 combinações possíveis (ver "Solicitar
+// NFe e Recibo" em NfeView.tsx): SERVIÇO sempre gera NFe, não importa a prestadora; LOCAÇÃO
+// (guardada como tipoNfe "Nota de débito") gera N/D quando a prestadora é Linave e R/L
+// quando é Servinave. Fica aqui (não em NfeView.tsx) pra useFin.ts também usar.
 export const siglaTipoNfe = (tipoNfe: string, empresa?: any): string => {
-  if (tipoNfe === 'Nota de débito') return 'R/L';
-  return isLinaveEmpresa(empresa) ? 'NFe' : 'N/D';
+  if (tipoNfe === 'Locação + Serviço') return 'Misto';
+  if (tipoNfe === 'Nota de débito') return isLinaveEmpresa(empresa) ? 'N/D' : 'R/L';
+  return 'NFe';
 };
 
 // ---------- Adaptação de dados reais do ERP ----------
@@ -362,11 +367,32 @@ const orcamentoValor = (entidade: any): number => {
   );
 };
 
+// Valor de LOCAÇÃO (item D) do último orçamento — separado do valor de Serviço (orcamentoValor
+// acima) porque uma OS "Locação + Serviço" precisa dos dois em separado: pra somar certo no
+// valor total da OS (osValor abaixo — antes só lia o Serviço, subestimando/zerando OS de
+// Locação pura ou mista) e pra auto-preencher "Valor Serviço"/"Valor Locação" na solicitação de
+// NFe/Recibo de uma OS mista (ver escolherOs em NfeView.tsx).
+const orcamentoValorLocacao = (entidade: any): number => {
+  const orcamentos = Array.isArray(entidade?.orcamentos) ? entidade.orcamentos : [];
+  const ultimo = orcamentos.length ? orcamentos[orcamentos.length - 1] : null;
+  return num(ultimo?.valores?.subtotalLocacao ?? entidade?.orcamentoValores?.subtotalLocacao ?? 0);
+};
+
+// Valor de Serviço e de Locação de uma OS, separados — mesma precedência do osValor (prioriza
+// os valores da própria OS; só cai pro negócio vinculado se a OS não tiver nenhum dos dois).
+const osValorServicoLocacao = (os: any, obra?: any): { servico: number; locacao: number } => {
+  const servicoOs = orcamentoValor(os);
+  const locacaoOs = orcamentoValorLocacao(os);
+  if (servicoOs || locacaoOs) return { servico: servicoOs, locacao: locacaoOs };
+  const servicoObra = orcamentoValor(obra);
+  const locacaoObra = orcamentoValorLocacao(obra);
+  if (servicoObra || locacaoObra) return { servico: servicoObra, locacao: locacaoObra };
+  return { servico: 0, locacao: 0 };
+};
+
 const osValor = (os: any, obra?: any): number => {
-  const doOs = orcamentoValor(os);
-  if (doOs) return doOs;
-  const doObra = orcamentoValor(obra);
-  if (doObra) return doObra;
+  const { servico, locacao } = osValorServicoLocacao(os, obra);
+  if (servico || locacao) return servico + locacao;
   return num(os?.valorTotal ?? os?.valor ?? 0);
 };
 
@@ -398,6 +424,7 @@ const osStatusLabel = (os: any, obra?: any): string => {
 // Normaliza uma OS do contexto (formatos camelCase e snake_case) para a view-model financeira.
 // `obra` é o negócio vinculado (ctx.obras), de onde vem o valor do orçamento.
 export const mapOsToFinanceiro = (os: any, obra?: any): OS => {
+  const { servico: valorServico, locacao: valorLocacao } = osValorServicoLocacao(os, obra);
   const numero = String(
     os?.ordemServicoNumero ?? os?.ordem_servico_numero ?? os?.numero_os ?? os?.numeroOs ?? os?.cc ?? os?.id ?? '',
   ).trim();
@@ -415,13 +442,16 @@ export const mapOsToFinanceiro = (os: any, obra?: any): OS => {
     clienteId: String(os?.clienteId ?? os?.cliente_id ?? ''),
     descricao: String(os?.descricaoGeralServico ?? os?.descricao_geral_servico ?? os?.descricao ?? os?.projeto ?? ''),
     valor: osValor(os, obra),
+    valorServico,
+    valorLocacao,
     dataTermino: String(os?.dataTerminoPrevisto ?? os?.data_termino_previsto ?? os?.dataTermino ?? '').slice(0, 10),
     status: osStatusLabel(os, obra),
+    modalidade: String(obra?.modalidade || ''),
   };
 };
 
 // Valor do orçamento de um negócio/obra (exposto para derivar NFe a partir da medição).
-export const negocioValor = (obra: any): number => orcamentoValor(obra);
+export const negocioValor = (obra: any): number => orcamentoValor(obra) + orcamentoValorLocacao(obra);
 
 // ---------- NFe: impostos e cálculo de líquido ----------
 export const TAX_DEFAULTS = { cofins: 3, csll: 1, inss: 5.5, ir: 1.5, pis: 0.65, iss: 0 };
@@ -506,6 +536,20 @@ export interface NfeSolicitacao {
   contrato: string;
   medicaoId?: string;      // vínculo com a medição (para mesclar NF + recibo no recebível)
   medicaoNumero?: string;
+  // Só preenchidos quando tipoNfe === 'Locação + Serviço' (OS mista, 1 registro só — ver
+  // "Solicitar NFe e Recibo" em NfeView.tsx): valor de cada natureza, separado do `valor`
+  // total acima. Cada um vira sua própria Conta a Receber ao arquivar (Serviço via emitirNfe,
+  // Locação via gerarEArquivarRecibo), mas as 2 ficam na MESMA linha/registro nfeReq.
+  valorServico?: number;
+  valorLocacao?: number;
+  // Rascunho dos % de imposto digitados na modal "Emitir Recibo/Nota" (NfeView.tsx) antes de
+  // arquivar de vez — essa modal, pra Recibo/Nota, só salva rascunho agora; quem arquiva de
+  // verdade (e usa esses %) é o botão "Emitir, anexar e arquivar" de dentro de "Preencher /
+  // editar" (gerarEArquivarRecibo, ReciboLocacaoFormModal.tsx). Ausente/vazio = 0% em todos,
+  // líquido = valor original, igual sempre foi.
+  rascunhoImpostos?: {
+    cofins?: string; csll?: string; inss?: string; ir?: string; pis?: string; iss?: string;
+  };
 }
 
 // Discriminador dos registros financeiros guardados na coleção `financeiro` do workspace.
@@ -706,9 +750,21 @@ export const upsertContaReceberPorMedicao = (financeiro: any[], aporte: AporteRe
     };
   };
 
-  // Sem medição: recebível avulso (ex.: NFe derivada de obra finalizada) — nunca mescla.
+  // Sem medição: recebível avulso (ex.: NFe derivada de obra finalizada, ou Recibo de Locação
+  // sem medição/vindo direto de uma OS ou de uma solicitação de NFe bridge). Não mescla com
+  // outras fontes — mas PRECISA achar e atualizar o mesmo recebível se essa mesma fonte já
+  // tiver gerado um antes (reemitir o mesmo documento não pode duplicar a conta a cada vez).
   if (!aporte.medicaoId) {
-    return [montarRecebivel([fonte]), ...lista];
+    const idxFonte = lista.findIndex(
+      (r: any) => r?.tipo === 'contaReceber'
+        && !r?.medicaoId
+        && Array.isArray(r?.fontes)
+        && r.fontes.some((f: any) => f.origem === aporte.origem && String(f.id) === String(aporte.fonteId)),
+    );
+    if (idxFonte === -1) return [montarRecebivel([fonte]), ...lista];
+    const copia = [...lista];
+    copia[idxFonte] = montarRecebivel([fonte], lista[idxFonte]);
+    return copia;
   }
 
   const idx = lista.findIndex(

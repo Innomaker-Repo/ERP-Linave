@@ -3,9 +3,10 @@
  * Tags, cartões, métricas, campos de formulário e tabela reutilizados pelas views.
  * =======================================================================================*/
 import React, { useEffect, useState } from 'react';
-import { Info, Trash2 } from 'lucide-react';
+import { Info, Trash2, Paperclip } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../ui/feedback';
+import { ScrollXTop } from '../../ui/scrollXTop';
 import { SEED_BANKS, IMPOSTOS_NFE, IMPOSTO_LABEL, brl, money, num, type ImpostosNfe } from './finData';
 
 // Realce do acrônimo "OS" (amarelo do tema) — fonte única em utils/osHighlight, re-exportado aqui
@@ -40,6 +41,39 @@ export function Pill({ tone = 'neutral', children }: { tone?: Tone; children: Re
     <span className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-bold ${TONE_CLASS[tone]}`}>
       {children}
     </span>
+  );
+}
+
+// ---------- Anexos: lista de documentos vinculados a um registro financeiro ----------
+// Um anexo é clicável quando é URL (/media/... do documento persistido). Registros antigos
+// guardavam só o nome do arquivo — esses continuam aparecendo, mas como texto. Reaproveitado
+// pela tabela de NFe (NfeView.tsx) e pelos cards de Recibo de Locação (ReciboLocacaoView.tsx),
+// que precisam do mesmo link clicável para o documento já salvo (em vez de regenerar um novo).
+const ehUrlAnexo = (a: any) => /^(https?:|\/media\/)/.test(String(a));
+const nomeAnexo = (a: any) =>
+  ehUrlAnexo(a) ? decodeURIComponent(String(a).split('/').pop() || 'documento') : String(a);
+
+export function AnexosCell({ anexos }: { anexos: any[] }) {
+  if (!Array.isArray(anexos) || !anexos.length) return <span className="text-white/30">-</span>;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {anexos.map((a, i) => (ehUrlAnexo(a) ? (
+        <a
+          key={i}
+          href={String(a)}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={nomeAnexo(a)}
+          className="inline-flex max-w-[180px] items-center gap-1 truncate rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[11px] font-bold text-amber-200 transition-colors hover:bg-amber-500/20"
+        >
+          <Paperclip size={11} /> {nomeAnexo(a)}
+        </a>
+      ) : (
+        <span key={i} title="Anexo antigo, sem arquivo vinculado" className="inline-flex max-w-[180px] items-center gap-1 truncate rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-bold text-white/60">
+          <Paperclip size={11} /> {nomeAnexo(a)}
+        </span>
+      )))}
+    </div>
   );
 }
 
@@ -284,14 +318,14 @@ export function UploadBox({ label = 'Anexar documento / imagem', files = [] as s
 // ---------- Tabela ----------
 export function DataTable({ head, children, minWidth }: { head: React.ReactNode; children: React.ReactNode; minWidth?: number }) {
   return (
-    <div className="overflow-auto rounded-2xl border border-white/5 bg-[#0b1220]">
+    <ScrollXTop className="rounded-2xl border border-white/5 bg-[#0b1220] overflow-hidden">
       <table className="w-full text-left text-sm" style={minWidth ? { minWidth } : undefined}>
         <thead className="bg-white/[0.03] text-[10px] font-black uppercase tracking-widest text-white/35">
           <tr className="border-b border-white/5">{head}</tr>
         </thead>
         <tbody className="divide-y divide-white/5">{children}</tbody>
       </table>
-    </div>
+    </ScrollXTop>
   );
 }
 

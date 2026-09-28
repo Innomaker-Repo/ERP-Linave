@@ -488,6 +488,16 @@ const STOCK_TABLES: StockTable[] = [
     ], [], false
   ),
   makeTable(
+    'Andaimes',
+    [
+      { key: 'material', label: 'Descrição' }, { key: 'unid', label: 'Unid.', align: 'center' },
+      { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'peso', label: 'Peso', align: 'center' }, { key: 'patrimonio', label: 'Patrimônio' },
+      { key: 'modelo', label: 'Modelo' }, { key: 'marca', label: 'Marca' },
+      { key: 'status', label: 'STATUS', align: 'center' }, { key: 'observacao', label: 'Observação' }, { key: 'localizacao', label: 'Local' },
+      { key: 'serviceOS', label: 'Serviço (OS)' }, { key: 'unidade', label: 'Unidade', align: 'center' }
+    ], [], false
+  ),
+  makeTable(
     'Alugados - Gases',
     [
       { key: 'fornecedor', label: 'Fornecedor' },
@@ -620,7 +630,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     rows: []
   })));
   
-  const [selectedCategory, setSelectedCategory] = useState<'Todos' | 'Materiais' | 'Equipamentos' | 'Alugados' | 'Caixa Metálica / Skid'>('Materiais');
+  const [selectedCategory, setSelectedCategory] = useState<'Todos' | 'Materiais' | 'Equipamentos' | 'Alugados' | 'Caixa Metálica / Skid' | 'Andaimes'>('Materiais');
   const [selectedType, setSelectedType] = useState<string>('');
   const [filtro, setFiltro] = useState<string>(searchQuery || '');
   const [selectedOsFilter, setSelectedOsFilter] = useState<string>('');
@@ -898,11 +908,12 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     'Materiais': [],
     'Equipamentos': EQUIPAMENTOS_TABLE_NAMES,
     'Alugados': ['Gases', 'Equipamentos'],
-    'Caixa Metálica / Skid': []
+    'Caixa Metálica / Skid': [],
+    'Andaimes': []
   };
 
   useEffect(() => {
-    if (!selectedType && (selectedCategory === 'Materiais' || selectedCategory === 'Caixa Metálica / Skid')) {
+    if (!selectedType && (selectedCategory === 'Materiais' || selectedCategory === 'Caixa Metálica / Skid' || selectedCategory === 'Andaimes')) {
       setSelectedType(selectedCategory);
     } else if (!selectedType && selectedCategory !== 'Materiais' && selectedCategory !== 'Todos') {
       const types = categoryMap[selectedCategory] as string[];
@@ -922,7 +933,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
 
   useEffect(() => {
     const types = categoryMap[selectedCategory] as string[];
-    if (selectedCategory === 'Materiais' || selectedCategory === 'Caixa Metálica / Skid') {
+    if (selectedCategory === 'Materiais' || selectedCategory === 'Caixa Metálica / Skid' || selectedCategory === 'Andaimes') {
       setSelectedType(selectedCategory);
     } else if (selectedCategory === 'Todos') {
       setSelectedType('');
@@ -935,6 +946,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     if (selectedCategory === 'Todos') return tables;
     if (selectedCategory === 'Materiais') return tables.filter(t => t.name === 'Materiais');
     if (selectedCategory === 'Caixa Metálica / Skid') return tables.filter(t => t.name === 'Caixa Metálica / Skid');
+    if (selectedCategory === 'Andaimes') return tables.filter(t => t.name === 'Andaimes');
     if (selectedCategory === 'Equipamentos') {
       if (selectedType === ALL_TYPES_VALUE) {
         const tipos = categoryMap['Equipamentos'] as string[];
@@ -1415,6 +1427,8 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       tableToUse = tables.find(t => t.name === 'Materiais');
     } else if (selectedCategory === 'Caixa Metálica / Skid') {
       tableToUse = tables.find(t => t.name === 'Caixa Metálica / Skid');
+    } else if (selectedCategory === 'Andaimes') {
+      tableToUse = tables.find(t => t.name === 'Andaimes');
     } else if (selectedCategory === 'Equipamentos') {
       // "Todos os tipos" não é uma tabela de verdade — um novo item sempre precisa
       // pertencer a um subtipo específico, então cai no primeiro da categoria.
@@ -2126,9 +2140,9 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     }
     if (column.key === 'actions') {
       const isGasTable = row.tableName === 'Alugados - Gases';
-      // Caixa Metálica/Skid entra no mesmo fluxo de alocação por unidade inteira dos
-      // Equipamentos (são itens retornáveis, não consumíveis como Materiais).
-      const isEquipamentosCategory = selectedCategory === 'Equipamentos' || selectedCategory === 'Caixa Metálica / Skid';
+      // Caixa Metálica/Skid e Andaimes entram no mesmo fluxo de alocação por unidade inteira
+      // dos Equipamentos (são itens retornáveis, não consumíveis como Materiais).
+      const isEquipamentosCategory = selectedCategory === 'Equipamentos' || selectedCategory === 'Caixa Metálica / Skid' || selectedCategory === 'Andaimes';
       // "Alugados - Equipamentos" (equipamento de terceiro alugado) é retornável do mesmo jeito
       // — precisa do ciclo completo Alocar/Desalocar, não só do botão de Desalocar. Sem isso não
       // havia NENHUM jeito de alocar esses itens: a linha só mostrava "Desalocar" quando já
@@ -2272,8 +2286,8 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     }
 
     if (column.key === 'status') {
-      // "Em manutenção" só aparece pra tabelas elegíveis (Equipamentos + Materiais) — Alugados
-      // e Caixa Metálica / Skid nunca entram em manutenção (ver MANUTENCAO_TABLE_NAMES).
+      // "Em manutenção" aparece pra todas as tabelas (ver MANUTENCAO_TABLE_NAMES) — o filtro
+      // continua aqui só como salvaguarda, caso alguma tabela um dia saia dessa lista.
       const statusOptions = getStatusOptionsForTable(table.name)
         .filter((option) => MANUTENCAO_TABLE_NAMES.includes(table.name) || !normalizeKey(option).includes('manut'));
       return (
@@ -2384,7 +2398,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_minmax(260px,320px)] lg:items-end">
         <div className="space-y-2">
           <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">Categoria</label>
-          <Select value={selectedCategory} onValueChange={(val) => setSelectedCategory(val as 'Todos' | 'Materiais' | 'Equipamentos' | 'Alugados' | 'Caixa Metálica / Skid')}>
+          <Select value={selectedCategory} onValueChange={(val) => setSelectedCategory(val as 'Todos' | 'Materiais' | 'Equipamentos' | 'Alugados' | 'Caixa Metálica / Skid' | 'Andaimes')}>
             <SelectTrigger className="relative h-12 w-full rounded-xl border border-white/5 bg-[#0b1220]/80 pl-11 pr-4 text-white shadow-sm transition focus:border-amber-400 focus:ring-1 focus:ring-amber-400 hover:border-white/20">
               <Package size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-amber-400" />
               <SelectValue placeholder="Selecione" className="text-sm font-semibold" />
@@ -2404,6 +2418,9 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
               </SelectItem>
               <SelectItem value="Caixa Metálica / Skid" className="cursor-pointer rounded-lg px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
                 Caixa Metálica / Skid
+              </SelectItem>
+              <SelectItem value="Andaimes" className="cursor-pointer rounded-lg px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
+                Andaimes
               </SelectItem>
             </SelectContent>
           </Select>
@@ -2555,6 +2572,8 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
             ? 'Visualizando Materiais'
             : selectedCategory === 'Caixa Metálica / Skid'
             ? 'Visualizando Caixa Metálica / Skid'
+            : selectedCategory === 'Andaimes'
+            ? 'Visualizando Andaimes'
             : selectedCategory === 'Equipamentos'
             ? `Equipamentos / ${selectedType === ALL_TYPES_VALUE ? 'Todos os tipos' : selectedType}`
             : `Alugados / ${selectedType}`}

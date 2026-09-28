@@ -221,6 +221,15 @@ interface OsResumoConsolidado {
       pesoFator: string;
       observacao: string;
     }>;
+    // Itens de Alocação/Locação de equipamento do orçamento (negócio "Locação" ou "Locação +
+    // Serviço" — ver utils/modalidade.ts). Sem valores monetários, mesmo padrão de
+    // materiais/terceirizados acima — a OS é o documento de produção, não de preço.
+    itensAlocacao: Array<{
+      equipamento: string;
+      unidade: string;
+      quantidade: string;
+      observacao: string;
+    }>;
     observacoes: string;
   };
   proposta: {
@@ -460,6 +469,7 @@ const criarInitialOsData = (): OsFormData => ({
       atividades: [],
       materiais: [],
       terceirizados: [],
+      itensAlocacao: [],
       observacoes: ''
     },
     proposta: {
@@ -610,6 +620,14 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
           pesoFator: String(item.peso || item.pesoFator || ''),
           observacao: item.observacao || ''
         })),
+      itensAlocacao: (Array.isArray(data.itensAlocacao) ? data.itensAlocacao : [])
+        .filter((item: any) => item.equipamento)
+        .map((item: any) => ({
+          equipamento: item.equipamento || '',
+          unidade: item.unidade || '',
+          quantidade: String(item.quantidade || ''),
+          observacao: item.observacao || ''
+        })),
       observacoes: data.observacoes || ''
     };
   };
@@ -683,7 +701,11 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
       .map((escopo: any) => `${escopo.titulo}${escopo.descricaoServico ? ` - ${escopo.descricaoServico}` : ''}`)
       .join('\n');
 
-    const itensLocacao = (Array.isArray(obra?.itensAlocacao) ? obra.itensAlocacao : [])
+    // Os itens de alocação/locação vivem dentro do orçamento (orcamento.data.itensAlocacao),
+    // não soltos na obra — `obra?.itensAlocacao` nunca existiu de verdade (ficava sempre
+    // undefined, então este trecho da descrição nunca aparecia). `resumoOrcamento` já é o
+    // resultado de extrairResumoOrcamentoSemValores(obra), que lê do lugar certo.
+    const itensLocacao = (Array.isArray(resumoOrcamento?.itensAlocacao) ? resumoOrcamento.itensAlocacao : [])
       .filter((it: any) => it.equipamento)
       .map((it: any) => `• ${it.equipamento} — ${it.quantidade ?? ''} ${it.unidade || ''}`.trim())
       .join('\n');
@@ -1956,6 +1978,42 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
                     </div>
                   </div>
 
+                  {/* Negócio "Locação"/"Locação + Serviço": tabela dos itens alocados (equipamento
+                      de terceiro/estoque próprio destinado ao cliente), vindos do orçamento — só
+                      aparece quando existe pelo menos 1 item (negócio 100% Serviço não tem). */}
+                  {(formData.resumoConsolidado?.orcamento.itensAlocacao || []).length > 0 && (
+                    <div className="bg-[#0b1220] rounded-3xl border border-cyan-500/25 p-7 space-y-5 shadow-lg shadow-cyan-900/20">
+                      <div className="flex items-center justify-between border-b border-white/10 pb-4">
+                        <p className="text-sm text-cyan-300 font-black uppercase tracking-wider">Alocação</p>
+                        <span className="px-3 py-1.5 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-200 text-xs font-black uppercase">
+                          {(formData.resumoConsolidado?.orcamento.itensAlocacao || []).length} item(ns)
+                        </span>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm border-collapse">
+                          <thead>
+                            <tr className="text-cyan-200/70 text-xs uppercase tracking-wider">
+                              <th className="border border-white/10 px-3 py-2 text-left">Equipamento</th>
+                              <th className="border border-white/10 px-3 py-2 text-left">Unidade</th>
+                              <th className="border border-white/10 px-3 py-2 text-left">Quantidade</th>
+                              <th className="border border-white/10 px-3 py-2 text-left">Observação</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(formData.resumoConsolidado?.orcamento.itensAlocacao || []).map((item, index) => (
+                              <tr key={`aloc-${index}`} className="text-white/85">
+                                <td className="border border-white/10 px-3 py-2 font-bold text-white">{item.equipamento}</td>
+                                <td className="border border-white/10 px-3 py-2">{item.unidade || '-'}</td>
+                                <td className="border border-white/10 px-3 py-2">{item.quantidade || '-'}</td>
+                                <td className="border border-white/10 px-3 py-2">{item.observacao || '-'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="bg-[#0b1220] rounded-3xl border border-emerald-500/25 p-7 space-y-5 shadow-lg shadow-emerald-900/20">
                     <div className="flex items-center justify-between border-b border-white/10 pb-4">
                       <p className="text-sm text-emerald-300 font-black uppercase tracking-wider">Proposta</p>
@@ -2181,6 +2239,36 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
                   </div>
                 )}
               </div>
+
+              {/* Negócio "Locação"/"Locação + Serviço": tabela dos itens alocados — só aparece
+                  quando existe pelo menos 1 item (negócio 100% Serviço não tem). */}
+              {(selectedOS.resumoConsolidado?.orcamento.itensAlocacao || []).length > 0 && (
+                <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-4">
+                  <h3 className="text-white font-black text-lg">ALOCAÇÃO</h3>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm border border-white/10">
+                      <thead>
+                        <tr className="bg-white/5 text-white/70 uppercase text-xs">
+                          <th className="border border-white/10 px-3 py-2 text-left">Equipamento</th>
+                          <th className="border border-white/10 px-3 py-2 text-left">Unidade</th>
+                          <th className="border border-white/10 px-3 py-2 text-left">Quantidade</th>
+                          <th className="border border-white/10 px-3 py-2 text-left">Observação</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(selectedOS.resumoConsolidado?.orcamento.itensAlocacao || []).map((item, index) => (
+                          <tr key={`aloc-view-${index}`} className="text-white/85">
+                            <td className="border border-white/10 px-3 py-2 font-bold text-white">{item.equipamento}</td>
+                            <td className="border border-white/10 px-3 py-2">{item.unidade || '-'}</td>
+                            <td className="border border-white/10 px-3 py-2">{item.quantidade || '-'}</td>
+                            <td className="border border-white/10 px-3 py-2">{item.observacao || '-'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
 
               <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-4">
                 <h3 className="text-white font-black text-lg">HORAS PREVISTAS POR SERVIÇO</h3>

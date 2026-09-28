@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useErp } from '../context/ErpContext';
-import { matchesSolicitante as matchesSolicitanteFin, money, CP_STATUS } from '../components/modules/Financeiro/finData';
+import { matchesSolicitante as matchesSolicitanteFin, money, br, CP_STATUS } from '../components/modules/Financeiro/finData';
 import { toItemRecords, matchesSolicitante as matchesSolicitanteCompra, stageLabel, type BoardStage } from '../components/modules/Compras/comprasLocal';
 
 /* =========================================================================================
@@ -99,6 +99,22 @@ const dataJaPassou = (dataIso?: string): boolean => {
   return data < hoje;
 };
 
+// Dias até uma data (negativo = já venceu) — mesmo cálculo de `diasAteVencimento` (finData.ts),
+// duplicado aqui pelo mesmo motivo de `dataJaPassou` acima.
+const diasAte = (dataIso?: string): number => {
+  const alvo = new Date(`${dataIso}T00:00:00`);
+  if (Number.isNaN(alvo.getTime())) return Infinity;
+  const hoje = new Date();
+  hoje.setHours(0, 0, 0, 0);
+  return Math.round((alvo.getTime() - hoje.getTime()) / 86400000);
+};
+
+// Janela de aviso pra parcela de fatura (Faturado) perto do vencimento — mesmo padrão de
+// antecedência das Contas Fixas (finData.ts: avisosContasFixas), só que sem campo próprio de
+// configuração: o vencimento de cada parcela já foi definido no momento do faturamento
+// (SolicitacaoView.tsx), então basta um limiar fixo.
+const DIAS_AVISO_VENCIMENTO_FATURADO = 5;
+
 export function useNotificacoes() {
   const { userSession, financeiro, comprasHistorico, compras, os, obras, almoxerifado } = useErp() as any;
   const chave = chaveVistos(userSession);
@@ -182,6 +198,34 @@ export function useNotificacoes() {
         destino: 'finPagar',
       }));
 
+    // ---- Financeiro: parcela de fatura (Faturado) perto do vencimento ----
+    // Cada parcela vira sua PRÓPRIA conta a pagar (filha), com o vencimento definido no
+    // momento do faturamento (SolicitacaoView.tsx) — dentro da janela de aviso e ainda não
+    // paga, avisa os DOIS: quem solicitou o pagamento (mesma identidade do bloco acima,
+    // via `origemSolicitacao`) e a gerência financeira (ADMIN/GERENTE, vê todas — mesmo
+    // critério de "quem aprova" usado em AprovacoesView.tsx). O id inclui os dias restantes
+    // de propósito: ao contrário do resto do arquivo, aqui a notificação deve MESMO reaparecer
+    // a cada dia que passa dentro da janela (é um lembrete de prazo, não um evento único).
+    const isGerenciaFinanceira = ['ADMIN', 'GERENTE'].includes(String(userSession?.role || '').toUpperCase());
+    const parcelasFaturadoAVencer: Notificacao[] = listaFinanceiro
+      .filter((r: any) => r?.tipo === 'contaPagar' && r.forma === 'Faturado' && r.type === 'child' && r.status !== CP_STATUS.pago)
+      .map((r: any) => ({ r, dias: diasAte(r.vencimento) }))
+      .filter(({ dias }) => dias >= 0 && dias <= DIAS_AVISO_VENCIMENTO_FATURADO)
+      .filter(({ r }) => {
+        if (isGerenciaFinanceira) return true;
+        if (!r.origemSolicitacao) return false;
+        const solicitacao = listaFinanceiro.find(
+          (s: any) => s?.tipo === 'solicitacao' && String(s.id) === String(r.origemSolicitacao),
+        );
+        return solicitacao ? matchesSolicitanteFin(solicitacao, userSession) : false;
+      })
+      .map(({ r, dias }) => ({
+        id: `faturado-vencimento-${r.id}-${dias}`,
+        titulo: `Parcela ${r.parcela || ''} da fatura vence ${dias === 0 ? 'hoje' : dias === 1 ? 'amanhã' : `em ${dias} dias`} (${br(r.vencimento)}) — ${r.fornecedor || 'fornecedor'} (${money(Number(r.valor) || 0)})`,
+        data: r.vencimento || '',
+        destino: 'finPagar',
+      }));
+
     // ---- Financeiro: NFe emitida — identidade resolvida via OS vinculada ----
     const nfesEmitidasIds = new Set(
       listaFinanceiro.filter((r: any) => r?.tipo === 'nfe').map((r: any) => r.sourceId).filter(Boolean),
@@ -256,6 +300,7 @@ export function useNotificacoes() {
       ...comprasConcluidas,
       ...comprasEstagios,
       ...contasPagar,
+      ...parcelasFaturadoAVencer,
       ...nfesEmitidas,
       ...recibosEmitidos,
       ...osNotificacoes,

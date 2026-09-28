@@ -89,34 +89,57 @@ export function useFin() {
   // verdade. Negócio antigo finalizado que ainda precise de NFe deve ser solicitado pelo
   // botão "Solicitar NFe" (cria um registro real, com id e histórico).
   const nfeSolicitacoes: NfeSolicitacao[] = useMemo(() => {
-    const emitidasSources = new Set(
-      financeiro.filter((r) => r.tipo === 'nfe').map((r) => r.sourceId).filter(Boolean),
-    );
-    // Anexos da NOTA emitida, por solicitação de origem. Depois que a NFe é arquivada é
-    // este arquivo (o PDF/XML da nota) que interessa na linha — sem isso a coluna Anexos
-    // continuava mostrando só o documento da medição, e a nota emitida ficava invisível.
-    const anexosEmitidos = new Map<string, string[]>();
+    // Nota(s) emitida(s) por solicitação de origem — normalmente 1, mas uma OS "Locação +
+    // Serviço" (1 registro nfeReq só, tipoNfe 'Locação + Serviço') arquiva com 2 bridges
+    // (uma 'NFe Serviço' via emitirNfe, outra 'Nota de débito' via gerarEArquivarRecibo),
+    // as duas com o MESMO sourceId — por isso agrupa numa lista, não sobrescreve num Map.
+    const bridgesPorSource = new Map<string, FinRecord[]>();
     financeiro
       .filter((r) => r.tipo === 'nfe' && r.sourceId)
-      .forEach((r) => anexosEmitidos.set(String(r.sourceId), Array.isArray(r.anexos) ? r.anexos : []));
+      .forEach((r) => {
+        const chave = String(r.sourceId);
+        const atual = bridgesPorSource.get(chave) || [];
+        atual.push(r);
+        bridgesPorSource.set(chave, atual);
+      });
+
+    // OS mista arquiva só quando as 2 naturezas já têm bridge (Serviço E Locação) — só uma
+    // das duas ainda deixa a linha em "Aguardando emissão" (o botão continua disponível pra
+    // completar a que falta). Natureza única continua bastando 1 bridge, como sempre foi.
+    const estaArquivada = (r: FinRecord, bridges: FinRecord[]): boolean => {
+      if (bridges.length === 0) return false;
+      if (r.tipoNfe === 'Locação + Serviço') {
+        return bridges.some((b) => b.tipoNfe === 'NFe Serviço') && bridges.some((b) => b.tipoNfe === 'Nota de débito');
+      }
+      return true;
+    };
 
     return financeiro
       .filter((r) => r.tipo === 'nfeReq')
-      .map((r) => ({
-        id: r.id,
-        os: r.os || '',
-        empresa: (r.empresa as Empresa) || 'Linave',
-        cliente: r.cliente || '',
-        valor: r.valor || 0,
-        forma: r.forma || '',
-        dataEmitir: r.dataEmitir || todayStr,
-        tipoNfe: r.tipoNfe || 'NFe Serviço',
-        status: emitidasSources.has(r.id) ? 'Emitida e arquivada' : (r.status || 'Aguardando emissão'),
-        anexos: [...(r.anexos || []), ...(anexosEmitidos.get(r.id) || [])],
-        contrato: r.contrato || r.os || '',
-        medicaoId: r.medicaoId || '',
-        medicaoNumero: r.medicaoNumero || '',
-      }));
+      .map((r) => {
+        const bridges = bridgesPorSource.get(String(r.id)) || [];
+        return {
+          id: r.id,
+          os: r.os || '',
+          empresa: (r.empresa as Empresa) || 'Linave',
+          cliente: r.cliente || '',
+          valor: r.valor || 0,
+          valorServico: r.valorServico,
+          valorLocacao: r.valorLocacao,
+          rascunhoImpostos: r.rascunhoImpostos || undefined,
+          forma: r.forma || '',
+          dataEmitir: r.dataEmitir || todayStr,
+          tipoNfe: r.tipoNfe || 'NFe Serviço',
+          status: estaArquivada(r, bridges) ? 'Emitida e arquivada' : (r.status || 'Aguardando emissão'),
+          // Anexos da(s) NOTA(s) emitida(s) — depois que arquiva é esse arquivo (o PDF/XML da
+          // nota, ou os 2 quando são 2 bridges) que interessa na linha, além do documento
+          // original da solicitação (medição, se houver).
+          anexos: [...(r.anexos || []), ...bridges.flatMap((b) => (Array.isArray(b.anexos) ? b.anexos : []))],
+          contrato: r.contrato || r.os || '',
+          medicaoId: r.medicaoId || '',
+          medicaoNumero: r.medicaoNumero || '',
+        };
+      });
   }, [financeiro]);
 
   // ----- Escrita (infra pronta) -----
@@ -324,11 +347,10 @@ export function useFin() {
   ) => {
     const ts = Date.now().toString(36).toUpperCase();
     const now = new Date().toISOString();
-    // Mesma função serve pra emitir NFe (serviço) e gerar Recibo de Locação (o botão "Gerar
-    // Recibo" em NfeView.tsx abre o MESMO modal/fluxo) — só muda a origem no recebível e a
-    // sigla usada na referência, decididas pela natureza da solicitação (sol.tipoNfe).
-    const sigla = siglaTipoNfe(sol.tipoNfe, sol.empresa);
-    const origem: 'NFe' | 'Recibo' = sigla === 'R/L' ? 'Recibo' : 'NFe';
+    // A origem do recebível segue a NATUREZA da solicitação (Serviço x Locação), não a sigla
+    // exibida — a sigla também varia por empresa prestadora (ver siglaTipoNfe em finData.ts),
+    // mas Locação sempre é "Recibo" (Linave = N/D, Servinave = R/L) e Serviço sempre é "NFe".
+    const origem: 'NFe' | 'Recibo' = sol.tipoNfe === 'Nota de débito' ? 'Recibo' : 'NFe';
     const nfe: FinRecord = {
       id: `NFE-${ts}`,
       tipo: 'nfe',

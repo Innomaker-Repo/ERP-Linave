@@ -57,9 +57,18 @@ const normalizeKeyLocal = (value: string): string =>
 // manutenção (ver MANUTENCAO_TABLE_NAMES abaixo) — é só o agrupamento de categoria/tipo.
 export const EQUIPAMENTOS_TABLE_NAMES = ['EQUIPAMENTOS ELETRICOS', 'EXTENSÃO-CABOS', 'BOMBA HIDROJATO', 'INSTRUMENTOS', 'FERRAMENTAS', 'TALHAS', 'ESLINGAS'];
 
-// Tabelas cujos itens podem entrar em manutenção: a categoria Equipamentos inteira, mais
-// Materiais. Alugados e Caixa Metálica / Skid continuam de fora.
-export const MANUTENCAO_TABLE_NAMES = [...EQUIPAMENTOS_TABLE_NAMES, 'Materiais'];
+// Tabelas cujos itens podem entrar em manutenção: TODAS as categorias do Almoxarifado —
+// Equipamentos, Materiais, Alugados (Equipamentos e Gases) e Caixa Metálica / Skid. Qualquer
+// item de qualquer tabela segue o mesmo fluxo (EntradaManutencaoModal, manutencaoHistorico,
+// bloqueio de alocação/romaneio enquanto em manutenção).
+export const MANUTENCAO_TABLE_NAMES = [
+  ...EQUIPAMENTOS_TABLE_NAMES,
+  'Materiais',
+  'Caixa Metálica / Skid',
+  'Andaimes',
+  'Alugados - Equipamentos',
+  'Alugados - Gases',
+];
 
 // Item só pode entrar em manutenção se a tabela dele estiver em MANUTENCAO_TABLE_NAMES — não
 // depende mais de um flag por item.

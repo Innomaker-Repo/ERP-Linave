@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Plus, Download, Trash2, Pencil } from 'lucide-react';
-import { FinCard, Toolbar, boldOS } from '../finUi';
+import { FinCard, Toolbar, boldOS, AnexosCell } from '../finUi';
 import { money, construirReciboDeMedicao, ultimoReciboLocacaoDaOs, proximoNumeroReciboLocacao, dadosClienteRecibo } from '../finData';
 import { useErp } from '../../../../context/ErpContext';
 import { comFinanceiroAtual } from '../../../../../services/financeiroSeguro';
@@ -145,6 +145,11 @@ export function ReciboLocacaoView() {
                 </div>
                 <span className={`shrink-0 px-2 py-1 rounded-full text-[10px] font-black uppercase border ${r.status === 'emitido' ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' : 'bg-amber-500/15 text-amber-300 border-amber-500/30'}`}>{r.status === 'emitido' ? 'Emitido' : 'Pendente'}</span>
               </div>
+              {/* Documento já gerado e salvo (via "Gerar e arquivar") — link real pro anexo, não
+                  uma cópia nova do PDF. Só aparece depois que o recibo foi arquivado ao menos uma vez. */}
+              {Array.isArray(r.anexos) && r.anexos.length > 0 && (
+                <div className="mt-2"><AnexosCell anexos={r.anexos} /></div>
+              )}
               <div className="flex gap-2 mt-3">
                 <button onClick={() => editar(r)} className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[11px] font-black uppercase flex items-center gap-1"><Pencil size={12} /> Preencher / editar</button>
                 <button onClick={() => gerarReciboLocacaoPDF(dadosPdf({ ...formInicialRecibo(todosOsRecibos, r.empresa, config), ...r }))} className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-[11px] font-black uppercase flex items-center gap-1"><Download size={12} /> PDF</button>
