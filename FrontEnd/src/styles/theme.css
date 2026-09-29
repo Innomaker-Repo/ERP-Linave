@@ -25,21 +25,7 @@
     background: rgba(255, 255, 255, 0.2);
   }
 
-  /* ScrollXTop: barra espelhada no topo de tabelas largas + oculta a nativa embaixo */
-  .scroll-x-mirror::-webkit-scrollbar {
-    height: 8px;
-  }
-  .scroll-x-mirror::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  .scroll-x-mirror::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.15);
-    border-radius: 10px;
-  }
-  .scroll-x-mirror::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.25);
-  }
-
+  /* ScrollXTop: oculta a barra nativa embaixo (a barra visível é desenhada em divs, no topo) */
   .scroll-x-hide {
     scrollbar-width: none;
     -ms-overflow-style: none;

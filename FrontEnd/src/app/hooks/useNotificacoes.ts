@@ -18,14 +18,20 @@ import { toItemRecords, matchesSolicitante as matchesSolicitanteCompra, stageLab
  * Identidade: Compras e a Solicitação de Pagamento (Financeiro) já têm
  * solicitante+solicitanteCpf+solicitanteEmail (ver `matchesSolicitante` em cada domínio).
  * Conta a Pagar, NFe e Recibo de Locação não têm campo de pessoa próprio — a identidade é
- * resolvida por junção indireta (ver blocos correspondentes). Conta a Receber fica fora do
- * escopo: não tem status persistido nem campo de pessoa. OS e Negócio têm `criadoPorCpf`/
+ * resolvida por junção indireta (ver blocos correspondentes). OS e Negócio têm `criadoPorCpf`/
  * `criadoPorEmail` (gravados automaticamente na criação, ver OsView.tsx/CrmViewNew.tsx) —
  * registros criados antes desse campo existir ficam sem identidade e não notificam.
  *
  * Exceção ao filtro por identidade: o alerta de "devolução atrasada" do Almoxarifado
  * (item alugado de fornecedor) não tem NENHUM campo de pessoa (só `fornecedor`, texto
  * livre) — esse bloco notifica todo mundo logado, não só quem "é dono" do registro.
+ *
+ * Todo bloco do domínio FINANCEIRO (pedido de pagamento, conta a pagar, conta a receber,
+ * NFe/recibo de locação) notifica DOIS públicos: quem fez a movimentação (identidade do
+ * bloco) E a gerência financeira (ADMIN/GERENTE — `isGerenciaFinanceira` abaixo, vê tudo,
+ * independente de ter relação com o registro) — é ela quem precisa acompanhar o financeiro
+ * como um todo, não só o que ela mesma criou. Compras, OS e Negócios ficam fora dessa regra
+ * (cada um já tem sua própria fila de aprovação/kanban visível pra quem precisa agir).
  * =======================================================================================*/
 
 export interface Notificacao {
@@ -134,11 +140,26 @@ export function useNotificacoes() {
     const listaObras = Array.isArray(obras) ? obras : [];
     const historicoCompras = toItemRecords(Array.isArray(comprasHistorico) ? comprasHistorico : []);
 
-    // ---- Solicitação de Pagamento aprovada/reprovada ----
+    // Gerência financeira (ADMIN/GERENTE) — mesmo critério de "quem aprova" usado em
+    // AprovacoesView.tsx. Some ao filtro por identidade (não substitui) em todo bloco do
+    // domínio Financeiro: ela precisa ver TODA movimentação, não só a que ela mesma originou.
+    const isGerenciaFinanceira = ['ADMIN', 'GERENTE'].includes(String(userSession?.role || '').toUpperCase());
+
+    // ---- Solicitação de Pagamento: criada (aguardando aprovação) ----
+    const pagamentosCriados: Notificacao[] = listaFinanceiro
+      .filter((r: any) => r?.tipo === 'solicitacao' && r.status === 'Aguardando aprovação')
+      .filter((r: any) => isGerenciaFinanceira || matchesSolicitanteFin(r, userSession))
+      .map((r: any) => ({
+        id: `pagamento-novo-${r.id}`,
+        titulo: `Novo pedido de pagamento — ${r.fornecedor || 'solicitação'} (${money(Number(r.valor) || 0)})`,
+        data: r.createdAt || '',
+        destino: isGerenciaFinanceira ? 'finAprovacoes' : 'meusPagamentos',
+      }));
+
+    // ---- Solicitação de Pagamento: aprovada/reprovada ----
     const pagamentos: Notificacao[] = listaFinanceiro
-      .filter((r: any) => r?.tipo === 'solicitacao'
-        && (r.status === 'Aprovado' || r.status === 'Reprovado')
-        && matchesSolicitanteFin(r, userSession))
+      .filter((r: any) => r?.tipo === 'solicitacao' && (r.status === 'Aprovado' || r.status === 'Reprovado'))
+      .filter((r: any) => isGerenciaFinanceira || matchesSolicitanteFin(r, userSession))
       .map((r: any) => ({
         id: `pagamento-${r.id}-${r.status}`,
         titulo: r.status === 'Aprovado'
@@ -181,6 +202,7 @@ export function useNotificacoes() {
     const contasPagar: Notificacao[] = listaFinanceiro
       .filter((r: any) => r?.tipo === 'contaPagar' && r.status && !CP_STATUS_SEM_NOTIFICAR.has(r.status))
       .filter((r: any) => {
+        if (isGerenciaFinanceira) return true;
         if (r.origemSolicitacao) {
           const solicitacao = listaFinanceiro.find(
             (s: any) => s?.tipo === 'solicitacao' && String(s.id) === String(r.origemSolicitacao),
@@ -206,7 +228,6 @@ export function useNotificacoes() {
     // critério de "quem aprova" usado em AprovacoesView.tsx). O id inclui os dias restantes
     // de propósito: ao contrário do resto do arquivo, aqui a notificação deve MESMO reaparecer
     // a cada dia que passa dentro da janela (é um lembrete de prazo, não um evento único).
-    const isGerenciaFinanceira = ['ADMIN', 'GERENTE'].includes(String(userSession?.role || '').toUpperCase());
     const parcelasFaturadoAVencer: Notificacao[] = listaFinanceiro
       .filter((r: any) => r?.tipo === 'contaPagar' && r.forma === 'Faturado' && r.type === 'child' && r.status !== CP_STATUS.pago)
       .map((r: any) => ({ r, dias: diasAte(r.vencimento) }))
@@ -232,7 +253,8 @@ export function useNotificacoes() {
     );
     const nfesEmitidas: Notificacao[] = listaFinanceiro
       .filter((r: any) => r?.tipo === 'nfeReq' && nfesEmitidasIds.has(r.id))
-      .filter((r: any) => matchesCriador(listaOs.find((o: any) => String(o?.id || '') === String(r.os || '')), userSession))
+      .filter((r: any) => isGerenciaFinanceira
+        || matchesCriador(listaOs.find((o: any) => String(o?.id || '') === String(r.os || '')), userSession))
       .map((r: any) => ({
         id: `nfe-${r.id}-emitida`,
         titulo: `NFe emitida — OS ${r.os || '—'}`,
@@ -243,7 +265,7 @@ export function useNotificacoes() {
     // ---- Financeiro: Recibo de Locação emitido — identidade resolvida via OS vinculada ----
     const recibosEmitidos: Notificacao[] = listaFinanceiro
       .filter((r: any) => r?.tipo === 'reciboLocacao' && r.status === 'emitido')
-      .filter((r: any) => matchesCriador(
+      .filter((r: any) => isGerenciaFinanceira || matchesCriador(
         listaOs.find((o: any) => String(o?.id || '') === String(r.ordemServicoNumero || '')),
         userSession,
       ))
@@ -254,8 +276,24 @@ export function useNotificacoes() {
         destino: 'finNfe',
       }));
 
-    // Conta a Receber fica fora do escopo: `status` é derivado na tela (não persistido no
-    // registro) e não existe nenhum campo de pessoa pra identificar quem notificar.
+    // ---- Financeiro: Conta a Receber — gerada / recebida — identidade via OS vinculada ----
+    // `recebido` é persistido no registro (ContasReceberView.tsx, ação "Registrar
+    // recebimento") — serve de estágio direto, sem precisar do status derivado (que mistura
+    // "vencido", baseado na data de hoje, e reabriria a notificação todo dia à toa).
+    const contasReceber: Notificacao[] = listaFinanceiro
+      .filter((r: any) => r?.tipo === 'contaReceber')
+      .filter((r: any) => isGerenciaFinanceira || matchesCriador(
+        listaOs.find((o: any) => String(o?.id || '') === String(r.ordemServicoNumero || '')),
+        userSession,
+      ))
+      .map((r: any) => ({
+        id: `receber-${r.id}-${r.recebido ? 'recebido' : 'pendente'}`,
+        titulo: r.recebido
+          ? `Recebimento confirmado — ${r.cliente || 'cliente'} (${money(Number(r.valorLiquido) || 0)})`
+          : `Nova conta a receber — ${r.cliente || 'cliente'} (${money(Number(r.valorLiquido) || 0)})`,
+        data: r.dataRecebimento || r.vencimentoRecebimento || r.createdAt || '',
+        destino: 'finReceber',
+      }));
 
     // ---- OS: mudança de status (statusOs/statusEnvio/statusAprovacao) — só quem criou ----
     const osNotificacoes: Notificacao[] = listaOs
@@ -296,6 +334,7 @@ export function useNotificacoes() {
         })));
 
     return [
+      ...pagamentosCriados,
       ...pagamentos,
       ...comprasConcluidas,
       ...comprasEstagios,
@@ -303,6 +342,7 @@ export function useNotificacoes() {
       ...parcelasFaturadoAVencer,
       ...nfesEmitidas,
       ...recibosEmitidos,
+      ...contasReceber,
       ...osNotificacoes,
       ...negociosNotificacoes,
       ...alugadosAtrasados,
