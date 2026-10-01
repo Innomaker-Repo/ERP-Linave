@@ -42,6 +42,19 @@ export function ContasPagarView() {
   const bancos = records('banco').filter((b) => b.nome) as Array<{ id: string; nome: string; empresa?: string }>;
   const [salvando, setSalvando] = useState(false);
 
+  // Os <select> de banco guardam/comparam pelo RÓTULO completo ("Itaú - Linave", ver
+  // bancoLabel em finData.ts) — nunca só o nome: dois bancos de empresas diferentes podem ter
+  // o mesmo nome, e guardar só ele misturava as duas contas (mesmo bug do <select>, só que
+  // gravado — reabrir sempre caía no primeiro banco daquele nome). O <select> em si opera por
+  // `id` (sempre único) e só traduz pra rótulo na entrada/saída.
+  const bancoSelectProps = (valorAtual: string, aoMudarRotulo: (rotulo: string) => void) => ({
+    value: bancos.find((b) => bancoLabel(b) === valorAtual)?.id || '',
+    onChange: (e: React.ChangeEvent<HTMLSelectElement>) => {
+      const b = bancos.find((x) => x.id === e.target.value);
+      aoMudarRotulo(b ? bancoLabel(b) : '');
+    },
+  });
+
   // ---- Contas fixas: gera as ocorrências que faltam ao abrir a tela ----
   // Roda uma vez por entrada na tela. `sincronizarContasFixas` só escreve quando há
   // ocorrência nova, então reentrar na tela não gera tráfego nem duplica conta.
@@ -649,9 +662,9 @@ export function ContasPagarView() {
 
             <Field label="Vencimento" span={3}><Input type="date" value={form.vencimento} onChange={(e) => setF('vencimento', e.target.value)} /></Field>
             <Field label="Banco" span={3}>
-              <Select value={form.banco} onChange={(e) => setF('banco', e.target.value)}>
+              <Select {...bancoSelectProps(form.banco, (nome) => setF('banco', nome))}>
                 <option value="">{bancos.length ? 'A definir...' : 'Nenhum banco cadastrado'}</option>
-                {bancos.map((b) => <option key={b.id} value={b.nome}>{bancoLabel(b)}</option>)}
+                {bancos.map((b) => <option key={b.id} value={b.id}>{bancoLabel(b)}</option>)}
               </Select>
             </Field>
             <Field label="Forma" span={6}>
@@ -767,9 +780,9 @@ export function ContasPagarView() {
             <Field label="Valor pago" span={3}><MoneyInput value={pay.valorPago} onChange={(v) => setPayF('valorPago', v)} /></Field>
 
             <Field label="Banco usado *" span={6}>
-              <Select value={pay.banco} onChange={(e) => setPayF('banco', e.target.value)}>
+              <Select {...bancoSelectProps(pay.banco, (nome) => setPayF('banco', nome))}>
                 <option value="">{bancos.length ? 'Selecione...' : 'Cadastre um banco na aba Bancos'}</option>
-                {bancos.map((b) => <option key={b.id} value={b.nome}>{bancoLabel(b)}</option>)}
+                {bancos.map((b) => <option key={b.id} value={b.id}>{bancoLabel(b)}</option>)}
               </Select>
             </Field>
             <Field label="Houve juros?" span={6}>
@@ -781,46 +794,44 @@ export function ContasPagarView() {
               <Field label="Motivo dos juros" span={8}><Input value={pay.motivoJuros} onChange={(e) => setPayF('motivoJuros', e.target.value)} /></Field>
             </>}
 
-            {pagando.forma === FORMA_DISPENSA_COMPROVANTE ? (
-              <div className="col-span-12 rounded-xl border border-sky-500/20 bg-sky-500/[0.06] p-3 text-xs text-sky-100">
-                Débito automático dispensa comprovante de pagamento — o débito é feito direto pelo banco.
-                {comprovantesExistentes.length > 0 && ' Os comprovantes já anexados anteriormente continuam disponíveis em "Ver documentos".'}
-              </div>
-            ) : (
-              <div className="col-span-12">
-                <label className={labelCls}>Comprovante(s) de pagamento (opcional, pode anexar mais de um)</label>
-                {comprovantesExistentes.length > 0 && (
-                  <div className="mb-2 space-y-1.5">
-                    {comprovantesExistentes.map((url) => (
-                      <div key={url} className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-bold text-emerald-200">
-                        <a href={url} target="_blank" rel="noopener noreferrer" className="flex-1 truncate underline decoration-dotted hover:text-emerald-100">
-                          {nomeDoArquivo(url)}
-                        </a>
-                        <label className="flex shrink-0 cursor-pointer items-center gap-1 text-emerald-200/70 hover:text-emerald-100" title="Substituir este comprovante">
-                          <RefreshCw size={12} className={processandoDoc === url ? 'animate-spin' : ''} /> Substituir
-                          <input
-                            type="file"
-                            className="hidden"
-                            disabled={processandoDoc === url}
-                            onChange={(e) => substituirDocumentoDaConta(pagando!.id, url, 'comprovantes', e.target.files?.[0])}
-                          />
-                        </label>
-                        <button
-                          type="button"
+            <div className="col-span-12">
+              {pagando.forma === FORMA_DISPENSA_COMPROVANTE && (
+                <div className="mb-2 rounded-xl border border-sky-500/20 bg-sky-500/[0.06] p-3 text-xs text-sky-100">
+                  Débito automático dispensa comprovante de pagamento — o débito é feito direto pelo banco. Anexar continua opcional, só se quiser guardar o registro.
+                </div>
+              )}
+              <label className={labelCls}>Comprovante(s) de pagamento (opcional, pode anexar mais de um)</label>
+              {comprovantesExistentes.length > 0 && (
+                <div className="mb-2 space-y-1.5">
+                  {comprovantesExistentes.map((url) => (
+                    <div key={url} className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-bold text-emerald-200">
+                      <a href={url} target="_blank" rel="noopener noreferrer" className="flex-1 truncate underline decoration-dotted hover:text-emerald-100">
+                        {nomeDoArquivo(url)}
+                      </a>
+                      <label className="flex shrink-0 cursor-pointer items-center gap-1 text-emerald-200/70 hover:text-emerald-100" title="Substituir este comprovante">
+                        <RefreshCw size={12} className={processandoDoc === url ? 'animate-spin' : ''} /> Substituir
+                        <input
+                          type="file"
+                          className="hidden"
                           disabled={processandoDoc === url}
-                          onClick={() => excluirDocumentoDaConta(pagando!.id, url, 'comprovantes')}
-                          title="Excluir este comprovante"
-                          className="shrink-0 text-emerald-200/60 hover:text-rose-300 disabled:opacity-40"
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <FileInput label="Anexar comprovante(s) (PDF, imagem...)" value={novosComprovantes} onChange={setNovosComprovantes} />
-              </div>
-            )}
+                          onChange={(e) => substituirDocumentoDaConta(pagando!.id, url, 'comprovantes', e.target.files?.[0])}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        disabled={processandoDoc === url}
+                        onClick={() => excluirDocumentoDaConta(pagando!.id, url, 'comprovantes')}
+                        title="Excluir este comprovante"
+                        className="shrink-0 text-emerald-200/60 hover:text-rose-300 disabled:opacity-40"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <FileInput label="Anexar comprovante(s) (PDF, imagem...)" value={novosComprovantes} onChange={setNovosComprovantes} />
+            </div>
 
             <div className="col-span-12 grid grid-cols-2 gap-3">
               <Kpi label="Valor pago" value={money(num(pay.valorPago))} />
@@ -1090,9 +1101,9 @@ export function ContasPagarView() {
               </Select>
             </Field>
             <Field label="Banco" span={6}>
-              <Select value={fixa.banco} onChange={(e) => setFixaF('banco', e.target.value)}>
+              <Select {...bancoSelectProps(fixa.banco, (nome) => setFixaF('banco', nome))}>
                 <option value="">{bancos.length ? 'Selecione o banco...' : 'Nenhum banco cadastrado'}</option>
-                {bancos.map((b) => <option key={b.id} value={b.nome}>{bancoLabel(b)}</option>)}
+                {bancos.map((b) => <option key={b.id} value={b.id}>{bancoLabel(b)}</option>)}
               </Select>
             </Field>
 

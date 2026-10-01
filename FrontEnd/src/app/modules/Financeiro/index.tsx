@@ -6,7 +6,7 @@ import { SolicitacaoView } from '../../components/modules/Financeiro/views/Solic
 import { MeusPagamentosView } from '../../components/modules/Financeiro/views/MeusPagamentosView';
 import { AprovacoesView } from '../../components/modules/Financeiro/views/AprovacoesView';
 import { ContasPagarView } from '../../components/modules/Financeiro/views/ContasPagarView';
-import { NfeReciboView } from '../../components/modules/Financeiro/views/NfeReciboView';
+import { NfeView } from '../../components/modules/Financeiro/views/NfeView';
 import { ContasReceberView } from '../../components/modules/Financeiro/views/ContasReceberView';
 import { PrevisaoView } from '../../components/modules/Financeiro/views/PrevisaoView';
 import { BancosView } from '../../components/modules/Financeiro/views/BancosView';
@@ -28,7 +28,7 @@ const VIEWS: Record<string, React.ComponentType> = {
   meusPagamentos: MeusPagamentosView,
   aprovacoes: AprovacoesView,
   pagar: ContasPagarView,
-  nfe: NfeReciboView,
+  nfe: NfeView,
   receber: ContasReceberView,
   previsao: PrevisaoView,
   bancos: BancosView,

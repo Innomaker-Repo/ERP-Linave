@@ -199,6 +199,9 @@ export const gerarEArquivarRecibo = async (
         valorOriginal: total,
         valorLiquido: liquido,
         vencimento: recEmitido.dataVencimento,
+        // Data de emissão do próprio recibo — sem isso a coluna "Emissão" de Contas a Receber
+        // ficava em branco para recebíveis originados só de Recibo (sem NFe combinada).
+        emissao: recEmitido.dataEmissao,
         // Este formulário só existe para Recibo de Locação — a sigla varia pela empresa
         // prestadora (Linave = N/D, Servinave = R/L; ver siglaTipoNfe em finData.ts).
         referencia: `${siglaTipoNfe('Nota de débito', recEmitido.empresa)} ${recEmitido.numero}`,

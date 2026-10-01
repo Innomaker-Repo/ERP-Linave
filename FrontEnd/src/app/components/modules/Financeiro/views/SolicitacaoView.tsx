@@ -81,7 +81,7 @@ export function SolicitacaoView() {
   const [parcelasFaturado, setParcelasFaturado] = useState<ParcelaFaturadoEdit[]>([]);
   const setForma = (value: string) => {
     set('forma', value);
-    if (value !== 'Faturado') {
+    if (value !== 'Parcelado') {
       setFaturadoForm(faturadoVazio());
       setNotaFiscalArquivo(null);
       setNotaFiscalArquivoExistente('');
@@ -173,7 +173,7 @@ export function SolicitacaoView() {
       forma: sol.forma || '',
       descricao: sol.descricao || '',
     });
-    if (sol.forma === 'Faturado' && sol.faturado) {
+    if (sol.forma === 'Parcelado' && sol.faturado) {
       setFaturadoForm({
         notaFiscalNumero: sol.faturado.notaFiscal?.numero || '',
         notaFiscalValor: String(sol.faturado.notaFiscal?.valorTotal ?? ''),
@@ -231,12 +231,12 @@ export function SolicitacaoView() {
     if (!form.fornecedor.trim()) faltando.push('Fornecedor / beneficiário');
     // Faturado usa o Número da Nota Fiscal como documento — o campo solto some do formulário
     // (ver JSX) pra não pedir a mesma informação duas vezes.
-    if (form.forma !== 'Faturado' && !form.documento.trim()) faltando.push('Documento');
+    if (form.forma !== 'Parcelado' && !form.documento.trim()) faltando.push('Documento');
     if (!form.compra) faltando.push('Data compra');
     if (!form.forma) faltando.push('Forma solicitada');
     if (!form.descricao.trim()) faltando.push('Descrição');
 
-    if (form.forma === 'Faturado') {
+    if (form.forma === 'Parcelado') {
       if (!faturadoForm.notaFiscalNumero.trim()) faltando.push('Número da Nota Fiscal');
       if (!num(faturadoForm.notaFiscalValor)) faltando.push('Valor total da Nota Fiscal');
       if (!notaFiscalArquivo && !notaFiscalArquivoExistente) faltando.push('Anexar Nota Fiscal');
@@ -273,7 +273,7 @@ export function SolicitacaoView() {
     // Bloqueia duplicidade: mesma nota (documento) pro mesmo fornecedor não pode virar uma
     // segunda solicitação — evita aprovar duas vezes e pagar a mesma nota em duplicidade.
     // Faturado usa o Número da Nota Fiscal como "documento" pra essa checagem.
-    const documentoParaChecagem = form.forma === 'Faturado' ? faturadoForm.notaFiscalNumero.trim() : form.documento.trim();
+    const documentoParaChecagem = form.forma === 'Parcelado' ? faturadoForm.notaFiscalNumero.trim() : form.documento.trim();
     if (solicitacaoDuplicada(financeiro, {
       fornecedor: form.fornecedor,
       documento: documentoParaChecagem,
@@ -289,7 +289,7 @@ export function SolicitacaoView() {
       let notaFiscalUrl = notaFiscalArquivoExistente;
       let parcelasFinal = parcelasFaturado;
 
-      if (form.forma === 'Faturado') {
+      if (form.forma === 'Parcelado') {
         // Só sobe arquivo novo se o usuário trocou; senão mantém o que já estava salvo
         // (mesma regra do anexo genérico, aplicada aqui à NF e a cada boleto de parcela).
         if (notaFiscalArquivo) {
@@ -337,13 +337,13 @@ export function SolicitacaoView() {
         // Faturado: valor = total da NF, vencimento = vencimento da 1ª parcela (a mais
         // próxima) — a solicitação inteira (NF + todas as parcelas, já com boleto) entra
         // de uma vez na fila de aprovação.
-        valor: form.forma === 'Faturado' ? num(faturadoForm.notaFiscalValor) : num(form.valor),
+        valor: form.forma === 'Parcelado' ? num(faturadoForm.notaFiscalValor) : num(form.valor),
         compra: form.compra,
-        vencimento: form.forma === 'Faturado' ? (parcelasFinal[0]?.vencimento || form.compra) : form.vencimento,
+        vencimento: form.forma === 'Parcelado' ? (parcelasFinal[0]?.vencimento || form.compra) : form.vencimento,
         forma: form.forma,
         descricao: form.descricao,
-        anexos: form.forma === 'Faturado' ? (notaFiscalUrl ? [notaFiscalUrl] : []) : anexosUrls,
-        ...(form.forma === 'Faturado' ? {
+        anexos: form.forma === 'Parcelado' ? (notaFiscalUrl ? [notaFiscalUrl] : []) : anexosUrls,
+        ...(form.forma === 'Parcelado' ? {
           faturado: {
             notaFiscal: { numero: faturadoForm.notaFiscalNumero.trim(), valorTotal: num(faturadoForm.notaFiscalValor), anexoUrl: notaFiscalUrl },
             periodicidade: faturadoForm.periodicidade,
@@ -432,21 +432,21 @@ export function SolicitacaoView() {
               {fornecedores.map((f, i) => <option key={i} value={fornecedorNome(f)} />)}
             </datalist>
           </Field>
-          {form.forma !== 'Faturado' && (
+          {form.forma !== 'Parcelado' && (
             <Field label={req('Documento')} span={3}>
               <Input value={form.documento} onChange={(e) => set('documento', e.target.value)} placeholder="Nº único do boleto" />
               <p className="mt-1 text-[10px] leading-tight text-white/40">Se for boleto, use o Nosso Número ou a linha digitável — é o que evita pagar a mesma nota duas vezes.</p>
             </Field>
           )}
 
-          {form.forma !== 'Faturado' && (
+          {form.forma !== 'Parcelado' && (
             <>
               <Field label={req('Valor')} span={3}><MoneyInput value={form.valor} onChange={(v) => set('valor', v)} /></Field>
               <Field label={req('Data compra')} span={3}><Input type="date" value={form.compra} onChange={(e) => set('compra', e.target.value)} /></Field>
               <Field label={req('Vencimento')} span={3}><Input type="date" value={form.vencimento} onChange={(e) => set('vencimento', e.target.value)} /></Field>
             </>
           )}
-          {form.forma === 'Faturado' && (
+          {form.forma === 'Parcelado' && (
             <Field label={req('Data compra')} span={3}><Input type="date" value={form.compra} onChange={(e) => set('compra', e.target.value)} /></Field>
           )}
           <Field label={req('Forma solicitada')} span={3}>
@@ -456,7 +456,7 @@ export function SolicitacaoView() {
             </Select>
           </Field>
 
-          {form.forma === 'Faturado' ? (
+          {form.forma === 'Parcelado' ? (
             <div className="col-span-12 space-y-5 rounded-2xl border border-amber-500/20 bg-amber-500/[0.04] p-5">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>

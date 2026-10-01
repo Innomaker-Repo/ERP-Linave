@@ -134,12 +134,12 @@ export function AprovacoesView() {
         minWidth={1100}
         head={<>
           <Th>Empresa</Th><Th>Solicitante</Th><Th>Vínculo</Th>
-          <Th>Fornecedor</Th><Th>Valor</Th><Th>Vencimento</Th><Th>Status</Th><Th>Ação</Th>
+          <Th>Fornecedor</Th><Th>Valor</Th><Th>Vencimento</Th><Th>Status</Th><Th>Aprovado/Reprovado por</Th><Th>Ação</Th>
         </>}
       >
         {rows.length === 0 ? (
           <EmptyRow
-            cols={8}
+            cols={9}
             text={
               buscaFornecedor
                 ? `Nenhuma solicitação encontrada para "${buscaFornecedor}"`
@@ -157,6 +157,13 @@ export function AprovacoesView() {
             <Td className="font-bold text-white">{money(num(r.valor))}</Td>
             <Td>{br(r.vencimento)}</Td>
             <Td><StatusTag status={r.status || 'Aguardando aprovação'} /></Td>
+            <Td>
+              {r.status === 'Aprovado'
+                ? <span className="text-emerald-200">{r.aprovadoPor || '—'}</span>
+                : r.status === 'Reprovado'
+                  ? <span className="text-rose-200">{r.reprovadoPor || '—'}</span>
+                  : <span className="text-white/30">—</span>}
+            </Td>
             <Td>
               <div className="flex gap-2">
                 <Btn small variant="secondary" onClick={() => setDetalhe(r)}>Ver mais</Btn>

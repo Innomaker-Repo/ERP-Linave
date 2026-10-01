@@ -12,7 +12,7 @@ import { useFin } from '../useFin';
 import { useFinFilters } from '../finFilters';
 import { useErp } from '../../../../context/ErpContext';
 import { uploadDocumento } from '../../../../../services/documentosService';
-import { ReciboLocacaoFormModal, ReciboLocacaoFormFields, formInicialRecibo, linhaItem, gerarEArquivarRecibo } from './ReciboLocacaoFormModal';
+import { ReciboLocacaoFormModal, formInicialRecibo, linhaItem, totalDoRecibo } from './ReciboLocacaoFormModal';
 import { temServico, temLocacao } from '../../../../utils/modalidade';
 import { toast } from 'sonner';
 
@@ -48,10 +48,9 @@ const emptyNf = () => ({
   baixado: '0', vencido: '0', vencimento: todayStr, contrato: '',
 });
 
-// Campos da tabela de "Emitir NFe" (Serviço) — extraído pra ser reaproveitado tal e qual
-// (nenhum campo diferente) dentro da modal combinada de uma OS "Locação + Serviço", que
-// mostra essa MESMA tabela lado a lado com o documento de Recibo de Locação (ver
-// ReciboLocacaoFormFields, o equivalente do lado da Locação).
+// Campos da tabela de "Emitir NFe" (Serviço) — usada pela modal única de emissão (ver
+// abrirEmissao). Cada natureza (Serviço/Locação) de uma OS mista é uma solicitação própria,
+// emitida individualmente, como qualquer outra.
 function EmissaoServicoFields({ nf, setNfField }: { nf: any; setNfField: (k: string, v: string) => void }) {
   const original = num(nf.original);
   const liquido = useMemo(
@@ -119,10 +118,43 @@ export function NfeView() {
     nfeSolicitacoes, financeiro, empresas, oss, clientes,
     emitirNfe, atualizarNfeEmitida, addRecord, updateRecord, deleteRecord,
   } = useFin();
-  const { config, saveEntity } = useErp() as any;
+  const { config } = useErp() as any;
   const { match } = useFinFilters();
   const [statusFiltro, setStatusFiltro] = useState<StatusFiltroNfe>('Todos');
-  const solicitacoes = nfeSolicitacoes.filter(match).filter((r) => statusFiltro === 'Todos' || r.status === statusFiltro);
+
+  // Recibos de locação que NUNCA passaram por uma solicitação de NFe (nasceram direto de uma
+  // OS com medição, pelo botão "Solicitar Recibo" da própria Medição, ou pelo antigo "Novo
+  // recibo a partir da OS" da aba separada que esta tela substituiu) — sem `nfeReqId`, não
+  // aparecem em `nfeSolicitacoes` (que só deriva de registros `nfeReq`). Sintetiza uma linha
+  // pra cada um, igual às demais, guardando o registro de verdade em `_recibo` pra saber editar
+  // o documento (não a solicitação, que não existe) quando o usuário clicar.
+  const todosOsRecibos = useMemo(
+    () => (Array.isArray(financeiro) ? financeiro : []).filter((r: any) => r?.tipo === 'reciboLocacao'),
+    [financeiro],
+  );
+  const recibosOrfaos = useMemo(() => todosOsRecibos
+    .filter((r: any) => !r.nfeReqId)
+    .map((r: any) => ({
+      id: r.id,
+      os: r.ordemServicoNumero || '',
+      empresa: r.empresa,
+      cliente: r.clienteNome || '',
+      valor: totalDoRecibo(r),
+      forma: '',
+      dataEmitir: r.dataEmissao || '',
+      tipoNfe: 'Nota de débito',
+      status: r.status === 'emitido' ? 'Emitida e arquivada' : 'Aguardando emissão',
+      anexos: r.anexos || [],
+      contrato: r.ordemServicoNumero || '',
+      medicaoId: r.medicaoId || '',
+      medicaoNumero: r.medicaoNumero || '',
+      _recibo: r,
+    } as NfeSolicitacao & { _recibo: any })),
+  [todosOsRecibos]);
+
+  const solicitacoes = [...nfeSolicitacoes, ...recibosOrfaos]
+    .filter(match)
+    .filter((r) => statusFiltro === 'Todos' || r.status === statusFiltro);
 
   // As 4 opções do dropdown "Tipo" do modal "Solicitar NFe e Recibo": cada uma já resolve a
   // empresa prestadora real (cadastro) e o tipoNfe — escolher uma seta os dois de uma vez,
@@ -145,6 +177,15 @@ export function NfeView() {
   // PDF; lá se lança o valor líquido/impostos e se arquiva o anexo pra criar a Conta a Receber.
   const [reciboForm, setReciboForm] = useState<any>(null);
 
+  // Preenche/edita um recibo órfão diretamente (mesmo fluxo de "Preencher/editar" das linhas
+  // com solicitação, ReciboLocacaoFormModal, só que a partir do documento já existente — não
+  // há nada pra "construir" a partir de uma solicitação, porque ela nunca existiu).
+  const abrirEdicaoRecibo = (r: any) => setReciboForm({
+    ...formInicialRecibo(todosOsRecibos, r.empresa, config),
+    ...r,
+    itens: (Array.isArray(r.itens) && r.itens.length ? r.itens : [linhaItem()]).map((i: any) => ({ ...linhaItem(), ...i })),
+  });
+
   const recibosPorNfeReqId = useMemo(() => {
     const mapa = new Map<string, any>();
     (Array.isArray(financeiro) ? financeiro : [])
@@ -153,8 +194,7 @@ export function NfeView() {
     return mapa;
   }, [financeiro]);
 
-  // Monta o documento de recibo de uma solicitação — reaproveitado pelo fluxo solo
-  // (abrirPreencherRecibo) E pela modal combinada de OS mista (abrirEmissaoMista) abaixo.
+  // Monta o documento de recibo de uma solicitação — usado por abrirPreencherRecibo abaixo.
   const construirReciboParaSolicitacao = (r: NfeSolicitacao) => {
     // % de imposto salvos como rascunho na modal "Emitir Recibo/Nota" (ver salvarRascunhoImpostos
     // abaixo) — mesclados aqui pra "Emitir, anexar e arquivar" (gerarEArquivarRecibo) já achar
@@ -316,24 +356,22 @@ export function NfeView() {
     setSf({ empresa: empresas[0] || 'Linave', os: '', cliente: '', valor: '', forma: '', dataEmitir: todayStr, tipoNfe: 'NFe Serviço', valorServico: '', valorLocacao: '' });
   };
 
-  // Monta o estado inicial da tabela "Emitir NFe" (Serviço) de uma solicitação — reaproveitado
-  // pelo fluxo solo (abrirEmissao) E pela modal combinada de OS mista (abrirEmissaoMista).
+  // Monta o estado inicial da tabela "Emitir NFe" (Serviço) de uma solicitação — usado por
+  // abrirEmissao abaixo.
   const construirNfParaSolicitacao = (sol: NfeSolicitacao) =>
     ({ ...emptyNf(), cliente: sol.cliente, original: String(sol.valor || ''), vencimento: sol.dataEmitir || todayStr, contrato: sol.contrato || sol.os });
 
   // Modal única para Serviço (NFe), Locação-Linave (Nota de débito, N/D) e Locação-Servinave
   // (Recibo, R/L) — mesmos campos/impostos dos três, só o título e o botão extra "Preencher /
-  // editar" variam por natureza (ver emitindoEhRecibo/emitindoSigla no JSX). Uma OS mista (par
-  // Serviço+Locação, ver osEhMista) abre a modal combinada em vez desta.
+  // editar" variam por natureza (ver emitindoEhRecibo/emitindoSigla no JSX). Uma OS mista tem
+  // uma solicitação própria por natureza, cada uma abrindo esta mesma modal individualmente.
   const abrirEmissao = (sol: NfeSolicitacao) => {
     setEmitindo(sol);
     setNfeAnexos([]);
     setNf(construirNfParaSolicitacao(sol));
   };
 
-  // Sobe o(s) anexo(s) da NFe e chama emitirNfe — extraído pra ser reaproveitado tal e qual
-  // pela modal combinada (confirmarEmissaoMista), que faz a mesma coisa pra parte de Serviço
-  // antes de gerar o recibo da parte de Locação.
+  // Sobe o(s) anexo(s) da NFe e chama emitirNfe.
   const emitirNfeComAnexos = async (sol: NfeSolicitacao, nfForm: typeof nf, anexos: File[]): Promise<boolean> => {
     const resultados = await Promise.allSettled(
       anexos.map((file) => uploadDocumento(file, { vinculoTipo: 'financeiro', vinculoId: sol.id, categoria: 'fin_anexo' }))
@@ -400,135 +438,30 @@ export function NfeView() {
     }
   };
 
-  // ---- Modal combinada: OS "Locação + Serviço" — duas tabelas (Serviço + documento de
-  // Recibo de Locação), um botão só arquiva as duas de uma vez. Dispara pela MODALIDADE da OS
-  // de origem, não pela existência prévia das 2 solicitações — a OS pode ter só uma das duas
-  // ainda lançada (ex.: só a de Serviço), e nesse caso a outra é sintetizada a partir dos
-  // valores já calculados na OS (valorServico/valorLocacao, ver finData.ts) e só vira
-  // solicitação de verdade (addRecord) no momento de confirmar, não ao abrir a modal.
-  const osEhMista = (numeroOs: string): boolean => {
-    const os = oss.find((o) => o.numero === numeroOs);
-    return Boolean(os) && temServico(os!.modalidade) && temLocacao(os!.modalidade);
-  };
-
-  const construirSolicitacaoVirtual = (os: (typeof oss)[number], tipoNfe: 'NFe Serviço' | 'Nota de débito'): NfeSolicitacao => ({
-    id: genFinId('SNF'),
-    os: os.numero,
-    empresa: os.empresa,
-    cliente: os.cliente,
-    valor: tipoNfe === 'NFe Serviço' ? (os.valorServico || 0) : (os.valorLocacao || 0),
-    forma: '',
-    dataEmitir: todayStr,
-    tipoNfe,
-    status: 'Aguardando emissão',
-    anexos: [],
-    contrato: os.numero,
-  });
-
-  const [emitindoMista, setEmitindoMista] = useState<{ servico: NfeSolicitacao; locacao: NfeSolicitacao } | null>(null);
-  const [nfMista, setNfMista] = useState(emptyNf());
-  const [nfeAnexosMista, setNfeAnexosMista] = useState<File[]>([]);
-  const [reciboMistaForm, setReciboMistaForm] = useState<any>(null);
-  const [anexoManualMista, setAnexoManualMista] = useState<File[]>([]);
-
-  // `r` é a linha em que o usuário clicou. Hoje uma OS mista nova sempre nasce como 1 registro
-  // só (tipoNfe 'Locação + Serviço', ver confirmarSolicitacao) — as duas "visões" (Serviço/
-  // Locação) apontam pro MESMO id, só o tipoNfe/valor variando; os bridges de arquivamento
-  // continuam com ids diferentes (emitirNfe usa timestamp, gerarEArquivarRecibo usa o próprio
-  // id) então não colidem entre si. Registro antigo de natureza única (de antes desta correção,
-  // ou vindo de outro fluxo como a Medição) cai no caminho de baixo: usa o irmão já existente
-  // se houver, ou sintetiza a partir dos valores calculados na OS.
-  const abrirEmissaoMista = (r: NfeSolicitacao) => {
-    let servicoSol: NfeSolicitacao;
-    let locacaoSol: NfeSolicitacao;
-
-    if (r.tipoNfe === 'Locação + Serviço') {
-      servicoSol = { ...r, tipoNfe: 'NFe Serviço', valor: r.valorServico || 0 };
-      locacaoSol = { ...r, tipoNfe: 'Nota de débito', valor: r.valorLocacao || 0 };
-    } else {
-      const chaveOs = r.os || r.contrato;
-      const os = oss.find((o) => o.numero === chaveOs);
-      if (!os) return;
-      const outraNatureza = r.tipoNfe === 'Nota de débito' ? 'NFe Serviço' : 'Nota de débito';
-      const outraExistente = nfeSolicitacoes.find(
-        (x) => x.status === 'Aguardando emissão' && (x.os || x.contrato) === chaveOs && x.tipoNfe === outraNatureza,
-      );
-      servicoSol = r.tipoNfe === 'NFe Serviço' ? r : (outraExistente || construirSolicitacaoVirtual(os, 'NFe Serviço'));
-      locacaoSol = r.tipoNfe === 'Nota de débito' ? r : (outraExistente || construirSolicitacaoVirtual(os, 'Nota de débito'));
-    }
-
-    setEmitindoMista({ servico: servicoSol, locacao: locacaoSol });
-    setNfMista(construirNfParaSolicitacao(servicoSol));
-    setNfeAnexosMista([]);
-    setReciboMistaForm(construirReciboParaSolicitacao(locacaoSol));
-    setAnexoManualMista([]);
-  };
-  const setNfMistaField = (k: string, v: string) => setNfMista((p) => ({ ...p, [k]: v }));
-
-  const confirmarEmissaoMista = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!emitindoMista || nfeAnexosMista.length === 0 || !reciboMistaForm) return;
-    setSalvando(true);
-    try {
-      // Sintetizada (id gerado agora, ainda não existe em `financeiro`) → precisa nascer como
-      // solicitação de verdade ANTES de emitir/gerar em cima dela, senão a linha arquivada
-      // nunca aparece na tabela (nfeSolicitacoes só deriva de registros tipo 'nfeReq' reais).
-      const { servico, locacao } = emitindoMista;
-      if (!nfeSolicitacoes.some((x) => x.id === servico.id)) {
-        await addRecord({
-          id: servico.id, tipo: 'nfeReq', status: 'Aguardando emissão', empresa: servico.empresa,
-          os: servico.os, cliente: servico.cliente, valor: servico.valor, forma: servico.forma,
-          dataEmitir: servico.dataEmitir, tipoNfe: 'NFe Serviço', anexos: [], contrato: servico.contrato,
-        });
-      }
-      if (!nfeSolicitacoes.some((x) => x.id === locacao.id)) {
-        await addRecord({
-          id: locacao.id, tipo: 'nfeReq', status: 'Aguardando emissão', empresa: locacao.empresa,
-          os: locacao.os, cliente: locacao.cliente, valor: locacao.valor, forma: locacao.forma,
-          dataEmitir: locacao.dataEmitir, tipoNfe: 'Nota de débito', anexos: [], contrato: locacao.contrato,
-        });
-      }
-      const okServico = await emitirNfeComAnexos(servico, nfMista, nfeAnexosMista);
-      if (!okServico) return;
-      const { ok: okLocacao, total } = await gerarEArquivarRecibo(reciboMistaForm, anexoManualMista, saveEntity);
-      if (!okLocacao) {
-        toast.error('NFe de Serviço arquivada, mas o Recibo de Locação não pôde ser gerado — tente novamente por esta mesma linha.');
-        setEmitindoMista(null);
-        return;
-      }
-      toast.success((total || 0) > 0
-        ? 'NFe de Serviço e Recibo de Locação arquivados — Conta a Receber gerada para os dois.'
-        : 'NFe de Serviço arquivada e Recibo de Locação salvo.');
-      setEmitindoMista(null);
-    } finally {
-      setSalvando(false);
-    }
-  };
-
   const confirmarSolicitacao = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!sf.cliente.trim()) return;
 
-    // OS "Locação + Serviço": não tem um Tipo só — vira 2 solicitações (uma NFe Serviço, uma
-    // Nota de débito), as duas na MESMA empresa da OS (não a que porventura ficou marcada no
-    // Tipo de uma seleção anterior — a OS é que manda aqui). Cada valor é opcional: se só um
-    // dos dois já é conhecido agora, solicita só esse; o outro pode ser lançado depois.
+    // OS "Locação + Serviço": não tem um Tipo só — vira 2 solicitações independentes (uma NFe
+    // Serviço, uma Nota de débito), cada uma emitida individualmente depois, como qualquer
+    // outra solicitação (mesmo padrão de natureza única). Cada valor é opcional: se só um dos
+    // dois já é conhecido agora, solicita só esse; o outro pode ser lançado depois.
     if (osMista && osSelecionadaSf) {
       const valorServico = num(sf.valorServico);
       const valorLocacao = num(sf.valorLocacao);
       if (valorServico <= 0 && valorLocacao <= 0) return;
       setSalvando(true);
       try {
-        // 1 registro só (tipoNfe 'Locação + Serviço', os 2 valores separados) — não 2 —
-        // pra não duplicar linha na tabela; abrirEmissaoMista reconhece esse tipoNfe e monta
-        // as duas tabelas (Serviço/Locação) a partir dele mesmo, cada uma com seu botão de
-        // arquivamento reaproveitado (emitirNfe/gerarEArquivarRecibo), mas 1 clique só.
-        await addRecord({
-          id: genFinId('SNF'), tipo: 'nfeReq', status: 'Aguardando emissão',
-          empresa: osSelecionadaSf.empresa, os: sf.os, cliente: sf.cliente,
-          forma: sf.forma, dataEmitir: sf.dataEmitir, anexos: [], contrato: sf.os,
-          tipoNfe: 'Locação + Serviço', valorServico, valorLocacao, valor: valorServico + valorLocacao,
-        });
+        const base = {
+          status: 'Aguardando emissão' as const, empresa: osSelecionadaSf.empresa, os: sf.os,
+          cliente: sf.cliente, forma: sf.forma, dataEmitir: sf.dataEmitir, anexos: [], contrato: sf.os,
+        };
+        if (valorServico > 0) {
+          await addRecord({ id: genFinId('SNF'), tipo: 'nfeReq', ...base, tipoNfe: 'NFe Serviço', valor: valorServico });
+        }
+        if (valorLocacao > 0) {
+          await addRecord({ id: genFinId('SNF'), tipo: 'nfeReq', ...base, tipoNfe: 'Nota de débito', valor: valorLocacao });
+        }
         fecharSolicitacao();
       } finally {
         setSalvando(false);
@@ -553,7 +486,7 @@ export function NfeView() {
   return (
     <FinCard>
       <Toolbar
-        title="Solicitações e Emissão de NFe"
+        title="Solicitações e Emissão de NFe e recibos"
         hint={'Solicite a NFe/Recibo pelo popup da Medição aprovada ou pelo botão "Solicitar NFe e Recibo". Os cálculos de impostos abrem ao Emitir NFe.'}
         actions={<Btn variant="amber" onClick={() => setSolicitando(true)}><Plus size={15} /> Solicitar NFe e Recibo</Btn>}
       />
@@ -590,15 +523,18 @@ export function NfeView() {
         {solicitacoes.length === 0 ? (
           <EmptyRow cols={12} text={'Nenhuma solicitação de NFe (use o botão "Solicitar NFe e Recibo" ou peça pela Medição)'} />
         ) : solicitacoes.map((r) => {
-          const nota = notaPorSolicitacao.get(r.id);
-          const semNumero = Boolean(nota) && !String(nota.numero || '').trim();
+          // Recibo órfão (sem solicitação de NFe — ver recibosOrfaos acima): o "Nº"/"Emissão"
+          // vêm do próprio documento, não de um bridge `tipo:'nfe'` (que só existe quando uma
+          // solicitação foi arquivada).
+          const reciboOrig = (r as any)._recibo as any | undefined;
+          const nota = reciboOrig ? null : notaPorSolicitacao.get(r.id);
+          const numeroExibido = reciboOrig ? reciboOrig.numero : nota?.numero;
+          const emissaoExibida = reciboOrig ? reciboOrig.dataEmissao : nota?.emissao;
+          const semNumero = !reciboOrig && Boolean(nota) && !String(nota?.numero || '').trim();
           // Ainda não emitida e a data planejada já passou: chama atenção em vermelho.
           const emitirAtrasado = r.status !== 'Emitida e arquivada' && isOld(r.dataEmitir);
           const sigla = siglaTipoNfe(r.tipoNfe, r.empresa);
           const linhaLabel = sigla === 'R/L' ? 'Recibo' : sigla === 'N/D' ? 'Nota' : 'NFe';
-          // OS "Locação + Serviço" (pela modalidade do negócio de origem, não pela existência
-          // das 2 solicitações): qualquer uma das duas linhas abre a modal combinada.
-          const linhaOsEhMista = osEhMista(r.os || r.contrato);
           return (
           <tr key={r.id} className={`transition-colors hover:bg-white/5 ${semNumero ? 'bg-amber-500/[0.06]' : ''}`}>
             <Td className="font-black text-white">{r.id}</Td>
@@ -611,45 +547,53 @@ export function NfeView() {
             <Td className={emitirAtrasado ? 'font-bold text-rose-300!' : ''}>{br(r.dataEmitir)}</Td>
             <Td>{sigla}</Td>
             <Td>
-              {!nota
+              {!numeroExibido
                 ? <span className="text-white/30">—</span>
                 : semNumero
                   ? <Pill tone="wait">Sem número</Pill>
-                  : <span className="font-bold text-white">{sigla} {nota.numero}</span>}
+                  : <span className="font-bold text-white">{sigla} {numeroExibido}</span>}
             </Td>
-            <Td>{nota?.emissao ? br(nota.emissao) : <span className="text-white/30">—</span>}</Td>
+            <Td>{emissaoExibida ? br(emissaoExibida) : <span className="text-white/30">—</span>}</Td>
             <Td><StatusTag status={r.status} /></Td>
             <Td className="whitespace-normal"><AnexosCell anexos={r.anexos} /></Td>
             <Td>
               <div className="flex items-center gap-2">
-                {/* NFe/Recibo/Nota usam a MESMA modal de emissão (abrirEmissao) — só o título e
-                    o botão extra "Preencher/editar" variam por natureza (ver emitindoEhRecibo no
-                    JSX da modal). OS mista: qualquer uma das duas linhas abre a modal combinada. */}
-                {r.status === 'Aguardando emissão'
-                  ? (
-                    <Btn small variant="amber" onClick={() => (linhaOsEhMista ? abrirEmissaoMista(r) : abrirEmissao(r))}>
-                      {linhaOsEhMista ? 'Emitir NFe e Recibo' : `Emitir ${linhaLabel}`}
-                    </Btn>
-                  )
-                  : <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-300"><FileCheck2 size={13} /> Arquivada</span>}
-                {/* Nota/recibo já arquivado: permite preencher/corrigir o número depois. */}
+                {/* NFe/Recibo/Nota COM solicitação usam a modal de emissão (abrirEmissao); recibo
+                    órfão (sem solicitação) edita o documento direto, igual à antiga aba "Recibo
+                    de Locação" — "Preencher/editar" fica disponível mesmo já emitido, pra poder
+                    corrigir o documento depois (mesmo comportamento de lá). */}
+                {reciboOrig ? (
+                  <Btn small variant={r.status === 'Aguardando emissão' ? 'amber' : 'secondary'} onClick={() => abrirEdicaoRecibo(reciboOrig)}>
+                    <Pencil size={12} /> Preencher / editar
+                  </Btn>
+                ) : r.status === 'Aguardando emissão' ? (
+                  <Btn small variant="amber" onClick={() => abrirEmissao(r)}>
+                    Emitir {linhaLabel}
+                  </Btn>
+                ) : null}
+                {r.status !== 'Aguardando emissão' && (
+                  <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-300"><FileCheck2 size={13} /> Arquivada</span>
+                )}
+                {/* Nota/recibo já arquivado (com solicitação): permite preencher/corrigir o número depois. */}
                 {nota && (
                   <Btn small variant={semNumero ? 'amber' : 'secondary'} onClick={() => abrirEdicaoNota(nota)}>
                     <Hash size={12} /> {semNumero ? 'Informar nº' : 'Editar nº'}
                   </Btn>
                 )}
-                {/* Ainda não emitido: dá para ajustar o prazo planejado. */}
-                {r.status === 'Aguardando emissão' && (
+                {/* Ainda não emitido (com solicitação): dá para ajustar o prazo planejado. */}
+                {!reciboOrig && r.status === 'Aguardando emissão' && (
                   <Btn small variant="secondary" onClick={() => abrirEdicaoData(r)}>
                     <CalendarClock size={12} /> Alterar data
                   </Btn>
                 )}
                 <DeleteBtn
-                  titulo="Excluir solicitação de NFe"
+                  titulo={reciboOrig ? 'Excluir recibo de locação' : 'Excluir solicitação de NFe'}
                   descricao={
-                    r.status === 'Emitida e arquivada'
-                      ? `${r.id} — ${r.cliente} — ${money(num(r.valor))}\n\nA nota já foi emitida. Excluir remove apenas a SOLICITAÇÃO: a NFe emitida e a conta a receber gerada continuam existindo e precisam ser excluídas nas telas delas, se for o caso.`
-                      : `${r.id} — ${r.cliente} — ${money(num(r.valor))}\n\nA solicitação sairá da fila de emissão.`
+                    reciboOrig
+                      ? `${reciboOrig.numero} — ${r.cliente} — ${money(num(r.valor))}\n\nO documento do recibo é excluído — inclusive se já emitido. A Conta a Receber gerada por ele (se houver) continua existindo e precisa ser excluída na tela dela, se for o caso.`
+                      : r.status === 'Emitida e arquivada'
+                        ? `${r.id} — ${r.cliente} — ${money(num(r.valor))}\n\nA nota já foi emitida. Excluir remove apenas a SOLICITAÇÃO: a NFe emitida e a conta a receber gerada continuam existindo e precisam ser excluídas nas telas delas, se for o caso.`
+                        : `${r.id} — ${r.cliente} — ${money(num(r.valor))}\n\nA solicitação sairá da fila de emissão.`
                   }
                   onConfirm={() => deleteRecord(r.id)}
                 />
@@ -717,47 +661,6 @@ export function NfeView() {
           </FinModal>
         );
       })()}
-
-      {/* MODAL: Emitir NFe e Recibo (OS "Locação + Serviço") — as duas tabelas (Serviço +
-          documento de Recibo de Locação) juntas, um botão só arquiva as duas de uma vez. */}
-      {emitindoMista && (
-        <FinModal
-          wide
-          title={`Emitir NFe e Recibo — OS mista (${emitindoMista.servico.os})`}
-          hint="Preencha as duas tabelas abaixo. Ao arquivar, cria a Conta a Receber da NFe de Serviço e do Recibo de Locação."
-          onClose={() => setEmitindoMista(null)}
-        >
-          <form className="grid grid-cols-12 gap-4" onSubmit={confirmarEmissaoMista}>
-            <div className="col-span-12">
-              <p className="mb-3 text-sm font-black uppercase tracking-widest text-amber-300">Tabela 1 — Serviço</p>
-              <div className="grid grid-cols-12 gap-4">
-                <EmissaoServicoFields nf={nfMista} setNfField={setNfMistaField} />
-                <Field label="NFe emitida (anexo obrigatório)" span={12}>
-                  <FileInput label="Anexar PDF / XML / imagem da NFe emitida" value={nfeAnexosMista} onChange={setNfeAnexosMista} />
-                </Field>
-              </div>
-            </div>
-
-            <div className="col-span-12 border-t border-white/10 pt-6">
-              <p className="mb-3 text-sm font-black uppercase tracking-widest text-cyan-300">Tabela 2 — Locação</p>
-              <ReciboLocacaoFormFields
-                form={reciboMistaForm}
-                setForm={setReciboMistaForm}
-                config={config}
-                anexoManual={anexoManualMista}
-                setAnexoManual={setAnexoManualMista}
-              />
-            </div>
-
-            <div className="col-span-12 flex justify-end gap-2 border-t border-white/10 pt-4">
-              <Btn type="button" variant="ghost" onClick={() => setEmitindoMista(null)}>Cancelar</Btn>
-              <Btn type="submit" variant="green" disabled={salvando || nfeAnexosMista.length === 0}>
-                <FileCheck2 size={15} /> {salvando ? 'Arquivando...' : 'Emitir e arquivar (Serviço + Locação)'}
-              </Btn>
-            </div>
-          </form>
-        </FinModal>
-      )}
 
       {/* MODAL: informar / corrigir o número da NFe já arquivada */}
       {editandoNota && (

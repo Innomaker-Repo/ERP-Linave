@@ -20,7 +20,7 @@ export const FORMAS_PAGAMENTO = [
   'Dinheiro',
   'Boleto bancário',
   'Transferência bancária',
-  'Faturado',
+  'Parcelado',
   'Débito automático',
 ];
 
@@ -122,9 +122,12 @@ export interface Banco {
   pix: string;
 }
 
-// Rótulo do banco nos menus suspensos: "Itaú - Linave". Usado em todo lugar que lista
-// bancos pra escolher (filtros, pagamento, recebimento) — o valor selecionado continua
-// sendo só o nome do banco, isso é só o texto exibido na opção.
+// Rótulo do banco nos menus suspensos: "Itaú - Linave". Usado em todo lugar que lista bancos
+// pra escolher (filtros, pagamento, recebimento) — e é esse mesmo texto (não só `nome`) que
+// fica gravado em `banco`/`bancoRecebimento` das contas (ver bancoSelectProps/BancoSelect).
+// O nome sozinho não identifica o banco: o mesmo nome pode estar cadastrado pra mais de uma
+// empresa (ex.: "Itaú" na Linave e na Servinave), e guardar só ele misturava as duas na hora
+// de reabrir o valor salvo num <select> (sempre caía no primeiro banco daquele nome).
 export const bancoLabel = (b: { nome?: string; empresa?: string }): string =>
   b?.empresa ? `${b.nome} - ${b.empresa}` : String(b?.nome || '');
 
@@ -307,7 +310,7 @@ export const FIN_TITLES: Record<string, [string, string]> = {
   solicitacao: ['Solicitação de Pagamento', 'Sem cotação, sem banco; vínculo por OS ou departamento.'],
   aprovacoes: ['Aprovações', 'Solicitações que podem virar Contas a Pagar.'],
   pagar: ['Contas a Pagar', 'Adicionar, editar, parcelar, pagar, registrar juros e comprovante.'],
-  nfe: ['Solicitações e Emissão de NFe', 'Medição aprovada cria solicitação; emissão abre cálculos e cria recebível.'],
+  nfe: ['Solicitações e Emissão de NFe e recibos', 'Medição aprovada cria solicitação; emissão abre cálculos e cria recebível.'],
   receber: ['Contas a Receber', 'Recebíveis por NFe ou lançamento manual.'],
   previsao: ['Previsão de Receita', 'Baseada nos serviços/OS abertas.'],
   bancos: ['Bancos', 'Cadastro e filtro financeiro por banco.'],
@@ -730,9 +733,10 @@ export const upsertContaReceberPorMedicao = (financeiro: any[], aporte: AporteRe
       // Fica no recebível para a tela e o CSV não precisarem voltar na NFe de origem.
       impostos: somarImpostos(fontes.map((f) => f.impostos)),
       vencimentoRecebimento: fontes.reduce((v, f) => _maxData(v, f.vencimento), ''),
-      // Data de emissão da NFe que originou o recebível (fonte 'NFe' especificamente —
-      // o recibo de locação não tem emissão de nota própria neste fluxo).
-      emissaoNfe: fontes.find((f) => f.origem === 'NFe')?.emissao || base?.emissaoNfe || '',
+      // Data de emissão do documento de origem — NFe ou Recibo, o que tiver (prioriza a
+      // ordem das fontes: quando há as duas, NFe vem primeiro). Recibo de locação também
+      // tem sua própria data de emissão (ver gerarEArquivarRecibo), não só a NFe.
+      emissaoNfe: fontes.find((f) => f.emissao)?.emissao || base?.emissaoNfe || '',
       // Recebível já existia → preserva o recebimento (manual ou anterior). Novo → semeia do `baixado`.
       recebido: base ? (base.recebido ?? false) : (baixado > 0 && baixado >= valorLiquido),
       dataRecebimento: base?.dataRecebimento ?? '',

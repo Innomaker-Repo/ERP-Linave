@@ -37,6 +37,38 @@ function AnexosDaSolicitacao({ anexos }: { anexos?: string[] }) {
   );
 }
 
+// Comprovante(s) de pagamento da Conta a Pagar gerada pela solicitação (anexados em Contas a
+// Pagar → "Pagar", ver ContasPagarView.tsx) — mesmo padrão visual do AnexosDaSolicitacao acima,
+// só que em tom esmeralda pra não se confundir com o documento original da solicitação.
+function ComprovantesDaConta({ comprovantes }: { comprovantes?: string[] }) {
+  const lista = Array.isArray(comprovantes) ? comprovantes : [];
+  if (!lista.length) return null;
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+      <span className="text-[10px] font-black uppercase tracking-widest text-white/30">Comprovante(s):</span>
+      {lista.map((a, i) => {
+        const ehUrl = /^(https?:|\/media\/)/.test(String(a));
+        const nome = ehUrl ? decodeURIComponent(String(a).split('/').pop() || 'comprovante') : String(a);
+        return ehUrl ? (
+          <a
+            key={i}
+            href={a}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-bold text-emerald-200 hover:bg-emerald-500/20"
+          >
+            📄 {nome}
+          </a>
+        ) : (
+          <span key={i} className="rounded-full border border-white/10 bg-white/5 px-2.5 py-0.5 text-[11px] font-bold text-white/60">
+            📄 {nome}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 // Parcelas de uma solicitação Faturado: cada uma já nasceu com seu próprio boleto anexado
 // (tudo enviado de uma vez, na criação — ver SolicitacaoView.tsx), então aqui é só consulta.
 function ParcelasFaturado({ parcelas }: { parcelas: FaturadoParcela[] }) {
@@ -344,13 +376,14 @@ export function MeusPagamentosView() {
                     </p>
                     <p className="mt-1 text-emerald-300/80 text-xs">Aprovado por: <span className="font-semibold">{r.aprovadoPor || '—'}</span></p>
                     <AnexosDaSolicitacao anexos={r.anexos} />
+                    <ComprovantesDaConta comprovantes={r.contaPagar?.comprovantes} />
                   </div>
                   <div className="text-right">
                     <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Valor</p>
                     <p className="text-lg font-black text-emerald-300">{money(num(r.valor))}</p>
                   </div>
                 </div>
-                {r.forma === 'Faturado' && Array.isArray(r.faturado?.parcelas) && r.faturado.parcelas.length > 0 && (
+                {r.forma === 'Parcelado' && Array.isArray(r.faturado?.parcelas) && r.faturado.parcelas.length > 0 && (
                   <div className="px-6 pb-4">
                     <ParcelasFaturado parcelas={r.faturado.parcelas} />
                   </div>

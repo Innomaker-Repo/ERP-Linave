@@ -229,7 +229,7 @@ export function useNotificacoes() {
     // de propósito: ao contrário do resto do arquivo, aqui a notificação deve MESMO reaparecer
     // a cada dia que passa dentro da janela (é um lembrete de prazo, não um evento único).
     const parcelasFaturadoAVencer: Notificacao[] = listaFinanceiro
-      .filter((r: any) => r?.tipo === 'contaPagar' && r.forma === 'Faturado' && r.type === 'child' && r.status !== CP_STATUS.pago)
+      .filter((r: any) => r?.tipo === 'contaPagar' && r.forma === 'Parcelado' && r.type === 'child' && r.status !== CP_STATUS.pago)
       .map((r: any) => ({ r, dias: diasAte(r.vencimento) }))
       .filter(({ dias }) => dias >= 0 && dias <= DIAS_AVISO_VENCIMENTO_FATURADO)
       .filter(({ r }) => {

@@ -47,11 +47,21 @@ function DocumentosDoRecebivel({ anexos }: { anexos?: string[] }) {
 }
 
 // Dropdown de banco (hoisted: componente estável para não remontar os inputs do modal).
+// Opera por `id` (sempre único) por baixo — dois bancos de empresas diferentes podem ter o
+// mesmo nome (ex.: "Itaú" na Linave e na Servinave). `value`/`onChange` guardam o RÓTULO
+// completo (bancoLabel, "Itaú - Linave"), não só o nome — guardar só o nome misturava as
+// duas contas (reabrir sempre caía no primeiro banco daquele nome).
 function BancoSelect({ value, onChange, bancos }: { value: string; onChange: (v: string) => void; bancos: Array<{ id: string; nome: string; empresa?: string }> }) {
   return (
-    <Select value={value} onChange={(e) => onChange(e.target.value)}>
+    <Select
+      value={bancos.find((b) => bancoLabel(b) === value)?.id || ''}
+      onChange={(e) => {
+        const b = bancos.find((x) => x.id === e.target.value);
+        onChange(b ? bancoLabel(b) : '');
+      }}
+    >
       <option value="">{bancos.length ? 'Selecione o banco...' : 'Nenhum banco cadastrado'}</option>
-      {bancos.map((b) => <option key={b.id} value={b.nome}>{bancoLabel(b)}</option>)}
+      {bancos.map((b) => <option key={b.id} value={b.id}>{bancoLabel(b)}</option>)}
     </Select>
   );
 }
@@ -130,7 +140,7 @@ export function ContasReceberView() {
   // conferir a retenção sem abrir nota por nota.
   const exportarExcel = () => {
     const head = [
-      'Origem', 'Empresa', 'Cliente', 'Referência', 'Emissão NFe', 'Valor original',
+      'Origem', 'Empresa', 'Cliente', 'Referência', 'Emissão', 'Valor original',
       ...IMPOSTOS_NFE.map((k) => `${IMPOSTO_LABEL[k]} (R$)`),
       'Total impostos', 'Valor líquido', 'Vencimento', 'Recebido?', 'Data receb.', 'Valor recebido', 'Banco', 'Status',
     ];
@@ -176,7 +186,7 @@ export function ContasReceberView() {
         automaticamente quando a NFe é emitida e arquivada — já com o valor original, os impostos
         retidos e o líquido corretos. Para gerar um novo recebível, solicite a nota fiscal em{' '}
         <button onClick={() => navegar(FIN_SECTIONS.nfe)} className="font-black text-amber-300 underline underline-offset-2 hover:text-amber-200">
-          Solicitações e Emissão de NFe
+          Solicitações e Emissão de NFe e recibos
         </button>.
       </InfoBar>
 
@@ -205,7 +215,7 @@ export function ContasReceberView() {
       <DataTable
         minWidth={1700}
         head={<>
-          <Th>Origem</Th><Th>Empresa</Th><Th>Cliente</Th><Th>Referência</Th><Th>Emissão NFe</Th><Th>Original</Th><Th>Impostos</Th><Th>Líquido</Th>
+          <Th>Origem</Th><Th>Empresa</Th><Th>Cliente</Th><Th>Referência</Th><Th>Emissão</Th><Th>Original</Th><Th>Impostos</Th><Th>Líquido</Th>
           <Th>Vencimento</Th><Th>Recebido?</Th><Th>Data receb.</Th><Th>Valor recebido</Th><Th>Banco</Th><Th>Status</Th><Th>Ação</Th>
         </>}
       >
@@ -262,7 +272,7 @@ export function ContasReceberView() {
               <Field label="Cliente" span={8}><Input value={String(detalhe.cliente || '')} disabled /></Field>
               <Field label="Origem" span={4}><Input value={String(detalhe.origem || 'Manual')} disabled /></Field>
               <Field label="Referência" span={8}><Input value={String(detalhe.referencia || '—')} disabled /></Field>
-              <Field label="Emissão NFe" span={4}><Input value={detalhe.emissaoNfe ? br(detalhe.emissaoNfe) : '—'} disabled /></Field>
+              <Field label="Emissão" span={4}><Input value={detalhe.emissaoNfe ? br(detalhe.emissaoNfe) : '—'} disabled /></Field>
               <Field label="Vencimento" span={4}><Input value={br(detalhe.vencimentoRecebimento)} disabled /></Field>
               <Field label="Recebido?" span={4}><Input value={detalhe.recebido ? 'Sim' : 'Não'} disabled /></Field>
               <Field label="Banco" span={4}><Input value={String(detalhe.bancoRecebimento || '—')} disabled /></Field>

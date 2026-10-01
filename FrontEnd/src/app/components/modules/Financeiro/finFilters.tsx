@@ -222,9 +222,21 @@ export function FinFiltersBar({ view = '' }: { view?: string }) {
         {/* Banco */}
         <div className="min-w-[168px] flex-1">
           <span className={grpLabel}><Landmark size={12} /> Banco</span>
-          <Select value={filters.banco} onChange={(e) => setFilters((f) => ({ ...f, banco: e.target.value }))}>
+          {/* O <select> opera por `id` (sempre único) por baixo — dois bancos de empresas
+              diferentes podem ter o mesmo nome. `filters.banco` guarda o RÓTULO completo
+              (bancoLabel, "Itaú - Linave"), igual ao que fica gravado em `rec.banco`/
+              `rec.bancoRecebimento` — é o que `match()` acima compara; só a tradução id↔rótulo
+              fica aqui. */}
+          <Select
+            value={bancos.find((b) => bancoLabel(b) === filters.banco)?.id || 'Todos'}
+            onChange={(e) => {
+              const id = e.target.value;
+              const b = bancos.find((x) => x.id === id);
+              setFilters((f) => ({ ...f, banco: b ? bancoLabel(b) : 'Todos' }));
+            }}
+          >
             <option value="Todos">Todos os bancos</option>
-            {bancos.map((b) => <option key={b.id} value={b.nome}>{bancoLabel(b)}</option>)}
+            {bancos.map((b) => <option key={b.id} value={b.id}>{bancoLabel(b)}</option>)}
           </Select>
         </div>
 

@@ -89,35 +89,16 @@ export function useFin() {
   // verdade. Negócio antigo finalizado que ainda precise de NFe deve ser solicitado pelo
   // botão "Solicitar NFe" (cria um registro real, com id e histórico).
   const nfeSolicitacoes: NfeSolicitacao[] = useMemo(() => {
-    // Nota(s) emitida(s) por solicitação de origem — normalmente 1, mas uma OS "Locação +
-    // Serviço" (1 registro nfeReq só, tipoNfe 'Locação + Serviço') arquiva com 2 bridges
-    // (uma 'NFe Serviço' via emitirNfe, outra 'Nota de débito' via gerarEArquivarRecibo),
-    // as duas com o MESMO sourceId — por isso agrupa numa lista, não sobrescreve num Map.
-    const bridgesPorSource = new Map<string, FinRecord[]>();
+    // Nota emitida por solicitação de origem (o registro 'nfe' aponta de volta pelo sourceId).
+    const bridgePorSource = new Map<string, FinRecord>();
     financeiro
       .filter((r) => r.tipo === 'nfe' && r.sourceId)
-      .forEach((r) => {
-        const chave = String(r.sourceId);
-        const atual = bridgesPorSource.get(chave) || [];
-        atual.push(r);
-        bridgesPorSource.set(chave, atual);
-      });
-
-    // OS mista arquiva só quando as 2 naturezas já têm bridge (Serviço E Locação) — só uma
-    // das duas ainda deixa a linha em "Aguardando emissão" (o botão continua disponível pra
-    // completar a que falta). Natureza única continua bastando 1 bridge, como sempre foi.
-    const estaArquivada = (r: FinRecord, bridges: FinRecord[]): boolean => {
-      if (bridges.length === 0) return false;
-      if (r.tipoNfe === 'Locação + Serviço') {
-        return bridges.some((b) => b.tipoNfe === 'NFe Serviço') && bridges.some((b) => b.tipoNfe === 'Nota de débito');
-      }
-      return true;
-    };
+      .forEach((r) => bridgePorSource.set(String(r.sourceId), r));
 
     return financeiro
       .filter((r) => r.tipo === 'nfeReq')
       .map((r) => {
-        const bridges = bridgesPorSource.get(String(r.id)) || [];
+        const bridge = bridgePorSource.get(String(r.id));
         return {
           id: r.id,
           os: r.os || '',
@@ -130,11 +111,10 @@ export function useFin() {
           forma: r.forma || '',
           dataEmitir: r.dataEmitir || todayStr,
           tipoNfe: r.tipoNfe || 'NFe Serviço',
-          status: estaArquivada(r, bridges) ? 'Emitida e arquivada' : (r.status || 'Aguardando emissão'),
-          // Anexos da(s) NOTA(s) emitida(s) — depois que arquiva é esse arquivo (o PDF/XML da
-          // nota, ou os 2 quando são 2 bridges) que interessa na linha, além do documento
-          // original da solicitação (medição, se houver).
-          anexos: [...(r.anexos || []), ...bridges.flatMap((b) => (Array.isArray(b.anexos) ? b.anexos : []))],
+          status: bridge ? 'Emitida e arquivada' : (r.status || 'Aguardando emissão'),
+          // Anexo da NOTA emitida — depois que arquiva é esse arquivo (o PDF/XML da nota) que
+          // interessa na linha, além do documento original da solicitação (medição, se houver).
+          anexos: [...(r.anexos || []), ...(Array.isArray(bridge?.anexos) ? bridge!.anexos : [])],
           contrato: r.contrato || r.os || '',
           medicaoId: r.medicaoId || '',
           medicaoNumero: r.medicaoNumero || '',
@@ -219,7 +199,7 @@ export function useFin() {
       // parcelarConta já usa (type/parentId/parcela/totalParcelas). Diferente de uma conta
       // parcelada comum, aqui TODAS as parcelas já chegam com boleto (anexado na criação da
       // solicitação, ver SolicitacaoView.tsx), então todas nascem de uma vez, não uma por mês.
-      if (sol.forma === 'Faturado' && Array.isArray(sol.faturado?.parcelas) && sol.faturado.parcelas.length > 0) {
+      if (sol.forma === 'Parcelado' && Array.isArray(sol.faturado?.parcelas) && sol.faturado.parcelas.length > 0) {
         const parcelas: FaturadoParcela[] = sol.faturado.parcelas;
         const maeId = `CP-${Date.now().toString(36).toUpperCase()}`;
         const totalFatura = parcelas.reduce((soma, p) => soma + num(p.valor), 0);

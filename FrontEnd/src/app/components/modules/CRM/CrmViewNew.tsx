@@ -125,7 +125,12 @@ interface ImportarOsData {
   propostaVersao: string;
   propostaArquivo: DocumentoNegocio | null;
   escopoServicos: ImportarEscopoServico[];
-  precoItens: ImportarPrecoItem[];
+  // Duas tabelas totalmente independentes (cada uma sua própria lista, não um array só
+  // filtrado por categoria) — negócio "Locação + Serviço" mostra as duas; modalidade única
+  // mostra só a que corresponde (ver renderTabelaPrecoImportarOs). No save, as duas se
+  // achatam num `precoItens` só com `categoria`, formato que Proposta/Orçamento já esperam.
+  precoItensServico: ImportarPrecoItem[];
+  precoItensLocacao: ImportarPrecoItem[];
   precoTextoLivre: string;
   materiais: ImportarMaterial[];
   terceirizados: ImportarTerceirizado[];
@@ -254,6 +259,11 @@ export function CrmViewNew({ searchQuery }: CrmViewProps) {
   const [documentoMediacaoForm, setDocumentoMediacaoForm] = useState<DocumentoMediacaoForm | null>(null);
   const [showDocumentoPreviewModal, setShowDocumentoPreviewModal] = useState(false);
   const [documentoVisualizado, setDocumentoVisualizado] = useState<any>(null);
+  // Filtro por Nº de Serviço (OS) — mesmo padrão de PropostaView.tsx/MedicaoView.tsx: lista os
+  // números de OS já existentes e, quando um é escolhido, só mostra negócios vinculados a ela.
+  // Negócio que ainda não chegou a gerar OS (Planejamento/Negociação) não aparece pra nenhum
+  // valor específico — só com o filtro limpo ("Todos").
+  const [filtroOs, setFiltroOs] = useState('');
 
     const empresasPrestadoras = useMemo(() => {
     const empresasCadastradas = Array.isArray(config?.empresasPrestadoras)
@@ -359,7 +369,8 @@ const initialServico: Servico = {
     propostaVersao: '',
     propostaArquivo: null,
     escopoServicos: [],
-    precoItens: [],
+    precoItensServico: [],
+    precoItensLocacao: [],
     precoTextoLivre: '',
     materiais: [{ id: `material-${Date.now()}`, descricao: '', unidade: '', quantidade: '', pesoFator: '', custoUnit: '', valorTotal: '0.00', origemTerceiros: 'Nao', observacao: '' }],
     terceirizados: [{ id: `terceirizado-${Date.now()}`, descricao: '', unidade: '', quantidade: '', pesoFator: '1', custoUnit: '', valorTotal: '0.00', observacao: '' }],
@@ -1407,10 +1418,15 @@ const initialServico: Servico = {
   };
 
   // --- B - Preço (mesmo cálculo de PropostaView.tsx: quantidade × valorUnitario × dias) ---
+  // Duas listas independentes (precoItensServico/precoItensLocacao, não uma só filtrada) —
+  // toda função abaixo recebe qual das duas mexer.
   const totalItemPrecoImportarOs = (it: Partial<ImportarPrecoItem>) =>
     (Number(it.quantidade) || 0) * (Number(it.valorUnitario) || 0) * (Number(it.dias) || 0);
 
-  const adicionarItemPrecoImportarOs = () => {
+  const chavePrecoImportarOs = (categoria: 'servico' | 'locacao') =>
+    categoria === 'locacao' ? 'precoItensLocacao' as const : 'precoItensServico' as const;
+
+  const adicionarItemPrecoImportarOs = (categoria: 'servico' | 'locacao' = 'servico') => {
     const novo: ImportarPrecoItem = {
       id: `preco-importar-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       descricao: '',
@@ -1420,22 +1436,25 @@ const initialServico: Servico = {
       dias: 1,
       total: 0,
     };
-    setFormData(prev => ({ ...prev, importarOs: { ...prev.importarOs, precoItens: [...prev.importarOs.precoItens, novo] } }));
+    const chave = chavePrecoImportarOs(categoria);
+    setFormData(prev => ({ ...prev, importarOs: { ...prev.importarOs, [chave]: [...prev.importarOs[chave], novo] } }));
   };
 
-  const removerItemPrecoImportarOs = (id: string) => {
+  const removerItemPrecoImportarOs = (categoria: 'servico' | 'locacao', id: string) => {
+    const chave = chavePrecoImportarOs(categoria);
     setFormData(prev => ({
       ...prev,
-      importarOs: { ...prev.importarOs, precoItens: prev.importarOs.precoItens.filter(it => it.id !== id) },
+      importarOs: { ...prev.importarOs, [chave]: prev.importarOs[chave].filter(it => it.id !== id) },
     }));
   };
 
-  const atualizarItemPrecoImportarOs = (id: string, campo: 'descricao' | 'quantidade' | 'unidade' | 'valorUnitario' | 'dias', valor: string) => {
+  const atualizarItemPrecoImportarOs = (categoria: 'servico' | 'locacao', id: string, campo: 'descricao' | 'quantidade' | 'unidade' | 'valorUnitario' | 'dias', valor: string) => {
+    const chave = chavePrecoImportarOs(categoria);
     setFormData(prev => ({
       ...prev,
       importarOs: {
         ...prev.importarOs,
-        precoItens: prev.importarOs.precoItens.map(it => {
+        [chave]: prev.importarOs[chave].map(it => {
           if (it.id !== id) return it;
           const atualizado = { ...it } as ImportarPrecoItem;
           if (campo === 'descricao' || campo === 'unidade') {
@@ -2020,7 +2039,12 @@ const initialServico: Servico = {
                   materiais: formData.importarOs.materiais,
                   terceirizados: formData.importarOs.terceirizados,
                   atividades: [],
-                  itensAlocacao: [],
+                  // Os mesmos itens já preenchidos na aba "Alocação" (equipamento/unidade/
+                  // quantidade — sem preço, que não é coletado ali) — iam com `[]` fixo aqui, o
+                  // que sobrescrevia (replace-all, ver buildOrcamentoPayload) o `itens_alocacao`
+                  // que acabara de ser salvo na criação do negócio (linha itensAlocacaoPayload
+                  // acima), apagando a alocação da OS gerada por "Deseja ir direto para OS?".
+                  itensAlocacao: formData.itensAlocacao,
                   observacoes: '',
                 },
                 null,
@@ -2034,7 +2058,13 @@ const initialServico: Servico = {
                 versao: formData.importarOs.orcamentoVersao,
               });
 
-              const totalPropostaImportada = formData.importarOs.precoItens.reduce((s, it) => s + (Number(it.total) || 0), 0);
+              // Achata as duas tabelas independentes num array só com `categoria` — formato que
+              // Proposta/Orçamento (e quem consome depois, ex. CustoPorOsView.tsx) já esperam.
+              const precoItensImportados = [
+                ...formData.importarOs.precoItensServico.map(it => ({ ...it, categoria: 'servico' as const })),
+                ...formData.importarOs.precoItensLocacao.map(it => ({ ...it, categoria: 'locacao' as const })),
+              ];
+              const totalPropostaImportada = precoItensImportados.reduce((s, it) => s + (Number(it.total) || 0), 0);
               await criarProposta({
                 cliente: clienteIdNum,
                 negocio: negocioIdNum,
@@ -2053,7 +2083,7 @@ const initialServico: Servico = {
                 efetivoPrevisto: '',
                 encerramento: '',
                 escopoBasicoServicos: formData.importarOs.escopoServicos,
-                precoItens: formData.importarOs.precoItens,
+                precoItens: precoItensImportados,
                 precoColunasOcultas: [],
               });
 
@@ -2511,17 +2541,31 @@ const initialServico: Servico = {
   };
 
 
+  // Números de OS/Serviço já existentes, pro dropdown do filtro — só os que têm valor.
+  const osDisponiveis = useMemo(
+    () => Array.from(new Set((Array.isArray(os) ? os : []).map((o: any) => o.ordemServicoNumero).filter(Boolean))),
+    [os],
+  );
+  const passaFiltroOs = (obra: any) => {
+    if (!filtroOs) return true;
+    return (Array.isArray(os) ? os : []).some((o: any) =>
+      String(o.ordemServicoNumero) === String(filtroOs) &&
+      (String(o.obraId) === String(obra.id) || String(o.negocioBackendId) === String(obra.negocioBackendId ?? obra.backendId)),
+    );
+  };
+
 const obrasOrdenadas = useMemo(() => {
     return negociosBackend.filter((obra: any) => {
       if (obra.categoria === 'Arquivado') return false;
       if (obra.usoInterno) return false; // negócios de uso interno não aparecem no CRM
+      if (!passaFiltroOs(obra)) return false;
       if (!searchQuery) return true;
 
       const termo = searchQuery.toLowerCase();
       const cliente = listaClientesCRM.find(c => String(c.id) === String(obra.clienteId));
-      
+
       return (
-        obra.nome?.toLowerCase().includes(termo) || 
+        obra.nome?.toLowerCase().includes(termo) ||
         obra.id?.toLowerCase().includes(termo) ||
         cliente?.razaoSocial?.toLowerCase().includes(termo)
       );
@@ -2544,15 +2588,76 @@ const obrasOrdenadas = useMemo(() => {
         categoria: categoriaTratada
       };
     });
-}, [negociosBackend, searchQuery, listaClientesCRM]);
+}, [negociosBackend, searchQuery, listaClientesCRM, filtroOs, os]);
 
   const inputClass = "w-full bg-[#0b1220] border border-white/10 p-3 rounded-lg text-white text-sm outline-none focus:border-amber-500 transition-all placeholder:text-white/20";
   const labelClass = "text-[9px] font-black text-white/40 uppercase tracking-widest ml-1 mb-1.5 block";
   const cellInputClass = "w-full bg-[#101f3d] border border-white/10 p-2 rounded text-white text-xs outline-none focus:border-amber-500";
 
-  const totalPrecoImportarOs = formData.importarOs.precoItens.reduce((s, it) => s + (Number(it.total) || 0), 0);
+  const totalPrecoServicoImportarOs = formData.importarOs.precoItensServico.reduce((s, it) => s + (Number(it.total) || 0), 0);
+  const totalPrecoLocacaoImportarOs = formData.importarOs.precoItensLocacao.reduce((s, it) => s + (Number(it.total) || 0), 0);
+  const totalPrecoImportarOs = totalPrecoServicoImportarOs + totalPrecoLocacaoImportarOs;
   const totalMateriaisImportarOs = formData.importarOs.materiais.reduce((s, it) => s + (parseFloat(it.valorTotal) || 0), 0);
   const totalTerceirizadosImportarOs = formData.importarOs.terceirizados.reduce((s, it) => s + (parseFloat(it.valorTotal) || 0), 0);
+
+  // Negócio "Locação + Serviço" indo direto para OS: a tabela B some em duas, cada uma no
+  // seu próprio card (Locação primeiro, depois Serviço — ver JSX) e cada uma com sua PRÓPRIA
+  // lista (precoItensServico/precoItensLocacao — completamente segmentadas, não um array só
+  // filtrado por categoria). Modalidade única mostra só a tabela da natureza correspondente.
+  const osMistaImportar = temServico(formData.modalidade) && temLocacao(formData.modalidade);
+
+  const renderTabelaPrecoImportarOs = (categoria: 'servico' | 'locacao', titulo: string) => {
+    const itens = formData.importarOs[chavePrecoImportarOs(categoria)];
+    const subtotal = itens.reduce((s, it) => s + (Number(it.total) || 0), 0);
+    return (
+      <div>
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-black text-white uppercase">{titulo}</h3>
+          <button type="button" onClick={() => adicionarItemPrecoImportarOs(categoria)} className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-[#0b1220] rounded-lg font-black text-xs uppercase transition">
+            <Plus size={14} className="inline mr-1" /> Adicionar Item
+          </button>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-white/5 border-b border-white/10">
+                <th className="px-2 py-2 text-left text-white font-black w-10">Item</th>
+                <th className="px-2 py-2 text-left text-white font-black">Descrição</th>
+                <th className="px-2 py-2 text-left text-white font-black w-20">Quant.</th>
+                <th className="px-2 py-2 text-left text-white font-black w-20">Unid.</th>
+                <th className="px-2 py-2 text-left text-white font-black w-28">Vl. Unit. R$</th>
+                <th className="px-2 py-2 text-left text-white font-black w-16">Dias</th>
+                <th className="px-2 py-2 text-left text-white font-black w-32">Valor total R$</th>
+                <th className="px-2 py-2 w-8" />
+              </tr>
+            </thead>
+            <tbody>
+              {itens.length === 0 && (
+                <tr><td colSpan={8} className="px-2 py-3 text-white/40">Nenhum item. Clique em "Adicionar Item".</td></tr>
+              )}
+              {itens.map((it, idx) => (
+                <tr key={it.id} className="border-b border-white/5">
+                  <td className="px-2 py-2 text-white/60 text-center">{idx + 1}</td>
+                  <td className="px-2 py-2"><input className={cellInputClass} value={it.descricao} onChange={e => atualizarItemPrecoImportarOs(categoria, it.id, 'descricao', e.target.value)} placeholder="Descrição" /></td>
+                  <td className="px-2 py-2"><input type="number" min="0" className={cellInputClass} value={String(it.quantidade)} onChange={e => atualizarItemPrecoImportarOs(categoria, it.id, 'quantidade', e.target.value)} /></td>
+                  <td className="px-2 py-2"><input className={cellInputClass} value={it.unidade} onChange={e => atualizarItemPrecoImportarOs(categoria, it.id, 'unidade', e.target.value)} placeholder="serv." /></td>
+                  <td className="px-2 py-2"><input className={cellInputClass} value={String(it.valorUnitario)} onChange={e => atualizarItemPrecoImportarOs(categoria, it.id, 'valorUnitario', e.target.value)} placeholder="0,00" /></td>
+                  <td className="px-2 py-2"><input type="number" min="0" className={cellInputClass} value={String(it.dias)} onChange={e => atualizarItemPrecoImportarOs(categoria, it.id, 'dias', e.target.value)} /></td>
+                  <td className="px-2 py-2 text-white font-black whitespace-nowrap">R$ {(Number(it.total) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  <td className="px-2 py-2 text-center"><button type="button" onClick={() => removerItemPrecoImportarOs(categoria, it.id)} className="text-red-300 p-1"><X size={13} /></button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="text-right mt-3 text-xs text-white/70">
+          Subtotal {titulo}: <span className="text-white font-black">R$ {subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="p-12 space-y-8 animate-in fade-in duration-500">
@@ -2563,15 +2668,30 @@ const obrasOrdenadas = useMemo(() => {
           <h1 className="text-3xl font-black text-white">CRM - NEGÓCIOS</h1>
           <p className="text-white/50 text-xs mt-1">Acompanhe os negócios em cada fase do funil comercial</p>
         </div>
-        <button 
-          onClick={() => {
-            setNovoNegocioTab('dados');
-            setShowFormNovoNegocio(true);
-          }}
-          className="px-6 py-3 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-400 hover:to-blue-500 text-white rounded-lg font-black uppercase text-xs tracking-widest transition-all shadow-lg shadow-blue-900/30"
-        >
-          <Plus size={18} className="inline mr-2" /> Novo Negócio
-        </button>
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2">
+            <span className="text-[10px] font-black uppercase tracking-widest text-white/40">Nº de Serviço</span>
+            <select
+              value={filtroOs}
+              onChange={(e) => setFiltroOs(e.target.value)}
+              className="w-48 appearance-none rounded-lg border border-white/10 bg-[#0b1220] px-3 py-2.5 text-sm text-white outline-none focus:border-amber-500 [&>option]:bg-[#101f3d] [&>option]:text-white"
+            >
+              <option value="">Todos</option>
+              {osDisponiveis.map((numero: string) => (
+                <option key={numero} value={numero}>{numero}</option>
+              ))}
+            </select>
+          </label>
+          <button
+            onClick={() => {
+              setNovoNegocioTab('dados');
+              setShowFormNovoNegocio(true);
+            }}
+            className="px-6 py-3 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-400 hover:to-blue-500 text-white rounded-lg font-black uppercase text-xs tracking-widest transition-all shadow-lg shadow-blue-900/30"
+          >
+            <Plus size={18} className="inline mr-2" /> Novo Negócio
+          </button>
+        </div>
       </div>
 
       {/* KANBAN BOARD */}
@@ -3351,69 +3471,58 @@ const obrasOrdenadas = useMemo(() => {
                   </div>
                 </div>
 
-                {/* B - PREÇO */}
-                <div className="bg-[#081225] border border-[#253550] rounded-2xl p-6">
-                  <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-lg font-black text-white uppercase">B - Preço</h3>
-                    <button type="button" onClick={adicionarItemPrecoImportarOs} className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-[#0b1220] rounded-lg font-black text-xs uppercase transition">
-                      <Plus size={14} className="inline mr-1" /> Adicionar Item
-                    </button>
-                  </div>
+                {/* B - PREÇO — negócio "Locação + Serviço": um card PRÓPRIO por tabela (mesmo
+                    padrão de Escopo/Consumíveis/Terceirizados nesta tela), Locação primeiro,
+                    Serviço depois, e o total geral só no final dos dois. Demais modalidades:
+                    um card só, tabela única, como sempre foi. */}
+                {osMistaImportar ? (
+                  <>
+                    <div className="bg-[#081225] border border-[#253550] rounded-2xl p-6">
+                      {renderTabelaPrecoImportarOs('locacao', 'B.1 - Preço — Alocação')}
+                    </div>
+                    <div className="bg-[#081225] border border-[#253550] rounded-2xl p-6">
+                      {renderTabelaPrecoImportarOs('servico', 'B.2 - Preço — Serviço')}
+                    </div>
+                    <div className="bg-[#081225] border border-[#253550] rounded-2xl p-6">
+                      <div className="flex justify-end">
+                        <div className="text-right">
+                          <p className="text-[10px] font-black uppercase tracking-widest text-white/50">Total da Proposta (Alocação + Serviço)</p>
+                          <p className="text-emerald-400 font-black text-xl">R$ {totalPrecoImportarOs.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                        </div>
+                      </div>
+                      <div className="mt-4">
+                        <label className={labelClass}>Texto livre do preço</label>
+                        <textarea
+                          className={`${inputClass} min-h-[70px]`}
+                          value={formData.importarOs.precoTextoLivre}
+                          onChange={e => setFormData(prev => ({ ...prev, importarOs: { ...prev.importarOs, precoTextoLivre: e.target.value } }))}
+                          placeholder="Observações, condições, detalhes comerciais ou qualquer texto complementar do preço"
+                        />
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="bg-[#081225] border border-[#253550] rounded-2xl p-6">
+                    {renderTabelaPrecoImportarOs(temLocacao(formData.modalidade) ? 'locacao' : 'servico', 'B - Preço')}
 
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="bg-white/5 border-b border-white/10">
-                          <th className="px-2 py-2 text-left text-white font-black w-10">Item</th>
-                          <th className="px-2 py-2 text-left text-white font-black">Descrição</th>
-                          <th className="px-2 py-2 text-left text-white font-black w-20">Quant.</th>
-                          <th className="px-2 py-2 text-left text-white font-black w-20">Unid.</th>
-                          <th className="px-2 py-2 text-left text-white font-black w-28">Vl. Unit. R$</th>
-                          <th className="px-2 py-2 text-left text-white font-black w-16">Dias</th>
-                          <th className="px-2 py-2 text-left text-white font-black w-32">Valor total R$</th>
-                          <th className="px-2 py-2 w-8" />
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {formData.importarOs.precoItens.length === 0 && (
-                          <tr><td colSpan={8} className="px-2 py-3 text-white/40">Nenhum item. Clique em "Adicionar Item".</td></tr>
-                        )}
-                        {formData.importarOs.precoItens.map((it, idx) => (
-                          <tr key={it.id} className="border-b border-white/5">
-                            <td className="px-2 py-2 text-white/60 text-center">{idx + 1}</td>
-                            <td className="px-2 py-2"><input className={cellInputClass} value={it.descricao} onChange={e => atualizarItemPrecoImportarOs(it.id, 'descricao', e.target.value)} placeholder="Descrição" /></td>
-                            <td className="px-2 py-2"><input type="number" min="0" className={cellInputClass} value={String(it.quantidade)} onChange={e => atualizarItemPrecoImportarOs(it.id, 'quantidade', e.target.value)} /></td>
-                            <td className="px-2 py-2"><input className={cellInputClass} value={it.unidade} onChange={e => atualizarItemPrecoImportarOs(it.id, 'unidade', e.target.value)} placeholder="serv." /></td>
-                            <td className="px-2 py-2"><input className={cellInputClass} value={String(it.valorUnitario)} onChange={e => atualizarItemPrecoImportarOs(it.id, 'valorUnitario', e.target.value)} placeholder="0,00" /></td>
-                            <td className="px-2 py-2"><input type="number" min="0" className={cellInputClass} value={String(it.dias)} onChange={e => atualizarItemPrecoImportarOs(it.id, 'dias', e.target.value)} /></td>
-                            <td className="px-2 py-2 text-white font-black whitespace-nowrap">R$ {(Number(it.total) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                            <td className="px-2 py-2 text-center"><button type="button" onClick={() => removerItemPrecoImportarOs(it.id)} className="text-red-300 p-1"><X size={13} /></button></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                    <div className="flex justify-end mt-2 pt-3 border-t border-white/10">
+                      <div className="text-right">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-white/50">Total da Proposta</p>
+                        <p className="text-emerald-400 font-black text-xl">R$ {totalPrecoImportarOs.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                      </div>
+                    </div>
 
-                  <div className="text-right mt-3 text-xs text-white/70">
-                    Subtotal Serviços: <span className="text-white font-black">R$ {totalPrecoImportarOs.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                  </div>
-                  <div className="flex justify-end mt-2 pt-3 border-t border-white/10">
-                    <div className="text-right">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-white/50">Total da Proposta</p>
-                      <p className="text-emerald-400 font-black text-xl">R$ {totalPrecoImportarOs.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                    <div className="mt-4">
+                      <label className={labelClass}>Texto livre do preço</label>
+                      <textarea
+                        className={`${inputClass} min-h-[70px]`}
+                        value={formData.importarOs.precoTextoLivre}
+                        onChange={e => setFormData(prev => ({ ...prev, importarOs: { ...prev.importarOs, precoTextoLivre: e.target.value } }))}
+                        placeholder="Observações, condições, detalhes comerciais ou qualquer texto complementar do preço"
+                      />
                     </div>
                   </div>
-
-                  <div className="mt-4">
-                    <label className={labelClass}>Texto livre do preço</label>
-                    <textarea
-                      className={`${inputClass} min-h-[70px]`}
-                      value={formData.importarOs.precoTextoLivre}
-                      onChange={e => setFormData(prev => ({ ...prev, importarOs: { ...prev.importarOs, precoTextoLivre: e.target.value } }))}
-                      placeholder="Observações, condições, detalhes comerciais ou qualquer texto complementar do preço"
-                    />
-                  </div>
-                </div>
+                )}
 
                 {/* C - CONSUMÍVEIS E MATERIAIS */}
                 <div className="bg-[#101f3d] rounded-2xl border border-white/5 p-6">
