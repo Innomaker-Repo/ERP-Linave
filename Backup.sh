@@ -56,7 +56,7 @@ docker exec erp_backend tar -C /app/media -czf - . > "${TEMP_DIR}/media.tar.gz"
 tar -tzf "${TEMP_DIR}/media.tar.gz" > /dev/null
 
 # Publish only a complete set; random suffix prevents same-second collisions.
-FINAL_DIR="${BACKUP_DIR}/erp_backup_$(date -u +%Y-%m-%d_%H%M%S_%N)_${TEMP_DIR##*.}"
+FINAL_DIR="${BACKUP_DIR}/erp_backup_$(TZ='Etc/GMT+3' date +%Y-%m-%d_%H%M%S_%N)_${TEMP_DIR##*.}"
 mv -- "$TEMP_DIR" "$FINAL_DIR"
 TEMP_DIR=""
 
