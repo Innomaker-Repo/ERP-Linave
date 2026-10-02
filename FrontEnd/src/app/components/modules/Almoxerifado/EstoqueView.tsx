@@ -2909,6 +2909,10 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                 <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
                   {currentRegisterTable.columns.map((column) => {
                     if (column.key === 'actions') return null;
+                    // "Serviço (OS)" some do CADASTRO de item novo (vincular a uma OS é o
+                    // que a aba "Alocados" já faz, com o fluxo próprio de Alocar) — continua
+                    // disponível ao editar um item já existente, se precisar corrigir depois.
+                    if (column.key === 'serviceOS' && !editingRowTarget) return null;
                     return (
                       <div key={column.key} className={column.key === 'status' ? 'md:col-span-1' : ''}>
                         <label className="ml-1 mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-white/50">

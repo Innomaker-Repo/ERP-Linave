@@ -21,6 +21,7 @@ function AnexosDaSolicitacao({ anexos }: { anexos?: string[] }) {
           <a
             key={i}
             href={a}
+            download={nome}
             target="_blank"
             rel="noopener noreferrer"
             className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-[11px] font-bold text-amber-200 hover:bg-amber-500/20"
@@ -53,6 +54,7 @@ function ComprovantesDaConta({ comprovantes }: { comprovantes?: string[] }) {
           <a
             key={i}
             href={a}
+            download={nome}
             target="_blank"
             rel="noopener noreferrer"
             className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-bold text-emerald-200 hover:bg-emerald-500/20"

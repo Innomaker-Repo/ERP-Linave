@@ -496,6 +496,8 @@ const criarInitialOsData = (): OsFormData => ({
 
 export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: OSViewProps) {
   const { obras, clientes, os, saveEntity, userSession } = useErp() as any;
+  // Aprovar OS é ato de gerência — mesmo critério usado em AprovacoesView.tsx (Financeiro).
+  const isGerencia = ['ADMIN', 'GERENTE'].includes(String(userSession?.role || '').toUpperCase());
   const [showFormNovaOS, setShowFormNovaOS] = useState(false);
   const [showDetalhesOS, setShowDetalhesOS] = useState(false);
   const [selectedOS, setSelectedOS] = useState<OsFormData | null>(null);
@@ -1534,6 +1536,17 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
                       <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase border ${osExistente.statusOs === 'rascunho' ? 'bg-yellow-500/20 border-yellow-500/40 text-yellow-300' : osExistente.statusAprovacao === 'aprovada' ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' : 'bg-amber-500/20 border-amber-500/40 text-amber-300'}`}>
                         {osExistente.statusOs === 'rascunho' ? 'Rascunho' : osExistente.statusAprovacao === 'aprovada' ? 'Aprovada' : 'Pendente'}
                       </span>
+                      {/* Só admin/gerente aprova, e só enquanto ainda não está aprovada — mesma
+                          ação (handleAprovarOS) do botão "Aprovar OS" dentro de "Ver OS", só que
+                          direto na lista, sem precisar abrir os detalhes primeiro. */}
+                      {isGerencia && osExistente.statusAprovacao !== 'aprovada' && (
+                        <button
+                          onClick={() => handleAprovarOS(osExistente.id)}
+                          className="px-4 py-2 bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 rounded-lg font-black text-xs hover:bg-emerald-500/30 transition flex items-center gap-2"
+                        >
+                          <Check size={14} /> Aprovar
+                        </button>
+                      )}
                       <button
                         onClick={() => handleEditarOS(osExistente)}
                         className="px-4 py-2 bg-amber-500/20 border border-amber-500/40 text-amber-300 rounded-lg font-black text-xs hover:bg-amber-500/30 transition flex items-center gap-2"
