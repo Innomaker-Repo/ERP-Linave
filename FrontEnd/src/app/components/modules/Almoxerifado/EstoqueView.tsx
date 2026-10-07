@@ -1496,6 +1496,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
 
     const missingRequiredFields = table.columns
       .filter((column) => column.key !== 'actions' && column.key !== 'item' && column.key !== 'peso')
+      .filter((column) => column.key !== 'serviceOS' || wasEditing)
       .filter((column) => !cleanValue(registerValues[column.key]));
 
     if (missingRequiredFields.length > 0) {
@@ -2847,7 +2848,9 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                 </div>
 
                 <p className="mb-5 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-amber-100">
-                  Todos os campos são obrigatórios. Ao selecionar a OS, o local é preenchido automaticamente.
+                  {editingRowTarget
+                    ? 'Todos os campos são obrigatórios. Ao selecionar a OS, o local é preenchido automaticamente.'
+                    : 'Todos os campos são obrigatórios.'}
                 </p>
 
                 {currentRegisterTable.name === 'Alugados - Gases' && (

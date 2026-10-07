@@ -155,16 +155,23 @@ export interface Solicitacao {
 // Identifica se o registro (solicitação, requisição etc.) foi criado pelo usuário logado.
 // Confere primeiro por CPF/e-mail (estável mesmo se o nome digitado mudar); cai para o nome
 // em texto livre só quando não há esses campos (registros antigos, sem vínculo de usuário).
+//
+// normalize('NFC') + colapso de espaços evita que o mesmo nome/e-mail deixe de bater só por
+// causa de acentuação Unicode em forma decomposta (comum em texto colado de outras fontes) ou
+// espaços duplicados; normCpf ignora pontuação (123.456.789-00 vs 12345678900) pelo mesmo motivo
+// — sem isso, uma edição inofensiva do cadastro do usuário (recorrigir um acento, reformatar o
+// CPF) faz as solicitações antigas dele sumirem de "Meus Pagamentos" sem nenhum aviso.
 export const matchesSolicitante = (
   record: { solicitante?: string; solicitanteCpf?: string; solicitanteEmail?: string },
   session: { cpf?: string; email?: string; nome?: string; username?: string } | null | undefined,
 ): boolean => {
   if (!session) return false;
-  const norm = (v?: string) => String(v || '').trim().toLowerCase();
-  const cpf = norm(session.cpf);
+  const norm = (v?: string) => String(v || '').trim().toLowerCase().normalize('NFC').replace(/\s+/g, ' ');
+  const normCpf = (v?: string) => String(v || '').replace(/\D/g, '');
+  const cpf = normCpf(session.cpf);
   const email = norm(session.email);
   const nome = norm(session.nome || session.username);
-  if (cpf && norm(record.solicitanteCpf) === cpf) return true;
+  if (cpf && normCpf(record.solicitanteCpf) === cpf) return true;
   if (email && norm(record.solicitanteEmail) === email) return true;
   const s = norm(record.solicitante);
   if (!s) return false;

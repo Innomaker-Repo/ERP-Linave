@@ -697,12 +697,36 @@ def _sem_permissao_financeira(user):
     return not any(permissoes.get(chave) is True for chave in FINANCEIRO)
 
 
-def _financeiro_restringir_para_leitor_sem_acesso(dados):
-    """Some com `solicitacao` (nome do solicitante, fornecedor, valor, motivo de reprovação)
-    e reduz `contaPagar` aos campos públicos — pra quem lê o Financeiro só por causa de outro
-    módulo (Compras, Almoxarifado, Dashboard), sem ter nenhuma permissão de Financeiro em si.
+def _financeiro_restringir_para_leitor_sem_acesso(dados, user=None):
+    """Some com `solicitacao` de outras pessoas (nome do solicitante, fornecedor, valor, motivo
+    de reprovação) e reduz `contaPagar` aos campos públicos — pra quem lê o Financeiro só por
+    causa de outro módulo (Compras, Almoxarifado, Dashboard), sem ter nenhuma permissão de
+    Financeiro em si.
+
+    "Solicitação de Pagamento"/"Meus Pagamentos" são abertos a todo usuário autenticado (sem
+    exigir nenhuma permissão de Financeiro — não há nem checkbox pra isso em Usuários & Acessos),
+    então as próprias solicitações de quem está lendo continuam aqui mesmo sem permissão alguma;
+    só as de outras pessoas são removidas. Sem essa exceção, o autor nunca veria o que ele mesmo
+    criou em "Meus Pagamentos".
     """
-    restantes = [r for r in dados if r.get('tipo') != 'solicitacao']
+    cpf_usuario = str(getattr(user, 'cpf', '') or '').strip()
+    email_usuario = str(getattr(user, 'email', '') or '').strip().lower()
+
+    def _e_do_proprio_usuario(registro):
+        if not cpf_usuario and not email_usuario:
+            return False
+        cpf_registro = str(registro.get('solicitanteCpf') or '').strip()
+        email_registro = str(registro.get('solicitanteEmail') or '').strip().lower()
+        if cpf_usuario and cpf_registro and cpf_registro == cpf_usuario:
+            return True
+        if email_usuario and email_registro and email_registro == email_usuario:
+            return True
+        return False
+
+    restantes = [
+        r for r in dados
+        if r.get('tipo') != 'solicitacao' or _e_do_proprio_usuario(r)
+    ]
     for r in restantes:
         if r.get('tipo') == 'contaPagar':
             for campo in list(r.keys()):
@@ -726,7 +750,7 @@ def financeiro_data(request):
     if request.method == 'GET':
         dados = read_all()
         if not escreve_em_tudo(request.user) and _sem_permissao_financeira(request.user):
-            dados = _financeiro_restringir_para_leitor_sem_acesso(dados)
+            dados = _financeiro_restringir_para_leitor_sem_acesso(dados, request.user)
         return Response(dados, status=status.HTTP_200_OK)
 
     payload = request.data
