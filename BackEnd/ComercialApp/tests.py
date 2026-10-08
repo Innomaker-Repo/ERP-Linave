@@ -1334,6 +1334,68 @@ class FinanceiroReplaceAllGuardTests(APITestCase):
         self.assertEqual(SolicitacaoPagamento.objects.count(), 1)
 
 
+class FinanceiroLeituraRestritaTests(APITestCase):
+    """GET /comercial/financeiro/ — usuário sem NENHUMA permissão de Financeiro não pode ler
+    solicitação de pagamento (nome, fornecedor, valor, motivo) nem os campos sensíveis de
+    conta a pagar, mesmo que o backend libere GET pra qualquer autenticado (outras telas,
+    tipo Almoxarifado/Compras, precisam ler outros tipos do Financeiro pra funcionar)."""
+
+    def _logar(self, cpf, senha='Admin@teste1'):
+        resp = obter_token(self.client, cpf, senha)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {resp.data["access"]}')
+
+    def _semear_financeiro(self):
+        # Usa o replace-all direto (como admin) pra semear uma solicitação e uma conta a
+        # pagar com dado sensível, sem passar pelo endpoint append-only.
+        self._logar('adm-leitura', 'Admin@teste1')
+        payload = [
+            {'id': 'SP-SIGILO', 'tipo': 'solicitacao', 'solicitante': 'Fulano Sigiloso',
+             'fornecedor': 'Fornecedor Confidencial', 'valor': 9999.99, 'documento': 'NF-SECRETA'},
+            {'id': 'CP-SIGILO', 'tipo': 'contaPagar', 'status': 'Aberto', 'documento': 'NF-002',
+             'anexos': ['/media/x.pdf'], 'fornecedor': 'Fornecedor Confidencial', 'valor': 500},
+        ]
+        resp = self.client.post(f'{BASE}/financeiro/', payload, format='json')
+        self.assertEqual(resp.status_code, 200)
+
+    def setUp(self):
+        criar_admin('adm-leitura', 'Admin@teste1')
+        self._semear_financeiro()
+
+    def test_usuario_sem_permissao_nao_ve_solicitacao(self):
+        criar_usuario('user-sem-perm', permissoes={})
+        self._logar('user-sem-perm')
+        resp = self.client.get(f'{BASE}/financeiro/')
+        self.assertEqual(resp.status_code, 200)
+        tipos = {r.get('tipo') for r in resp.data}
+        self.assertNotIn('solicitacao', tipos)
+
+    def test_usuario_sem_permissao_ve_contapagar_so_com_campos_publicos(self):
+        criar_usuario('user-sem-perm2', permissoes={})
+        self._logar('user-sem-perm2')
+        resp = self.client.get(f'{BASE}/financeiro/')
+        conta = next(r for r in resp.data if r.get('id') == 'CP-SIGILO')
+        self.assertEqual(set(conta.keys()), {'id', 'tipo', 'status', 'documento', 'anexos'})
+        self.assertNotIn('fornecedor', conta)
+        self.assertNotIn('valor', conta)
+
+    def test_usuario_com_permissao_financeira_ve_tudo(self):
+        criar_usuario('user-com-perm', permissoes={'finSolicitacao': True})
+        self._logar('user-com-perm')
+        resp = self.client.get(f'{BASE}/financeiro/')
+        sol = next((r for r in resp.data if r.get('id') == 'SP-SIGILO'), None)
+        self.assertIsNotNone(sol)
+        self.assertEqual(sol.get('solicitante'), 'Fulano Sigiloso')
+        conta = next(r for r in resp.data if r.get('id') == 'CP-SIGILO')
+        self.assertEqual(conta.get('fornecedor'), 'Fornecedor Confidencial')
+
+    def test_gerente_ve_tudo(self):
+        criar_gerente('ger-leitura')
+        self._logar('ger-leitura')
+        resp = self.client.get(f'{BASE}/financeiro/')
+        tipos = {r.get('tipo') for r in resp.data}
+        self.assertIn('solicitacao', tipos)
+
+
 class FinanceiroSolicitacaoCriarTests(APITestCase):
     """POST /comercial/financeiro/solicitacao/ — append-only, aberto a todo autenticado.
 

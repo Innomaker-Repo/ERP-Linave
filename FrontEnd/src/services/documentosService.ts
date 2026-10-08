@@ -16,11 +16,16 @@ import api from './api';
  * abre/baixa direto, sem CORS.
  */
 
-export type DocumentoVinculo = 'negocio' | 'os' | 'financeiro';
+export type DocumentoVinculo = 'negocio' | 'os' | 'financeiro' | 'almoxarifado';
 export type DocumentoCategoria =
   | 'negocio'
   | 'cliente_assinado'
   | 'os_assinatura'
+  | 'orcamento_importado'
+  | 'proposta_importada'
+  | 'almoxarifado_imagem'
+  | 'almoxarifado_manutencao_entrada'
+  | 'almoxarifado_manutencao_saida'
   | 'fin_anexo'
   | 'fin_comprovante'
   | 'fin_documento'

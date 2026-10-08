@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Plus, Pencil, X, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { FinCard, Toolbar, Field, Input, Select, Btn, DataTable, Th, Td, CompanyTag, EmptyRow, DeleteBtn } from '../finUi';
-import { genFinId } from '../finData';
+import { genFinId, bancoLabel } from '../finData';
 import { useFin } from '../useFin';
 
 const formVazio = (empresaPadrao: string) => ({ nome: '', empresa: empresaPadrao, tipo: 'Conta corrente', pix: '' });
@@ -15,18 +15,21 @@ export function BancosView() {
   const [form, setForm] = useState(formVazio(empresas[0] || 'Linave'));
   const [editandoId, setEditandoId] = useState<string | null>(null);
   const [nomeOriginal, setNomeOriginal] = useState('');
+  const [empresaOriginal, setEmpresaOriginal] = useState('');
   const [salvando, setSalvando] = useState(false);
   const set = (k: string, v: string) => setForm((p) => ({ ...p, [k]: v }));
 
   const abrirEdicao = (b: any) => {
     setEditandoId(b.id);
     setNomeOriginal(b.nome || '');
+    setEmpresaOriginal(b.empresa || '');
     setForm({ nome: b.nome || '', empresa: b.empresa || empresas[0] || 'Linave', tipo: b.tipoConta || 'Conta corrente', pix: b.pix && b.pix !== '-' ? b.pix : '' });
   };
 
   const cancelarEdicao = () => {
     setEditandoId(null);
     setNomeOriginal('');
+    setEmpresaOriginal('');
     setForm(formVazio(empresas[0] || 'Linave'));
   };
 
@@ -36,12 +39,13 @@ export function BancosView() {
     setSalvando(true);
     try {
       if (editandoId) {
-        const novoNome = form.nome.trim();
-        const nomeAntigo = nomeOriginal.trim();
-        // Nome do banco é copiado como texto em Contas a Pagar (`banco`) e Contas a
-        // Receber (`bancoRecebimento`) no momento do pagamento/recebimento — não é uma
-        // referência viva, então precisa ser reescrito aqui para acompanhar o rename.
-        const propagar = !!nomeAntigo && !!novoNome && nomeAntigo !== novoNome;
+        // O rótulo completo (bancoLabel, "Itaú - Linave") é o que fica copiado como texto em
+        // Contas a Pagar (`banco`) e Contas a Receber (`bancoRecebimento`) no momento do
+        // pagamento/recebimento — não é uma referência viva, então precisa ser reescrito aqui
+        // pra acompanhar o rename (de nome OU de empresa — os dois mudam o rótulo).
+        const rotuloAntigo = bancoLabel({ nome: nomeOriginal.trim(), empresa: empresaOriginal });
+        const rotuloNovo = bancoLabel({ nome: form.nome.trim(), empresa: form.empresa });
+        const propagar = !!rotuloAntigo && !!rotuloNovo && rotuloAntigo !== rotuloNovo;
         await updateRecords((r) => {
           if (r.id === editandoId) {
             return { ...r, nome: form.nome, empresa: form.empresa, tipoConta: form.tipo, pix: form.pix || '-' };
@@ -49,13 +53,14 @@ export function BancosView() {
           if (!propagar) return r;
           return {
             ...r,
-            ...(r.banco === nomeAntigo ? { banco: novoNome } : {}),
-            ...(r.bancoRecebimento === nomeAntigo ? { bancoRecebimento: novoNome } : {}),
+            ...(r.banco === rotuloAntigo ? { banco: rotuloNovo } : {}),
+            ...(r.bancoRecebimento === rotuloAntigo ? { bancoRecebimento: rotuloNovo } : {}),
           };
         });
         if (propagar) toast.info('Banco renomeado — contas a pagar e a receber já criadas foram atualizadas.');
         setEditandoId(null);
         setNomeOriginal('');
+        setEmpresaOriginal('');
         setForm(formVazio(empresas[0] || 'Linave'));
       } else {
         await addRecord({

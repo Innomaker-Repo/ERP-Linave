@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useErp, getPrefixoEmpresa, gerarIdProjetoDeNegocio } from '../../../context/ErpContext';
+import { formatNumeroOsDisplay } from '../../../../services/ordensServico';
 import { Plus, X, Check, Clock, Zap, Download, Eye, FileText, Pencil } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -13,6 +14,7 @@ import { getLogoUrlForEmpresa } from '../../../utils/company';
 import { formatDateBR } from '../../../utils/formatDate';
 import { boldOS } from '../../../utils/osHighlight';
 import { ObservacoesNegocio } from '../../ObservacoesNegocio';
+import { handleDownloadOSPDF as gerarOSPdf } from '../CRM/handleDownloadOSPDF';
 
 // ==========================================
 // FUNÇÕES AUXILIARES GERAIS
@@ -174,6 +176,7 @@ interface OsResumoConsolidado {
   orcamento: {
     numeroOrcamento: string;
     versao: string;
+    status: string;
     dataCriacao: string;
     solicitante: string;
     responsavelComercial: string;
@@ -213,6 +216,15 @@ interface OsResumoConsolidado {
       unidade: string;
       quantidade: string;
       pesoFator: string;
+      observacao: string;
+    }>;
+    // Itens de Alocação/Locação de equipamento do orçamento (negócio "Locação" ou "Locação +
+    // Serviço" — ver utils/modalidade.ts). Sem valores monetários, mesmo padrão de
+    // materiais/terceirizados acima — a OS é o documento de produção, não de preço.
+    itensAlocacao: Array<{
+      equipamento: string;
+      unidade: string;
+      quantidade: string;
       observacao: string;
     }>;
     observacoes: string;
@@ -303,6 +315,12 @@ interface OsFormData {
 
 interface OSViewProps {
   searchQuery: string;
+  // Id do negócio (obraId) que esta tela deve abrir sozinha assim que ele aparecer em
+  // `obrasEmAndamento` — vem do fluxo "Deseja ir direto para OS?" do Novo Negócio
+  // (App.tsx repassa via ComercialModule). `onAutoAbrirConsumido` avisa o chamador pra
+  // limpar o pendente, senão a OS reabriria sozinha a cada vez que esta tela remontasse.
+  autoAbrirObraId?: string | null;
+  onAutoAbrirConsumido?: () => void;
 }
 
 const A_SER_INCLUIDO_DEFAULT: OsFormData['aSerIncluido'] = {
@@ -437,6 +455,7 @@ const criarInitialOsData = (): OsFormData => ({
     orcamento: {
       numeroOrcamento: '',
       versao: '',
+      status: '',
       dataCriacao: '',
       solicitante: '',
       responsavelComercial: '',
@@ -447,6 +466,7 @@ const criarInitialOsData = (): OsFormData => ({
       atividades: [],
       materiais: [],
       terceirizados: [],
+      itensAlocacao: [],
       observacoes: ''
     },
     proposta: {
@@ -471,8 +491,10 @@ const criarInitialOsData = (): OsFormData => ({
   }
 });
 
-export function OsView({ searchQuery }: OSViewProps) {
-  const { obras, clientes, os, saveEntity } = useErp();
+export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: OSViewProps) {
+  const { obras, clientes, os, saveEntity, userSession } = useErp() as any;
+  // Aprovar OS é ato de gerência — mesmo critério usado em AprovacoesView.tsx (Financeiro).
+  const isGerencia = ['ADMIN', 'GERENTE'].includes(String(userSession?.role || '').toUpperCase());
   const [showFormNovaOS, setShowFormNovaOS] = useState(false);
   const [showDetalhesOS, setShowDetalhesOS] = useState(false);
   const [selectedOS, setSelectedOS] = useState<OsFormData | null>(null);
@@ -597,6 +619,14 @@ export function OsView({ searchQuery }: OSViewProps) {
           pesoFator: String(item.peso || item.pesoFator || ''),
           observacao: item.observacao || ''
         })),
+      itensAlocacao: (Array.isArray(data.itensAlocacao) ? data.itensAlocacao : [])
+        .filter((item: any) => item.equipamento)
+        .map((item: any) => ({
+          equipamento: item.equipamento || '',
+          unidade: item.unidade || '',
+          quantidade: String(item.quantidade || ''),
+          observacao: item.observacao || ''
+        })),
       observacoes: data.observacoes || ''
     };
   };
@@ -670,7 +700,11 @@ export function OsView({ searchQuery }: OSViewProps) {
       .map((escopo: any) => `${escopo.titulo}${escopo.descricaoServico ? ` - ${escopo.descricaoServico}` : ''}`)
       .join('\n');
 
-    const itensLocacao = (Array.isArray(obra?.itensAlocacao) ? obra.itensAlocacao : [])
+    // Os itens de alocação/locação vivem dentro do orçamento (orcamento.data.itensAlocacao),
+    // não soltos na obra — `obra?.itensAlocacao` nunca existiu de verdade (ficava sempre
+    // undefined, então este trecho da descrição nunca aparecia). `resumoOrcamento` já é o
+    // resultado de extrairResumoOrcamentoSemValores(obra), que lê do lugar certo.
+    const itensLocacao = (Array.isArray(resumoOrcamento?.itensAlocacao) ? resumoOrcamento.itensAlocacao : [])
       .filter((it: any) => it.equipamento)
       .map((it: any) => `• ${it.equipamento} — ${it.quantidade ?? ''} ${it.unidade || ''}`.trim())
       .join('\n');
@@ -772,6 +806,22 @@ export function OsView({ searchQuery }: OSViewProps) {
       resumoConsolidado
     }));
   };
+
+  // Abre sozinha a criação de OS pro negócio recém-importado via "Deseja ir direto para
+  // OS?" (Novo Negócio), assim que ele aparecer em `obrasEmAndamento` — mesmo par de
+  // chamadas que o botão "Criar OS" por linha já faz (handleObraChange + abrir modal).
+  useEffect(() => {
+    if (!autoAbrirObraId) return;
+    const obraAlvo = obrasEmAndamento.find((item: any) => item.id === autoAbrirObraId);
+    if (!obraAlvo) return;
+    setEditandoOsBackendId(null);
+    setDiasPrevistos(0);
+    setFormData(criarInitialOsData());
+    handleObraChange(obraAlvo.id);
+    setShowFormNovaOS(true);
+    onAutoAbrirConsumido?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoAbrirObraId, obrasEmAndamento.length]);
 
   // Abre o formulário "fazer OS" já preenchido com uma OS existente, em modo edição.
   const handleEditarOS = (osItem: any) => {
@@ -921,7 +971,14 @@ export function OsView({ searchQuery }: OSViewProps) {
         if (editando) {
           await atualizarOrdemServico(editandoOsBackendId as number, payload);
         } else {
-          await criarOrdemServico(payload);
+          // Identidade de quem criou a OS — só gravada na criação (nunca no PATCH de
+          // edição), pro sino de notificações saber quem avisar quando o status mudar.
+          await criarOrdemServico({
+            ...payload,
+            criado_por_nome: userSession?.nome || '',
+            criado_por_cpf: userSession?.cpf || '',
+            criado_por_email: userSession?.email || '',
+          });
         }
       } catch (err: any) {
         const detail = err?.response?.data ? JSON.stringify(err.response.data) : String(err);
@@ -1103,13 +1160,17 @@ export function OsView({ searchQuery }: OSViewProps) {
       const margin = 10;
       let y = margin;
       
+      // A altura da caixa externa só é fechada (doc.rect) depois de saber quanto as linhas de
+      // CLIENTE/EMBARCAÇÃO/PROJETO/LOCAL cresceram ao quebrar texto longo — antes ela era
+      // desenhada aqui com 35mm fixos, e a borda inferior cortava o texto do LOCAL quando ele
+      // precisava de mais de uma linha.
+      const headerBoxTopY = y;
       doc.setDrawColor(0);
       doc.setLineWidth(0.3);
-      doc.rect(margin, y, pageWidth - 2 * margin, 35);        
-      doc.line(margin + 50, y, margin + 50, y + 15); 
-      doc.line(margin + 130, y, margin + 130, y + 15); 
-      doc.line(margin, y + 15, pageWidth - margin, y + 15); 
-      
+      doc.line(margin + 50, y, margin + 50, y + 15);
+      doc.line(margin + 130, y, margin + 130, y + 15);
+      doc.line(margin, y + 15, pageWidth - margin, y + 15);
+
       if (logoBase64) {
         const logoFormat = logoBase64.match(/^data:image\/(png|jpe?g)/i)?.[1]?.toLowerCase().includes('png') ? 'PNG' : 'JPEG';
         doc.addImage(logoBase64, logoFormat, margin + 2, y + 2, 46, 11);
@@ -1133,21 +1194,32 @@ export function OsView({ searchQuery }: OSViewProps) {
       doc.setFont('Helvetica', 'normal');
       doc.text(osPrincipal.cc || 'Não inf.', margin + 142, y + 10);
       y += 15;
-      
-      const rowH = 5;
-      doc.line(margin, y + rowH, pageWidth - margin, y + rowH);
-      doc.line(margin, y + rowH * 2, pageWidth - margin, y + rowH * 2);
-      doc.line(margin, y + rowH * 3, pageWidth - margin, y + rowH * 3);
-      doc.line(margin + 100, y, margin + 100, y + 20); 
-      
+
+      // Altura de cada linha CALCULADA a partir do texto (campos longos, como um endereço
+      // extenso em LOCAL, quebram em várias linhas em vez de estourar por cima da coluna
+      // vizinha ou sair da caixa). As divisórias só são desenhadas DEPOIS de saber a altura
+      // real de cada linha.
+      const rowMinH = 5;
+      const rowLineH = 3.3;
+      const rowPadTop = 3.5;
+      const rowPadBottom = 1.5;
+      const leftValueX = margin + 27;
+      const rightValueX = margin + 127;
+      const leftValueMaxW = (margin + 100) - leftValueX - 2;
+      const rightValueMaxW = (pageWidth - margin) - rightValueX - 2;
+
       doc.setFontSize(8);
-      const printDado = (lbl: string, val: string, vx: number, vy: number) => {
+      // Desenha um par label/valor (quebrando o valor em várias linhas se precisar) e devolve
+      // a altura que ele ocupou, para a linha usar a maior altura entre as duas colunas.
+      const printDadoWrapped = (lbl: string, val: string, vx: number, vTopY: number, maxW: number): number => {
         doc.setFont('Helvetica', 'bold');
-        doc.text(lbl, vx, vy);
+        doc.text(lbl, vx, vTopY + rowPadTop);
         doc.setFont('Helvetica', 'normal');
-        doc.text(val || ' ', vx + 25, vy);
+        const linhas = doc.splitTextToSize(val || ' ', maxW) as string[];
+        linhas.forEach((linha, i) => doc.text(linha, vx + 25, vTopY + rowPadTop + i * rowLineH));
+        return Math.max(linhas.length * rowLineH + rowPadTop + rowPadBottom - rowLineH, rowMinH);
       };
-      
+
       const dataInicio = osPrincipal.dataInicioPrevisto || selectedObraDetalhes?.dataPrevistaInicio;
       const dataTermino = osPrincipal.dataTerminoPrevisto || selectedObraDetalhes?.dataPrevistaFinal;
       
@@ -1163,21 +1235,22 @@ export function OsView({ searchQuery }: OSViewProps) {
       const embarcacaoOS = (Array.isArray(selectedObraDetalhes?.servicos) ? (selectedObraDetalhes.servicos.find((s: any) => s?.embarcacao)?.embarcacao) : '') || osPrincipal.embarcacao || '';
       const projetoTexto = `${selectedObraDetalhes?.nome || osPrincipal.projeto || ''}${idProjetoForPrint ? ' • ' + idProjetoForPrint : ''}`;
 
-      printDado('CLIENTE:', cliente?.razaoSocial || cliente?.razao_social || osPrincipal.cliente || '', margin + 2, y + 3.5);
-      printDado('Início Previsto:', dataInicio ? formatDateISO(dataInicio) : '', margin + 102, y + 3.5);
-      y += rowH;
+      const linhasCabecalho: Array<[string, string, string, string]> = [
+        ['CLIENTE:', cliente?.razaoSocial || cliente?.razao_social || osPrincipal.cliente || '', 'Início Previsto:', dataInicio ? formatDateISO(dataInicio) : ''],
+        ['EMBARCAÇÃO:', embarcacaoOS || localOS, 'Térm. Previsto:', dataTermino ? formatDateISO(dataTermino) : ''],
+        ['PROJETO:', projetoTexto, 'OS Nº:', formatNumeroOsDisplay(osPrincipal.ordemServicoNumero) || ''],
+        ['LOCAL:', localOS, 'Encarregado:', osPrincipal.supervisorEncarregado || ''],
+      ];
 
-      printDado('EMBARCAÇÃO:', embarcacaoOS || localOS, margin + 2, y + 3.5);
-      printDado('Térm. Previsto:', dataTermino ? formatDateISO(dataTermino) : '', margin + 102, y + 3.5);
-      y += rowH;
-
-      printDado('PROJETO:', projetoTexto, margin + 2, y + 3.5);
-      printDado('OS Nº:', osPrincipal.ordemServicoNumero || '', margin + 102, y + 3.5);
-      y += rowH;
-
-      printDado('LOCAL:', localOS, margin + 2, y + 3.5);
-      printDado('Encarregado:', osPrincipal.supervisorEncarregado || '', margin + 102, y + 3.5);
-      y += rowH;
+      linhasCabecalho.forEach(([lblEsq, valEsq, lblDir, valDir], idx) => {
+        const hEsq = printDadoWrapped(lblEsq, valEsq, margin + 2, y, leftValueMaxW);
+        const hDir = printDadoWrapped(lblDir, valDir, margin + 102, y, rightValueMaxW);
+        const rowH = Math.max(hEsq, hDir);
+        doc.line(margin + 100, y, margin + 100, y + rowH);
+        y += rowH;
+        if (idx < linhasCabecalho.length - 1) doc.line(margin, y, pageWidth - margin, y);
+      });
+      doc.rect(margin, headerBoxTopY, pageWidth - 2 * margin, y - headerBoxTopY);
       y += 5;
 
       // Cita a proposta de origem (número + versão), para deixar claro de qual documento o
@@ -1260,44 +1333,31 @@ export function OsView({ searchQuery }: OSViewProps) {
         try { baseChecks = JSON.parse(baseChecks); } catch(e) { baseChecks = {}; }
       }
 
-      const getCheck = (uiLabel: string, dbKey: string) => {
-        let isChecked = false;
-        try {
-          const checkboxes = document.querySelectorAll('input[type="checkbox"]');
-          for (let i = 0; i < checkboxes.length; i++) {
-            const input = checkboxes[i] as HTMLInputElement;
-            if (input.parentElement && input.parentElement.textContent && input.parentElement.textContent.includes(uiLabel)) {
-              if (input.checked) isChecked = true;
-            }
-          }
-        } catch (e) {}
-
-        if (!isChecked && (baseChecks[dbKey] === true || String(baseChecks[dbKey]) === 'true')) {
-          isChecked = true;
-        }
-        return isChecked;
-      };
+      // Lê só dos dados salvos (aSerIncluido) — antes fazia scraping do DOM (checkboxes
+      // renderizados na tela por texto aproximado), o que dependia de qual tela estava aberta
+      // no momento do download e podia casar com o checkbox errado por substring.
+      const isChecked = (dbKey: string) => baseChecks?.[dbKey] === true || String(baseChecks?.[dbKey]) === 'true';
 
       const chk = (val: boolean) => val ? '[ X ]' : '[   ]';
-      
+
       const listChecks = [
-        { lbl: 'CERTIFICADO DE GÁS FREE', v: getCheck('Certificado de Gás', 'certificadoGas') },
-        { lbl: 'VENTILAÇÃO', v: getCheck('Ventilação', 'ventilacao') },
-        { lbl: 'LIMPEZA ANTES', v: getCheck('Limpeza antes', 'limpezaAntes') },
-        { lbl: 'LIMPEZA APÓS CONCLUSÃO', v: getCheck('Limpeza após', 'limpezaApos') },
-        { lbl: 'ANDAIMES', v: getCheck('Andaimes', 'andaimes') },
-        { lbl: 'APOIO DE GUINDASTE', v: getCheck('Apoio de guindaste', 'apoioGuindastes') },
-        { lbl: 'TRANSPORTE EXTERNO', v: getCheck('Transporte externo', 'transporteExterno') },
-        { lbl: 'TESTE DE PRESSÃO', v: getCheck('Testes de pressão', 'testesPressao') },
-        { lbl: 'PINTURA', v: getCheck('Pintura', 'pintura') },
-        { lbl: 'LP / PM', v: getCheck('LP / PM', 'lpPm') },
-        { lbl: 'TESTE DE ULTRASSOM', v: getCheck('Teste de ultrassom', 'testeUltrassom') },
-        { lbl: 'INSPEÇÃO DIMENSIONAL', v: getCheck('Inspeção dimensional', 'inspecaoDimensional') },
-        { lbl: 'VISUAL DE SOLDA', v: getCheck('Visual de solda', 'visualSolda') },
-        { lbl: 'SOLDADOR CERTIFICADO', v: getCheck('Soldador certificado', 'soldadorCertificado') },
-        { lbl: 'PROCEDIMENTO DE SOLDA', v: getCheck('Procedimento de solda', 'procedimentoSolda') },
-        { lbl: 'CERTIFICAÇÃO DO MATERIAL', v: getCheck('Certificação do material', 'certificacaoMaterial') },
-        { lbl: 'VIGIA DE FOGO', v: getCheck('Vigia de fogo', 'vigiaFogo') }
+        { lbl: 'CERTIFICADO DE GÁS FREE', v: isChecked('certificadoGas') },
+        { lbl: 'VENTILAÇÃO', v: isChecked('ventilacao') },
+        { lbl: 'LIMPEZA ANTES', v: isChecked('limpezaAntes') },
+        { lbl: 'LIMPEZA APÓS CONCLUSÃO', v: isChecked('limpezaApos') },
+        { lbl: 'ANDAIMES', v: isChecked('andaimes') },
+        { lbl: 'APOIO DE GUINDASTE', v: isChecked('apoioGuindastes') },
+        { lbl: 'TRANSPORTE EXTERNO', v: isChecked('transporteExterno') },
+        { lbl: 'TESTE DE PRESSÃO', v: isChecked('testesPressao') },
+        { lbl: 'PINTURA', v: isChecked('pintura') },
+        { lbl: 'LP / PM', v: isChecked('lpPm') },
+        { lbl: 'TESTE DE ULTRASSOM', v: isChecked('testeUltrassom') },
+        { lbl: 'INSPEÇÃO DIMENSIONAL', v: isChecked('inspecaoDimensional') },
+        { lbl: 'VISUAL DE SOLDA', v: isChecked('visualSolda') },
+        { lbl: 'SOLDADOR CERTIFICADO', v: isChecked('soldadorCertificado') },
+        { lbl: 'PROCEDIMENTO DE SOLDA', v: isChecked('procedimentoSolda') },
+        { lbl: 'CERTIFICAÇÃO DO MATERIAL', v: isChecked('certificacaoMaterial') },
+        { lbl: 'VIGIA DE FOGO', v: isChecked('vigiaFogo') }
       ];
       // Itens "a incluir" customizados (sempre marcados, pois foram adicionados de propósito).
       const extrasInc = (Array.isArray((baseChecks as any).extras) ? (baseChecks as any).extras : [])
@@ -1401,7 +1461,7 @@ export function OsView({ searchQuery }: OSViewProps) {
         });
       }
       
-      const pageCount = (doc as any).internal.getNumberOfPages();
+      const pageCount = doc.getNumberOfPages();
       for (let i = 1; i <= pageCount; i++) {
         doc.setPage(i);
         doc.setFontSize(6);
@@ -1409,9 +1469,9 @@ export function OsView({ searchQuery }: OSViewProps) {
         doc.text(`Documento gerado pelo Linave ERP em ${new Date().toLocaleString('pt-BR')}`, margin, pageHeight - 5);
         doc.text(`Pag. ${i} / ${pageCount}`, pageWidth - margin - 15, pageHeight - 5);
       }
-      
+
       const prefixo = getPrefixoEmpresa(selectedObraDetalhes?.empresaPrestadora);
-      doc.save(`OS_${String(osPrincipal.ordemServicoNumero || '001').replace(/[\\/]/g, '-')}.pdf`);
+      doc.save(`${prefixo}_OS_${String(osPrincipal.ordemServicoNumero || '001').replace(/[\\/]/g, '-')}.pdf`);
       
       toast.success('OS baixada em PDF com sucesso!');
     } catch (error) {
@@ -1473,6 +1533,17 @@ export function OsView({ searchQuery }: OSViewProps) {
                       <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase border ${osExistente.statusOs === 'rascunho' ? 'bg-yellow-500/20 border-yellow-500/40 text-yellow-300' : osExistente.statusAprovacao === 'aprovada' ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' : 'bg-amber-500/20 border-amber-500/40 text-amber-300'}`}>
                         {osExistente.statusOs === 'rascunho' ? 'Rascunho' : osExistente.statusAprovacao === 'aprovada' ? 'Aprovada' : 'Pendente'}
                       </span>
+                      {/* Só admin/gerente aprova, e só enquanto ainda não está aprovada — mesma
+                          ação (handleAprovarOS) do botão "Aprovar OS" dentro de "Ver OS", só que
+                          direto na lista, sem precisar abrir os detalhes primeiro. */}
+                      {isGerencia && osExistente.statusAprovacao !== 'aprovada' && (
+                        <button
+                          onClick={() => handleAprovarOS(osExistente.id)}
+                          className="px-4 py-2 bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 rounded-lg font-black text-xs hover:bg-emerald-500/30 transition flex items-center gap-2"
+                        >
+                          <Check size={14} /> Aprovar
+                        </button>
+                      )}
                       <button
                         onClick={() => handleEditarOS(osExistente)}
                         className="px-4 py-2 bg-amber-500/20 border border-amber-500/40 text-amber-300 rounded-lg font-black text-xs hover:bg-amber-500/30 transition flex items-center gap-2"
@@ -1532,7 +1603,7 @@ export function OsView({ searchQuery }: OSViewProps) {
                 <h2 className="text-2xl font-black text-white uppercase">Ordem de Serviço Consolidada</h2>
                 <div className="mt-3 flex flex-wrap items-center gap-3">
                   <span className="inline-flex items-center rounded-full border border-cyan-400/30 bg-cyan-500/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.2em] text-cyan-300">
-                    ID da OS: {formData.ordemServicoNumero || 'Selecione uma obra'}
+                    ID da OS: {formatNumeroOsDisplay(formData.ordemServicoNumero) || 'Selecione uma obra'}
                   </span>
                 </div>
               </div>
@@ -1544,7 +1615,7 @@ export function OsView({ searchQuery }: OSViewProps) {
             </div>
 
             <div className="p-8 space-y-6 max-h-[calc(90vh-180px)] overflow-y-auto">
-              <ObservacoesNegocio servicos={formData.servicos} />
+              <ObservacoesNegocio servicos={formData.resumoConsolidado?.negocio.servicos} />
               <div className="bg-gradient-to-r from-blue-500/10 to-cyan-500/10 rounded-2xl border border-blue-500/20 p-6 space-y-4">
                 <div className="flex items-center justify-between">
                   <h3 className="text-lg font-black text-white uppercase">Dados Principais</h3>
@@ -1917,6 +1988,42 @@ export function OsView({ searchQuery }: OSViewProps) {
                     </div>
                   </div>
 
+                  {/* Negócio "Locação"/"Locação + Serviço": tabela dos itens alocados (equipamento
+                      de terceiro/estoque próprio destinado ao cliente), vindos do orçamento — só
+                      aparece quando existe pelo menos 1 item (negócio 100% Serviço não tem). */}
+                  {(formData.resumoConsolidado?.orcamento.itensAlocacao || []).length > 0 && (
+                    <div className="bg-[#0b1220] rounded-3xl border border-cyan-500/25 p-7 space-y-5 shadow-lg shadow-cyan-900/20">
+                      <div className="flex items-center justify-between border-b border-white/10 pb-4">
+                        <p className="text-sm text-cyan-300 font-black uppercase tracking-wider">Alocação</p>
+                        <span className="px-3 py-1.5 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-200 text-xs font-black uppercase">
+                          {(formData.resumoConsolidado?.orcamento.itensAlocacao || []).length} item(ns)
+                        </span>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm border-collapse">
+                          <thead>
+                            <tr className="text-cyan-200/70 text-xs uppercase tracking-wider">
+                              <th className="border border-white/10 px-3 py-2 text-left">Equipamento</th>
+                              <th className="border border-white/10 px-3 py-2 text-left">Unidade</th>
+                              <th className="border border-white/10 px-3 py-2 text-left">Quantidade</th>
+                              <th className="border border-white/10 px-3 py-2 text-left">Observação</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(formData.resumoConsolidado?.orcamento.itensAlocacao || []).map((item, index) => (
+                              <tr key={`aloc-${index}`} className="text-white/85">
+                                <td className="border border-white/10 px-3 py-2 font-bold text-white">{item.equipamento}</td>
+                                <td className="border border-white/10 px-3 py-2">{item.unidade || '-'}</td>
+                                <td className="border border-white/10 px-3 py-2">{item.quantidade || '-'}</td>
+                                <td className="border border-white/10 px-3 py-2">{item.observacao || '-'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="bg-[#0b1220] rounded-3xl border border-emerald-500/25 p-7 space-y-5 shadow-lg shadow-emerald-900/20">
                     <div className="flex items-center justify-between border-b border-white/10 pb-4">
                       <p className="text-sm text-emerald-300 font-black uppercase tracking-wider">Proposta</p>
@@ -1982,7 +2089,7 @@ export function OsView({ searchQuery }: OSViewProps) {
             <div className="sticky top-0 z-40 bg-gradient-to-r from-orange-500/40 to-amber-500/40 backdrop-blur-md p-8 border-b border-white/10 flex justify-between items-center">
               <div>
                 <h2 className="text-3xl font-black text-white">{boldOS('Detalhes da OS Consolidada')}</h2>
-                <p className="text-white/60 text-base mt-2">{selectedOS.ordemServicoNumero}</p>
+                <p className="text-white/60 text-base mt-2">{formatNumeroOsDisplay(selectedOS.ordemServicoNumero)}</p>
               </div>
               <button onClick={() => setShowDetalhesOS(false)} className="p-2 bg-white/5 rounded-full hover:bg-white/10">
                 <X size={24} className="text-white/60" />
@@ -2142,6 +2249,36 @@ export function OsView({ searchQuery }: OSViewProps) {
                   </div>
                 )}
               </div>
+
+              {/* Negócio "Locação"/"Locação + Serviço": tabela dos itens alocados — só aparece
+                  quando existe pelo menos 1 item (negócio 100% Serviço não tem). */}
+              {(selectedOS.resumoConsolidado?.orcamento.itensAlocacao || []).length > 0 && (
+                <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-4">
+                  <h3 className="text-white font-black text-lg">ALOCAÇÃO</h3>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm border border-white/10">
+                      <thead>
+                        <tr className="bg-white/5 text-white/70 uppercase text-xs">
+                          <th className="border border-white/10 px-3 py-2 text-left">Equipamento</th>
+                          <th className="border border-white/10 px-3 py-2 text-left">Unidade</th>
+                          <th className="border border-white/10 px-3 py-2 text-left">Quantidade</th>
+                          <th className="border border-white/10 px-3 py-2 text-left">Observação</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(selectedOS.resumoConsolidado?.orcamento.itensAlocacao || []).map((item, index) => (
+                          <tr key={`aloc-view-${index}`} className="text-white/85">
+                            <td className="border border-white/10 px-3 py-2 font-bold text-white">{item.equipamento}</td>
+                            <td className="border border-white/10 px-3 py-2">{item.unidade || '-'}</td>
+                            <td className="border border-white/10 px-3 py-2">{item.quantidade || '-'}</td>
+                            <td className="border border-white/10 px-3 py-2">{item.observacao || '-'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
 
               <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-4">
                 <h3 className="text-white font-black text-lg">HORAS PREVISTAS POR SERVIÇO</h3>

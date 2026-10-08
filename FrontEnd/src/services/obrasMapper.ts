@@ -21,7 +21,15 @@ export const formatNegocioId = (negocio: any): string => {
 
   const prefixo = prefixoEmpresa(negocio?.empresa_prestadora ?? negocio?.empresaPrestadora);
   const numero = formatarNumeroSequencial(negocio?.id);
-  const ano = String(new Date().getFullYear()).slice(-2);
+  // O "/AA" precisa ser o ano em que o negócio foi CRIADO, não o ano atual — como este id é
+  // recalculado toda vez que o negócio é exibido (não é uma string fixa, exceto quando
+  // `numero_customizado` já está gravado), usar `new Date()` aqui fazia o número de negócios
+  // antigos (sem numero_customizado, ex.: criados por script/seed) mudar sozinho de "/26"
+  // para "/27" assim que o ano virasse — mesmo tendo sido criados em 2026. `created_at` é
+  // fixo, então o número fica estável independente de quando a tela for aberta.
+  const dataCriacao = negocio?.created_at ?? negocio?.createdAt;
+  const anoBase = dataCriacao ? new Date(dataCriacao).getFullYear() : NaN;
+  const ano = String(Number.isFinite(anoBase) ? anoBase : new Date().getFullYear()).slice(-2);
   return `${prefixo}-${numero}/${ano}`;
 };
 
@@ -76,6 +84,12 @@ export const mapNegocioToObra = (n: any, clientesMapa: Record<string, string> = 
     documentosNegocio,
     documentoClienteAssinado,
     usoInterno: Boolean(n?.uso_interno),
+    // Identidade estável de quem criou o negócio — só usada pelo sino de notificações
+    // para saber quem avisar a cada mudança de `categoria`. Negócios criados antes deste
+    // campo existir vêm em branco (ver comentário no model Django).
+    criadoPorNome: n?.criado_por_nome || '',
+    criadoPorCpf: n?.criado_por_cpf || '',
+    criadoPorEmail: n?.criado_por_email || '',
     os: [],
   };
 };
@@ -97,7 +111,12 @@ export const mapOrdemToOs = (o: any) => {
   const docsOs = mapDocsApiToFront(Array.isArray(o?.documentos) ? o.documentos : []);
   const assinatura = docsOs.find((d) => d.categoria === 'os_assinatura') || null;
   const obraId = negocioId != null
-    ? formatNegocioId({ id: negocioId, empresa_prestadora: o?.negocio_detalhes?.empresa_prestadora })
+    ? formatNegocioId({
+        id: negocioId,
+        empresa_prestadora: o?.negocio_detalhes?.empresa_prestadora,
+        numero_customizado: o?.negocio_detalhes?.numero_customizado,
+        created_at: o?.negocio_detalhes?.created_at,
+      })
     : '';
   return {
     id: numero,
@@ -128,6 +147,12 @@ export const mapOrdemToOs = (o: any) => {
     documentoAssinaturaAprovacao: assinatura,
     tipoDocumento: 'consolidada' as const,
     usoInterno: Boolean(o?.negocio_detalhes?.uso_interno),
+    // Identidade estável de quem criou a OS — só usada pelo sino de notificações para
+    // saber quem avisar a cada mudança de status. OS criadas antes deste campo existir
+    // vêm em branco (ver comentário no model Django).
+    criadoPorNome: o?.criado_por_nome || '',
+    criadoPorCpf: o?.criado_por_cpf || '',
+    criadoPorEmail: o?.criado_por_email || '',
   };
 };
 

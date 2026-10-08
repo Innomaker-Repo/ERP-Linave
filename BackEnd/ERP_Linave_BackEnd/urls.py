@@ -16,8 +16,9 @@ Including another URLconf
 """
 import os
 from django.contrib import admin
-from django.urls import include, path
+from django.urls import include, path, re_path
 from django.views.generic import TemplateView
+from django.views.static import serve as serve_static
 from django.conf import settings
 from django.conf.urls.static import static
 from rest_framework_simplejwt.views import TokenVerifyView, TokenRefreshView
@@ -46,3 +47,16 @@ if settings.DEBUG:
     # referencia em /assets/... nunca ficavam expostos — daí o 404/MIME error no
     # navegador. Em produção isso também é responsabilidade do nginx/whitenoise.
     urlpatterns += static('assets/', document_root=os.path.join(settings.BASE_DIR, '../FrontEnd/dist/assets'))
+
+    # Além de /assets/, o build também copia direto pra raiz do dist/ tudo que está em
+    # FrontEnd/public/ (logos, favicon, a imagem de fundo da Proposta, etc.) — sem essa
+    # rota, esses arquivos davam 404 quando acessados via :8000 (só funcionavam no `vite
+    # dev`, que serve public/ nativamente), e a Proposta em PDF saía sem logo/marca d'água.
+    # `static()` não aceita prefixo vazio ("Empty static prefix not permitted"), então usa
+    # `django.views.static.serve` direto via re_path. Fica por último pra só pegar o que
+    # nenhuma rota mais específica acima já resolveu.
+    urlpatterns += [
+        re_path(r'^(?P<path>[^/]+\.[A-Za-z0-9]+)$', serve_static, {
+            'document_root': os.path.join(settings.BASE_DIR, '../FrontEnd/dist'),
+        }),
+    ]

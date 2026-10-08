@@ -24,6 +24,15 @@
   .custom-scrollbar::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.2);
   }
+
+  /* ScrollXTop: oculta a barra nativa embaixo (a barra visível é desenhada em divs, no topo) */
+  .scroll-x-hide {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scroll-x-hide::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 @layer components {

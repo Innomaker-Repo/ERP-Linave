@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { Archive, FileCheck2, FileDown, FileWarning, History, Package, Search } from 'lucide-react';
+import { Archive, FileCheck2, FileDown, FileWarning, History, Package, Search, Trash2 } from 'lucide-react';
 import { useErp } from '../../../context/ErpContext';
+import { formatOsChipLabel, formatNumeroOsDisplay } from '../../../../services/ordensServico';
+import { comComprasAtual } from '../../../../services/comprasSeguro';
 import {
   formatCurrency,
   purchaseStateLabel,
@@ -11,6 +13,7 @@ import {
 import { FinModal, Field, Input, FileInput, Btn } from '../Financeiro/finUi';
 import { uploadDocumento } from '../../../../services/documentosService';
 import { handleDownloadPedidoCompraPDF } from './handleDownloadPedidoCompraPDF';
+import { confirmDialog } from '../../ui/feedback';
 import { toast } from 'sonner';
 
 interface HistoricoComprasViewProps {
@@ -52,6 +55,30 @@ export function HistoricoComprasView({ searchQuery }: HistoricoComprasViewProps)
     () => toItemRecords(Array.isArray(comprasHistorico) ? comprasHistorico : []),
     [comprasHistorico],
   );
+
+  // Exclusão: admin/gerente excluem qualquer registro; os demais só o que eles mesmos
+  // compraram/contrataram (quem gerou o registro, `compradoPor`). Registros do fluxo antigo
+  // (`_legacy`, achatados de um blob por pedido) não têm um item isolado pra excluir com
+  // segurança, então ficam de fora.
+  const isAdminOuGerente = ['ADMIN', 'GERENTE'].includes(String(userSession?.role || '').toUpperCase());
+  const podeExcluir = (item: CompraHistoricoRegistro) => {
+    if ((item as any)._legacy) return false;
+    if (isAdminOuGerente) return true;
+    const nomeAtual = String(userSession?.nome || userSession?.email || '').trim().toLowerCase();
+    const criador = String(item.compradoPor || '').trim().toLowerCase();
+    return Boolean(nomeAtual) && criador === nomeAtual;
+  };
+
+  const handleExcluirRegistro = async (item: CompraHistoricoRegistro) => {
+    const rotulo = item.itemDescricao || item.itemNome || 'este item';
+    if (!(await confirmDialog(`Excluir "${rotulo}" do histórico de compras? Essa ação não pode ser desfeita.`))) return;
+    const salvou = await comComprasAtual(async ({ comprasHistorico: all }) => {
+      const atualizado = all.filter((r: any) => r?.id !== item.id);
+      await saveEntity?.('comprasHistorico', atualizado);
+      return true;
+    });
+    if (salvou) toast.success('Registro excluído do histórico.');
+  };
 
   const opcoesOS = useMemo(() => {
     const set = new Set<string>();
@@ -159,20 +186,26 @@ export function HistoricoComprasView({ searchQuery }: HistoricoComprasViewProps)
         if (falhas > 0) toast.error(`${falhas} anexo(s) não puderam ser enviados.`);
       }
       const nfeAnexos = [...nfeAnexosUrls, ...novasUrls];
-      const all = Array.isArray(comprasHistorico) ? comprasHistorico : [];
-      const updated = all.map((r: any) =>
-        r?.id === nfeModal.id
-          ? {
-              ...r,
-              nfeStatus: 'lancada',
-              nfeNumero: nfeNumero.trim(),
-              nfeAnexos,
-              nfeLancadaEm: new Date().toISOString(),
-              nfeLancadaPor: userSession?.nome || userSession?.email || 'sistema',
-            }
-          : r,
-      );
-      await saveEntity?.('comprasHistorico', updated);
+      // Grava em cima do histórico mais recente do servidor (não do `comprasHistorico` do
+      // contexto, que pode estar desatualizado) — evita perder um lançamento de NFe feito
+      // por outra pessoa nesse meio-tempo.
+      const salvou = await comComprasAtual(async ({ comprasHistorico: all }) => {
+        const updated = all.map((r: any) =>
+          r?.id === nfeModal.id
+            ? {
+                ...r,
+                nfeStatus: 'lancada',
+                nfeNumero: nfeNumero.trim(),
+                nfeAnexos,
+                nfeLancadaEm: new Date().toISOString(),
+                nfeLancadaPor: userSession?.nome || userSession?.email || 'sistema',
+              }
+            : r,
+        );
+        await saveEntity?.('comprasHistorico', updated);
+        return true;
+      });
+      if (!salvou) return; // comComprasAtual já avisou o usuário do erro
       setNfeModal(null);
     } finally {
       setSalvando(false);
@@ -206,11 +239,11 @@ export function HistoricoComprasView({ searchQuery }: HistoricoComprasViewProps)
           <select
             value={osFiltro}
             onChange={(event) => setOsFiltro(event.target.value)}
-            className="h-14 w-full appearance-none rounded-xl border border-white/10 bg-white/5 px-4 text-white text-sm outline-none focus:border-amber-500 cursor-pointer"
+            className="h-14 w-full appearance-none rounded-xl border border-white/10 bg-white/5 px-4 text-white text-sm outline-none focus:border-amber-500 cursor-pointer [&>option]:bg-[#101f3d] [&>option]:text-white"
           >
             <option value="">Todas as OS</option>
             {opcoesOS.map((os) => (
-              <option key={os} value={os}>{os}</option>
+              <option key={os} value={os}>{formatNumeroOsDisplay(os)}</option>
             ))}
           </select>
           <div className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-white/30">▼</div>
@@ -255,7 +288,7 @@ export function HistoricoComprasView({ searchQuery }: HistoricoComprasViewProps)
                         </span>
                       )}
                       <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-amber-200">
-                        OS: {grupo.centroCusto || '—'}
+                        {grupo.centroCusto ? formatOsChipLabel(grupo.centroCusto) : 'OS: —'}
                       </span>
                       <span className="text-[10px] font-bold uppercase tracking-widest text-white/35">
                         {grupo.itens.length} item(ns)
@@ -321,13 +354,24 @@ export function HistoricoComprasView({ searchQuery }: HistoricoComprasViewProps)
                             )}
                           </td>
                           <td className="px-6 py-4">
-                            {item.nfeStatus === 'lancada' ? (
-                              <span className="text-xs text-white/35">{item.nfeLancadaEm ? formatDateTime(item.nfeLancadaEm) : 'Lançada'}</span>
-                            ) : (item as any)._legacy ? (
-                              <span className="text-xs text-white/30">Registro antigo</span>
-                            ) : (
-                              <Btn small variant="amber" onClick={() => abrirNfe(item)}><FileCheck2 size={13} /> Lançar NFe</Btn>
-                            )}
+                            <div className="flex items-center gap-2">
+                              {item.nfeStatus === 'lancada' ? (
+                                <span className="text-xs text-white/35">{item.nfeLancadaEm ? formatDateTime(item.nfeLancadaEm) : 'Lançada'}</span>
+                              ) : (item as any)._legacy ? (
+                                <span className="text-xs text-white/30">Registro antigo</span>
+                              ) : (
+                                <Btn small variant="amber" onClick={() => abrirNfe(item)}><FileCheck2 size={13} /> Lançar NFe</Btn>
+                              )}
+                              {podeExcluir(item) && (
+                                <button
+                                  onClick={() => handleExcluirRegistro(item)}
+                                  title="Excluir registro"
+                                  className="p-2 rounded-lg border border-white/10 bg-white/5 hover:bg-red-500/20 hover:border-red-500/30 text-white/50 hover:text-red-300 transition-colors"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       ))}

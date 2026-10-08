@@ -1,7 +1,8 @@
 import React from 'react';
 import { ComprasKanbanView } from '../../components/modules/Compras/ComprasKanbanView';
 import { ComprasSolicitacoesView } from '../../components/modules/Compras/ComprasSolicitacoesView';
-import { ComprasAprovacoesView } from '../../components/modules/Compras/ComprasAprovacoesView';
+import { ComprasAprovarComercialView } from '../../components/modules/Compras/ComprasAprovarComercialView';
+import { ComprasAprovarFinanceiroView } from '../../components/modules/Compras/ComprasAprovarFinanceiroView';
 import { HistoricoComprasView } from '../../components/modules/Compras/HistoricoComprasView';
 import { MinhasComprasView } from '../../components/modules/Compras/MinhasComprasView';
 import { FornecedoresView } from '../../components/modules/Fornecedores/FornecedoresView';
@@ -19,8 +20,10 @@ export function ComprasModule({ activeItem, searchQuery }: ComprasModuleProps) {
       return <MinhasComprasView searchQuery={searchQuery} />;
     case 'kanbanCompras':
       return <ComprasKanbanView searchQuery={searchQuery} />;
-    case 'aprovacoesCompras':
-      return <ComprasAprovacoesView searchQuery={searchQuery} />;
+    case 'aprovarComercial':
+      return <ComprasAprovarComercialView searchQuery={searchQuery} />;
+    case 'aprovarFinanceiro':
+      return <ComprasAprovarFinanceiroView searchQuery={searchQuery} />;
     case 'historicoCompras':
       return <HistoricoComprasView searchQuery={searchQuery} />;
     case 'fornecedores':

@@ -133,6 +133,20 @@ export const gerarRomaneioPdf = (params: RomaneioPdfParams): jsPDF => {
     margin: { left: margin, right: margin },
     theme: 'grid',
     head: [['ITEM', 'MATERIAL DESCRIPTION', 'QTD', 'PESO (kg)']],
+    // O cabeçalho da TABELA já repete sozinho (comportamento padrão do autoTable). Isso aqui
+    // só repete o logo/título nas páginas de continuação de um romaneio com muitos itens —
+    // sem isso, só a página 1 identificava de qual documento (FLN 026) aquilo é.
+    didDrawPage: (data) => {
+      if (data.pageNumber === 1) return;
+      if (params.logoBase64) {
+        try {
+          doc.addImage(params.logoBase64, getLogoFormat(params.logoBase64), (pageWidth - 120) / 2, margin, 120, 38);
+        } catch { /* segue sem logo */ }
+      }
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(13);
+      doc.text('ROMANEIO DE MATERIAL', pageWidth / 2, margin + (params.logoBase64 ? 54 : 18) + 10, { align: 'center' });
+    },
     body: [
       ...params.items.map((item, index) => [
         String(index + 1),
@@ -156,7 +170,7 @@ export const gerarRomaneioPdf = (params: RomaneioPdfParams): jsPDF => {
   });
 
   // Rodapé padrão FLN 026 em todas as páginas
-  const pageCount = doc.internal.getNumberOfPages();
+  const pageCount = doc.getNumberOfPages();
   for (let page = 1; page <= pageCount; page += 1) {
     doc.setPage(page);
     doc.setFont('helvetica', 'normal');

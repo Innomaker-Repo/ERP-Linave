@@ -20,10 +20,17 @@ export const FORMAS_PAGAMENTO = [
   'Dinheiro',
   'Boleto bancário',
   'Transferência bancária',
+  'Parcelado',
+  'Débito automático',
 ];
+
+// Débito automático é feito direto pelo banco — não existe um comprovante próprio pra
+// anexar (ver modal "Pagar" em ContasPagarView.tsx, que dispensa esse campo pra essa forma).
+export const FORMA_DISPENSA_COMPROVANTE = 'Débito automático';
 
 // Tipo de reembolso / adiantamento (usado em Solicitação e Contas a Pagar).
 export const TIPOS_REEMBOLSO = [
+  'Reembolso',
   'Viagens',
   'Salário',
   'Adiantamento',
@@ -83,10 +90,23 @@ export interface OS {
   numero: string;
   empresa: Empresa;
   cliente: string;
+  // Id real do cliente (FK vinda da OS) — usado para achar o cadastro completo (CNPJ,
+  // endereço, inscrição estadual) sem depender de comparar o nome como texto, que quebra
+  // com qualquer diferença (prefixo digitado à mão, acento, etc. — ver dadosClienteRecibo).
+  clienteId: string;
   descricao: string;
   valor: number;
+  // Split do valor total (item D do orçamento) por natureza — só ambos > 0 numa OS "Locação +
+  // Serviço" de verdade; numa OS de natureza única, um dos dois vem 0 e o outro = valor.
+  // Usado em "Solicitar NFe e Recibo" (NfeView.tsx) pra auto-preencher os 2 campos de valor.
+  valorServico: number;
+  valorLocacao: number;
   dataTermino: string;
   status: string;
+  // Modalidade do negócio de origem ('servico' | 'locacao' | 'locacao_servico') — usada em
+  // "Solicitar NFe e Recibo" (NfeView.tsx) pra saber se a OS precisa de 2 solicitações
+  // separadas (Serviço + Locação) em vez de só uma. Ver utils/modalidade.ts.
+  modalidade?: string;
 }
 
 export interface Departamento {
@@ -102,9 +122,12 @@ export interface Banco {
   pix: string;
 }
 
-// Rótulo do banco nos menus suspensos: "Itaú - Linave". Usado em todo lugar que lista
-// bancos pra escolher (filtros, pagamento, recebimento) — o valor selecionado continua
-// sendo só o nome do banco, isso é só o texto exibido na opção.
+// Rótulo do banco nos menus suspensos: "Itaú - Linave". Usado em todo lugar que lista bancos
+// pra escolher (filtros, pagamento, recebimento) — e é esse mesmo texto (não só `nome`) que
+// fica gravado em `banco`/`bancoRecebimento` das contas (ver bancoSelectProps/BancoSelect).
+// O nome sozinho não identifica o banco: o mesmo nome pode estar cadastrado pra mais de uma
+// empresa (ex.: "Itaú" na Linave e na Servinave), e guardar só ele misturava as duas na hora
+// de reabrir o valor salvo num <select> (sempre caía no primeiro banco daquele nome).
 export const bancoLabel = (b: { nome?: string; empresa?: string }): string =>
   b?.empresa ? `${b.nome} - ${b.empresa}` : String(b?.nome || '');
 
@@ -132,16 +155,23 @@ export interface Solicitacao {
 // Identifica se o registro (solicitação, requisição etc.) foi criado pelo usuário logado.
 // Confere primeiro por CPF/e-mail (estável mesmo se o nome digitado mudar); cai para o nome
 // em texto livre só quando não há esses campos (registros antigos, sem vínculo de usuário).
+//
+// normalize('NFC') + colapso de espaços evita que o mesmo nome/e-mail deixe de bater só por
+// causa de acentuação Unicode em forma decomposta (comum em texto colado de outras fontes) ou
+// espaços duplicados; normCpf ignora pontuação (123.456.789-00 vs 12345678900) pelo mesmo motivo
+// — sem isso, uma edição inofensiva do cadastro do usuário (recorrigir um acento, reformatar o
+// CPF) faz as solicitações antigas dele sumirem de "Meus Pagamentos" sem nenhum aviso.
 export const matchesSolicitante = (
   record: { solicitante?: string; solicitanteCpf?: string; solicitanteEmail?: string },
   session: { cpf?: string; email?: string; nome?: string; username?: string } | null | undefined,
 ): boolean => {
   if (!session) return false;
-  const norm = (v?: string) => String(v || '').trim().toLowerCase();
-  const cpf = norm(session.cpf);
+  const norm = (v?: string) => String(v || '').trim().toLowerCase().normalize('NFC').replace(/\s+/g, ' ');
+  const normCpf = (v?: string) => String(v || '').replace(/\D/g, '');
+  const cpf = normCpf(session.cpf);
   const email = norm(session.email);
   const nome = norm(session.nome || session.username);
-  if (cpf && norm(record.solicitanteCpf) === cpf) return true;
+  if (cpf && normCpf(record.solicitanteCpf) === cpf) return true;
   if (email && norm(record.solicitanteEmail) === email) return true;
   const s = norm(record.solicitante);
   if (!s) return false;
@@ -218,12 +248,6 @@ export interface HistItem {
 }
 
 // ---------- Dados iniciais (mock / seed) ----------
-export const SEED_OS: OS[] = [
-  { numero: 'OS-2408', empresa: 'Linave', cliente: 'CONSTELLATION S/A', descricao: 'Serviço de locação operacional', valor: 28500, dataTermino: days(todayStr, 20), status: 'Em andamento' },
-  { numero: 'OS-2410', empresa: 'Servinave', cliente: 'SOLSTAD OFFSHORE', descricao: 'Serviço offshore', valor: 43603.75, dataTermino: days(todayStr, 35), status: 'Aberta' },
-  { numero: 'OS-2413', empresa: 'Linave', cliente: 'ESTALEIRO MAUÁ', descricao: 'Serviço técnico', valor: 5830, dataTermino: days(todayStr, -5), status: 'Aberta' },
-];
-
 export const SEED_DEPTS: Departamento[] = [
   { nome: 'Comercial', empresa: 'Ambas', email: 'comercial@linave.com' },
   { nome: 'Financeiro', empresa: 'Ambas', email: 'financeiro@linave.com' },
@@ -293,7 +317,7 @@ export const FIN_TITLES: Record<string, [string, string]> = {
   solicitacao: ['Solicitação de Pagamento', 'Sem cotação, sem banco; vínculo por OS ou departamento.'],
   aprovacoes: ['Aprovações', 'Solicitações que podem virar Contas a Pagar.'],
   pagar: ['Contas a Pagar', 'Adicionar, editar, parcelar, pagar, registrar juros e comprovante.'],
-  nfe: ['Solicitações e Emissão de NFe', 'Medição aprovada cria solicitação; emissão abre cálculos e cria recebível.'],
+  nfe: ['Solicitações e Emissão de NFe e recibos', 'Medição aprovada cria solicitação; emissão abre cálculos e cria recebível.'],
   receber: ['Contas a Receber', 'Recebíveis por NFe ou lançamento manual.'],
   previsao: ['Previsão de Receita', 'Baseada nos serviços/OS abertas.'],
   bancos: ['Bancos', 'Cadastro e filtro financeiro por banco.'],
@@ -304,6 +328,27 @@ export const FIN_TITLES: Record<string, [string, string]> = {
 // Status de recebível derivado.
 export const recStatus = (r: ContaReceber) =>
   r.recebido ? 'Recebido' : isOld(r.vencimentoRecebimento) ? 'Vencido' : 'A receber';
+
+// A empresa prestadora decide a sigla do documento fiscal em todo o Financeiro: NFe
+// (serviço, qualquer empresa) / N/D (locação Linave) / R/L (locação Servinave — ver
+// siglaTipoNfe em NfeView.tsx e a regra de referência em useFin.ts/ReciboLocacaoFormModal.tsx).
+// Única definição — NfeView.tsx e ReciboLocacaoFormModal.tsx importam daqui, não duplicam.
+export const isLinaveEmpresa = (empresa?: any): boolean => {
+  const s = String(empresa || '').toLowerCase();
+  return s.includes('linave') || s.includes('wlm') || s.includes('w.l.m');
+};
+
+// Sigla do documento por natureza da solicitação + empresa prestadora — usada na coluna
+// "Tipo" da tela de NFe, como prefixo do número do documento E para decidir a origem do
+// recebível (NFe × Recibo) na Conta a Receber. As 4 combinações possíveis (ver "Solicitar
+// NFe e Recibo" em NfeView.tsx): SERVIÇO sempre gera NFe, não importa a prestadora; LOCAÇÃO
+// (guardada como tipoNfe "Nota de débito") gera N/D quando a prestadora é Linave e R/L
+// quando é Servinave. Fica aqui (não em NfeView.tsx) pra useFin.ts também usar.
+export const siglaTipoNfe = (tipoNfe: string, empresa?: any): string => {
+  if (tipoNfe === 'Locação + Serviço') return 'Misto';
+  if (tipoNfe === 'Nota de débito') return isLinaveEmpresa(empresa) ? 'N/D' : 'R/L';
+  return 'NFe';
+};
 
 // ---------- Adaptação de dados reais do ERP ----------
 // O centro de custo / cc das OS usa prefixo LN (Linave) ou VTS (Servinave).
@@ -332,11 +377,32 @@ const orcamentoValor = (entidade: any): number => {
   );
 };
 
+// Valor de LOCAÇÃO (item D) do último orçamento — separado do valor de Serviço (orcamentoValor
+// acima) porque uma OS "Locação + Serviço" precisa dos dois em separado: pra somar certo no
+// valor total da OS (osValor abaixo — antes só lia o Serviço, subestimando/zerando OS de
+// Locação pura ou mista) e pra auto-preencher "Valor Serviço"/"Valor Locação" na solicitação de
+// NFe/Recibo de uma OS mista (ver escolherOs em NfeView.tsx).
+const orcamentoValorLocacao = (entidade: any): number => {
+  const orcamentos = Array.isArray(entidade?.orcamentos) ? entidade.orcamentos : [];
+  const ultimo = orcamentos.length ? orcamentos[orcamentos.length - 1] : null;
+  return num(ultimo?.valores?.subtotalLocacao ?? entidade?.orcamentoValores?.subtotalLocacao ?? 0);
+};
+
+// Valor de Serviço e de Locação de uma OS, separados — mesma precedência do osValor (prioriza
+// os valores da própria OS; só cai pro negócio vinculado se a OS não tiver nenhum dos dois).
+const osValorServicoLocacao = (os: any, obra?: any): { servico: number; locacao: number } => {
+  const servicoOs = orcamentoValor(os);
+  const locacaoOs = orcamentoValorLocacao(os);
+  if (servicoOs || locacaoOs) return { servico: servicoOs, locacao: locacaoOs };
+  const servicoObra = orcamentoValor(obra);
+  const locacaoObra = orcamentoValorLocacao(obra);
+  if (servicoObra || locacaoObra) return { servico: servicoObra, locacao: locacaoObra };
+  return { servico: 0, locacao: 0 };
+};
+
 const osValor = (os: any, obra?: any): number => {
-  const doOs = orcamentoValor(os);
-  if (doOs) return doOs;
-  const doObra = orcamentoValor(obra);
-  if (doObra) return doObra;
+  const { servico, locacao } = osValorServicoLocacao(os, obra);
+  if (servico || locacao) return servico + locacao;
   return num(os?.valorTotal ?? os?.valor ?? 0);
 };
 
@@ -368,6 +434,7 @@ const osStatusLabel = (os: any, obra?: any): string => {
 // Normaliza uma OS do contexto (formatos camelCase e snake_case) para a view-model financeira.
 // `obra` é o negócio vinculado (ctx.obras), de onde vem o valor do orçamento.
 export const mapOsToFinanceiro = (os: any, obra?: any): OS => {
+  const { servico: valorServico, locacao: valorLocacao } = osValorServicoLocacao(os, obra);
   const numero = String(
     os?.ordemServicoNumero ?? os?.ordem_servico_numero ?? os?.numero_os ?? os?.numeroOs ?? os?.cc ?? os?.id ?? '',
   ).trim();
@@ -382,15 +449,19 @@ export const mapOsToFinanceiro = (os: any, obra?: any): OS => {
     numero: numero || '—',
     empresa,
     cliente,
+    clienteId: String(os?.clienteId ?? os?.cliente_id ?? ''),
     descricao: String(os?.descricaoGeralServico ?? os?.descricao_geral_servico ?? os?.descricao ?? os?.projeto ?? ''),
     valor: osValor(os, obra),
+    valorServico,
+    valorLocacao,
     dataTermino: String(os?.dataTerminoPrevisto ?? os?.data_termino_previsto ?? os?.dataTermino ?? '').slice(0, 10),
     status: osStatusLabel(os, obra),
+    modalidade: String(obra?.modalidade || ''),
   };
 };
 
 // Valor do orçamento de um negócio/obra (exposto para derivar NFe a partir da medição).
-export const negocioValor = (obra: any): number => orcamentoValor(obra);
+export const negocioValor = (obra: any): number => orcamentoValor(obra) + orcamentoValorLocacao(obra);
 
 // ---------- NFe: impostos e cálculo de líquido ----------
 export const TAX_DEFAULTS = { cofins: 3, csll: 1, inss: 5.5, ir: 1.5, pis: 0.65, iss: 0 };
@@ -473,9 +544,22 @@ export interface NfeSolicitacao {
   status: string;
   anexos: string[];
   contrato: string;
-  derived: boolean;
   medicaoId?: string;      // vínculo com a medição (para mesclar NF + recibo no recebível)
   medicaoNumero?: string;
+  // Só preenchidos quando tipoNfe === 'Locação + Serviço' (OS mista, 1 registro só — ver
+  // "Solicitar NFe e Recibo" em NfeView.tsx): valor de cada natureza, separado do `valor`
+  // total acima. Cada um vira sua própria Conta a Receber ao arquivar (Serviço via emitirNfe,
+  // Locação via gerarEArquivarRecibo), mas as 2 ficam na MESMA linha/registro nfeReq.
+  valorServico?: number;
+  valorLocacao?: number;
+  // Rascunho dos % de imposto digitados na modal "Emitir Recibo/Nota" (NfeView.tsx) antes de
+  // arquivar de vez — essa modal, pra Recibo/Nota, só salva rascunho agora; quem arquiva de
+  // verdade (e usa esses %) é o botão "Emitir, anexar e arquivar" de dentro de "Preencher /
+  // editar" (gerarEArquivarRecibo, ReciboLocacaoFormModal.tsx). Ausente/vazio = 0% em todos,
+  // líquido = valor original, igual sempre foi.
+  rascunhoImpostos?: {
+    cofins?: string; csll?: string; inss?: string; ir?: string; pis?: string; iss?: string;
+  };
 }
 
 // Discriminador dos registros financeiros guardados na coleção `financeiro` do workspace.
@@ -518,10 +602,37 @@ const CAMPOS_CABECALHO_RECIBO = [
   'clienteCep', 'clienteCnpj', 'clienteInscEst', 'clienteIncMun', 'obs',
 ] as const;
 
+// Dados do cliente pra "Usuário Final / Destinatário" do Recibo de Locação, a partir do
+// cadastro de Clientes. Prioriza casar por ID (a FK real que a OS carrega, via clienteId de
+// mapOsToFinanceiro/mapOrdemToOs) — é exato e não quebra com qualquer diferença de texto no
+// nome (prefixo digitado à mão, acento, maiúscula...). Casar por nome (razão social) é só
+// fallback, pros poucos lugares que ainda não têm o id em mãos (ex.: medição sem OS resolvida).
+// O cadastro de Cliente só tem UM campo de endereço (sem logradouro/bairro/município/UF/CEP
+// separados), então o valor inteiro cai em "Logradouro" — os demais campos de endereço
+// continuam por preencher à mão.
+export const dadosClienteRecibo = (clientes: any[], params: { clienteId?: string | number; nomeCliente?: string }) => {
+  const lista = Array.isArray(clientes) ? clientes : [];
+  const idAlvo = String(params.clienteId ?? '').trim();
+  const porId = idAlvo ? lista.find((x: any) => String(x?.id ?? '') === idAlvo) : undefined;
+  const nomeAlvo = String(params.nomeCliente || '').trim().toLowerCase();
+  const c = porId || (nomeAlvo
+    ? lista.find((x: any) => String(x?.razaoSocial || x?.razao_social || '').trim().toLowerCase() === nomeAlvo)
+    : undefined);
+  if (!c) return null;
+  return {
+    clienteNome: c.razaoSocial || c.razao_social || '',
+    clienteCnpj: c.cpfCnpj || c.documento || '',
+    clienteInscEst: c.inscricaoEstadual || c.inscricao_estadual || '',
+    clienteLogradouro: c.endereco || c.endereco_completo || '',
+  };
+};
+
 // Monta o objeto do recibo de locação a partir de uma medição aprovada. Devolve null se a medição
 // não tiver itens de locação. Cabeçalho vem do recibo anterior da OS (se houver); itens vêm SEMPRE
 // da medição informada. Reutilizado tanto na aprovação da medição quanto no dropdown de "Novo recibo".
-export const construirReciboDeMedicao = (financeiro: any[], med: any): any | null => {
+// `clienteId` é opcional (o chamador passa quando já tem a OS resolvida em mãos — ver
+// ReciboLocacaoView.tsx/MedicaoView.tsx) — sem ele, cai no fallback por nome de dadosClienteRecibo.
+export const construirReciboDeMedicao = (financeiro: any[], med: any, clientes: any[] = [], clienteId?: string | number): any | null => {
   const itensLoc = (Array.isArray(med?.itens) ? med.itens : []).filter(
     (l: any) => (l?.categoria || 'servico') === 'locacao',
   );
@@ -533,7 +644,13 @@ export const construirReciboDeMedicao = (financeiro: any[], med: any): any | nul
 
   const cabecalho: Record<string, any> = anterior
     ? CAMPOS_CABECALHO_RECIBO.reduce((acc, k) => ({ ...acc, [k]: anterior[k] }), {})
-    : { empresa: med?.empresa || '', clienteNome: med?.cliente || '', clienteCnpj: med?.cnpj || '', obs: '' };
+    : {
+        empresa: med?.empresa || '',
+        obs: '',
+        clienteNome: med?.cliente || '',
+        clienteCnpj: med?.cnpj || '',
+        ...dadosClienteRecibo(clientes, { clienteId, nomeCliente: med?.cliente }),
+      };
 
   return {
     id: `REC-${Date.now()}`,
@@ -581,6 +698,7 @@ export interface AporteReceber {
   baixado?: number;          // valor já recebido na emissão (NFe); semeia o recebimento na criação
   impostos?: ImpostosNfe;    // detalhamento retido na NF que originou este aporte
   emissao?: string;          // data de emissão da NFe (origem 'NFe'), exibida em Contas a Receber
+  anexos?: string[];         // documento(s) da fonte (NFe emitida / recibo de locação gerado)
 }
 
 const _maxData = (a?: string, b?: string): string => {
@@ -602,6 +720,7 @@ export const upsertContaReceberPorMedicao = (financeiro: any[], aporte: AporteRe
     referencia: aporte.referencia || '',
     impostos: aporte.impostos || null,
     emissao: aporte.emissao || '',
+    anexos: aporte.anexos || [],
   };
 
   // Reconstrói o recebível a partir das suas fontes (soma valores, vencimento = o mais distante).
@@ -621,9 +740,10 @@ export const upsertContaReceberPorMedicao = (financeiro: any[], aporte: AporteRe
       // Fica no recebível para a tela e o CSV não precisarem voltar na NFe de origem.
       impostos: somarImpostos(fontes.map((f) => f.impostos)),
       vencimentoRecebimento: fontes.reduce((v, f) => _maxData(v, f.vencimento), ''),
-      // Data de emissão da NFe que originou o recebível (fonte 'NFe' especificamente —
-      // o recibo de locação não tem emissão de nota própria neste fluxo).
-      emissaoNfe: fontes.find((f) => f.origem === 'NFe')?.emissao || base?.emissaoNfe || '',
+      // Data de emissão do documento de origem — NFe ou Recibo, o que tiver (prioriza a
+      // ordem das fontes: quando há as duas, NFe vem primeiro). Recibo de locação também
+      // tem sua própria data de emissão (ver gerarEArquivarRecibo), não só a NFe.
+      emissaoNfe: fontes.find((f) => f.emissao)?.emissao || base?.emissaoNfe || '',
       // Recebível já existia → preserva o recebimento (manual ou anterior). Novo → semeia do `baixado`.
       recebido: base ? (base.recebido ?? false) : (baixado > 0 && baixado >= valorLiquido),
       dataRecebimento: base?.dataRecebimento ?? '',
@@ -633,14 +753,29 @@ export const upsertContaReceberPorMedicao = (financeiro: any[], aporte: AporteRe
       medicaoId: aporte.medicaoId || base?.medicaoId || '',
       medicaoNumero: aporte.medicaoNumero || base?.medicaoNumero || '',
       ordemServicoNumero: aporte.ordemServicoNumero || base?.ordemServicoNumero || '',
+      // Documento(s) de cada fonte (NFe emitida / recibo de locação gerado), achatados pra
+      // a tela de Contas a Receber conseguir mostrar/baixar sem precisar voltar na origem.
+      anexos: fontes.flatMap((f) => (Array.isArray(f.anexos) ? f.anexos : [])),
       fontes,
       createdAt: base?.createdAt || new Date().toISOString(),
     };
   };
 
-  // Sem medição: recebível avulso (ex.: NFe derivada de obra finalizada) — nunca mescla.
+  // Sem medição: recebível avulso (ex.: NFe derivada de obra finalizada, ou Recibo de Locação
+  // sem medição/vindo direto de uma OS ou de uma solicitação de NFe bridge). Não mescla com
+  // outras fontes — mas PRECISA achar e atualizar o mesmo recebível se essa mesma fonte já
+  // tiver gerado um antes (reemitir o mesmo documento não pode duplicar a conta a cada vez).
   if (!aporte.medicaoId) {
-    return [montarRecebivel([fonte]), ...lista];
+    const idxFonte = lista.findIndex(
+      (r: any) => r?.tipo === 'contaReceber'
+        && !r?.medicaoId
+        && Array.isArray(r?.fontes)
+        && r.fontes.some((f: any) => f.origem === aporte.origem && String(f.id) === String(aporte.fonteId)),
+    );
+    if (idxFonte === -1) return [montarRecebivel([fonte]), ...lista];
+    const copia = [...lista];
+    copia[idxFonte] = montarRecebivel([fonte], lista[idxFonte]);
+    return copia;
   }
 
   const idx = lista.findIndex(
@@ -669,8 +804,13 @@ export const download = (text: string, filename: string, type = 'text/plain;char
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  // Precisa estar no DOM pro .click() disparar o download em todos os navegadores (Firefox/
+  // Safari podem ignorar o click de um <a> solto, fora da árvore) — e o revoke só depois de um
+  // instante, senão corre risco de invalidar a URL antes do download começar de verdade.
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 
 // ---------- Contas a Pagar: builder puro (única ou mãe+filhas) ----------
@@ -927,6 +1067,104 @@ export const primeiroVencimento = (fixa: any): string => {
     if (data >= inicio) return data;
   }
   return inicio;
+};
+
+/* =========================================================================================
+ * FATURADO — Solicitação de Pagamento com UMA Nota Fiscal cujo valor total é dividido em N
+ * parcelas, cada uma com seu PRÓPRIO boleto (todos anexados já na criação — diferente das
+ * Contas Fixas acima, aqui não sobra nada em aberto pra depois). Periodicidade própria
+ * (inclui quinzenal/bimestral/trimestral, que não existem em Contas Fixas), então tipos e
+ * cálculo de data ficam separados de Periodicidade/PERIODICIDADES/proximoVencimento.
+ * =======================================================================================*/
+
+export type PeriodicidadeFaturado = 'mensal' | 'quinzenal' | 'semanal' | 'bimestral' | 'trimestral';
+
+export const PERIODICIDADES_FATURADO: { id: PeriodicidadeFaturado; label: string }[] = [
+  { id: 'mensal', label: 'Mensal' },
+  { id: 'quinzenal', label: 'Quinzenal' },
+  { id: 'semanal', label: 'Semanal' },
+  { id: 'bimestral', label: 'Bimestral' },
+  { id: 'trimestral', label: 'Trimestral' },
+];
+
+export interface FaturadoParcela {
+  numero: number;
+  periodo: string;   // competência, "yyyy-mm"
+  vencimento: string; // "yyyy-mm-dd"
+  valor: number;
+  anexoUrl?: string;
+  contaPagarId?: string;
+}
+
+export interface FaturadoInfo {
+  notaFiscal: { numero: string; valorTotal: number; anexoUrl?: string };
+  periodicidade: PeriodicidadeFaturado;
+  diaVencimento: number;
+  inicio: string;
+  parcelas: FaturadoParcela[];
+  maeContaPagarId?: string;
+}
+
+// Divide um valor total em N parcelas trabalhando em centavos (evita perder centavo na
+// divisão) — o resto vai para as PRIMEIRAS parcelas, uma a uma, até zerar.
+export const calcularValoresParcelas = (valorTotal: number, quantidade: number): number[] => {
+  const n = Math.max(1, Math.floor(quantidade) || 0);
+  const totalCentavos = Math.round((valorTotal || 0) * 100);
+  const base = Math.floor(totalCentavos / n);
+  const resto = totalCentavos % n;
+  const valores: number[] = [];
+  for (let i = 0; i < n; i += 1) {
+    valores.push((base + (i < resto ? 1 : 0)) / 100);
+  }
+  return valores;
+};
+
+// Vencimento dentro do mês/ano de `referenciaIso`, no dia desejado (1-31, truncado pro
+// último dia do mês se o mês for mais curto).
+export const vencimentoNoMesFaturado = (referenciaIso: string, diaDesejado: number): string => {
+  const [ano, mes] = String(referenciaIso || todayStr).slice(0, 7).split('-').map(Number);
+  const ultimoDia = ultimoDiaDoMes(ano, mes - 1);
+  const dia = Math.min(Math.max(Math.floor(diaDesejado) || 1, 1), ultimoDia);
+  return `${ano}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+};
+
+// Um período à frente, a partir de uma data de referência (não necessariamente um vencimento
+// — é a "competência" que avança; o vencimento de cada passo é recalculado à parte, com
+// vencimentoNoMesFaturado, sempre no dia fixo configurado).
+export const proximoPeriodoFaturado = (referenciaIso: string, periodicidade: PeriodicidadeFaturado): string => {
+  if (periodicidade === 'semanal') return days(referenciaIso, 7);
+  if (periodicidade === 'quinzenal') return days(referenciaIso, 15);
+  const mesesAFrente = periodicidade === 'bimestral' ? 2 : periodicidade === 'trimestral' ? 3 : 1;
+  const [ano, mes, dia] = referenciaIso.split('-').map(Number);
+  const idx = ano * 12 + (mes - 1) + mesesAFrente;
+  const a = Math.floor(idx / 12);
+  const m = idx % 12;
+  const ultimoDia = ultimoDiaDoMes(a, m);
+  return `${a}-${String(m + 1).padStart(2, '0')}-${String(Math.min(dia, ultimoDia)).padStart(2, '0')}`;
+};
+
+// Gera a lista fechada de N parcelas (período, vencimento, valor) a partir da NF total e da
+// periodicidade — cada parcela ainda sem anexoUrl (o boleto é anexado depois, por linha).
+export const gerarParcelasFaturado = (params: {
+  periodicidade: PeriodicidadeFaturado;
+  diaVencimento: number;
+  inicio: string;
+  quantidade: number;
+  valorTotal: number;
+}): FaturadoParcela[] => {
+  const valores = calcularValoresParcelas(params.valorTotal, params.quantidade);
+  const parcelas: FaturadoParcela[] = [];
+  let referencia = params.inicio;
+  for (let i = 0; i < valores.length; i += 1) {
+    parcelas.push({
+      numero: i + 1,
+      periodo: referencia.slice(0, 7),
+      vencimento: vencimentoNoMesFaturado(referencia, params.diaVencimento),
+      valor: valores[i],
+    });
+    referencia = proximoPeriodoFaturado(referencia, params.periodicidade);
+  }
+  return parcelas;
 };
 
 // Id determinístico da ocorrência: regra + data. Torna a criação idempotente — se dois

@@ -8,11 +8,18 @@ import api from './api';
  *   POST /comercial/compras/ -> substitui a(s) coleção(ões) enviada(s)
  */
 
+// A aprovação virou um fluxo sequencial em duas telas (Aprovar Com. / Aprovar Fin.) — o
+// estágio único antigo 'APROVACAO' e a extinta coluna 'SELECAO_GERENTE' viram
+// 'AGUARDANDO_COMERCIAL' em qualquer registro lido, pra pedidos já gravados antes da mudança
+// continuarem aparecendo pra aprovar.
+const migrarStageLegado = (r: any) =>
+  (r?.stage === 'APROVACAO' || r?.stage === 'SELECAO_GERENTE') ? { ...r, stage: 'AGUARDANDO_COMERCIAL' } : r;
+
 export const getCompras = async (): Promise<{ compras: any[]; comprasHistorico: any[] }> => {
   try {
     const response = await api.get('compras/');
     return {
-      compras: Array.isArray(response.data?.compras) ? response.data.compras : [],
+      compras: (Array.isArray(response.data?.compras) ? response.data.compras : []).map(migrarStageLegado),
       comprasHistorico: Array.isArray(response.data?.comprasHistorico) ? response.data.comprasHistorico : [],
     };
   } catch (error) {

@@ -34,10 +34,21 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
 
   const doc = new jsPDF('p', 'mm', 'a4');
   const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
   const lineHeight = 5;
   const cellHeight = lineHeight;
   let y = 10;
   const margin = 8;
+
+  // Não existia NENHUMA quebra de página neste arquivo — com ~50 linhas (comum em orçamentos
+  // com bastante mão de obra/materiais/atividades) o conteúdo passava de 297mm e tudo depois
+  // disso, inclusive o Valor Total no resumo final, saía da folha e era perdido.
+  const ensureSpace = (needed: number) => {
+    if (y + needed > pageHeight - margin) {
+      doc.addPage();
+      y = margin;
+    }
+  };
   const baseColWidth = (pageWidth - margin * 2) / 10;
   const laborColWidths = [
     baseColWidth,
@@ -60,20 +71,30 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
   const sumWidths = (widths: number[]) => widths.reduce((sum, width) => sum + width, 0);
 
   const drawCellWithAutoWrap = (x: number, y: number, width: number, height: number, text: string, bold = false, red = false) => {
-    doc.setFont('Arial', bold ? 'bold' : 'normal');
+    doc.setFont('helvetica', bold ? 'bold' : 'normal');
     if (red) {
       doc.setTextColor(255, 0, 0);
     } else {
       doc.setTextColor(0, 0, 0);
     }
-    const lines = doc.splitTextToSize(text || '', width - 2);
+    // O tamanho da fonte precisa estar fixado ANTES do primeiro splitTextToSize — sem isso a
+    // contagem de linhas usava o tamanho que sobrou da última célula desenhada, e a decisão de
+    // reduzir a fonte ficava inconsistente conforme a ordem das chamadas.
     let fontSize = 8;
+    doc.setFontSize(fontSize);
+    const lines = doc.splitTextToSize(text || '', width - 2);
     let displayLines = lines.slice(0, 2);
     if (lines.length > 2) {
       fontSize = 6;
       doc.setFontSize(fontSize);
       const newLines = doc.splitTextToSize(text || '', width - 2);
       displayLines = newLines.slice(0, 3);
+      // A célula tem altura fixa (não dá pra crescer) — quando mesmo a fonte menor não coube
+      // tudo, marca "…" na última linha visível em vez de cortar o texto sem nenhum aviso.
+      if (newLines.length > 3) {
+        const ultima = displayLines[2];
+        displayLines[2] = ultima.length > 1 ? `${ultima.slice(0, -1)}…` : '…';
+      }
     } else {
       doc.setFontSize(fontSize);
     }
@@ -90,16 +111,25 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
 
   const drawCell = (x: number, y: number, width: number, height: number, text: string, bold = false, red = false) => {
     doc.rect(x, y, width, height);
-    doc.setFont('Arial', bold ? 'bold' : 'normal');
+    doc.setFont('helvetica', bold ? 'bold' : 'normal');
     doc.setFontSize(9);
     if (red) {
       doc.setTextColor(255, 0, 0);
     } else {
       doc.setTextColor(0, 0, 0);
     }
-    const maxChars = Math.floor(width / 1.5);
-    const wrappedText = text.length > maxChars ? text.substring(0, maxChars - 3) + '...' : text;
-    doc.text(wrappedText, x + 1, y + 3.5, { maxWidth: width - 2 });
+    // Trunca pela largura de texto MEDIDA (doc.getTextWidth), não por uma estimativa de nº de
+    // caracteres — a estimativa cortava nomes/razões sociais cedo demais ou tarde demais
+    // dependendo de quantos caracteres largos (M, W) ou estreitos (i, l) o texto tinha.
+    const maxWidth = width - 2;
+    let wrappedText = text || '';
+    if (doc.getTextWidth(wrappedText) > maxWidth) {
+      while (wrappedText.length > 1 && doc.getTextWidth(`${wrappedText}…`) > maxWidth) {
+        wrappedText = wrappedText.slice(0, -1);
+      }
+      wrappedText += '…';
+    }
+    doc.text(wrappedText, x + 1, y + 3.5, { maxWidth });
     doc.setTextColor(0, 0, 0);
   };
 
@@ -113,12 +143,14 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
   drawCell(x, y, baseColWidth * 5, cellHeight, `Data: ${new Date().toLocaleDateString('pt-BR')}`);
   y += cellHeight;
 
+  ensureSpace(cellHeight);
   x = margin;
   drawCell(x, y, baseColWidth, cellHeight, 'Ship:', true);
   x += baseColWidth;
   drawCell(x, y, baseColWidth * 9, cellHeight, obra?.nome || '');
   y += cellHeight;
 
+  ensureSpace(cellHeight);
   x = margin;
   drawCell(x, y, baseColWidth, cellHeight, 'Escopo:', true);
   x += baseColWidth;
@@ -157,8 +189,9 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
   const temServicoPdf = !(itensAlocacaoData.length > 0 && maoDeObraData.length === 0 && materiaisData.length === 0 && terceirizadosData.length === 0);
 
   if (temServicoPdf) {
+  ensureSpace(cellHeight);
   x = margin;
-  doc.setFont('Arial', 'bold');
+  doc.setFont('helvetica', 'bold');
   doc.setFontSize(9);
   doc.text('A', x + 2, y + 3);
   doc.rect(x, y, baseColWidth, cellHeight);
@@ -169,11 +202,12 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
   doc.setTextColor(0, 0, 0);
   y += cellHeight;
 
+  ensureSpace(cellHeight);
   x = margin;
   const headersMaoDeObra = ['Item', 'Função', 'Qtd', 'Dias', 'Custo/Dia', 'Obs', 'Valor Total'];
   headersMaoDeObra.forEach((h, index) => {
     const colWidth = laborColWidths[index];
-    doc.setFont('Arial', 'bold');
+    doc.setFont('helvetica', 'bold');
     doc.setFontSize(7);
     doc.text(h, x + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
     doc.rect(x, y, colWidth, cellHeight);
@@ -182,8 +216,9 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
   y += cellHeight;
 
   maoDeObraData.forEach((item: any, idx: number) => {
+    ensureSpace(cellHeight);
     x = margin;
-    doc.setFont('Arial', 'normal');
+    doc.setFont('helvetica', 'normal');
     doc.setFontSize(7);
 
     doc.text(String(idx + 1), x + 0.5, y + 2.5);
@@ -208,19 +243,20 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
     drawCellWithAutoWrap(x, y, laborColWidths[5], cellHeight, item.observacoes || item.observacao || '');
     x += laborColWidths[5];
 
-    doc.setFont('Arial', 'bold');
+    doc.setFont('helvetica', 'bold');
     doc.setTextColor(255, 0, 0);
     doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
     doc.setTextColor(0, 0, 0);
-    doc.setFont('Arial', 'normal');
+    doc.setFont('helvetica', 'normal');
     doc.rect(x, y, laborColWidths[6], cellHeight);
     x += laborColWidths[6];
 
     y += cellHeight;
   });
 
+  ensureSpace(cellHeight);
   x = margin;
-  doc.setFont('Arial', 'bold');
+  doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
   doc.setTextColor(255, 0, 0);
   doc.text('Sub-total', x + 0.5, y + 2.5);
@@ -237,8 +273,9 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
   if (materiaisData && materiaisData.length > 0) {
     const headersMateriais = ['Item', 'Descrição', 'Un', 'Qtd', 'Peso/Fat', 'Custo Un', 'Total'];
 
+    ensureSpace(cellHeight);
     x = margin;
-    doc.setFont('Arial', 'bold');
+    doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
     doc.text('B', x + 2, y + 3);
     doc.rect(x, y, baseColWidth, cellHeight);
@@ -249,10 +286,11 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
     doc.setTextColor(0, 0, 0);
     y += cellHeight;
 
+    ensureSpace(cellHeight);
     x = margin;
     headersMateriais.forEach((h, index) => {
       const colWidth = materialsColWidths[index];
-      doc.setFont('Arial', 'bold');
+      doc.setFont('helvetica', 'bold');
       doc.setFontSize(7);
       doc.text(h, x + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
       doc.rect(x, y, colWidth, cellHeight);
@@ -261,8 +299,9 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
     y += cellHeight;
 
     materiaisData.forEach((item: any, idx: number) => {
+      ensureSpace(cellHeight);
       x = margin;
-      doc.setFont('Arial', 'normal');
+      doc.setFont('helvetica', 'normal');
       doc.setFontSize(7);
 
       doc.text(String(idx + 1), x + 0.5, y + 2.5);
@@ -288,19 +327,20 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
       doc.rect(x, y, materialsColWidths[5], cellHeight);
       x += materialsColWidths[5];
 
-      doc.setFont('Arial', 'bold');
+      doc.setFont('helvetica', 'bold');
       doc.setTextColor(255, 0, 0);
       doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
       doc.setTextColor(0, 0, 0);
-      doc.setFont('Arial', 'normal');
+      doc.setFont('helvetica', 'normal');
       doc.rect(x, y, materialsColWidths[6], cellHeight);
       x += materialsColWidths[6];
 
       y += cellHeight;
     });
 
+    ensureSpace(cellHeight);
     x = margin;
-    doc.setFont('Arial', 'bold');
+    doc.setFont('helvetica', 'bold');
     doc.setFontSize(8);
     doc.setTextColor(255, 0, 0);
     doc.text('Valor total', x + 0.5, y + 2.5);
@@ -317,8 +357,9 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
   if (terceirizadosData && terceirizadosData.length > 0) {
     const headersTerceiros = ['Item', 'Descrição', 'Un', 'Qtd', 'Peso/Fat', 'Custo Un', 'Total'];
 
+    ensureSpace(cellHeight);
     x = margin;
-    doc.setFont('Arial', 'bold');
+    doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
     doc.text('C', x + 2, y + 3);
     doc.rect(x, y, baseColWidth, cellHeight);
@@ -329,10 +370,11 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
     doc.setTextColor(0, 0, 0);
     y += cellHeight;
 
+    ensureSpace(cellHeight);
     x = margin;
     headersTerceiros.forEach((h, index) => {
       const colWidth = materialsColWidths[index];
-      doc.setFont('Arial', 'bold');
+      doc.setFont('helvetica', 'bold');
       doc.setFontSize(7);
       doc.text(h, x + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
       doc.rect(x, y, colWidth, cellHeight);
@@ -341,8 +383,9 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
     y += cellHeight;
 
     terceirizadosData.forEach((item: any, idx: number) => {
+      ensureSpace(cellHeight);
       x = margin;
-      doc.setFont('Arial', 'normal');
+      doc.setFont('helvetica', 'normal');
       doc.setFontSize(7);
 
       doc.text(String(idx + 1), x + 0.5, y + 2.5);
@@ -368,19 +411,20 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
       doc.rect(x, y, materialsColWidths[5], cellHeight);
       x += materialsColWidths[5];
 
-      doc.setFont('Arial', 'bold');
+      doc.setFont('helvetica', 'bold');
       doc.setTextColor(255, 0, 0);
       doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
       doc.setTextColor(0, 0, 0);
-      doc.setFont('Arial', 'normal');
+      doc.setFont('helvetica', 'normal');
       doc.rect(x, y, materialsColWidths[6], cellHeight);
       x += materialsColWidths[6];
 
       y += cellHeight;
     });
 
+    ensureSpace(cellHeight);
     x = margin;
-    doc.setFont('Arial', 'bold');
+    doc.setFont('helvetica', 'bold');
     doc.setFontSize(8);
     doc.setTextColor(255, 0, 0);
     doc.text('Sub-total', x + 0.5, y + 2.5);
@@ -398,8 +442,9 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
   if (itensAlocacaoData && itensAlocacaoData.length > 0) {
     const headersLocacao = ['Item', 'Equipamento', 'Un', 'Qtd', 'Vl Indeniz', 'Vl Locação', 'Total'];
 
+    ensureSpace(cellHeight);
     x = margin;
-    doc.setFont('Arial', 'bold');
+    doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
     doc.text('D', x + 2, y + 3);
     doc.rect(x, y, baseColWidth, cellHeight);
@@ -410,10 +455,11 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
     doc.setTextColor(0, 0, 0);
     y += cellHeight;
 
+    ensureSpace(cellHeight);
     x = margin;
     headersLocacao.forEach((h, index) => {
       const colWidth = materialsColWidths[index];
-      doc.setFont('Arial', 'bold');
+      doc.setFont('helvetica', 'bold');
       doc.setFontSize(7);
       doc.text(h, x + 0.5, y + 2.5, { maxWidth: colWidth - 1 });
       doc.rect(x, y, colWidth, cellHeight);
@@ -422,8 +468,9 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
     y += cellHeight;
 
     itensAlocacaoData.forEach((item: any, idx: number) => {
+      ensureSpace(cellHeight);
       x = margin;
-      doc.setFont('Arial', 'normal');
+      doc.setFont('helvetica', 'normal');
       doc.setFontSize(7);
 
       doc.text(String(idx + 1), x + 0.5, y + 2.5);
@@ -449,19 +496,20 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
       doc.rect(x, y, materialsColWidths[5], cellHeight);
       x += materialsColWidths[5];
 
-      doc.setFont('Arial', 'bold');
+      doc.setFont('helvetica', 'bold');
       doc.setTextColor(255, 0, 0);
       doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
       doc.setTextColor(0, 0, 0);
-      doc.setFont('Arial', 'normal');
+      doc.setFont('helvetica', 'normal');
       doc.rect(x, y, materialsColWidths[6], cellHeight);
       x += materialsColWidths[6];
 
       y += cellHeight;
     });
 
+    ensureSpace(cellHeight);
     x = margin;
-    doc.setFont('Arial', 'bold');
+    doc.setFont('helvetica', 'bold');
     doc.setFontSize(8);
     doc.setTextColor(255, 0, 0);
     doc.text('Sub-total Locação', x + 0.5, y + 2.5);
@@ -477,8 +525,9 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
 
   // ===== Seção E - Cálculos Finais (serviço; oculto em locação pura) =====
   if (temServicoPdf) {
+  ensureSpace(cellHeight);
   x = margin;
-  doc.setFont('Arial', 'bold');
+  doc.setFont('helvetica', 'bold');
   doc.setFontSize(9);
   doc.text('E', x + 2, y + 3);
   doc.rect(x, y, baseColWidth, cellHeight);
@@ -501,11 +550,12 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
 
   calculos.forEach((row, idx) => {
     const isLastRow = idx === calculos.length - 1;
+    ensureSpace(cellHeight);
     x = margin;
-    doc.setFont('Arial', 'normal');
+    doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
     if (isLastRow) {
-      doc.setFont('Arial', 'bold');
+      doc.setFont('helvetica', 'bold');
       doc.setTextColor(255, 0, 0);
     }
     doc.text(row[0], x + 0.5, y + 2.5);
@@ -523,43 +573,47 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
   });
   } // fim Seção E (serviço)
 
+  ensureSpace(cellHeight);
   x = margin;
-  doc.setFont('Arial', 'bold');
+  doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
   doc.text('RESUMO:', x + 0.5, y + 2.5);
   doc.rect(x, y, baseColWidth * 10, cellHeight);
   y += cellHeight;
 
   if (temServicoPdf) {
+  ensureSpace(cellHeight);
   x = margin;
-  doc.setFont('Arial', 'normal');
+  doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.text('Qtd. de Itens:', x + 0.5, y + 2.5);
   doc.rect(x, y, baseColWidth * 5, cellHeight);
   x += baseColWidth * 5;
-  doc.setFont('Arial', 'bold');
+  doc.setFont('helvetica', 'bold');
   doc.text(String(totalItens), x + 0.5, y + 2.5);
   doc.rect(x, y, baseColWidth * 5, cellHeight);
   y += cellHeight;
 
+  ensureSpace(cellHeight);
   x = margin;
-  doc.setFont('Arial', 'normal');
+  doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.text('Preço por Item:', x + 0.5, y + 2.5);
   doc.rect(x, y, baseColWidth * 5, cellHeight);
   x += baseColWidth * 5;
-  doc.setFont('Arial', 'bold');
+  doc.setFont('helvetica', 'bold');
   doc.text(`R$ ${precoPorItem.toFixed(2)}`, x + 0.5, y + 2.5);
   doc.rect(x, y, baseColWidth * 5, cellHeight);
   y += cellHeight;
 
+  ensureSpace(cellHeight);
   x = margin;
-  doc.setFont('Arial', 'normal');
+  doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.text('Valor Serviços:', x + 0.5, y + 2.5);
   doc.rect(x, y, baseColWidth * 5, cellHeight);
   x += baseColWidth * 5;
-  doc.setFont('Arial', 'bold');
+  doc.setFont('helvetica', 'bold');
   doc.text(`R$ ${precoFinal.toFixed(2)}`, x + 0.5, y + 2.5);
   doc.rect(x, y, baseColWidth * 5, cellHeight);
   y += cellHeight;
@@ -567,13 +621,14 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
 
   if (subtotalLocacaoBruto > 0) {
   const drawResumoRow = (label: string, valor: string) => {
+    ensureSpace(cellHeight);
     x = margin;
-    doc.setFont('Arial', 'normal');
+    doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
     doc.text(label, x + 0.5, y + 2.5);
     doc.rect(x, y, baseColWidth * 5, cellHeight);
     x += baseColWidth * 5;
-    doc.setFont('Arial', 'bold');
+    doc.setFont('helvetica', 'bold');
     doc.text(valor, x + 0.5, y + 2.5);
     doc.rect(x, y, baseColWidth * 5, cellHeight);
     y += cellHeight;
@@ -583,13 +638,14 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
   drawResumoRow('Subtotal Locação (c/ imposto):', `R$ ${subtotalLocacao.toFixed(2)}`);
   }
 
+  ensureSpace(cellHeight);
   x = margin;
-  doc.setFont('Arial', 'normal');
+  doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.text('Valor Total:', x + 0.5, y + 2.5);
   doc.rect(x, y, baseColWidth * 5, cellHeight);
   x += baseColWidth * 5;
-  doc.setFont('Arial', 'bold');
+  doc.setFont('helvetica', 'bold');
   doc.setTextColor(255, 0, 0);
   doc.text(`R$ ${totalGeral.toFixed(2)}`, x + 0.5, y + 2.5);
   doc.setTextColor(0, 0, 0);
@@ -599,9 +655,15 @@ export const handleDownloadOrcamentoPDF = (orcamento: any, cliente: any, obra: a
   const conteudoDataUrl = doc.output('datauristring');
   doc.save(nomeArquivo);
 
+  // Tamanho real do PDF em bytes: descontando o prefixo "data:...;base64," (não é conteúdo) e
+  // o padding "=" do base64, que juntos inflavam o valor reportado.
+  const base64 = conteudoDataUrl.slice(conteudoDataUrl.indexOf(',') + 1);
+  const padding = (base64.match(/=+$/)?.[0] || '').length;
+  const tamanho = Math.max(0, Math.round((base64.length * 3) / 4) - padding);
+
   return {
     nomeArquivo,
     conteudoDataUrl,
-    tamanho: Math.max(0, Math.round((conteudoDataUrl.length * 3) / 4)),
+    tamanho,
   };
 };

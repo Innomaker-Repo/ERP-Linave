@@ -1,19 +1,34 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, Download, Save, Banknote, Split, Paperclip, CalendarClock, Repeat, AlertTriangle, Power } from 'lucide-react';
+import { Plus, Download, Save, Banknote, Split, Paperclip, CalendarClock, Repeat, AlertTriangle, Power, Files, RefreshCw, Trash2 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import {
   FinCard, Toolbar, DataTable, Th, Td, Btn, StatusTag, CompanyTag, TypeTag, Pill, EmptyRow,
-  FinModal, Field, Input, MoneyInput, Select, Textarea, Kpi, DeleteBtn, labelCls, boldOS,
+  FinModal, Field, Input, MoneyInput, Select, Textarea, Kpi, DeleteBtn, labelCls, boldOS, FileInput,
 } from '../finUi';
 import {
-  br, money, num, todayStr, genFinId, download, days, FORMAS_PAGAMENTO, TIPOS_REEMBOLSO,
-  NATUREZAS_CONTA_PAGAR, CP_STATUS, documentoDuplicado, bancoLabel,
+  br, money, num, todayStr, genFinId, days, FORMAS_PAGAMENTO, TIPOS_REEMBOLSO,
+  NATUREZAS_CONTA_PAGAR, CP_STATUS, documentoDuplicado, bancoLabel, FORMA_DISPENSA_COMPROVANTE,
   PERIODICIDADES, CATEGORIAS_CONTA_FIXA, avisosContasFixas, contaVencida, contaPaga,
   diasAteVencimento, type AvisoContaFixa,
 } from '../finData';
 import { useFin, type FinRecord } from '../useFin';
 import { useFinFilters } from '../finFilters';
-import { uploadDocumento } from '../../../../../services/documentosService';
+import { uploadDocumento, listarDocumentos, excluirDocumento } from '../../../../../services/documentosService';
+import { confirmDialog, promptDialog } from '../../../ui/feedback';
 import { toast } from 'sonner';
+
+// Deriva um nome de arquivo amigável a partir da URL salva (`anexos`/`comprovantes` guardam
+// só a URL, sem metadado de nome) — é só o basename decodificado, mas já é o suficiente pra
+// diferenciar "boleto.pdf" de "nf_entrada.pdf" na hora de listar os documentos anexados.
+const nomeDoArquivo = (url: string): string => {
+  try {
+    const semQuery = url.split('?')[0];
+    const base = semQuery.split('/').pop() || url;
+    return decodeURIComponent(base);
+  } catch {
+    return url;
+  }
+};
 
 export function ContasPagarView() {
   const {
@@ -26,6 +41,19 @@ export function ContasPagarView() {
   const contasFixas = records('contaFixa');
   const bancos = records('banco').filter((b) => b.nome) as Array<{ id: string; nome: string; empresa?: string }>;
   const [salvando, setSalvando] = useState(false);
+
+  // Os <select> de banco guardam/comparam pelo RÓTULO completo ("Itaú - Linave", ver
+  // bancoLabel em finData.ts) — nunca só o nome: dois bancos de empresas diferentes podem ter
+  // o mesmo nome, e guardar só ele misturava as duas contas (mesmo bug do <select>, só que
+  // gravado — reabrir sempre caía no primeiro banco daquele nome). O <select> em si opera por
+  // `id` (sempre único) e só traduz pra rótulo na entrada/saída.
+  const bancoSelectProps = (valorAtual: string, aoMudarRotulo: (rotulo: string) => void) => ({
+    value: bancos.find((b) => bancoLabel(b) === valorAtual)?.id || '',
+    onChange: (e: React.ChangeEvent<HTMLSelectElement>) => {
+      const b = bancos.find((x) => x.id === e.target.value);
+      aoMudarRotulo(b ? bancoLabel(b) : '');
+    },
+  });
 
   // ---- Contas fixas: gera as ocorrências que faltam ao abrir a tela ----
   // Roda uma vez por entrada na tela. `sincronizarContasFixas` só escreve quando há
@@ -78,6 +106,17 @@ export function ContasPagarView() {
       if (origemFiltro === 'Fixas') return Boolean(r.contaFixaId);
       if (origemFiltro === 'Normais') return !r.contaFixaId;
       return true;
+    })
+    // Vencimento mais próximo primeiro (ordem crescente). `vencimento` é sempre ISO
+    // YYYY-MM-DD, então dá pra comparar como string direto. Conta sem vencimento (ainda
+    // sem documento) não tem data pra ordenar — fica por último, não no topo.
+    .sort((a, b) => {
+      const va = String(a.vencimento || '');
+      const vb = String(b.vencimento || '');
+      if (!va && !vb) return 0;
+      if (!va) return 1;
+      if (!vb) return -1;
+      return va < vb ? -1 : va > vb ? 1 : 0;
     });
 
   const totalFixasNaTela = useMemo(
@@ -90,15 +129,18 @@ export function ContasPagarView() {
   const formVazio = () => ({
     empresa: empresas[0] || 'Linave', vinculoTipo: 'OS' as 'OS' | 'Departamento', vinculoValor: '',
     fornecedor: '', tipoPagamento: 'Material', natureza: '', documento: '', valor: '', vencimento: todayStr, banco: '', forma: '', obs: '',
-    nfAnexo: '', nfAnexoNome: '',
   });
   const [editId, setEditId] = useState<string | null | undefined>(undefined); // undefined=fechado, null=novo
   const [form, setForm] = useState(formVazio());
   const setF = (k: string, v: string) => setForm((p) => ({ ...p, [k]: v }));
+  // Documentos já salvos na conta (URLs) + arquivos novos ainda não enviados (File[]). O
+  // upload de verdade só acontece no submit — mantém tudo (existentes + novos) em vez de
+  // sobrescrever, que era o bug: anexar um documento novo apagava o boleto que já estava lá.
+  const [anexosExistentes, setAnexosExistentes] = useState<string[]>([]);
+  const [novosAnexos, setNovosAnexos] = useState<File[]>([]);
 
-  const abrirNovo = () => { setForm(formVazio()); setEditId(null); };
+  const abrirNovo = () => { setForm(formVazio()); setAnexosExistentes([]); setNovosAnexos([]); setEditId(null); };
   const abrirEdicao = (p: FinRecord) => {
-    const nfAnexo = Array.isArray(p.anexos) && p.anexos.length ? String(p.anexos[0]) : '';
     setForm({
       empresa: String(p.empresa || empresas[0] || 'Linave'),
       vinculoTipo: (p.vinculoTipo as any) || 'OS',
@@ -113,26 +155,33 @@ export function ContasPagarView() {
       banco: p.banco || '',
       forma: p.forma || '',
       obs: p.obs || '',
-      nfAnexo,
-      nfAnexoNome: nfAnexo ? 'Nota fiscal anexada' : '',
     });
+    setAnexosExistentes(Array.isArray(p.anexos) ? p.anexos : []);
+    setNovosAnexos([]);
     setEditId(p.id);
   };
 
-  // Upload do documento de compra (NF de entrada, boleto...) vinculado ao id da conta.
-  const [enviandoNf, setEnviandoNf] = useState(false);
-  const handleSelecionarNf = async (file: File | undefined) => {
-    if (!file || !editId) return;
-    setEnviandoNf(true);
-    try {
-      const doc = await uploadDocumento(file, { vinculoTipo: 'financeiro', vinculoId: editId, categoria: 'fin_documento' });
-      setForm((p) => ({ ...p, nfAnexo: doc.url, nfAnexoNome: doc.nome }));
-      toast.success('Documento anexado e salvo no banco.');
-    } catch {
-      toast.error('Não foi possível enviar o documento.');
-    } finally {
-      setEnviandoNf(false);
+  // Regra: editar ou excluir uma conta sem nº de boleto/NF pede o número na hora — só
+  // segue (e persiste na conta) se o usuário informar; cancelar aborta a ação em silêncio.
+  const garantirDocumento = async (p: FinRecord): Promise<string | null> => {
+    const docAtual = String(p.documento || '').trim();
+    if (docAtual) return docAtual;
+    const digitado = await promptDialog({
+      title: 'Nº do boleto/Nota Fiscal obrigatório',
+      message: 'Esta conta ainda não tem nº de boleto/Nota Fiscal. Informe antes de continuar.',
+      placeholder: 'Nº do boleto/NF',
+      confirmText: 'Confirmar',
+    });
+    const doc = (digitado || '').trim();
+    if (!doc) {
+      toast.error('É obrigatório informar o nº do boleto/Nota Fiscal.');
+      return null;
     }
+    const st = String(p.status || '');
+    const patch: Record<string, any> = { documento: doc };
+    if (st !== CP_STATUS.pago && st !== CP_STATUS.parcelado) patch.status = CP_STATUS.comDoc;
+    await updateRecord(p.id, patch);
+    return doc;
   };
 
   const salvarConta = async (e: React.FormEvent) => {
@@ -142,9 +191,9 @@ export function ContasPagarView() {
     const editingRec = editId ? allContasPagar.find((r) => r.id === editId) : null;
     const doc = form.documento.trim();
 
-    // Ao anexar o documento é obrigatório informar número e vencimento (quando a conta ganha documento).
-    if (form.nfAnexo && (!doc || !form.vencimento)) {
-      toast.error('Ao anexar o documento, informe o número e o vencimento.');
+    // Ao anexar documento(s) é obrigatório informar número e vencimento (quando a conta ganha documento).
+    if (novosAnexos.length > 0 && (!doc || !form.vencimento)) {
+      toast.error('Ao anexar documentos, informe o número e o vencimento.');
       return;
     }
     // Duplicidade: o mesmo número de documento não pode se repetir para o MESMO fornecedor.
@@ -160,7 +209,23 @@ export function ContasPagarView() {
 
     setSalvando(true);
     try {
-      const anexos = form.nfAnexo ? [form.nfAnexo] : (Array.isArray(editingRec?.anexos) ? editingRec!.anexos : []);
+      // Sobe só os arquivos NOVOS agora que já se tem o id (na criação, um id novo) pra
+      // vincular — e junta com os que já estavam salvos (nunca substitui, só adiciona/remove
+      // pelo botão de remover no formulário).
+      const idAlvo = editId || genFinId('CP');
+      let anexos = anexosExistentes;
+      if (novosAnexos.length > 0) {
+        const resultados = await Promise.allSettled(
+          novosAnexos.map((file) => uploadDocumento(file, { vinculoTipo: 'financeiro', vinculoId: idAlvo, categoria: 'fin_documento' })),
+        );
+        const novasUrls = resultados
+          .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
+          .map((r) => r.value.url);
+        const falhas = resultados.length - novasUrls.length;
+        if (falhas > 0) toast.error(`${falhas} documento(s) não puderam ser enviados.`);
+        anexos = [...anexosExistentes, ...novasUrls];
+      }
+
       const base: Record<string, any> = {
         empresa: form.empresa, vinculoTipo: form.vinculoTipo, vinculoValor: form.vinculoValor,
         fornecedor: form.fornecedor, tipoPagamento: form.tipoPagamento, natureza: form.natureza, documento: doc,
@@ -168,16 +233,16 @@ export function ContasPagarView() {
         anexos,
       };
       if (editId) {
-        // Transição de status: anexar a NF (ou informar o documento) leva "Aberto S/Documento"
+        // Transição de status: anexar documento(s) (ou informar o nº) leva "Aberto S/Documento"
         // → "Aberto C/Documento". Nunca rebaixa contas já Pagas/Parceladas.
         const st = String(editingRec?.status || '');
         if (st !== CP_STATUS.pago && st !== CP_STATUS.parcelado) {
-          const temNf = !!form.nfAnexo || !!doc;
+          const temNf = anexos.length > 0 || !!doc;
           base.status = temNf ? CP_STATUS.comDoc : (st || CP_STATUS.aberto);
         }
         await updateRecord(editId, base);
       } else {
-        await addRecord({ id: genFinId('CP'), tipo: 'contaPagar', type: 'single', parentId: null, parcela: '-', status: CP_STATUS.aberto, valorPago: 0, jurosPago: 0, comprovantes: [], ...base });
+        await addRecord({ id: idAlvo, tipo: 'contaPagar', type: 'single', parentId: null, parcela: '-', status: CP_STATUS.aberto, valorPago: 0, jurosPago: 0, comprovantes: [], ...base });
       }
       setEditId(undefined);
     } finally {
@@ -293,46 +358,98 @@ export function ContasPagarView() {
 
   // ---- Modal pagar ----
   const [pagando, setPagando] = useState<FinRecord | null>(null);
-  // `comprovante` guarda a URL (/media/...) do documento persistido; `comprovanteNome`
-  // é só o rótulo amigável exibido. `enviandoComprovante` controla o estado de upload.
-  const [pay, setPay] = useState({ dataPagamento: todayStr, valorPago: '', banco: '', houveJuros: 'Não', jurosPago: '', motivoJuros: '', comprovante: '', comprovanteNome: '' });
-  const [enviandoComprovante, setEnviandoComprovante] = useState(false);
+  const [pay, setPay] = useState({ dataPagamento: todayStr, valorPago: '', banco: '', houveJuros: 'Não', jurosPago: '', motivoJuros: '' });
   const setPayF = (k: string, v: string) => setPay((p) => ({ ...p, [k]: v }));
+  // Comprovantes já salvos na conta (de um pagamento parcial/correção anterior) + arquivos
+  // novos ainda não enviados — mesmo padrão de anexosExistentes/novosAnexos acima: o upload
+  // some no submit, e novos comprovantes se somam aos que já existiam, nunca substituem.
+  const [comprovantesExistentes, setComprovantesExistentes] = useState<string[]>([]);
+  const [novosComprovantes, setNovosComprovantes] = useState<File[]>([]);
 
   const abrirPagamento = (p: FinRecord) => {
     setPagando(p);
-    setPay({ dataPagamento: todayStr, valorPago: String(p.valorPago || p.valor || ''), banco: p.banco || '', houveJuros: 'Não', jurosPago: '', motivoJuros: '', comprovante: '', comprovanteNome: '' });
+    setPay({ dataPagamento: todayStr, valorPago: String(p.valorPago || p.valor || ''), banco: p.banco || '', houveJuros: 'Não', jurosPago: '', motivoJuros: '' });
+    setComprovantesExistentes(Array.isArray(p.comprovantes) ? p.comprovantes : []);
+    setNovosComprovantes([]);
   };
 
-  // Sobe o comprovante para a tabela Documento (vinculado ao id da conta) e guarda a URL.
-  const handleSelecionarComprovante = async (file: File | undefined) => {
-    if (!file || !pagando) return;
-    setEnviandoComprovante(true);
+  // ---- Excluir/substituir um documento JÁ SALVO (edição, não a criação em lote acima) ----
+  // Ação imediata (não espera o "Salvar" do formulário): exclui de verdade o arquivo no
+  // backend (não só a referência) e já grava a lista atualizada na conta, pra não deixar a
+  // conta apontando pra um documento removido caso o usuário feche o modal sem salvar mais
+  // nada. `processandoDoc` guarda a URL em andamento, só pra desabilitar o botão dela.
+  const [processandoDoc, setProcessandoDoc] = useState<string | null>(null);
+
+  const excluirDocumentoDaConta = async (contaId: string, url: string, campo: 'anexos' | 'comprovantes') => {
+    const ok = await confirmDialog({
+      title: 'Excluir documento',
+      message: `Excluir "${nomeDoArquivo(url)}"? O arquivo é removido definitivamente.`,
+      confirmText: 'Excluir',
+      cancelText: 'Cancelar',
+      danger: true,
+    });
+    if (!ok) return;
+    setProcessandoDoc(url);
     try {
-      const doc = await uploadDocumento(file, { vinculoTipo: 'financeiro', vinculoId: pagando.id, categoria: 'fin_comprovante' });
-      setPay((p) => ({ ...p, comprovante: doc.url, comprovanteNome: doc.nome }));
-      toast.success('Comprovante anexado e salvo no banco.');
+      const categoria = campo === 'anexos' ? 'fin_documento' : 'fin_comprovante';
+      const docs = await listarDocumentos({ vinculoTipo: 'financeiro', vinculoId: contaId, categoria });
+      const alvo = docs.find((d) => d.url === url);
+      if (alvo) await excluirDocumento(alvo.backendId);
+      const atual = allContasPagar.find((r) => r.id === contaId);
+      const novaLista = (Array.isArray(atual?.[campo]) ? (atual as any)[campo] : []).filter((u: string) => u !== url);
+      await updateRecord(contaId, { [campo]: novaLista });
+      if (campo === 'anexos') setAnexosExistentes((prev) => prev.filter((u) => u !== url));
+      else setComprovantesExistentes((prev) => prev.filter((u) => u !== url));
+      toast.success('Documento excluído.');
     } catch {
-      toast.error('Não foi possível enviar o comprovante.');
+      toast.error('Não foi possível excluir o documento.');
     } finally {
-      setEnviandoComprovante(false);
+      setProcessandoDoc(null);
     }
   };
 
-  const exportarCsv = () => {
+  const substituirDocumentoDaConta = async (contaId: string, urlAntiga: string, campo: 'anexos' | 'comprovantes', file: File | undefined) => {
+    if (!file) return;
+    setProcessandoDoc(urlAntiga);
+    try {
+      const categoria = campo === 'anexos' ? 'fin_documento' : 'fin_comprovante';
+      const novoDoc = await uploadDocumento(file, { vinculoTipo: 'financeiro', vinculoId: contaId, categoria });
+      const docs = await listarDocumentos({ vinculoTipo: 'financeiro', vinculoId: contaId, categoria });
+      const antigo = docs.find((d) => d.url === urlAntiga && d.backendId !== novoDoc.backendId);
+      if (antigo) await excluirDocumento(antigo.backendId).catch(() => {});
+      const atual = allContasPagar.find((r) => r.id === contaId);
+      const novaLista = (Array.isArray(atual?.[campo]) ? (atual as any)[campo] : []).map((u: string) => (u === urlAntiga ? novoDoc.url : u));
+      await updateRecord(contaId, { [campo]: novaLista });
+      if (campo === 'anexos') setAnexosExistentes((prev) => prev.map((u) => (u === urlAntiga ? novoDoc.url : u)));
+      else setComprovantesExistentes((prev) => prev.map((u) => (u === urlAntiga ? novoDoc.url : u)));
+      toast.success('Documento substituído.');
+    } catch {
+      toast.error('Não foi possível substituir o documento.');
+    } finally {
+      setProcessandoDoc(null);
+    }
+  };
+
+  // ---- Modal ver documentos (anexos + comprovantes juntos, só consulta) ----
+  const [verDocumentos, setVerDocumentos] = useState<FinRecord | null>(null);
+
+  const exportarExcel = () => {
     const head = ['Tipo', 'ID', 'Parcela', 'Empresa', 'Vínculo', 'Natureza', 'Fornecedor', 'Documento', 'Valor', 'Vencimento', 'Banco', 'Status', 'Pago em', 'Valor pago', 'Juros', 'Comprovantes'];
     const linhas = rows.map((p) => [
       p.type || 'single', p.id, p.parcela || '-', p.empresa, `${p.vinculoTipo}: ${p.vinculoValor || ''}`, p.natureza || '',
       p.fornecedor, p.documento || '', num(p.valor), p.vencimento, p.banco || '', p.status || 'Aberto',
       p.dataPagamento || '', num(p.valorPago), num(p.jurosPago), (p.comprovantes || []).join('|'),
     ]);
-    // Resumo (totais) no fim do CSV.
+    // Resumo (totais) na última linha da planilha.
     const totValor = rows.reduce((s, p) => s + num(p.valor), 0);
     const totPago = rows.reduce((s, p) => s + num(p.valorPago), 0);
     const totJuros = rows.reduce((s, p) => s + num(p.jurosPago), 0);
     linhas.push(['TOTAL', '', '', '', '', '', '', '', totValor, '', '', '', '', totPago, totJuros, '']);
-    const csv = [head, ...linhas].map((l) => l.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\n');
-    download(csv, 'contas_a_pagar.csv', 'text/csv;charset=utf-8');
+
+    const planilha = XLSX.utils.aoa_to_sheet([head, ...linhas]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, planilha, 'Contas a Pagar');
+    XLSX.writeFile(workbook, 'contas_a_pagar.xlsx');
   };
 
   const confirmarPagamento = async (e: React.FormEvent) => {
@@ -341,6 +458,18 @@ export function ContasPagarView() {
     setSalvando(true);
     try {
       const houveJuros = pay.houveJuros === 'Sim';
+      let comprovantes = comprovantesExistentes;
+      if (novosComprovantes.length > 0) {
+        const resultados = await Promise.allSettled(
+          novosComprovantes.map((file) => uploadDocumento(file, { vinculoTipo: 'financeiro', vinculoId: pagando.id, categoria: 'fin_comprovante' })),
+        );
+        const novasUrls = resultados
+          .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
+          .map((r) => r.value.url);
+        const falhas = resultados.length - novasUrls.length;
+        if (falhas > 0) toast.error(`${falhas} comprovante(s) não puderam ser enviados.`);
+        comprovantes = [...comprovantesExistentes, ...novasUrls];
+      }
       const proxima = await pagarConta(pagando.id, {
         dataPagamento: pay.dataPagamento,
         valorPago: num(pay.valorPago),
@@ -348,7 +477,7 @@ export function ContasPagarView() {
         houveJuros,
         jurosPago: houveJuros ? num(pay.jurosPago) : 0,
         motivoJuros: houveJuros ? pay.motivoJuros : '',
-        comprovantes: pay.comprovante ? [pay.comprovante] : [],
+        comprovantes,
       });
       // Conta fixa: o pagamento encadeia a próxima competência. Avisar deixa explícito
       // que a conta "voltou" na lista de propósito, e para quando.
@@ -390,20 +519,20 @@ export function ContasPagarView() {
           <Btn variant="blue" onClick={() => setGerenciandoFixas(true)}>
             <Repeat size={15} /> Contas fixas{contasFixas.length ? ` (${contasFixas.length})` : ''}
           </Btn>
-          <Btn variant="secondary" onClick={exportarCsv}><Download size={15} /> Exportar CSV</Btn>
+          <Btn variant="secondary" onClick={exportarExcel}><Download size={15} /> Exportar Excel</Btn>
         </>}
       />
       <DataTable
         minWidth={1650}
         head={<>
-          <Th>Tipo</Th><Th>ID</Th><Th>Parcela</Th><Th>Empresa</Th><Th>Vínculo</Th><Th>Natureza</Th>
+          <Th>Tipo</Th><Th>Parcela</Th><Th>Empresa</Th><Th>Vínculo</Th><Th>Natureza</Th>
           <Th>Fornecedor</Th><Th>Doc</Th><Th>Valor</Th><Th>Vencimento</Th><Th>Banco</Th>
           <Th>Status</Th><Th>Pago em</Th><Th>Juros</Th><Th>Comprov.</Th><Th>Ação</Th>
         </>}
       >
         {rows.length === 0 ? (
           <EmptyRow
-            cols={16}
+            cols={15}
             text={
               origemFiltro === 'Fixas'
                 ? 'Nenhuma conta fixa no período (cadastre uma regra em "Contas fixas")'
@@ -425,14 +554,15 @@ export function ContasPagarView() {
               : p.type === 'parent' ? 'bg-violet-500/[0.05]' : p.type === 'child' ? 'bg-sky-500/[0.04]' : '';
           return (
           <tr key={p.id} className={`transition-colors hover:bg-white/5 ${corLinha}`}>
-            <Td><TypeTag type={p.type || 'single'} /></Td>
-            <Td className="font-black text-white">
-              {p.id}
-              {p.contaFixaId && (
-                <span className="ml-2 inline-flex items-center gap-1 rounded-full border border-sky-500/30 bg-sky-500/15 px-2 py-0.5 text-[10px] font-black uppercase text-sky-200" title={`Conta fixa ${p.contaFixaPeriodicidade || ''} — ${p.contaFixaDescricao || ''}`}>
-                  <Repeat size={10} /> Fixa
-                </span>
-              )}
+            <Td>
+              <div className="flex items-center gap-2">
+                <TypeTag type={p.type || 'single'} />
+                {p.contaFixaId && (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-sky-500/30 bg-sky-500/15 px-2 py-0.5 text-[10px] font-black uppercase text-sky-200" title={`Conta fixa ${p.contaFixaPeriodicidade || ''} — ${p.contaFixaDescricao || ''}`}>
+                    <Repeat size={10} /> Fixa
+                  </span>
+                )}
+              </div>
             </Td>
             <Td>{p.parcela || '-'}</Td>
             <Td><CompanyTag empresa={String(p.empresa)} /></Td>
@@ -446,12 +576,39 @@ export function ContasPagarView() {
             <Td><StatusTag status={vencida ? 'Vencido' : (p.status || 'Aberto')} /></Td>
             <Td>{p.dataPagamento ? br(p.dataPagamento) : '-'}</Td>
             <Td>{p.jurosPago ? money(num(p.jurosPago)) : '-'}</Td>
-            <Td>{(p.comprovantes || []).length ? <Pill tone="ok">{p.comprovantes.length}</Pill> : '-'}</Td>
+            <Td>
+              {(p.comprovantes || []).length ? (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {(p.comprovantes || []).map((url: string, i: number, arr: string[]) => (
+                    <a key={`${p.id}-comprovante-${i}`} href={url} target="_blank" rel="noopener noreferrer" title="Ver/baixar comprovante">
+                      <Pill tone="ok"><Download size={11} />{arr.length > 1 ? ` ${i + 1}` : ''}</Pill>
+                    </a>
+                  ))}
+                </div>
+              ) : '-'}
+            </Td>
             <Td>
               <div className="flex gap-2">
-                {p.type !== 'parent' && <Btn small variant="secondary" onClick={() => abrirEdicao(p)}>Editar</Btn>}
+                {p.type !== 'parent' && (
+                  <Btn
+                    small
+                    variant="secondary"
+                    onClick={async () => {
+                      const doc = await garantirDocumento(p);
+                      if (doc === null) return;
+                      abrirEdicao({ ...p, documento: doc, status: p.status === CP_STATUS.semDoc ? CP_STATUS.comDoc : p.status });
+                    }}
+                  >
+                    Editar
+                  </Btn>
+                )}
                 {p.type === 'single' && p.status !== 'Pago' && p.status !== CP_STATUS.semDoc && <Btn small variant="blue" onClick={() => abrirParcelar(p)}><Split size={12} /> Parcelar</Btn>}
                 {p.type !== 'parent' && p.status !== 'Pago' && <Btn small variant="green" onClick={() => abrirPagamento(p)}><Banknote size={12} /> Pagar</Btn>}
+                {(((p.anexos as string[] | undefined)?.length || 0) + ((p.comprovantes as string[] | undefined)?.length || 0)) > 0 && (
+                  <Btn small variant="secondary" onClick={() => setVerDocumentos(p)}>
+                    <Files size={12} /> Documentos ({((p.anexos as string[] | undefined)?.length || 0) + ((p.comprovantes as string[] | undefined)?.length || 0)})
+                  </Btn>
+                )}
                 <DeleteBtn
                   titulo="Excluir conta a pagar"
                   descricao={
@@ -463,6 +620,7 @@ export function ContasPagarView() {
                       ? '\n\nATENÇÃO: esta conta já foi PAGA. O pagamento e o comprovante saem do histórico financeiro.'
                       : '')
                   }
+                  beforeConfirm={async () => (await garantirDocumento(p)) !== null}
                   onConfirm={() => deleteRecord(p.id)}
                 />
               </div>
@@ -504,9 +662,9 @@ export function ContasPagarView() {
 
             <Field label="Vencimento" span={3}><Input type="date" value={form.vencimento} onChange={(e) => setF('vencimento', e.target.value)} /></Field>
             <Field label="Banco" span={3}>
-              <Select value={form.banco} onChange={(e) => setF('banco', e.target.value)}>
+              <Select {...bancoSelectProps(form.banco, (nome) => setF('banco', nome))}>
                 <option value="">{bancos.length ? 'A definir...' : 'Nenhum banco cadastrado'}</option>
-                {bancos.map((b) => <option key={b.id} value={b.nome}>{bancoLabel(b)}</option>)}
+                {bancos.map((b) => <option key={b.id} value={b.id}>{bancoLabel(b)}</option>)}
               </Select>
             </Field>
             <Field label="Forma" span={6}>
@@ -518,23 +676,44 @@ export function ContasPagarView() {
 
             <Field label="Observação" span={12}><Textarea value={form.obs} onChange={(e) => setF('obs', e.target.value)} /></Field>
 
-            {editId && (
-              <div className="col-span-12">
-                <label className={labelCls}>Documento de compra (anexo)</label>
-                <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-dashed border-white/15 bg-[#0b1220] px-4 py-4 text-sm text-white/60 transition-colors hover:border-amber-500/40">
-                  <Paperclip size={16} /> {enviandoNf ? 'Enviando...' : (form.nfAnexoNome || 'Anexar documento — NF de entrada, boleto... (PDF, imagem)')}
-                  <input type="file" className="hidden" disabled={enviandoNf} onChange={(e) => handleSelecionarNf(e.target.files?.[0])} />
-                </label>
-                {form.nfAnexo && (
-                  <a href={form.nfAnexo} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block text-xs font-bold text-amber-300 underline">Ver documento anexado</a>
-                )}
-                <p className="mt-2 text-[11px] text-white/40">Ao anexar o documento e preencher número + vencimento, a conta passa para <strong className="text-white/70">Aberto C/Documento</strong>.</p>
-              </div>
-            )}
+            <div className="col-span-12">
+              <label className={labelCls}>Documentos (NF, boleto, recibo... pode anexar mais de um)</label>
+              {anexosExistentes.length > 0 && (
+                <div className="mb-2 space-y-1.5">
+                  {anexosExistentes.map((url) => (
+                    <div key={url} className="flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-bold text-amber-200">
+                      <a href={url} target="_blank" rel="noopener noreferrer" className="flex-1 truncate underline decoration-dotted hover:text-amber-100">
+                        {nomeDoArquivo(url)}
+                      </a>
+                      <label className="flex shrink-0 cursor-pointer items-center gap-1 text-amber-200/70 hover:text-amber-100" title="Substituir este documento">
+                        <RefreshCw size={12} className={processandoDoc === url ? 'animate-spin' : ''} /> Substituir
+                        <input
+                          type="file"
+                          className="hidden"
+                          disabled={processandoDoc === url}
+                          onChange={(e) => substituirDocumentoDaConta(editId as string, url, 'anexos', e.target.files?.[0])}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        disabled={processandoDoc === url}
+                        onClick={() => excluirDocumentoDaConta(editId as string, url, 'anexos')}
+                        title="Excluir este documento"
+                        className="shrink-0 text-amber-200/60 hover:text-rose-300 disabled:opacity-40"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <FileInput label="Anexar documento(s) — NF de entrada, boleto, recibo... (PDF, imagem)" value={novosAnexos} onChange={setNovosAnexos} />
+              <p className="mt-2 text-[11px] text-white/40">Ao anexar documento(s) e preencher número + vencimento, a conta passa para <strong className="text-white/70">Aberto C/Documento</strong>.</p>
+            </div>
 
             <div className="col-span-12 flex justify-end gap-2">
               <Btn type="button" variant="ghost" onClick={() => setEditId(undefined)}>Cancelar</Btn>
-              <Btn type="submit" variant="amber" disabled={salvando || enviandoNf}><Save size={15} /> {salvando ? 'Salvando...' : 'Salvar conta a pagar'}</Btn>
+              <Btn type="submit" variant="amber" disabled={salvando}><Save size={15} /> {salvando ? 'Salvando...' : 'Salvar conta a pagar'}</Btn>
             </div>
           </form>
         </FinModal>
@@ -588,16 +767,22 @@ export function ContasPagarView() {
 
       {/* MODAL: pagar */}
       {pagando && (
-        <FinModal title={`Pagar ${pagando.id}`} hint="Data real, banco e juros. Comprovante opcional (dá para pagar antes da nota chegar)." onClose={() => setPagando(null)}>
+        <FinModal
+          title={`Pagar ${pagando.id}`}
+          hint={pagando.forma === FORMA_DISPENSA_COMPROVANTE
+            ? 'Data real, banco e juros. Débito automático dispensa comprovante — o banco já registra o débito sozinho.'
+            : 'Data real, banco e juros. Comprovante opcional (dá para pagar antes da nota chegar).'}
+          onClose={() => setPagando(null)}
+        >
           <form className="grid grid-cols-12 gap-4" onSubmit={confirmarPagamento}>
             <Field label="Conta" span={6}><Input value={`${pagando.fornecedor || ''} • ${money(num(pagando.valor))}`} disabled /></Field>
             <Field label="Quando paguei?" span={3}><Input type="date" value={pay.dataPagamento} onChange={(e) => setPayF('dataPagamento', e.target.value)} /></Field>
             <Field label="Valor pago" span={3}><MoneyInput value={pay.valorPago} onChange={(v) => setPayF('valorPago', v)} /></Field>
 
             <Field label="Banco usado *" span={6}>
-              <Select value={pay.banco} onChange={(e) => setPayF('banco', e.target.value)}>
+              <Select {...bancoSelectProps(pay.banco, (nome) => setPayF('banco', nome))}>
                 <option value="">{bancos.length ? 'Selecione...' : 'Cadastre um banco na aba Bancos'}</option>
-                {bancos.map((b) => <option key={b.id} value={b.nome}>{bancoLabel(b)}</option>)}
+                {bancos.map((b) => <option key={b.id} value={b.id}>{bancoLabel(b)}</option>)}
               </Select>
             </Field>
             <Field label="Houve juros?" span={6}>
@@ -610,16 +795,42 @@ export function ContasPagarView() {
             </>}
 
             <div className="col-span-12">
-              <label className={labelCls}>Comprovante de pagamento (opcional)</label>
-              <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-dashed border-white/15 bg-[#0b1220] px-4 py-4 text-sm text-white/60 transition-colors hover:border-amber-500/40">
-                <Paperclip size={16} /> {enviandoComprovante ? 'Enviando...' : (pay.comprovanteNome || 'Anexar comprovante (PDF, imagem...)')}
-                <input type="file" className="hidden" disabled={enviandoComprovante} onChange={(e) => handleSelecionarComprovante(e.target.files?.[0])} />
-              </label>
-              {pay.comprovante && (
-                <a href={pay.comprovante} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block text-xs font-bold text-amber-300 underline">
-                  Ver comprovante anexado
-                </a>
+              {pagando.forma === FORMA_DISPENSA_COMPROVANTE && (
+                <div className="mb-2 rounded-xl border border-sky-500/20 bg-sky-500/[0.06] p-3 text-xs text-sky-100">
+                  Débito automático dispensa comprovante de pagamento — o débito é feito direto pelo banco. Anexar continua opcional, só se quiser guardar o registro.
+                </div>
               )}
+              <label className={labelCls}>Comprovante(s) de pagamento (opcional, pode anexar mais de um)</label>
+              {comprovantesExistentes.length > 0 && (
+                <div className="mb-2 space-y-1.5">
+                  {comprovantesExistentes.map((url) => (
+                    <div key={url} className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-bold text-emerald-200">
+                      <a href={url} target="_blank" rel="noopener noreferrer" className="flex-1 truncate underline decoration-dotted hover:text-emerald-100">
+                        {nomeDoArquivo(url)}
+                      </a>
+                      <label className="flex shrink-0 cursor-pointer items-center gap-1 text-emerald-200/70 hover:text-emerald-100" title="Substituir este comprovante">
+                        <RefreshCw size={12} className={processandoDoc === url ? 'animate-spin' : ''} /> Substituir
+                        <input
+                          type="file"
+                          className="hidden"
+                          disabled={processandoDoc === url}
+                          onChange={(e) => substituirDocumentoDaConta(pagando!.id, url, 'comprovantes', e.target.files?.[0])}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        disabled={processandoDoc === url}
+                        onClick={() => excluirDocumentoDaConta(pagando!.id, url, 'comprovantes')}
+                        title="Excluir este comprovante"
+                        className="shrink-0 text-emerald-200/60 hover:text-rose-300 disabled:opacity-40"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <FileInput label="Anexar comprovante(s) (PDF, imagem...)" value={novosComprovantes} onChange={setNovosComprovantes} />
             </div>
 
             <div className="col-span-12 grid grid-cols-2 gap-3">
@@ -629,11 +840,74 @@ export function ContasPagarView() {
 
             <div className="col-span-12 flex justify-end gap-2">
               <Btn type="button" variant="ghost" onClick={() => setPagando(null)}>Cancelar</Btn>
-              <Btn type="submit" variant="green" disabled={salvando || enviandoComprovante || !pay.banco}>
+              <Btn type="submit" variant="green" disabled={salvando || !pay.banco}>
                 <Banknote size={15} /> {salvando ? 'Registrando...' : 'Confirmar pagamento'}
               </Btn>
             </div>
           </form>
+        </FinModal>
+      )}
+
+      {/* MODAL: ver documentos (anexos + comprovantes) — só consulta, sem edição */}
+      {verDocumentos && (
+        <FinModal
+          title={`Documentos — ${verDocumentos.id}`}
+          hint={`${verDocumentos.fornecedor || 'Fornecedor não informado'} · ${money(num(verDocumentos.valor))}`}
+          onClose={() => setVerDocumentos(null)}
+        >
+          <div className="space-y-5">
+            <div>
+              <p className="mb-2 text-xs font-black uppercase tracking-widest text-amber-300">
+                Documentos anexados (NF, boleto, recibo...)
+              </p>
+              {(verDocumentos.anexos || []).length === 0 ? (
+                <p className="text-xs text-white/40">Nenhum documento anexado.</p>
+              ) : (
+                <div className="space-y-2">
+                  {(verDocumentos.anexos as string[]).map((url, i) => (
+                    <a
+                      key={`${verDocumentos.id}-anexo-${i}`}
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white/80 transition hover:border-amber-500/40 hover:bg-white/5"
+                    >
+                      <Paperclip size={15} className="shrink-0 text-amber-300" />
+                      <span className="truncate">{nomeDoArquivo(url)}</span>
+                    </a>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <p className="mb-2 text-xs font-black uppercase tracking-widest text-emerald-300">
+                Comprovantes de pagamento
+              </p>
+              {(verDocumentos.comprovantes || []).length === 0 ? (
+                <p className="text-xs text-white/40">Nenhum comprovante anexado.</p>
+              ) : (
+                <div className="space-y-2">
+                  {(verDocumentos.comprovantes as string[]).map((url, i) => (
+                    <a
+                      key={`${verDocumentos.id}-comprovante-${i}`}
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white/80 transition hover:border-emerald-500/40 hover:bg-white/5"
+                    >
+                      <Download size={15} className="shrink-0 text-emerald-300" />
+                      <span className="truncate">{nomeDoArquivo(url)}</span>
+                    </a>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end">
+              <Btn variant="ghost" onClick={() => setVerDocumentos(null)}>Fechar</Btn>
+            </div>
+          </div>
         </FinModal>
       )}
 
@@ -686,7 +960,7 @@ export function ContasPagarView() {
       {/* MODAL: gerenciar contas fixas (as REGRAS de recorrência) */}
       {gerenciandoFixas && (
         <FinModal
-          wide
+          full
           title="Contas fixas"
           hint="Regras de recorrência (luz, água, aluguel...). Cada regra lança sozinha a conta a pagar de cada vencimento."
           onClose={() => setGerenciandoFixas(false)}
@@ -827,9 +1101,9 @@ export function ContasPagarView() {
               </Select>
             </Field>
             <Field label="Banco" span={6}>
-              <Select value={fixa.banco} onChange={(e) => setFixaF('banco', e.target.value)}>
+              <Select {...bancoSelectProps(fixa.banco, (nome) => setFixaF('banco', nome))}>
                 <option value="">{bancos.length ? 'Selecione o banco...' : 'Nenhum banco cadastrado'}</option>
-                {bancos.map((b) => <option key={b.id} value={b.nome}>{bancoLabel(b)}</option>)}
+                {bancos.map((b) => <option key={b.id} value={b.id}>{bancoLabel(b)}</option>)}
               </Select>
             </Field>
 

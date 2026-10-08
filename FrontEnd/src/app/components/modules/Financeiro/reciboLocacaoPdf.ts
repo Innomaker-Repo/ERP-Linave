@@ -91,9 +91,19 @@ export interface ReciboLocacaoData {
 export const gerarReciboLocacaoPDF = async (r: ReciboLocacaoData) => {
   const doc = new jsPDF('p', 'mm', 'a4');
   const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
   const margin = 12;
   const rightX = pageW - margin;
   let y = 12;
+
+  // Sem isso, recibos com muitos itens (ou o bloco de assinatura/nota legal no fim)
+  // simplesmente saíam da folha A4 e o conteúdo era perdido — não tinha nenhum addPage.
+  const ensureSpace = (needed: number) => {
+    if (y + needed > pageH - margin) {
+      doc.addPage();
+      y = margin;
+    }
+  };
 
   const G: [number, number, number] = [241, 241, 241];
 
@@ -193,6 +203,7 @@ export const gerarReciboLocacaoPDF = async (r: ReciboLocacaoData) => {
   const uw = doc.getTextWidth('USUÁRIO FINAL / DESTINATÁRIO');
   doc.setLineWidth(0.3);
   doc.line(pageW / 2 - uw / 2, y + 4.2, pageW / 2 + uw / 2, y + 4.2);
+  doc.setLineWidth(0.2); // volta à espessura padrão — as bordas de `cell()` (`doc.rect`) usam a que estiver ativa
   y += 8;
 
   // Destinatário
@@ -243,6 +254,7 @@ export const gerarReciboLocacaoPDF = async (r: ReciboLocacaoData) => {
   itens.forEach((it, i) => {
     const descLines = doc.splitTextToSize(String(it.descricao || ''), cDesc - 3);
     const rh = Math.max(9, descLines.length * 4 + 3);
+    ensureSpace(rh);
     cell(margin, y, cItem, rh, it.item || String(i + 1).padStart(2, '0'), { align: 'center', size: 8 });
     cell(margin + cItem, y, cQtd, rh, it.qtd || '', { align: 'center', size: 8 });
     cell(margin + cItem + cQtd, y, cDesc, rh, it.descricao || '', { italic: true, size: 8, valign: 'top' });
@@ -251,17 +263,20 @@ export const gerarReciboLocacaoPDF = async (r: ReciboLocacaoData) => {
     y += rh;
   });
   // linhas em branco para dar corpo (como no modelo)
-  for (let i = itens.length; i < 3; i++) { cell(margin, y, fullW, 8, '', {}); y += 8; }
+  for (let i = itens.length; i < 3; i++) { ensureSpace(8); cell(margin, y, fullW, 8, '', {}); y += 8; }
 
   const totalRecibo = itens.reduce((s, it) => s + (Number(it.total) || 0), 0);
+  ensureSpace(8);
   cell(margin, y, fullW - cTotal, 8, docValorTotalLabel, { bold: true, align: 'center', fill: true });
   cell(margin + fullW - cTotal, y, cTotal, 8, `R$ ${money(totalRecibo)}`, { italic: true, size: 8 });
   y += 8;
+  ensureSpace(10);
   cell(margin, y, 34, 10, 'VALOR POR EXTENSO', { bold: true, size: 7.5, align: 'center' });
   cell(margin + 34, y, fullW - 34, 10, valorPorExtenso(totalRecibo), { italic: true, size: 8 });
   y += 10 + 1;
 
   // OBS
+  ensureSpace(9);
   cell(margin, y, 16, 9, 'OBS:', { bold: true, size: 8, align: 'center' });
   cell(margin + 16, y, fullW - 16, 9, r.obs || '', { size: 8 });
   y += 9 + 3;
@@ -272,12 +287,14 @@ export const gerarReciboLocacaoPDF = async (r: ReciboLocacaoData) => {
   const nota = 'ATIVIDADE DE LOCAÇÃO NÃO SUJEITA A EMISSÃO DA NOTA FISCAL DE SERVIÇO CONFORME LEI COMPLEMENTAR Nº 116/03 DE 31/07/2003 E PORTARIA Nº 74/2003 DA SECRETARIA DE FAZENDA.';
   const notaLines = doc.splitTextToSize(nota, fullW - 6);
   const notaH = notaLines.length * 3.2 + 3;
+  ensureSpace(notaH);
   doc.rect(margin, y, fullW, notaH);
   let ny = y + 3.5;
   notaLines.forEach((ln: string) => { doc.text(ln, pageW / 2, ny, { align: 'center' }); ny += 3.2; });
   y += notaH + 3;
 
-  // Rodapé: recebido / assinatura / nº recibo
+  // Rodapé: recebido / assinatura / nº recibo — mantido inteiro na mesma página.
+  ensureSpace(7 + 16);
   const c1 = 55, c3 = 40;
   const c2 = fullW - c1 - c3;
   cell(margin, y, c1, 7, 'DOCUMENTO RECEBIDO EM', { bold: true, size: 6.5, align: 'center' });
@@ -288,5 +305,9 @@ export const gerarReciboLocacaoPDF = async (r: ReciboLocacaoData) => {
   cell(margin + c1, y, c2, 16, '', {});
   cell(margin + c1 + c2, y, c3, 16, r.numero, { bold: true, size: 10, align: 'center' });
 
-  doc.save(`${docArquivo}_${String(r.numero || 'documento').replace(/[\\/]/g, '-')}.pdf`);
+  const nomeArquivo = `${docArquivo}_${String(r.numero || 'documento').replace(/[\\/]/g, '-')}.pdf`;
+  doc.save(nomeArquivo);
+  // Devolve o mesmo PDF como File, além do download local — quem chama usa isso pra subir o
+  // documento de verdade no backend (ver ReciboLocacaoFormModal.tsx), sem gerar o PDF 2x.
+  return new File([doc.output('blob')], nomeArquivo, { type: 'application/pdf' });
 };

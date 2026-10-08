@@ -10,12 +10,17 @@ venv/
 **/node_modules/
 dist/
 .env.local
+SECRET.md
 
 # Banco de Dados
 *.sqlite3
 
 # Uploads de documentos (binários servidos via MEDIA_ROOT; não versionar)
 BackEnd/media/
+
+# Docker / Traefik
+docker-compose.yml
+traefik/
 
 #vscode
 .vscode

@@ -1,38 +1,28 @@
 import type { ElementType } from 'react';
-import { CheckCircle2, ClipboardList, Clock3, Users } from 'lucide-react';
+import { CheckCircle2, ClipboardList } from 'lucide-react';
 
-export type BoardStage = 'SOLICITACOES' | 'SELECAO_GERENTE' | 'APROVACAO' | 'COMPRADOS';
-// Rota de aprovação decidida pelo VALOR do orçamento:
-//   'setorCompras' (< R$ 500)  -> qualquer usuário com acesso à aba Aprovações aprova;
-//   'gerencia'     (>= R$ 500) -> somente perfis Gerente/Admin veem e aprovam.
+// A aprovação agora é sequencial em duas telas (Aprovar Com. / Aprovar Fin.), não mais um
+// único estágio "APROVACAO" com a rota decidida pelo valor: TODO pedido passa primeiro por
+// Aguardando Comercial; só os que ultrapassam APPROVAL_LIMIT seguem depois pra Aguardando Fin.
+// 'APROVACAO' e 'SELECAO_GERENTE' (nomes antigos) são tratados como alias de AGUARDANDO_COMERCIAL
+// só pra migrar registros já gravados — ver `migrarStageLegado`. A coluna "Seleção do Gerente"
+// foi removida do Kanban: ao terminar a cotação em Solicitações, o pedido já segue direto para
+// Aguardando Comercial (a escolha do fornecedor vencedor é feita lá, em Aprovar Com.).
+// 'RECUSADO' tira o pedido do funil de compras (não é coluna do Kanban) — o solicitante vê o
+// motivo e decide editar+reenviar (volta pra SOLICITACOES) ou cancelar (remove o pedido) em
+// Minhas Compras.
+export type BoardStage = 'SOLICITACOES' | 'SELECAO_GERENTE' | 'AGUARDANDO_COMERCIAL' | 'AGUARDANDO_FIN' | 'COMPRADOS' | 'RECUSADO';
+export const migrarStageLegado = (stage: any): BoardStage =>
+  stage === 'APROVACAO' || stage === 'SELECAO_GERENTE' ? 'AGUARDANDO_COMERCIAL' : stage;
+// Rota de aprovação — nome antigo, mantido só pra ler registros gravados antes da mudança pro
+// fluxo sequencial (Comercial sempre primeiro, Financeiro só acima de APPROVAL_LIMIT). Não é
+// mais usado para decidir quem aprova.
 export type ApprovalRoute = 'gerencia' | 'setorCompras' | null;
 // Itens (produtos) iniciam em 'comprar' e avançam para comprado/entregue/estoque.
 // Serviços iniciam em 'aContratar' e avançam para contratado.
 export type PurchaseState = 'comprar' | 'comprado' | 'entregue' | 'estoque' | 'aContratar' | 'contratado';
 
 export const APPROVAL_LIMIT = 500;
-
-// Emails mockados dos únicos perfis autorizados a selecionar o fornecedor na etapa
-// "Seleção do Gerente". Provisório até existir um modelo de permissões por usuário.
-export const MOCK_GERENTE_COMERCIAL_EMAIL = 'gerente.comercial@linave.com.br';
-export const MOCK_DIRETOR_FINANCEIRO_EMAIL = 'diretor.financeiro@linave.com.br';
-
-// Quem opera a etapa de seleção do gerente: perfis Admin/Gerente (login real) OU os e-mails
-// de gerente comercial / diretor financeiro (mockados e padrões comercial@/financeiro@).
-// Sem isso, com o login real ninguém (nem o admin) avançava os pedidos para a Aprovação.
-export const podeSelecionarFornecedorGerente = (email?: string | null, role?: string | null): boolean => {
-  const r = String(role || '').trim().toUpperCase();
-  if (r === 'ADMIN' || r === 'GERENTE') return true;
-  const normalized = String(email || '').trim().toLowerCase();
-  return (
-    normalized === MOCK_GERENTE_COMERCIAL_EMAIL ||
-    normalized === MOCK_DIRETOR_FINANCEIRO_EMAIL ||
-    normalized.startsWith('comercial@') ||
-    normalized.startsWith('financeiro@') ||
-    (normalized.includes('gerente') && normalized.includes('comercial')) ||
-    (normalized.includes('diretor') && normalized.includes('financeiro'))
-  );
-};
 
 export const approvalRouteLabel: Record<Exclude<ApprovalRoute, null>, string> = {
   gerencia: 'Gerência',
@@ -75,6 +65,13 @@ export interface ItemCompra {
   fornecedor: string;
   naturezaFornecimento: 'ITEM' | 'SERVICO';
   purchaseState: PurchaseState;
+  // Número do Pedido de Compra (PC-XXXX) atribuído a ESTE item na aprovação, agrupando-o com os
+  // demais itens do mesmo fornecedor selecionado. Usado só para exibição/agrupamento dos cards
+  // em Comprados e para carimbar o Histórico corretamente — não confundir com
+  // `RequisicaoCompra.pedidoCompraNumero` (o protocolo único da requisição inteira, antes dela
+  // ser dividida por fornecedor). Ausente para itens que ainda não foram aprovados, ou que
+  // caíram no fluxo manual de segurança (aprovados sem fornecedor selecionado).
+  pedidoCompraNumero?: string;
 }
 
 export interface RequisicaoCompra {
@@ -92,6 +89,16 @@ export interface RequisicaoCompra {
   purchaseState: PurchaseState;
   budgetValue: number | null;
   budgetDetails: QuoteItem[];
+  // Número provisório do Pedido de Compra (PC-XXXX), atribuído quando o pedido sai da cotação
+  // e entra em Aguardando Comercial — pra já aparecer identificado nas telas de aprovação. Os
+  // números FINAIS (por fornecedor, no Histórico de Compras) continuam gerados na aprovação.
+  pedidoCompraNumero?: string;
+  // Preenchidos quando `stage === 'RECUSADO'` — motivo e autoria da recusa (Kanban, Aprovar
+  // Com. ou Aprovar Fin., ver `recusarRequisicao` em comprasAprovacaoShared.ts). Limpos ao
+  // reenviar a solicitação.
+  motivoRecusa?: string;
+  recusadoPor?: string;
+  recusadoEm?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -111,20 +118,6 @@ export const BOARD_COLUMNS: Array<{ id: BoardStage; title: string; subtitle: str
     subtitle: 'Orçamento é levantado aqui',
     icon: ClipboardList,
     accent: 'from-amber-500/20 to-amber-500/5 border-amber-500/20 text-amber-300',
-  },
-  {
-    id: 'SELECAO_GERENTE',
-    title: 'Seleção do Gerente',
-    subtitle: 'Gerente analisa e escolhe os orçamentos',
-    icon: Users,
-    accent: 'from-violet-500/20 to-violet-500/5 border-violet-500/20 text-violet-300',
-  },
-  {
-    id: 'APROVACAO',
-    title: 'Aprovações',
-    subtitle: 'Até R$ 499 o setor de compras aprova; a partir de R$ 500, somente a gerência',
-    icon: Clock3,
-    accent: 'from-sky-500/20 to-sky-500/5 border-sky-500/20 text-sky-300',
   },
   {
     id: 'COMPRADOS',
@@ -259,13 +252,20 @@ export const normalizeRequests = (value: unknown): RequisicaoCompra[] => {
             purchaseState: ['comprar', 'comprado', 'entregue', 'estoque', 'aContratar', 'contratado'].includes(it.purchaseState)
               ? it.purchaseState
               : (it.naturezaFornecimento === 'ITEM' ? 'comprar' : 'aContratar'),
+            pedidoCompraNumero: it.pedidoCompraNumero ? String(it.pedidoCompraNumero) : undefined,
           }))
         : [],
-      stage: ['SOLICITACOES','SELECAO_GERENTE','APROVACAO','COMPRADOS'].includes(item.stage) ? item.stage : 'SOLICITACOES',
+      stage: ['SOLICITACOES','SELECAO_GERENTE','APROVACAO','AGUARDANDO_COMERCIAL','AGUARDANDO_FIN','COMPRADOS','RECUSADO'].includes(item.stage)
+        ? migrarStageLegado(item.stage)
+        : 'SOLICITACOES',
       approvalRoute: normalizeApprovalRoute(item.approvalRoute, typeof item.budgetValue === 'number' ? item.budgetValue : null),
       purchaseState: item.purchaseState === 'entregue' || item.purchaseState === 'estoque' || item.purchaseState === 'contratado' ? item.purchaseState : 'comprado',
       budgetValue: typeof item.budgetValue === 'number' ? item.budgetValue : null,
       budgetDetails: Array.isArray(item.budgetDetails) ? item.budgetDetails.map(normalizeQuote) : [],
+      pedidoCompraNumero: item.pedidoCompraNumero ? String(item.pedidoCompraNumero) : undefined,
+      motivoRecusa: item.motivoRecusa ? String(item.motivoRecusa) : undefined,
+      recusadoPor: item.recusadoPor ? String(item.recusadoPor) : undefined,
+      recusadoEm: item.recusadoEm ? String(item.recusadoEm) : undefined,
       createdAt: String(item.createdAt || new Date().toISOString()),
       updatedAt: String(item.updatedAt || new Date().toISOString()),
     }))
@@ -433,6 +433,25 @@ export const parsePedidoCompraSeq = (registros: CompraHistoricoRegistro[]): numb
 
 export const formatPedidoCompraNumero = (seq: number) => `PC-${String(seq).padStart(4, '0')}`;
 
+// Como a Conta a Pagar/Histórico só é criada na confirmação manual da compra (não mais na
+// aprovação), `parsePedidoCompraSeq(comprasHistorico)` sozinho não basta pra evitar número
+// repetido entre duas aprovações seguidas cujos itens ainda não foram comprados — os números já
+// atribuídos ficam carimbados em `itens[].pedidoCompraNumero` das requisições em Comprados,
+// sem passar pelo histórico ainda. Varre as duas bases e usa a maior sequência encontrada.
+export const parsePedidoCompraSeqAtual = (
+  comprasHistorico: CompraHistoricoRegistro[],
+  compras: RequisicaoCompra[],
+): number => {
+  let max = parsePedidoCompraSeq(comprasHistorico);
+  for (const request of compras || []) {
+    for (const item of request?.itens || []) {
+      const m = /^PC-(\d+)$/.exec(String((item as any)?.pedidoCompraNumero || ''));
+      if (m) max = Math.max(max, Number(m[1]));
+    }
+  }
+  return max;
+};
+
 // Reagrupa registros de histórico (já persistidos) por Pedido de Compra, para reexibir/rebaixar
 // o documento depois. Registros do fluxo manual antigo (sem pedidoCompraNumero) não entram aqui.
 export const agruparPorPedidoCompra = (registros: CompraHistoricoRegistro[]): PedidoCompraResumo[] => {
@@ -479,8 +498,10 @@ export const agruparPorPedidoCompra = (registros: CompraHistoricoRegistro[]): Pe
 export const stageLabel: Record<BoardStage, string> = {
   SOLICITACOES: 'Solicitação',
   SELECAO_GERENTE: 'Em cotação',
-  APROVACAO: 'Em aprovação',
+  AGUARDANDO_COMERCIAL: 'Aguardando Comercial',
+  AGUARDANDO_FIN: 'Aguardando Financeiro',
   COMPRADOS: 'Em compra',
+  RECUSADO: 'Recusado',
 };
 
 // O registro (pedido ou item de histórico) pertence ao usuário logado?

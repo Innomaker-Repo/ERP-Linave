@@ -7,13 +7,12 @@
  *   - departamentos via saveListas.
  * =======================================================================================*/
 import { useMemo } from 'react';
-import { toast } from 'sonner';
 import { useErp } from '../../../context/ErpContext';
-import api from '../../../../services/api';
+import { comFinanceiroAtual } from '../../../../services/financeiroSeguro';
 import {
-  mapOsToFinanceiro, obraFinalizada, docsMediacao, negocioValor, empresaFromCC, todayStr, days, num,
+  mapOsToFinanceiro, todayStr, days, num, isLinaveEmpresa, siglaTipoNfe,
   upsertContaReceberPorMedicao, garantirOcorrenciasContasFixas, proximaOcorrenciaAposPagamento, CP_STATUS,
-  type OS, type Empresa, type FinTipo, type NfeSolicitacao, type ImpostosNfe,
+  type OS, type Empresa, type FinTipo, type NfeSolicitacao, type ImpostosNfe, type FaturadoParcela,
 } from './finData';
 
 export interface FinRecord {
@@ -22,6 +21,10 @@ export interface FinRecord {
   empresa?: Empresa | string;
   status?: string;
   createdAt?: string;
+  // Nome de exibição — presente em registros como 'banco' (ver BancosView.tsx); declarado
+  // aqui pra `records('banco') as Array<{ id; nome; empresa? }>` (Contas a Pagar/Receber,
+  // finFilters.tsx) não esbarrar em "Property 'nome' is missing" no cast.
+  nome?: string;
   [key: string]: any;
 }
 
@@ -75,106 +78,57 @@ export function useFin() {
 
   const records = (tipo: FinTipo): FinRecord[] => financeiro.filter((r) => r.tipo === tipo);
 
-  // ----- NFe: solicitações (medição aprovada → solicitação de NFe) -----
-  // Deriva, a partir dos negócios finalizados/medidos, as solicitações de NFe "Aguardando
-  // emissão" (leitura real). Some quando a NFe correspondente já foi emitida e arquivada.
+  // ----- NFe: solicitações (leitura real, só registros de verdade) -----
+  // A medição aprovada NÃO gera solicitação de NFe automaticamente — a solicitação é
+  // feita manualmente no popup da Medição ou pelo botão "Solicitar NFe" (evita a
+  // duplicidade "automática + manual"). Existia aqui também um fallback que DERIVAVA uma
+  // solicitação "fantasma" (id `SNF-<id do negócio>`, nunca gravada em `financeiro`) para
+  // todo negócio finalizado/arquivado sem medição própria — removido: além de duplicar a
+  // linha de negócios que já tinham pedido manual, o id derivado (ex.: "SNF-LN-0002/26")
+  // não existe no banco, então não dava pra rastrear, editar ou excluir feito registro de
+  // verdade. Negócio antigo finalizado que ainda precise de NFe deve ser solicitado pelo
+  // botão "Solicitar NFe" (cria um registro real, com id e histórico).
   const nfeSolicitacoes: NfeSolicitacao[] = useMemo(() => {
-    const obras = Array.isArray(ctx.obras) ? ctx.obras : [];
-    const osList = Array.isArray(ctx.os) ? ctx.os : [];
-    const emitidasSources = new Set(
-      financeiro.filter((r) => r.tipo === 'nfe').map((r) => r.sourceId).filter(Boolean),
-    );
-    // Anexos da NOTA emitida, por solicitação de origem. Depois que a NFe é arquivada é
-    // este arquivo (o PDF/XML da nota) que interessa na linha — sem isso a coluna Anexos
-    // continuava mostrando só o documento da medição, e a nota emitida ficava invisível.
-    const anexosEmitidos = new Map<string, string[]>();
+    // Nota emitida por solicitação de origem (o registro 'nfe' aponta de volta pelo sourceId).
+    const bridgePorSource = new Map<string, FinRecord>();
     financeiro
       .filter((r) => r.tipo === 'nfe' && r.sourceId)
-      .forEach((r) => anexosEmitidos.set(String(r.sourceId), Array.isArray(r.anexos) ? r.anexos : []));
+      .forEach((r) => bridgePorSource.set(String(r.sourceId), r));
 
-    // A medição aprovada NÃO gera mais solicitação de NFe automaticamente — a solicitação é
-    // feita manualmente no popup da Medição (evita a duplicidade "automática + manual").
-    // Aqui só deriva o fluxo antigo de obra finalizada/arquivada (sem medição própria).
-    const derived: NfeSolicitacao[] = obras.filter((o: any) => obraFinalizada(o)).map((obra: any) => {
-      const osLinked = osList.find((o: any) => String(o?.obraId) === String(obra?.id));
-      const osVm = osLinked ? mapOsToFinanceiro(osLinked, obra) : null;
-      const id = `SNF-${obra?.id}`;
-      const numeroOs = osVm?.numero || String(obra?.cc || obra?.id || '—');
-      return {
-        id,
-        os: numeroOs,
-        empresa: osVm?.empresa || empresaFromCC(numeroOs),
-        cliente: osVm?.cliente || obra?.cliente || 'Cliente não informado',
-        valor: osVm?.valor || negocioValor(obra),
-        forma: '',
-        dataEmitir: String(obra?.dataArquivamento || '').slice(0, 10) || todayStr,
-        tipoNfe: 'NFe Serviço',
-        status: emitidasSources.has(id) ? 'Emitida e arquivada' : 'Aguardando emissão',
-        // URL do documento (não o nome): é o que torna o anexo clicável/baixável na tela.
-        anexos: [
-          ...docsMediacao(obra).map((d: any) => d?.url || d?.conteudo || d?.nome).filter(Boolean),
-          ...(anexosEmitidos.get(id) || []),
-        ],
-        contrato: numeroOs,
-        derived: true,
-      };
-    });
-
-    const manual: NfeSolicitacao[] = financeiro
+    return financeiro
       .filter((r) => r.tipo === 'nfeReq')
-      .map((r) => ({
-        id: r.id,
-        os: r.os || '',
-        empresa: (r.empresa as Empresa) || 'Linave',
-        cliente: r.cliente || '',
-        valor: r.valor || 0,
-        forma: r.forma || '',
-        dataEmitir: r.dataEmitir || todayStr,
-        tipoNfe: r.tipoNfe || 'NFe Serviço',
-        status: emitidasSources.has(r.id) ? 'Emitida e arquivada' : (r.status || 'Aguardando emissão'),
-        anexos: [...(r.anexos || []), ...(anexosEmitidos.get(r.id) || [])],
-        contrato: r.contrato || r.os || '',
-        derived: false,
-        medicaoId: r.medicaoId || '',
-        medicaoNumero: r.medicaoNumero || '',
-      }));
-
-    return [...derived, ...manual];
-  }, [ctx.obras, ctx.os, financeiro]);
+      .map((r) => {
+        const bridge = bridgePorSource.get(String(r.id));
+        return {
+          id: r.id,
+          os: r.os || '',
+          empresa: (r.empresa as Empresa) || 'Linave',
+          cliente: r.cliente || '',
+          valor: r.valor || 0,
+          valorServico: r.valorServico,
+          valorLocacao: r.valorLocacao,
+          rascunhoImpostos: r.rascunhoImpostos || undefined,
+          forma: r.forma || '',
+          dataEmitir: r.dataEmitir || todayStr,
+          tipoNfe: r.tipoNfe || 'NFe Serviço',
+          status: bridge ? 'Emitida e arquivada' : (r.status || 'Aguardando emissão'),
+          // Anexo da NOTA emitida — depois que arquiva é esse arquivo (o PDF/XML da nota) que
+          // interessa na linha, além do documento original da solicitação (medição, se houver).
+          anexos: [...(r.anexos || []), ...(Array.isArray(bridge?.anexos) ? bridge!.anexos : [])],
+          contrato: r.contrato || r.os || '',
+          medicaoId: r.medicaoId || '',
+          medicaoNumero: r.medicaoNumero || '',
+        };
+      });
+  }, [financeiro]);
 
   // ----- Escrita (infra pronta) -----
   // Toda escrita aqui é replace-all: o array final substitui a tabela inteira no servidor.
-  // `financeiro` (acima) é só o que foi carregado no LOGIN — se o usuário está logado há
-  // horas, pode estar bem atrás do que outros usuários já gravaram nesse meio-tempo. Usar
-  // essa cópia como base apagaria silenciosamente as mudanças deles. Por isso toda função
-  // de escrita busca o estado mais recente do servidor primeiro, e só then monta o array
-  // final em cima dele — reduz a janela de corrida de "desde o login" pra "essa ação".
-  //
-  // Importante: NÃO usa getFinanceiro() (services/financeiroService.ts) — aquela função é
-  // pra leitura de tela e, de propósito, transforma qualquer falha em `[]` (aceitável quando
-  // é só exibição). Aqui uma falha vale muito mais: se o array vier vazio por causa de um erro
-  // de rede, e não porque o Financeiro está genuinamente vazio, a escrita seguinte manda só o
-  // registro novo pro replace-all — apagando o histórico inteiro (foi exatamente isso que
-  // aconteceu). Por isso a busca é feita direto aqui, sem capturar o erro: se falhar, propaga.
-  const financeiroAtual = async (): Promise<FinRecord[]> => {
-    const response = await api.get('financeiro/');
-    return Array.isArray(response.data) ? response.data : [];
-  };
-
-  // Envolve uma escrita que depende do estado atual do Financeiro. Se `financeiroAtual()`
-  // falhar, ABORTA sem chamar saveEntity — nada é salvo nem apagado — e avisa o usuário, em
-  // vez de deixar a escrita seguir com uma base incompleta (a causa raiz do apagão anterior).
-  const comFinanceiroAtual = async <T,>(fn: (base: FinRecord[]) => Promise<T>): Promise<T | undefined> => {
-    let base: FinRecord[];
-    try {
-      base = await financeiroAtual();
-    } catch (error) {
-      console.error('Erro ao buscar o estado atual do Financeiro:', error);
-      toast.error('Não foi possível confirmar os dados atuais do Financeiro. Tente novamente.');
-      return undefined;
-    }
-    return fn(base);
-  };
+  // `comFinanceiroAtual` (services/financeiroSeguro.ts, compartilhada com outras telas que
+  // também escrevem em `financeiro` fora deste hook) busca o estado mais recente do servidor
+  // primeiro — nunca usa o `financeiro` do contexto (carregado no login) como base — e aborta
+  // com aviso ao usuário se a busca ou a gravação falharem, em vez de seguir com dado
+  // incompleto (a causa raiz de um apagão real de dados que já aconteceu).
 
   // Acrescenta um registro à coleção `financeiro`.
   const addRecord = async (record: FinRecord) => {
@@ -191,12 +145,17 @@ export function useFin() {
     await ctx.criarSolicitacaoFinanceiro(record);
   };
 
-  // Atualiza registros financeiros por função de mapeamento.
-  const updateRecords = async (mapFn: (r: FinRecord) => FinRecord) => {
-    await comFinanceiroAtual(async (base) => {
+  // Atualiza registros financeiros por função de mapeamento. Devolve se a gravação
+  // realmente aconteceu — comFinanceiroAtual engole erro (403 de permissão, rede caída
+  // etc.) e só avisa por toast, então quem chama precisa saber que falhou pra não seguir
+  // como se tivesse dado certo (ex.: fechar um formulário de edição que não foi salvo).
+  const updateRecords = async (mapFn: (r: FinRecord) => FinRecord): Promise<boolean> => {
+    const resultado = await comFinanceiroAtual(async (base) => {
       const next = base.map(mapFn);
       await ctx.saveEntity('financeiro', next);
+      return true;
     });
+    return resultado === true;
   };
 
   // Atualiza um registro específico por id (merge de campos).
@@ -227,10 +186,49 @@ export function useFin() {
   // Aprova uma solicitação: marca como aprovada e cria a Conta a Pagar correspondente
   // (numa única escrita, para o estado ficar consistente).
   const approveSolicitacao = async (id: string) => {
+    // Quem aprovou — pro solicitante ver em "Meus Pagamentos" (antes só dava pra saber que
+    // tinha sido aprovado, não por quem).
+    const aprovadoPor = ctx.userSession?.nome || ctx.userSession?.email || '';
     await comFinanceiroAtual(async (base) => {
       const sol = base.find((r) => r.id === id);
       if (!sol) return;
       const now = new Date().toISOString();
+
+      // Faturado: em vez de UMA conta a pagar "single", nasce a mãe (a Nota Fiscal, nunca paga
+      // diretamente) + UMA filha por parcela, já prontas pra pagar — mesmo shape que
+      // parcelarConta já usa (type/parentId/parcela/totalParcelas). Diferente de uma conta
+      // parcelada comum, aqui TODAS as parcelas já chegam com boleto (anexado na criação da
+      // solicitação, ver SolicitacaoView.tsx), então todas nascem de uma vez, não uma por mês.
+      if (sol.forma === 'Parcelado' && Array.isArray(sol.faturado?.parcelas) && sol.faturado.parcelas.length > 0) {
+        const parcelas: FaturadoParcela[] = sol.faturado.parcelas;
+        const maeId = `CP-${Date.now().toString(36).toUpperCase()}`;
+        const totalFatura = parcelas.reduce((soma, p) => soma + num(p.valor), 0);
+        const camposComuns = {
+          origemSolicitacao: sol.id, tipo: 'contaPagar' as const, empresa: sol.empresa,
+          vinculoTipo: sol.vinculoTipo, vinculoValor: sol.vinculoValor, fornecedor: sol.fornecedor,
+          tipoPagamento: sol.tipoPagamento, natureza: sol.natureza || '', documento: sol.documento,
+          banco: '', forma: sol.forma, descricao: sol.descricao || '',
+          valorPago: 0, jurosPago: 0, comprovantes: [], createdAt: now,
+        };
+        const mae: FinRecord = {
+          ...camposComuns, id: maeId, type: 'parent', parentId: null, parcela: 'Mãe',
+          totalParcelas: parcelas.length, valor: totalFatura, vencimento: parcelas[0].vencimento,
+          status: 'Parcelado', anexos: sol.faturado.notaFiscal?.anexoUrl ? [sol.faturado.notaFiscal.anexoUrl] : [],
+          dataPagamento: '',
+        };
+        const filhas: FinRecord[] = parcelas.map((p, i) => ({
+          ...camposComuns, id: `${maeId}-${String(i + 1).padStart(2, '0')}`, type: 'child', parentId: maeId,
+          parcela: `${i + 1}/${parcelas.length}`, totalParcelas: parcelas.length, valor: num(p.valor),
+          vencimento: p.vencimento, status: 'Aberto', anexos: p.anexoUrl ? [p.anexoUrl] : [], dataPagamento: '',
+        }));
+        const nextParcelas = parcelas.map((p, i) => ({ ...p, contaPagarId: filhas[i].id }));
+        const next = base.map((r) => (r.id === id
+          ? { ...r, status: 'Aprovado', aprovadoPor, faturado: { ...sol.faturado, maeContaPagarId: maeId, parcelas: nextParcelas } }
+          : r));
+        await ctx.saveEntity('financeiro', [mae, ...filhas, ...next]);
+        return;
+      }
+
       const contaPagar: FinRecord = {
         id: `CP-${Date.now().toString(36).toUpperCase()}`,
         tipo: 'contaPagar',
@@ -259,38 +257,43 @@ export function useFin() {
         comprovantes: [],
         createdAt: now,
       };
-      const next = base.map((r) => (r.id === id ? { ...r, status: 'Aprovado' } : r));
+      const next = base.map((r) => (r.id === id ? { ...r, status: 'Aprovado', aprovadoPor } : r));
       await ctx.saveEntity('financeiro', [contaPagar, ...next]);
     });
   };
 
   const rejectSolicitacao = async (id: string, motivo?: string) => {
-    await updateRecords((r) => (r.id === id ? { ...r, status: 'Reprovado', motivoReprovacao: motivo || '' } : r));
+    const reprovadoPor = ctx.userSession?.nome || ctx.userSession?.email || '';
+    await updateRecords((r) => (r.id === id
+      ? { ...r, status: 'Reprovado', motivoReprovacao: motivo || '', reprovadoPor }
+      : r));
   };
 
   // Reenvia uma solicitação reprovada: o próprio solicitante corrige os dados e ela volta
   // para a fila de aprovação, como se fosse enviada agora — sem precisar criar um registro novo
   // (mantém o mesmo id e o anexo já enviado, a menos que troque).
-  const reenviarSolicitacao = async (id: string, patch: Partial<FinRecord>) => {
-    await updateRecords((r) => (r.id === id
-      ? { ...r, ...patch, status: 'Aguardando aprovação', motivoReprovacao: '' }
+  const reenviarSolicitacao = async (id: string, patch: Partial<FinRecord>): Promise<boolean> =>
+    updateRecords((r) => (r.id === id
+      ? { ...r, ...patch, status: 'Aguardando aprovação', motivoReprovacao: '', reprovadoPor: '' }
       : r));
-  };
 
-  // Rótulo do recebível gerado pela nota. O número é opcional na emissão (nem sempre já
-  // saiu do emissor), então a referência precisa continuar legível sem ele.
-  const referenciaNfe = (numero?: string) => {
+  // Rótulo do recebível gerado pela nota/recibo. Sigla por natureza (serviço × locação) e
+  // empresa prestadora — ver siglaTipoNfe em finData.ts. O número é opcional na emissão (nem
+  // sempre já saiu do emissor), a referência continua legível sem ele.
+  const referenciaNfe = (numero: string | undefined, empresa: any, tipoNfe?: string) => {
     const n = String(numero || '').trim();
-    return n ? `NF ${n}` : 'NF sem número';
+    const sigla = siglaTipoNfe(tipoNfe || '', empresa);
+    return n ? `${sigla} ${n}` : `${sigla} sem número`;
   };
 
   // Preenche/corrige o número (e a data) de uma NFe já emitida. Atualiza junto a
   // referência da Conta a Receber que ela gerou — sem isso o recebível ficaria marcado
-  // como "NF sem número" para sempre, mesmo depois de o número ser informado.
+  // como "NFe sem número" para sempre, mesmo depois de o número ser informado.
   const atualizarNfeEmitida = async (nfeId: string, patch: { numero?: string; emissao?: string }) => {
     const numero = String(patch.numero ?? '').trim();
-    const referencia = referenciaNfe(numero);
     await comFinanceiroAtual(async (base) => {
+      const nfeAtual = base.find((r) => r.id === nfeId && r.tipo === 'nfe');
+      const referencia = referenciaNfe(numero, nfeAtual?.empresa, nfeAtual?.tipoNfe);
       const next = base.map((r) => {
         if (r.id === nfeId && r.tipo === 'nfe') {
           return { ...r, numero, ...(patch.emissao ? { emissao: patch.emissao } : {}) };
@@ -324,11 +327,19 @@ export function useFin() {
   ) => {
     const ts = Date.now().toString(36).toUpperCase();
     const now = new Date().toISOString();
+    // A origem do recebível segue a NATUREZA da solicitação (Serviço x Locação), não a sigla
+    // exibida — a sigla também varia por empresa prestadora (ver siglaTipoNfe em finData.ts),
+    // mas Locação sempre é "Recibo" (Linave = N/D, Servinave = R/L) e Serviço sempre é "NFe".
+    const origem: 'NFe' | 'Recibo' = sol.tipoNfe === 'Nota de débito' ? 'Recibo' : 'NFe';
     const nfe: FinRecord = {
       id: `NFE-${ts}`,
       tipo: 'nfe',
       sourceId: sol.id,
       empresa: sol.empresa,
+      // Guardado pra reconstruir a sigla certa (NFe/N-D/R-L) depois, ex.: ao editar o número
+      // já arquivado (atualizarNfeEmitida) — sem isso, um recibo editado mais tarde voltava a
+      // ser rotulado "NFe" só porque o registro em si não sabia sua própria natureza.
+      tipoNfe: sol.tipoNfe,
       cliente: payload.cliente,
       numero: payload.numero,
       emissao: payload.emissao,
@@ -337,7 +348,7 @@ export function useFin() {
       vencimento: payload.vencimento,
       contrato: payload.contrato,
       anexos: payload.anexos || [],
-      // Detalhamento do que foi retido nesta nota (alíquota + valor por imposto).
+      // Detalhamento do que foi retido nesta nota/recibo (alíquota + valor por imposto).
       impostos: payload.impostos || null,
       createdAt: now,
     };
@@ -350,15 +361,16 @@ export function useFin() {
         ordemServicoNumero: sol.os || '',
         empresa: sol.empresa,
         cliente: payload.cliente,
-        origem: 'NFe',
+        origem,
         fonteId: nfe.id,
         valorOriginal: payload.original,
         valorLiquido: payload.liquido,
         vencimento: payload.vencimento,
-        referencia: referenciaNfe(payload.numero),
+        referencia: referenciaNfe(payload.numero, sol.empresa, sol.tipoNfe),
         baixado: payload.baixado,
         impostos: payload.impostos,
         emissao: payload.emissao,
+        anexos: payload.anexos,
       });
       await ctx.saveEntity('financeiro', next);
     });
@@ -536,7 +548,8 @@ export function useFin() {
     setPendingEditSolicitacaoId: ctx.setPendingEditSolicitacaoId,
     // escrita
     addRecord, addSolicitacao, updateRecords, updateRecord, deleteRecord, contarDependentes,
-    addDepartamento, approveSolicitacao, rejectSolicitacao, reenviarSolicitacao, emitirNfe, atualizarNfeEmitida,
+    addDepartamento, approveSolicitacao, rejectSolicitacao, reenviarSolicitacao,
+    emitirNfe, atualizarNfeEmitida,
     parcelarConta, pagarConta,
     // contas fixas (recorrentes)
     sincronizarContasFixas, salvarContaFixa, excluirContaFixa, ocorrenciasFuturasDaFixa,

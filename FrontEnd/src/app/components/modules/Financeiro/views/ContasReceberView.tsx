@@ -1,11 +1,12 @@
 import React, { useMemo, useState } from 'react';
-import { Save, Download, FileText, Eye } from 'lucide-react';
+import { Save, Download, FileText, Eye, Paperclip } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import {
   FinCard, Toolbar, DataTable, Th, Td, Btn, StatusTag, CompanyTag, AlertBar, InfoBar, EmptyRow,
   FinModal, Field, Input, MoneyInput, Select, Textarea, ImpostosPanel, DeleteBtn,
 } from '../finUi';
 import {
-  br, money, num, isOld, todayStr, download, bancoLabel,
+  br, money, num, isOld, todayStr, bancoLabel,
   IMPOSTOS_NFE, IMPOSTO_LABEL, impostosDoRegistro,
 } from '../finData';
 import { useFin, type FinRecord } from '../useFin';
@@ -17,12 +18,50 @@ const status = (r: any) => (r.recebido ? 'Recebido' : isOld(r.vencimentoRecebime
 const STATUS_FILTROS = ['Todos', 'A receber', 'Recebido', 'Vencido'] as const;
 type StatusFiltro = typeof STATUS_FILTROS[number];
 
+// Documento(s) do recebível — NFe emitida ou recibo de locação gerado, achatados em
+// `detalhe.anexos` por upsertContaReceberPorMedicao (finData.ts). Link de verdade quando é
+// URL (/media/...); registros antigos sem anexo simplesmente não mostram nada aqui.
+const ehUrlAnexo = (a: any) => /^(https?:|\/media\/)/.test(String(a));
+const nomeAnexo = (a: any) => (ehUrlAnexo(a) ? decodeURIComponent(String(a).split('/').pop() || 'documento') : String(a));
+function DocumentosDoRecebivel({ anexos }: { anexos?: string[] }) {
+  const lista = Array.isArray(anexos) ? anexos : [];
+  if (!lista.length) return null;
+  return (
+    <div className="rounded-xl border border-white/10 bg-[#0b1220] p-4">
+      <p className="mb-1.5 text-[11px] font-black uppercase tracking-widest text-white/40">Documentos</p>
+      <div className="flex flex-wrap gap-2">
+        {lista.map((a, i) => (
+          <a
+            key={i}
+            href={a}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs font-bold text-amber-200 hover:bg-amber-500/20"
+          >
+            <Paperclip size={12} /> {nomeAnexo(a)}
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // Dropdown de banco (hoisted: componente estável para não remontar os inputs do modal).
+// Opera por `id` (sempre único) por baixo — dois bancos de empresas diferentes podem ter o
+// mesmo nome (ex.: "Itaú" na Linave e na Servinave). `value`/`onChange` guardam o RÓTULO
+// completo (bancoLabel, "Itaú - Linave"), não só o nome — guardar só o nome misturava as
+// duas contas (reabrir sempre caía no primeiro banco daquele nome).
 function BancoSelect({ value, onChange, bancos }: { value: string; onChange: (v: string) => void; bancos: Array<{ id: string; nome: string; empresa?: string }> }) {
   return (
-    <Select value={value} onChange={(e) => onChange(e.target.value)}>
+    <Select
+      value={bancos.find((b) => bancoLabel(b) === value)?.id || ''}
+      onChange={(e) => {
+        const b = bancos.find((x) => x.id === e.target.value);
+        onChange(b ? bancoLabel(b) : '');
+      }}
+    >
       <option value="">{bancos.length ? 'Selecione o banco...' : 'Nenhum banco cadastrado'}</option>
-      {bancos.map((b) => <option key={b.id} value={b.nome}>{bancoLabel(b)}</option>)}
+      {bancos.map((b) => <option key={b.id} value={b.id}>{bancoLabel(b)}</option>)}
     </Select>
   );
 }
@@ -96,12 +135,12 @@ export function ContasReceberView() {
       : `${base}\n\nLançamento manual antigo. Será removido do controle de recebimentos.`;
   };
 
-  // Resumo em CSV do que está na tela (respeita os filtros), com linha de TOTAL ao final.
+  // Resumo em Excel do que está na tela (respeita os filtros), com linha de TOTAL ao final.
   // Traz valor original, cada imposto retido e o total — é o que o contador precisa para
   // conferir a retenção sem abrir nota por nota.
-  const exportarCsv = () => {
+  const exportarExcel = () => {
     const head = [
-      'Origem', 'Empresa', 'Cliente', 'Referência', 'Emissão NFe', 'Valor original',
+      'Origem', 'Empresa', 'Cliente', 'Referência', 'Emissão', 'Valor original',
       ...IMPOSTOS_NFE.map((k) => `${IMPOSTO_LABEL[k]} (R$)`),
       'Total impostos', 'Valor líquido', 'Vencimento', 'Recebido?', 'Data receb.', 'Valor recebido', 'Banco', 'Status',
     ];
@@ -125,8 +164,10 @@ export function ContasReceberView() {
       soma((r) => num(r.valorLiquido ?? r.valor)),
       '', '', '', soma((r) => num(r.valorRecebido)), '', '',
     ]);
-    const csv = [head, ...linhas].map((l) => l.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\n');
-    download(csv, 'contas_a_receber.csv', 'text/csv;charset=utf-8');
+    const planilha = XLSX.utils.aoa_to_sheet([head, ...linhas]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, planilha, 'Contas a Receber');
+    XLSX.writeFile(workbook, 'contas_a_receber.xlsx');
   };
 
   return (
@@ -135,7 +176,7 @@ export function ContasReceberView() {
         title="Contas a Receber"
         hint="Valores a receber dos clientes. O banco é definido aqui, no recebimento."
         actions={<>
-          <Btn variant="secondary" onClick={exportarCsv}><Download size={15} /> Exportar CSV</Btn>
+          <Btn variant="secondary" onClick={exportarExcel}><Download size={15} /> Exportar Excel</Btn>
           <Btn variant="amber" onClick={() => navegar(FIN_SECTIONS.nfe)}><FileText size={15} /> Solicitar NFe</Btn>
         </>}
       />
@@ -145,7 +186,7 @@ export function ContasReceberView() {
         automaticamente quando a NFe é emitida e arquivada — já com o valor original, os impostos
         retidos e o líquido corretos. Para gerar um novo recebível, solicite a nota fiscal em{' '}
         <button onClick={() => navegar(FIN_SECTIONS.nfe)} className="font-black text-amber-300 underline underline-offset-2 hover:text-amber-200">
-          Solicitações e Emissão de NFe
+          Solicitações e Emissão de NFe e recibos
         </button>.
       </InfoBar>
 
@@ -174,7 +215,7 @@ export function ContasReceberView() {
       <DataTable
         minWidth={1700}
         head={<>
-          <Th>Origem</Th><Th>Empresa</Th><Th>Cliente</Th><Th>Referência</Th><Th>Emissão NFe</Th><Th>Original</Th><Th>Impostos</Th><Th>Líquido</Th>
+          <Th>Origem</Th><Th>Empresa</Th><Th>Cliente</Th><Th>Referência</Th><Th>Emissão</Th><Th>Original</Th><Th>Impostos</Th><Th>Líquido</Th>
           <Th>Vencimento</Th><Th>Recebido?</Th><Th>Data receb.</Th><Th>Valor recebido</Th><Th>Banco</Th><Th>Status</Th><Th>Ação</Th>
         </>}
       >
@@ -231,7 +272,7 @@ export function ContasReceberView() {
               <Field label="Cliente" span={8}><Input value={String(detalhe.cliente || '')} disabled /></Field>
               <Field label="Origem" span={4}><Input value={String(detalhe.origem || 'Manual')} disabled /></Field>
               <Field label="Referência" span={8}><Input value={String(detalhe.referencia || '—')} disabled /></Field>
-              <Field label="Emissão NFe" span={4}><Input value={detalhe.emissaoNfe ? br(detalhe.emissaoNfe) : '—'} disabled /></Field>
+              <Field label="Emissão" span={4}><Input value={detalhe.emissaoNfe ? br(detalhe.emissaoNfe) : '—'} disabled /></Field>
               <Field label="Vencimento" span={4}><Input value={br(detalhe.vencimentoRecebimento)} disabled /></Field>
               <Field label="Recebido?" span={4}><Input value={detalhe.recebido ? 'Sim' : 'Não'} disabled /></Field>
               <Field label="Banco" span={4}><Input value={String(detalhe.bancoRecebimento || '—')} disabled /></Field>
@@ -242,6 +283,8 @@ export function ContasReceberView() {
               valorOriginal={num(detalhe.valorOriginal ?? detalhe.valor)}
               valorLiquido={num(detalhe.valorLiquido ?? detalhe.valor)}
             />
+
+            <DocumentosDoRecebivel anexos={detalhe.anexos} />
 
             {detalhe.observacao && (
               <div className="rounded-xl border border-white/10 bg-[#0b1220] p-4">

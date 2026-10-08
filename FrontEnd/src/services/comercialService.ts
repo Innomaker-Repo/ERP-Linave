@@ -39,7 +39,7 @@ export const getNegocioPorId = async (id: any) => {
 // ==========================================
 
 // Cria um novo negócio no Django (POST)
-export const criarNegocio = async (dadosNegocio) => {
+export const criarNegocio = async (dadosNegocio: any) => {
     try {
         const payload = {
             ...dadosNegocio,
@@ -50,30 +50,30 @@ export const criarNegocio = async (dadosNegocio) => {
         return response.data;
     } catch (error) {
         // Log detalhado do erro que volta do Django (ex: campos obrigatórios faltando)
-        console.error("Erro ao criar negócio:", error.response?.data || error.message);
+        console.error("Erro ao criar negócio:", (error as any)?.response?.data || (error as any)?.message);
         throw error; // Joga o erro para a tela do React exibir o alerta vermelho
     }
 };
 
 // Atualiza um negócio existente no Django (PATCH)
-export const atualizarNegocio = async (id, dadosAtualizados) => {
+export const atualizarNegocio = async (id: any, dadosAtualizados: any) => {
     try {
         // Usamos PATCH para permitir atualizações parciais (ex: só adicionar um arquivo)
         const response = await api.patch(`negocios/${id}/`, dadosAtualizados);
         return response.data;
     } catch (error) {
-        console.error(`Erro ao atualizar negócio ${id}:`, error.response?.data || error.message);
+        console.error(`Erro ao atualizar negócio ${id}:`, (error as any)?.response?.data || (error as any)?.message);
         throw error;
     }
 };
 
 // Exclui um negócio no Django (DELETE)
-export const excluirNegocio = async (id) => {
+export const excluirNegocio = async (id: any) => {
     try {
         const response = await api.delete(`negocios/${id}/`);
         return response.data;
     } catch (error) {
-        console.error(`Erro ao excluir negócio ${id}:`, error.response?.data || error.message);
+        console.error(`Erro ao excluir negócio ${id}:`, (error as any)?.response?.data || (error as any)?.message);
         throw error;
     }
 };
@@ -83,7 +83,7 @@ export const excluirNegocio = async (id) => {
 // ==========================================
 
 // Busca todos os clientes (Tabela comercialapp_cliente)
-const mapClienteFromApi = (cliente) => ({
+const mapClienteFromApi = (cliente: any) => ({
   id: cliente.id,
   tipoPessoa: cliente.tipo === 'Juridica' ? 'PJ' : 'PF',
   razaoSocial: cliente.razao_social,
@@ -98,7 +98,7 @@ const mapClienteFromApi = (cliente) => ({
   negocios: Array.isArray(cliente.negocios) ? cliente.negocios : []
 });
 
-const mapClienteToApi = (cliente) => ({
+const mapClienteToApi = (cliente: any) => ({
   tipo: cliente.tipoPessoa === 'PJ' ? 'Juridica' : 'Fisica',
   razao_social: cliente.razaoSocial,
   nome_fantasia: cliente.nomeFantasia || '',
@@ -123,7 +123,7 @@ export const getClientes = async () => {
     }
 };
 
-export const createCliente = async (cliente) => {
+export const createCliente = async (cliente: any) => {
     try {
         const response = await api.post('clientes/', mapClienteToApi(cliente));
         return mapClienteFromApi(response.data);
@@ -133,7 +133,7 @@ export const createCliente = async (cliente) => {
     }
 };
 
-export const updateCliente = async (id, cliente) => {
+export const updateCliente = async (id: any, cliente: any) => {
     try {
         const response = await api.put(`clientes/${id}/`, mapClienteToApi(cliente));
         return mapClienteFromApi(response.data);
@@ -143,7 +143,7 @@ export const updateCliente = async (id, cliente) => {
     }
 };
 
-export const deleteCliente = async (id) => {
+export const deleteCliente = async (id: any) => {
     try {
         await api.delete(`clientes/${id}/`);
     } catch (error) {
@@ -153,7 +153,7 @@ export const deleteCliente = async (id) => {
 };
 
 // Busca negócios específicos de um cliente (Endpoint customizado)
-export const getNegociosDoCliente = async (clienteId) => {
+export const getNegociosDoCliente = async (clienteId: any) => {
     try {
         const response = await api.get(`os-por-cliente/${clienteId}/`);
         return response.data;
@@ -164,12 +164,12 @@ export const getNegociosDoCliente = async (clienteId) => {
 };
 
 // Busca ordens de serviço por negócio (endpoint customizado)
-export const getOrdensPorNegocio = async (negocioId) => {
+export const getOrdensPorNegocio = async (negocioId: any) => {
     try {
         const response = await api.get(`os-por-negocio/${negocioId}/`);
         return response.data;
     } catch (error) {
-        console.error(`Erro ao buscar OS por negócio ${negocioId}:`, error?.response?.data || error.message);
+        console.error(`Erro ao buscar OS por negócio ${negocioId}:`, (error as any)?.response?.data || (error as any)?.message);
         return [];
     }
 };
@@ -190,7 +190,7 @@ export const getOrdensServico = async () => {
  */
 
 // Cria um novo orçamento resolvendo o erro de IntegrityError (Duplicate Entry)
-export const criarOrcamentoCompleto = async (dadosOrcamento) => {
+export const criarOrcamentoCompleto = async (dadosOrcamento: any) => {
     try {
         const response = await api.post('orcamentos/criar/', dadosOrcamento);
         return response.data;

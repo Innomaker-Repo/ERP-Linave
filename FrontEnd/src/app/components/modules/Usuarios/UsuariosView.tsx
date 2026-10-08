@@ -42,13 +42,12 @@ const PERMISSAO_GRUPOS = [
       { id: 'finDashboard', label: 'Dashboard Financeiro' },
       { id: 'finAprovacoes', label: 'Aprovações' },
       { id: 'finPagar', label: 'Contas a Pagar' },
-      { id: 'finNfe', label: 'NFe' },
+      { id: 'finNfe', label: 'NFe / Recibo de Locação' },
       { id: 'finReceber', label: 'Contas a Receber' },
       { id: 'finPrevisao', label: 'Previsão de Receita' },
       { id: 'finBancos', label: 'Bancos' },
       { id: 'finHistorico', label: 'Histórico' },
       { id: 'finCustoOs', label: boldOS('Custo por OS') },
-      { id: 'finReciboLocacao', label: 'Fazer Recibo de Locação' },
     ],
   },
   {
@@ -58,7 +57,8 @@ const PERMISSAO_GRUPOS = [
     // (todo colaborador pode solicitar e ver o próprio histórico), por isso não entram aqui.
     itens: [
       { id: 'kanbanCompras', label: 'Kanban de Compras' },
-      { id: 'aprovacoesCompras', label: 'Aprovações' },
+      { id: 'aprovarComercial', label: 'Aprovar Com.' },
+      { id: 'aprovarFinanceiro', label: 'Aprovar Fin.' },
       { id: 'historicoCompras', label: 'Histórico de Compras' },
       { id: 'fornecedores', label: 'Fornecedores' },
     ],

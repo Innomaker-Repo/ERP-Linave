@@ -603,6 +603,29 @@ def configuracoes_data(request):
     return Response({'config': inst.config, 'listas': inst.listas}, status=status.HTTP_200_OK)
 
 
+# Mesma rede de segurança do replace-all do Financeiro (ver comentário acima) — o
+# Almoxarifado é o mesmo padrão de objeto agregado único substituído por inteiro a cada
+# save, e já sofreu exatamente esse tipo de perda: uma tela que espelha o backend em
+# estado local e re-salva sozinha a qualquer mudança pode persistir uma cópia incompleta
+# (hidratação que ainda não terminou, aba antiga) e apagar tables/históricos inteiros.
+ALMOXARIFADO_QUEDA_PISO_MINIMO = 10
+ALMOXARIFADO_QUEDA_FRACAO_MAXIMA = 0.5  # recusa se o total novo for menos da metade do atual
+
+
+def _almoxarifado_contar_itens(obj):
+    """Linhas de todas as tables + entradas de histórico — o que baliza se um payload
+    'encolheu drasticamente' em relação ao que já está salvo."""
+    if not isinstance(obj, dict):
+        return 0
+    tabelas = obj.get('tables') if isinstance(obj.get('tables'), list) else []
+    total_linhas = sum(len(t.get('rows') or []) for t in tabelas if isinstance(t, dict))
+    total_historicos = sum(
+        len(obj.get(chave) or []) if isinstance(obj.get(chave), list) else 0
+        for chave in ('romaneiosHistorico', 'manutencaoHistorico', 'baixasHistorico', 'alocacoesHistorico')
+    )
+    return total_linhas + total_historicos
+
+
 @api_view(['GET', 'POST', 'PUT'])
 @permission_classes([permissao_modulo(*SUPRIMENTOS, *COMPRAS_GESTAO)])
 def almoxarifado_data(request):
@@ -619,7 +642,24 @@ def almoxarifado_data(request):
     payload = request.data
     if isinstance(payload, dict) and set(payload.keys()) == {'data'}:
         payload = payload.get('data')
-    result = almox_replace(payload if isinstance(payload, dict) else {})
+    if not isinstance(payload, dict):
+        payload = {}
+
+    contagem_atual = _almoxarifado_contar_itens(almox_read())
+    contagem_nova = _almoxarifado_contar_itens(payload)
+    if contagem_atual >= ALMOXARIFADO_QUEDA_PISO_MINIMO and contagem_nova < contagem_atual * ALMOXARIFADO_QUEDA_FRACAO_MAXIMA:
+        return Response(
+            {
+                'error': (
+                    f'Operação recusada: o objeto enviado ({contagem_nova} item(ns)/registro(s)) é muito '
+                    f'menor que o total atual salvo ({contagem_atual}). Isso indica uma cópia desatualizada '
+                    f'do Almoxarifado, que apagaria dados. Recarregue a página e tente novamente.'
+                ),
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    result = almox_replace(payload)
     _registrar_log(request, 'atualizacao', 'Almoxarifado', 'Estoque/almoxarifado atualizado.')
     return Response(result, status=status.HTTP_200_OK)
 
@@ -643,6 +683,58 @@ def _financeiro_contagem_atual():
     return sum(m.objects.count() for m in modelos)
 
 
+# Campos de ContaPagar visíveis pra quem não tem nenhuma permissão de Financeiro — só o
+# suficiente pra "Itens para Adicionar" (Almoxarifado) saber se o documento de compra já
+# foi anexado (contaTemDocumento no frontend usa exatamente esses campos). Fornecedor,
+# valor, natureza, observações e comprovantes ficam de fora.
+_FINANCEIRO_CAMPOS_CONTAPAGAR_PUBLICOS = {'id', 'tipo', 'status', 'documento', 'anexos'}
+
+
+def _sem_permissao_financeira(user):
+    permissoes = getattr(user, 'permissoes', None)
+    if not isinstance(permissoes, dict):
+        return True
+    return not any(permissoes.get(chave) is True for chave in FINANCEIRO)
+
+
+def _financeiro_restringir_para_leitor_sem_acesso(dados, user=None):
+    """Some com `solicitacao` de outras pessoas (nome do solicitante, fornecedor, valor, motivo
+    de reprovação) e reduz `contaPagar` aos campos públicos — pra quem lê o Financeiro só por
+    causa de outro módulo (Compras, Almoxarifado, Dashboard), sem ter nenhuma permissão de
+    Financeiro em si.
+
+    "Solicitação de Pagamento"/"Meus Pagamentos" são abertos a todo usuário autenticado (sem
+    exigir nenhuma permissão de Financeiro — não há nem checkbox pra isso em Usuários & Acessos),
+    então as próprias solicitações de quem está lendo continuam aqui mesmo sem permissão alguma;
+    só as de outras pessoas são removidas. Sem essa exceção, o autor nunca veria o que ele mesmo
+    criou em "Meus Pagamentos".
+    """
+    cpf_usuario = str(getattr(user, 'cpf', '') or '').strip()
+    email_usuario = str(getattr(user, 'email', '') or '').strip().lower()
+
+    def _e_do_proprio_usuario(registro):
+        if not cpf_usuario and not email_usuario:
+            return False
+        cpf_registro = str(registro.get('solicitanteCpf') or '').strip()
+        email_registro = str(registro.get('solicitanteEmail') or '').strip().lower()
+        if cpf_usuario and cpf_registro and cpf_registro == cpf_usuario:
+            return True
+        if email_usuario and email_registro and email_registro == email_usuario:
+            return True
+        return False
+
+    restantes = [
+        r for r in dados
+        if r.get('tipo') != 'solicitacao' or _e_do_proprio_usuario(r)
+    ]
+    for r in restantes:
+        if r.get('tipo') == 'contaPagar':
+            for campo in list(r.keys()):
+                if campo not in _FINANCEIRO_CAMPOS_CONTAPAGAR_PUBLICOS:
+                    del r[campo]
+    return restantes
+
+
 @api_view(['GET', 'POST', 'PUT'])
 @permission_classes([permissao_modulo(*FINANCEIRO, *COMPRAS_GESTAO)])
 def financeiro_data(request):
@@ -656,7 +748,10 @@ def financeiro_data(request):
     from .financeiro_sync import read_all, replace_all
 
     if request.method == 'GET':
-        return Response(read_all(), status=status.HTTP_200_OK)
+        dados = read_all()
+        if not escreve_em_tudo(request.user) and _sem_permissao_financeira(request.user):
+            dados = _financeiro_restringir_para_leitor_sem_acesso(dados, request.user)
+        return Response(dados, status=status.HTTP_200_OK)
 
     payload = request.data
     if isinstance(payload, dict):
