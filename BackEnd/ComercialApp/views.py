@@ -21,6 +21,7 @@ from .permissions import (
     IsAdmin, permissao_modulo, eh_admin, escreve_em_tudo,
     COMERCIAL, PRODUCAO, FINANCEIRO, COMPRAS_GESTAO, SUPRIMENTOS,
 )
+from .ws_notify import dispatch_collection_changed
 
 
 # --- Log de atividades ---
@@ -792,6 +793,7 @@ def financeiro_data(request):
 
     total = replace_all(payload)
     _registrar_log(request, 'atualizacao', 'Financeiro', f'Registros financeiros sincronizados ({total} itens).')
+    dispatch_collection_changed('financeiro')
     return Response({'message': 'Financeiro sincronizado.', 'total': total, 'financeiro': read_all()}, status=status.HTTP_200_OK)
 
 
@@ -820,6 +822,7 @@ def financeiro_solicitacao_criar(request):
     instance = _build_instance('solicitacao', record)
     instance.save()
     _registrar_log(request, 'criacao', 'Financeiro', f'Solicitação de pagamento {rid} criada.')
+    dispatch_collection_changed('financeiro')
     return Response({'message': 'Solicitação enviada.', 'financeiro': read_all()}, status=status.HTTP_201_CREATED)
 
 
@@ -851,6 +854,8 @@ def compras_data(request):
         replace_historico(payload.get('comprasHistorico') or [])
     partes = [k for k in ('compras', 'comprasHistorico') if k in payload]
     _registrar_log(request, 'atualizacao', 'Compras', f'Compras atualizadas: {", ".join(partes)}.')
+    if partes:
+        dispatch_collection_changed('compras')
     return Response(
         {'compras': read_requisicoes(), 'comprasHistorico': read_historico()},
         status=status.HTTP_200_OK,

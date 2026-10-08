@@ -43,6 +43,23 @@ services:
     networks:
       - erp-network
 
+  # Channel layer do tempo real (WebSocket) — ver docs/backlog/tempo-real-websockets.md.
+  # Obrigatório porque backend (gunicorn, 3 workers) e ws (daphne) são processos
+  # separados: sem Redis, o aviso "coleção X mudou" publicado por um worker do backend
+  # nunca chegaria às conexões WebSocket abertas no processo do ws. Rede interna só —
+  # nenhuma porta exposta ao host.
+  redis:
+    image: redis:7-alpine
+    container_name: erp_redis
+    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - erp-network
+
   # --- BACKEND: DJANGO ---
   backend:
     build: ./BackEnd  # Compila usando o Dockerfile do seu backend
@@ -66,8 +83,11 @@ services:
       - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
       - DJANGO_ALLOWED_HOSTS=${ALLOWED_HOSTS}
       - DJANGO_CORS_ALLOWED_ORIGINS=${DJANGO_CORS_ALLOWED_ORIGINS}
+      - REDIS_URL=redis://redis:6379/0
     depends_on:
         database:
+          condition: service_healthy
+        redis:
           condition: service_healthy
     networks:
       - erp-network
@@ -84,6 +104,43 @@ services:
       - "traefik.http.middlewares.backend-secure-headers.headers.contentTypeNosniff=true"
       - "traefik.http.middlewares.backend-secure-headers.headers.frameDeny=true"
       - "traefik.http.middlewares.backend-secure-headers.headers.contentSecurityPolicy=default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self';"
+
+  # --- WEBSOCKET: DAPHNE (tempo real) ---
+  # Mesma imagem do backend, processo à parte rodando daphne em vez de gunicorn — HTTP
+  # continua 100% no gunicorn/WSGI acima, intocado (ver docs/backlog/tempo-real-websockets.md,
+  # "não trocar a stack HTTP inteira de uma vez"). Só esse processo serve /ws/workspace/.
+  ws:
+    build: ./BackEnd
+    container_name: erp_ws
+    restart: always
+    command: python -m daphne -b 0.0.0.0 -p 8001 ERP_Linave_BackEnd.asgi:application
+    environment:
+      - DB_HOST=database
+      - DB_NAME=${MYSQL_DATABASE}
+      - DB_USER=${MYSQL_USER}
+      - DB_PASSWORD=${MYSQL_PASSWORD}
+      - DJANGO_DEBUG=${DJANGO_DEBUG}
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
+      - DJANGO_ALLOWED_HOSTS=${ALLOWED_HOSTS}
+      - DJANGO_CORS_ALLOWED_ORIGINS=${DJANGO_CORS_ALLOWED_ORIGINS}
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+        database:
+          condition: service_healthy
+        redis:
+          condition: service_healthy
+    networks:
+      - erp-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ws.entrypoints=websecure"
+      # PathPrefix(/ws) é mais específico que o Host() sozinho do router do frontend
+      # abaixo — Traefik prioriza a regra mais específica, então isso vence sem precisar
+      # de "priority" explícito (mesmo mecanismo que já separa /comercial do resto pro
+      # backend).
+      - "traefik.http.routers.ws.rule=Host(`${DOMINIO_SISTEMA}`) && PathPrefix(`/ws`)"
+      - "traefik.http.services.ws.loadbalancer.server.port=8001"
+      - "traefik.http.routers.ws.tls.certresolver=meu-resolvedor"
 
   # --- FRONTEND: REACT ---
   frontend:

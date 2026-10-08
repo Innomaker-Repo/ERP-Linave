@@ -19,7 +19,9 @@ SECRET.md
 BackEnd/media/
 
 # Docker / Traefik
-docker-compose.yml
+# docker-compose.yml temporariamente liberado do ignore (pedido do usuário em
+# 2026-10-08) para permitir subir a atualização do tempo real (WebSockets) pra
+# produção. Reavaliar se volta a ser ignorado depois do deploy.
 traefik/
 
 #vscode

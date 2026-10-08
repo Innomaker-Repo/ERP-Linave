@@ -9,6 +9,7 @@ import { getAlmoxarifado, syncAlmoxarifado } from '../../services/almoxarifadoSe
 import { getConfiguracoes, syncConfig, syncListas } from '../../services/configuracoesService';
 import { getMedicoes } from '../../services/medicoesService';
 import { getStoredSession as getAuthSession, getStoredTokens, storeSession, clearTokens, refreshAccessToken } from '../../services/authService';
+import { connectRealtime } from '../../services/realtime';
 import { toast } from 'sonner';
 
 
@@ -1117,6 +1118,37 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
       window.removeEventListener('focus', refetchSeVisivel);
       window.clearInterval(intervalId);
     };
+  }, [userSession?.email]);
+
+  // Tempo real (WebSocket) — ver docs/backlog/tempo-real-websockets.md. O backend só
+  // avisa QUAL coleção mudou (ComercialApp/ws_notify.py); aqui busca só aquela coleção
+  // de novo, reaproveitando as mesmas funções de fetch do hydrateWorkspace acima (em vez
+  // do Promise.all de tudo). Só financeiro e compras disparam esse aviso por enquanto —
+  // ver o backlog pra por que (bulk_create não dispara post_save do Django nesses dois;
+  // os demais, quando ganharem o mesmo tratamento, só precisam de um case novo aqui.
+  // Não substitui o polling de 45s/foco acima — continua como rede de segurança caso o
+  // socket caia e ainda não tenha reconectado.
+  useEffect(() => {
+    if (!userSession) return;
+
+    const handleCollectionChanged = async (collection: string) => {
+      switch (collection) {
+        case 'financeiro': {
+          const financeiro = await getFinanceiro();
+          setData((prevData: any) => ({ ...prevData, financeiro }));
+          break;
+        }
+        case 'compras': {
+          const { compras, comprasHistorico } = await getCompras();
+          setData((prevData: any) => ({ ...prevData, compras, comprasHistorico }));
+          break;
+        }
+        default:
+          break;
+      }
+    };
+
+    return connectRealtime(handleCollectionChanged);
   }, [userSession?.email]);
 
   const showTestAlert = (operacao: string) => {

@@ -1,6 +1,11 @@
 # Backlog: Sincronização em tempo real (WebSockets / Django Channels)
 
-**Status:** proposto, não iniciado. Aberto em 2026-09-07, a pedido do Andre, para revisão em ~2026-09-14.
+**Status:** IMPLEMENTADO em 2026-10-08 (Financeiro + Compras) e testado ao vivo de ponta
+a ponta no navegador (escrita via API → tela já aberta atualiza sozinha, sem reload).
+`docker-compose.yml`/Traefik também já preparados para produção — não verificados com
+`docker-compose up` de verdade nesta máquina (sem Docker instalado aqui); conferir no
+servidor de deploy antes de considerar 100% fechado. Detalhes no final deste documento,
+seção "Execução real (2026-10-08)".
 
 ## Contexto
 
@@ -123,3 +128,99 @@ Confirmar que o levantamento acima ainda bate com o estado do repo (esse documen
 escrito em 2026-09-07 — se muita coisa mudou no backend desde então, re-levantar antes
 de seguir o plano ao pé da letra), decidir o formato de auth do WebSocket (query string
 vs. primeira mensagem) e então implementar backend → frontend → infra, nessa ordem.
+
+## Execução real (2026-10-08)
+
+Implementado com UM desvio importante em relação ao passo 4 do plano original acima
+("Disparo via `post_save`/`post_delete`"): **não usa sinais do Django**. Ao investigar,
+`financeiro_sync.replace_all` e `compras_sync.replace_requisicoes/replace_historico`
+usam `model.objects.all().delete()` + `model.objects.bulk_create(...)` — e `bulk_create`
+é documentado pelo próprio Django como NÃO disparando `post_save`. Um sinal nunca veria
+essas escritas. Reescrever o replace-all pra salvar registro a registro só pra viabilizar
+o sinal mexeria em lógica sensível já blindada (guard-rail contra perda de dado em
+`financeiro_data`/`compras_data`, trava de aprovação só pra admin/gerente) — risco
+desnecessário. Em vez disso, o aviso é disparado MANUALMENTE de dentro das views, logo
+após a escrita ter sido confirmada (`ComercialApp/ws_notify.py:dispatch_collection_changed`).
+
+Confirmado por varredura completa do repo: só `compras_sync.py` e `financeiro_sync.py`
+usam `bulk_create`/`bulk_update` em todo o backend — nenhum outro módulo (Clientes,
+Fornecedores, Negócios, OS, Medições, Configurações, Almoxarifado) precisa desse mesmo
+tratamento; todos usam `ModelViewSet` do DRF ou `.save()`/`.create()` direto, que já
+disparam sinal nativo do Django normalmente (se um dia quiserem tempo real, dá pra usar
+sinal de verdade neles, sem o desvio acima).
+
+**Arquivos novos/alterados:**
+- `BackEnd/requirements.txt` — `channels`, `channels-redis`, `daphne`.
+- `BackEnd/ERP_Linave_BackEnd/settings.py` — `channels` em `INSTALLED_APPS`,
+  `ASGI_APPLICATION`, `CHANNEL_LAYERS` (Redis via `REDIS_URL`; cai pra
+  `InMemoryChannelLayer` se a env var não existir — só serve pra um processo só, não
+  funciona em dev local com `runserver` + `daphne` como dois processos separados, ver
+  "Pendências" abaixo).
+- `BackEnd/ERP_Linave_BackEnd/routing.py` (novo) — `ProtocolTypeRouter`, HTTP continua
+  no Django normal, `/ws/workspace/` vai pro `WorkspaceConsumer`.
+- `BackEnd/ERP_Linave_BackEnd/asgi.py` — importa de `routing.py` em vez de expor só
+  `get_asgi_application()` puro.
+- `BackEnd/ComercialApp/ws_auth.py` (novo) — autentica o WebSocket pelo JWT na query
+  string (`?token=...`), mesmo `SIMPLE_JWT` da API REST.
+- `BackEnd/ComercialApp/consumers.py` (novo) — `WorkspaceConsumer`, grupo único
+  `"workspace"`.
+- `BackEnd/ComercialApp/ws_notify.py` (novo) — `dispatch_collection_changed(nome)`,
+  chamado manualmente pelas views (ver desvio acima). Nunca deixa uma falha de
+  notificação (Redis fora do ar) quebrar a escrita em si — só loga.
+- `BackEnd/ComercialApp/views.py` — `dispatch_collection_changed('financeiro')` em
+  `financeiro_data` (replace-all) e `financeiro_solicitacao_criar` (criação avulsa);
+  `dispatch_collection_changed('compras')` em `compras_data` (replace-all).
+- `FrontEnd/src/services/realtime.ts` (novo) — `connectRealtime(onCollectionChanged)`,
+  reconecta com backoff exponencial (1s → 30s), relê o token a cada tentativa (cobre
+  renovação de token entre quedas).
+- `FrontEnd/src/services/network.ts` — `getRealtimeWsUrl(token)`.
+- `FrontEnd/src/app/context/ErpContext.tsx` — novo `useEffect` plugando
+  `connectRealtime`; ao receber `{collection: 'financeiro'|'compras'}`, rechama só
+  `getFinanceiro()`/`getCompras()` (reaproveita as mesmas funções do
+  `hydrateWorkspace`) em vez de tudo. Polling de 45s/foco MANTIDO como rede de
+  segurança, como o plano original já previa.
+- `FrontEnd/vite.config.ts` — proxy `/ws` → `http://localhost:8001` com `ws: true`
+  (dev local; replica o que o Traefik faz em produção por path prefix).
+- `docker-compose.yml` — serviço `redis` (`redis:7-alpine`, rede interna, sem porta
+  exposta); serviço `ws` (mesma imagem do `backend`, comando
+  `daphne -p 8001 ERP_Linave_BackEnd.asgi:application`, roteado pelo Traefik por
+  `PathPrefix('/ws')`); `REDIS_URL=redis://redis:6379/0` adicionado também ao `backend`
+  (os 3 workers do gunicorn publicam no mesmo Redis que o `ws` consome).
+
+**Verificação feita:**
+1. `npx tsc --noEmit` (frontend) e `python manage.py check` (backend) limpos.
+2. WebSocket real (Node, depois Playwright/navegador real) conectando com JWT válido,
+   recebendo `{"collection": "financeiro"}` e `{"collection": "compras"}` logo após uma
+   escrita de verdade.
+3. **Teste decisivo**: tela "Aprovações" aberta como gerente; uma solicitação nova
+   criada via API simulando "outro usuário"; a tela atualizou sozinha, SEM reload nem
+   navegação, mostrando a nova solicitação — provando que o pipeline completo
+   (backend → Redis/processo → WebSocket → frontend → re-render) funciona.
+4. `docker-compose.yml` validado só sintaticamente (YAML parseável, `services:` com as
+   chaves esperadas) — **não** rodado com `docker-compose up` de verdade, porque esta
+   máquina de desenvolvimento não tem Docker instalado.
+
+**Pendências / pontos de atenção pra quem retomar:**
+- **Redis local não foi instalado** (tentativa via `winget install Memurai.MemuraiDeveloper`
+  falhou duas vezes com erro de permissão do instalador — `SFXCA: Failed to create temp
+  directory. Error code 5` — provavelmente antivírus/política do Windows bloqueando a
+  extração temporária que o MSI faz; não é um erro do nosso lado). Sem Redis local, os
+  dois processos (`manage.py runserver` pra HTTP + `daphne` pra WS) não compartilham o
+  channel layer entre si — tempo real só foi testado localmente concentrando HTTP e WS
+  no MESMO processo daphne (prova a lógica, mas não é o setup real de dois processos).
+  Em produção isso não é problema: o Redis do `docker-compose.yml` resolve.
+- **Channels 4.x não faz mais o `manage.py runserver` virar servidor ASGI/WebSocket
+  sozinho** (comportamento que existia no Channels 2.x foi removido). Em dev local
+  `/ws` precisa do `daphne` rodando como processo separado (`python -m daphne -p 8001
+  ERP_Linave_BackEnd.asgi:application`), com o proxy do Vite (`/ws` → porta 8001)
+  cobrindo o roteamento — já configurado em `vite.config.ts`.
+- `docker-compose.yml`/Traefik não foram exercitados com Docker de verdade — confirmar
+  no servidor de deploy que o serviço `ws` sobe, que o Traefik roteia `/ws` pra ele
+  (prioridade de regra: `PathPrefix('/ws')` é mais específico que o `Host()` sozinho do
+  `frontend`, deve vencer sem precisar de `priority` explícito — mas vale testar) e que
+  o `redis` healthcheck passa antes de `backend`/`ws` tentarem conectar.
+- Só Financeiro e Compras disparam o aviso por enquanto. Qualquer outro módulo que
+  precisar de tempo real no futuro: se usar `ModelViewSet`/`.save()` direto (todos os
+  outros hoje usam), pode usar sinal de verdade do Django (`post_save`/`post_delete`,
+  chamando `dispatch_collection_changed` de dentro do handler) em vez do padrão manual
+  usado aqui — mais simples de manter quando o sinal funciona de verdade.

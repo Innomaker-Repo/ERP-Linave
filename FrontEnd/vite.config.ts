@@ -16,6 +16,16 @@ const backendProxy = {
   changeOrigin: true,
 }
 
+// WebSocket (tempo real) roda num processo à parte do HTTP normal — daphne, não o
+// `manage.py runserver` (Channels 4.x não faz mais o runserver virar ASGI sozinho).
+// Em produção é o Traefik quem roteia /ws pro serviço do daphne por path prefix; aqui
+// o proxy do Vite replica o mesmo roteamento pra dev local.
+const wsProxy = {
+  target: 'http://localhost:8001',
+  changeOrigin: true,
+  ws: true,
+}
+
 export default defineConfig({
   server: {
     host: true,
@@ -27,6 +37,7 @@ export default defineConfig({
       '/token': backendProxy,
       '/media': backendProxy,
       '/jamanta-fiscal': backendProxy,
+      '/ws': wsProxy,
     },
   },
   plugins: [

@@ -30,3 +30,13 @@ export function getBackendUrl(path = ''): string {
   const normalizedPath = path.startsWith('/') ? path.slice(1) : path;
   return `${getBackendBaseUrl()}${normalizedPath}`;
 }
+
+// Mesma origem relativa que getBackendBaseUrl() (dev: proxy do Vite; produção: Traefik
+// roteando por path) — só troca o protocolo HTTP(S) por WS(S).
+export function getRealtimeWsUrl(token: string): string {
+  const wsProtocol = getCurrentProtocol() === 'https:' ? 'wss:' : 'ws:';
+  const host = typeof window !== 'undefined' && window.location?.host
+    ? window.location.host
+    : `${getCurrentHost()}:5173`;
+  return `${wsProtocol}//${host}/ws/workspace/?token=${encodeURIComponent(token)}`;
+}
