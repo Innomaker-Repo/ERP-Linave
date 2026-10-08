@@ -18,5 +18,9 @@ SECRET.md
 # Uploads de documentos (binários servidos via MEDIA_ROOT; não versionar)
 BackEnd/media/
 
+# Docker / Traefik
+docker-compose.yml
+traefik/
+
 #vscode
 .vscode
