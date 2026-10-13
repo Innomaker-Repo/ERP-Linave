@@ -55,6 +55,15 @@ def obter_token(client, identifier, senha='Admin@teste1'):
                        content_type='application/json')
     return resp
 
+def autenticar_admin(client, cpf='admin-test'):
+    """Cria um admin e autentica `client` (APIClient) com o Bearer dele. Usado em testes
+    de endpoints que exigem IsAuthenticated (REST_FRAMEWORK.DEFAULT_PERMISSION_CLASSES
+    em settings.py) mas cujo propósito é testar outra coisa (filtro, CRUD, etc.) — não a
+    autenticação em si, que já tem cobertura própria."""
+    criar_admin(cpf=cpf)
+    tok = obter_token(client, cpf, 'Admin@teste1')
+    client.credentials(HTTP_AUTHORIZATION=f'Bearer {tok.data["access"]}')
+
 
 # =============================================================================
 # 1. UNIT TESTS — VALIDATORS
@@ -943,23 +952,24 @@ class CriarOrcamentoAPITests(APITestCase):
 # =============================================================================
 
 class UserViewSetSecurityTests(APITestCase):
-    """UserViewSet usa AllowAny — documenta o comportamento atual (vulnerabilidade conhecida)."""
+    """UserViewSet exige autenticação (IsAuthenticated, via REST_FRAMEWORK.
+    DEFAULT_PERMISSION_CLASSES em settings.py) — a vulnerabilidade AllowAny que estes
+    testes documentavam foi corrigida antes desta sessão; os testes abaixo cobrem o
+    comportamento atual (401 para quem não autentica), não mais o bug antigo."""
 
     def setUp(self):
         self.admin = criar_admin('adm-sec', 'Admin@teste1')
         self.gerente = criar_gerente('ger-sec', 'Admin@teste1')
 
-    def test_usuario_anonimo_pode_listar_usuarios(self):
-        """BUG CONHECIDO: AllowAny expõe a lista de usuários sem autenticação."""
+    def test_usuario_anonimo_nao_pode_listar_usuarios(self):
+        """Sem token, GET /usuarios/ deve retornar 401 (IsAuthenticated)."""
         resp = self.client.get(f'{BASE}/usuarios/')
-        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.status_code, 401)
 
     def test_usuario_anonimo_nao_pode_excluir_admin(self):
         """Sem token, DELETE deve retornar 401 (autenticação exigida pelo DRF padrão ao tentar deletar)."""
         resp = self.client.delete(f'{BASE}/usuarios/{self.admin.pk}/')
-        # AllowAny permite; a proteção real é a lógica de negócio (is_superuser)
-        # Documentamos o status real para monitorar regressões
-        self.assertIn(resp.status_code, [200, 204, 403, 401])
+        self.assertEqual(resp.status_code, 401)
 
     def test_admin_nao_pode_excluir_superuser(self):
         """Regra de negócio: admin principal (is_superuser) não pode ser deletado."""
@@ -968,14 +978,14 @@ class UserViewSetSecurityTests(APITestCase):
         resp = self.client.delete(f'{BASE}/usuarios/{self.admin.pk}/')
         self.assertEqual(resp.status_code, 403)
 
-    def test_criar_usuario_sem_autenticacao(self):
-        """BUG CONHECIDO: AllowAny permite criar usuário sem autenticar."""
+    def test_criar_usuario_sem_autenticacao_retorna_401(self):
+        """Sem token, POST /usuarios/ deve retornar 401 (IsAuthenticated)."""
         payload = {
             'cpf': 'anon-new', 'password': 'Admin@teste1',
             'nome': 'Anon User', 'email': 'anon@test.com', 'role': 'usuario'
         }
         resp = self.client.post(f'{BASE}/usuarios/', payload, format='json')
-        self.assertIn(resp.status_code, [201, 400])  # 201 = bug ativo, 400 = validação
+        self.assertEqual(resp.status_code, 401)
 
     def test_admin_pode_criar_usuario(self):
         resp_tok = obter_token(self.client, 'adm-sec', 'Admin@teste1')
@@ -1680,6 +1690,7 @@ class PropostaComercialAPITests(APITestCase):
     """CRUD e filtros por cliente/negocio no PropostaComercialViewSet."""
 
     def setUp(self):
+        autenticar_admin(self.client)
         self.cli = criar_cliente()
         self.neg = criar_negocio(self.cli)
 
@@ -1742,6 +1753,7 @@ class OrdemServicoFiltersTests(APITestCase):
     """Filtros de GET /ordens-servico/: status_os, status_envio, status_aprovacao."""
 
     def setUp(self):
+        autenticar_admin(self.client)
         self.cli = criar_cliente()
         self.neg = criar_negocio(self.cli)
 
@@ -1786,6 +1798,7 @@ class OsPorClienteNegocioTests(APITestCase):
     """Endpoints /os-por-cliente/ e /os-por-negocio/ retornam estrutura com chave ordens_servico."""
 
     def setUp(self):
+        autenticar_admin(self.client)
         self.cli = criar_cliente()
         self.neg = criar_negocio(self.cli)
         self.os = _criar_os(self.cli, self.neg, numero='OS-CN01')
@@ -1831,6 +1844,7 @@ class MedicaoViewSetCRUDTests(APITestCase):
     """CRUD de Medicao via API e filtros por negocio/status."""
 
     def setUp(self):
+        autenticar_admin(self.client)
         self.cli = criar_cliente()
         self.neg = criar_negocio(self.cli)
 
@@ -1890,6 +1904,7 @@ class DocumentoViewSetTests(APITestCase):
 
     def setUp(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
+        autenticar_admin(self.client)
         self.SimpleUploadedFile = SimpleUploadedFile
         self.neg = criar_negocio(criar_cliente())
 
@@ -1954,6 +1969,7 @@ class NegocioUpdateComServicosTests(APITestCase):
     """PATCH /negocios/{id}/ com servicos=[...] substitui todos os servicos existentes."""
 
     def setUp(self):
+        autenticar_admin(self.client)
         self.cli = criar_cliente()
         self.neg = criar_negocio(self.cli)
         Servico.objects.create(negocio=self.neg, tipo_servico='Solda', descricao='Servico A')
@@ -2077,6 +2093,9 @@ class MDOMaterialNoneFieldsTests(TestCase):
 
 class OrcamentoStatusTransitionTests(APITestCase):
     """Status pendente/aprovado/recusado persiste via endpoint criar_orcamento."""
+
+    def setUp(self):
+        autenticar_admin(self.client)
 
     def _payload(self, neg, cli, status_val):
         return {

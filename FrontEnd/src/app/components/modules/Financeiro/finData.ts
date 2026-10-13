@@ -442,9 +442,19 @@ export const mapOsToFinanceiro = (os: any, obra?: any): OS => {
     os?.cliente_detalhes?.razao_social ?? os?.cliente_detalhes?.razaoSocial ?? os?.cliente ?? os?.projeto ?? '—',
   );
   const cc = String(os?.cc ?? '');
-  const empresa = os?.empresa_prestadora || os?.empresaPrestadora
-    ? empresaFromCC(undefined, String(os.empresa_prestadora ?? os.empresaPrestadora).toLowerCase().includes('servi') ? 'Servinave' : 'Linave')
-    : empresaFromCC(cc || numero);
+  // O prefixo do NÚMERO da OS (VTS/SN = Servinave, LN = Linave) é quem confiavelmente
+  // carrega a empresa — é definido uma vez, na criação, e nunca mais recalculado. `cc`
+  // é só um código de centro de custo livre (ex.: "CC-OPS-014"), sem relação nenhuma com
+  // esse prefixo — por isso `numero` tem que vir ANTES de `cc` aqui; usar `cc || numero`
+  // fazia OS de Servinave caírem no fallback Linave sempre que o cc não começasse com
+  // "VTS"/"SN" (quase sempre, já que cc raramente carrega esse prefixo).
+  // `empresa_prestadora` do negócio também pode ser editado depois (tela "Editar
+  // Negócio") sem regenerar o número já emitido — só serve de fallback pros números sem
+  // prefixo reconhecível (ex.: "1000"/"2000" de USO INTERNO).
+  const empresaPorTexto = (os?.empresa_prestadora || os?.empresaPrestadora)
+    ? (String(os.empresa_prestadora ?? os.empresaPrestadora).toLowerCase().includes('servi') ? 'Servinave' : 'Linave')
+    : 'Linave';
+  const empresa = empresaFromCC(numero || cc, empresaPorTexto);
   return {
     numero: numero || '—',
     empresa,
