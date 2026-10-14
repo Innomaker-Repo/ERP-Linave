@@ -3,7 +3,7 @@
  * Tags, cartões, métricas, campos de formulário e tabela reutilizados pelas views.
  * =======================================================================================*/
 import React, { useEffect, useState } from 'react';
-import { Info, Trash2, Paperclip } from 'lucide-react';
+import { Info, Trash2, Paperclip, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../ui/feedback';
 import { ScrollXTop } from '../../ui/scrollXTop';
@@ -288,9 +288,38 @@ export function FileInput({
       </label>
       {value.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-2">
-          {value.map((f, i) => (
-            <span key={i} className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-bold text-white/70">📄 {f.name}</span>
-          ))}
+          {value.map((f, i) => {
+            // Arquivo ainda não foi enviado (só vira Documento no submit de quem usa este
+            // componente, ver comentário acima) — createObjectURL deixa visualizar o
+            // próprio arquivo local antes de enviar, sem precisar de nenhuma URL de servidor.
+            const url = URL.createObjectURL(f);
+            return (
+              <span key={i} className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 py-1 pl-3 pr-1.5 text-xs font-bold text-white/70">
+                <a
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => setTimeout(() => URL.revokeObjectURL(url), 60000)}
+                  className="hover:text-amber-300 hover:underline"
+                  title="Abrir em nova aba"
+                >
+                  📄 {f.name}
+                </a>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    URL.revokeObjectURL(url);
+                    onChange(value.filter((_, idx) => idx !== i));
+                  }}
+                  className="rounded-full p-0.5 text-white/40 transition-colors hover:bg-red-500/20 hover:text-red-300"
+                  title="Remover anexo"
+                >
+                  <X size={12} />
+                </button>
+              </span>
+            );
+          })}
         </div>
       )}
     </div>

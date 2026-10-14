@@ -7,6 +7,7 @@
  *   - departamentos via saveListas.
  * =======================================================================================*/
 import { useMemo } from 'react';
+import { toast } from 'sonner';
 import { useErp } from '../../../context/ErpContext';
 import { comFinanceiroAtual } from '../../../../services/financeiroSeguro';
 import {
@@ -183,90 +184,27 @@ export function useFin() {
     return financeiro.filter((r) => r.parentId === id).length;
   };
 
-  // Aprova uma solicitação: marca como aprovada e cria a Conta a Pagar correspondente
-  // (numa única escrita, para o estado ficar consistente).
+  // Aprova/reprova uma solicitação: update direto no backend (com lock), não replace-all
+  // — a Conta a Pagar correspondente (ou mãe+filhas, se Faturado) já nasce do lado do
+  // servidor na mesma transação. Ver docstring de `financeiro_solicitacao_decidir`
+  // (views.py) para o porquê: o replace-all já fez aprovações perderem o campo
+  // `aprovadoPor` em produção quando duas aconteciam perto uma da outra.
   const approveSolicitacao = async (id: string) => {
-    // Quem aprovou — pro solicitante ver em "Meus Pagamentos" (antes só dava pra saber que
-    // tinha sido aprovado, não por quem).
-    const aprovadoPor = ctx.userSession?.nome || ctx.userSession?.email || '';
-    await comFinanceiroAtual(async (base) => {
-      const sol = base.find((r) => r.id === id);
-      if (!sol) return;
-      const now = new Date().toISOString();
-
-      // Faturado: em vez de UMA conta a pagar "single", nasce a mãe (a Nota Fiscal, nunca paga
-      // diretamente) + UMA filha por parcela, já prontas pra pagar — mesmo shape que
-      // parcelarConta já usa (type/parentId/parcela/totalParcelas). Diferente de uma conta
-      // parcelada comum, aqui TODAS as parcelas já chegam com boleto (anexado na criação da
-      // solicitação, ver SolicitacaoView.tsx), então todas nascem de uma vez, não uma por mês.
-      if (sol.forma === 'Parcelado' && Array.isArray(sol.faturado?.parcelas) && sol.faturado.parcelas.length > 0) {
-        const parcelas: FaturadoParcela[] = sol.faturado.parcelas;
-        const maeId = `CP-${Date.now().toString(36).toUpperCase()}`;
-        const totalFatura = parcelas.reduce((soma, p) => soma + num(p.valor), 0);
-        const camposComuns = {
-          origemSolicitacao: sol.id, tipo: 'contaPagar' as const, empresa: sol.empresa,
-          vinculoTipo: sol.vinculoTipo, vinculoValor: sol.vinculoValor, fornecedor: sol.fornecedor,
-          tipoPagamento: sol.tipoPagamento, natureza: sol.natureza || '', documento: sol.documento,
-          banco: '', forma: sol.forma, descricao: sol.descricao || '',
-          valorPago: 0, jurosPago: 0, comprovantes: [], createdAt: now,
-        };
-        const mae: FinRecord = {
-          ...camposComuns, id: maeId, type: 'parent', parentId: null, parcela: 'Mãe',
-          totalParcelas: parcelas.length, valor: totalFatura, vencimento: parcelas[0].vencimento,
-          status: 'Parcelado', anexos: sol.faturado.notaFiscal?.anexoUrl ? [sol.faturado.notaFiscal.anexoUrl] : [],
-          dataPagamento: '',
-        };
-        const filhas: FinRecord[] = parcelas.map((p, i) => ({
-          ...camposComuns, id: `${maeId}-${String(i + 1).padStart(2, '0')}`, type: 'child', parentId: maeId,
-          parcela: `${i + 1}/${parcelas.length}`, totalParcelas: parcelas.length, valor: num(p.valor),
-          vencimento: p.vencimento, status: 'Aberto', anexos: p.anexoUrl ? [p.anexoUrl] : [], dataPagamento: '',
-        }));
-        const nextParcelas = parcelas.map((p, i) => ({ ...p, contaPagarId: filhas[i].id }));
-        const next = base.map((r) => (r.id === id
-          ? { ...r, status: 'Aprovado', aprovadoPor, faturado: { ...sol.faturado, maeContaPagarId: maeId, parcelas: nextParcelas } }
-          : r));
-        await ctx.saveEntity('financeiro', [mae, ...filhas, ...next]);
-        return;
-      }
-
-      const contaPagar: FinRecord = {
-        id: `CP-${Date.now().toString(36).toUpperCase()}`,
-        tipo: 'contaPagar',
-        origemSolicitacao: sol.id,
-        type: 'single',
-        empresa: sol.empresa,
-        vinculoTipo: sol.vinculoTipo,
-        vinculoValor: sol.vinculoValor,
-        fornecedor: sol.fornecedor,
-        tipoPagamento: sol.tipoPagamento,
-        natureza: sol.natureza || '',
-        documento: sol.documento,
-        valor: sol.valor,
-        vencimento: sol.vencimento,
-        banco: '',
-        forma: sol.forma,
-        status: 'Aberto',
-        // Os anexos da solicitação (URLs /media/... dos documentos já persistidos) precisam
-        // seguir para a Conta a Pagar: é o mesmo documento que o solicitante enviou e que
-        // quem paga precisa consultar. Sem isso a conta nasce sem anexo e `contaTemDocumento`
-        // retorna false, afetando o status e a liberação no estoque.
-        anexos: Array.isArray(sol.anexos) ? sol.anexos : [],
-        descricao: sol.descricao || '',
-        valorPago: 0,
-        jurosPago: 0,
-        comprovantes: [],
-        createdAt: now,
-      };
-      const next = base.map((r) => (r.id === id ? { ...r, status: 'Aprovado', aprovadoPor } : r));
-      await ctx.saveEntity('financeiro', [contaPagar, ...next]);
-    });
+    try {
+      await ctx.decidirSolicitacaoFinanceiro(id, 'aprovar');
+    } catch (error) {
+      const mensagem = (error as any)?.response?.data?.error;
+      toast.error(typeof mensagem === 'string' ? mensagem : 'Não foi possível aprovar a solicitação. Tente novamente.');
+    }
   };
 
   const rejectSolicitacao = async (id: string, motivo?: string) => {
-    const reprovadoPor = ctx.userSession?.nome || ctx.userSession?.email || '';
-    await updateRecords((r) => (r.id === id
-      ? { ...r, status: 'Reprovado', motivoReprovacao: motivo || '', reprovadoPor }
-      : r));
+    try {
+      await ctx.decidirSolicitacaoFinanceiro(id, 'reprovar', motivo || '');
+    } catch (error) {
+      const mensagem = (error as any)?.response?.data?.error;
+      toast.error(typeof mensagem === 'string' ? mensagem : 'Não foi possível reprovar a solicitação. Tente novamente.');
+    }
   };
 
   // Reenvia uma solicitação reprovada: o próprio solicitante corrige os dados e ela volta

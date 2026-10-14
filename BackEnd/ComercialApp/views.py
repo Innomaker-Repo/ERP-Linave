@@ -826,6 +826,185 @@ def financeiro_solicitacao_criar(request):
     return Response({'message': 'Solicitação enviada.', 'financeiro': read_all()}, status=status.HTTP_201_CREATED)
 
 
+def _gen_fin_id(prefix):
+    """Mesmo formato do `genFinId` do frontend (finData.ts): PREFIXO-<timestamp em base36,
+    maiúsculo>. Mantém os ids gerados aqui visualmente idênticos aos gerados no cliente."""
+    import time
+    ms = int(time.time() * 1000)
+    digitos = '0123456789abcdefghijklmnopqrstuvwxyz'
+    b36 = ''
+    n = ms
+    while n:
+        b36 = digitos[n % 36] + b36
+        n //= 36
+    return f'{prefix}-{(b36 or "0").upper()}'
+
+
+@api_view(['POST'])
+def financeiro_solicitacao_decidir(request, rid):
+    """Aprova ou reprova UMA solicitação de pagamento — update direto no registro (e
+    criação da(s) Conta(s) a Pagar correspondente(s), tudo numa transação), em vez do
+    replace-all que `financeiro_data` usa para o resto do módulo.
+
+    Por quê: o replace-all é "ler a lista inteira -> montar a lista inteira -> regravar a
+    lista inteira". Quando duas aprovações acontecem perto uma da outra (comum com várias
+    pessoas de gerência aprovando pagamentos ao mesmo tempo), a segunda gravação pode se
+    basear numa cópia que ainda não tinha a mudança da primeira e sobrescrevê-la em
+    silêncio — foi isso que causou, em produção, aprovações que ficaram sem o nome de
+    quem aprovou (campo `aprovadoPor`) sem nenhum erro aparecer pra ninguém. Esse
+    endpoint, por travar (`select_for_update`) e alterar só ESSE registro dentro de uma
+    transação, elimina essa corrida pra aprovação/reprovação por completo — outras
+    solicitações continuam podendo ser aprovadas em paralelo sem se atrapalharem.
+
+    POST /comercial/financeiro/solicitacao/<rid>/decidir/
+    body: {"acao": "aprovar"} ou {"acao": "reprovar", "motivo": "..."}
+    """
+    from .models import SolicitacaoPagamento, ContaPagar
+    from .financeiro_sync import _dec, read_all
+
+    if not escreve_em_tudo(request.user):
+        return Response(
+            {'error': 'Somente administradores e gerentes podem aprovar ou reprovar solicitações de pagamento.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    acao = request.data.get('acao')
+    if acao not in ('aprovar', 'reprovar'):
+        return Response({'error': 'Campo "acao" deve ser "aprovar" ou "reprovar".'}, status=status.HTTP_400_BAD_REQUEST)
+
+    nome_usuario = str(getattr(request.user, 'nome', '') or getattr(request.user, 'email', '') or '')
+
+    with transaction.atomic():
+        try:
+            sol = SolicitacaoPagamento.objects.select_for_update().get(record_id=rid)
+        except SolicitacaoPagamento.DoesNotExist:
+            return Response({'error': 'Solicitação não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+
+        extra = dict(sol.extra) if isinstance(sol.extra, dict) else {}
+        status_atual = extra.get('status') or 'Aguardando aprovação'
+        if status_atual in ('Aprovado', 'Reprovado'):
+            return Response(
+                {'error': f'Esta solicitação já foi {status_atual.lower()}.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        if acao == 'reprovar':
+            motivo = str(request.data.get('motivo') or '')
+            extra['status'] = 'Reprovado'
+            extra['motivoReprovacao'] = motivo
+            extra['reprovadoPor'] = nome_usuario
+            sol.status = 'Reprovado'
+            sol.extra = extra
+            sol.save(update_fields=['status', 'extra', 'updated_at'])
+            _registrar_log(request, 'atualizacao', 'Financeiro', f'Solicitação {rid} reprovada por {nome_usuario}.')
+            dispatch_collection_changed('financeiro')
+            return Response({'message': 'Solicitação reprovada.', 'financeiro': read_all()}, status=status.HTTP_200_OK)
+
+        # acao == 'aprovar' — mesma lógica de useFin.ts:approveSolicitacao, portada pro
+        # backend pra rodar dentro da transação travada (ver docstring acima).
+        from django.utils import timezone
+        agora = timezone.now().isoformat()
+
+        faturado = extra.get('faturado') if isinstance(extra.get('faturado'), dict) else None
+        parcelas = faturado.get('parcelas') if faturado and isinstance(faturado.get('parcelas'), list) else None
+
+        if extra.get('forma') == 'Parcelado' and parcelas:
+            mae_id = _gen_fin_id('CP')
+            total_fatura = sum((_dec(p.get('valor')) for p in parcelas), _dec(0))
+            nf_anexo = ((faturado.get('notaFiscal') or {}).get('anexoUrl')) if isinstance(faturado.get('notaFiscal'), dict) else None
+            mae_anexos = [nf_anexo] if nf_anexo else []
+
+            mae_extra = {
+                'id': mae_id, 'tipo': 'contaPagar', 'origemSolicitacao': rid, 'type': 'parent',
+                'parentId': None, 'parcela': 'Mãe', 'totalParcelas': len(parcelas),
+                'empresa': extra.get('empresa', ''), 'vinculoTipo': extra.get('vinculoTipo', ''),
+                'vinculoValor': extra.get('vinculoValor', ''), 'fornecedor': extra.get('fornecedor', ''),
+                'tipoPagamento': extra.get('tipoPagamento', ''), 'natureza': extra.get('natureza', ''),
+                'documento': extra.get('documento', ''), 'valor': float(total_fatura),
+                'vencimento': (parcelas[0] or {}).get('vencimento', ''), 'banco': '',
+                'forma': extra.get('forma', ''), 'status': 'Parcelado', 'anexos': mae_anexos,
+                'descricao': extra.get('descricao', ''), 'valorPago': 0, 'jurosPago': 0,
+                'comprovantes': [], 'createdAt': agora, 'dataPagamento': '',
+            }
+            ContaPagar(
+                record_id=mae_id, extra=mae_extra, type='parent', parent_record_id=None,
+                parcela='Mãe', total_parcelas=len(parcelas), empresa=mae_extra['empresa'],
+                vinculo_tipo=mae_extra['vinculoTipo'], vinculo_valor=mae_extra['vinculoValor'],
+                fornecedor=mae_extra['fornecedor'], tipo=mae_extra['tipoPagamento'],
+                natureza=mae_extra['natureza'], documento=mae_extra['documento'],
+                valor=total_fatura, vencimento=mae_extra['vencimento'], banco='',
+                forma=mae_extra['forma'], status='Parcelado', anexos=mae_anexos,
+                comprovantes=[], valor_pago=_dec(0), data_pagamento='', juros_pago=_dec(0),
+            ).save()
+
+            nova_lista_parcelas = []
+            for i, p in enumerate(parcelas):
+                filha_id = f"{mae_id}-{str(i + 1).zfill(2)}"
+                valor_parcela = _dec(p.get('valor'))
+                anexo_url = p.get('anexoUrl')
+                filha_anexos = [anexo_url] if anexo_url else []
+                filha_extra = {
+                    'id': filha_id, 'tipo': 'contaPagar', 'origemSolicitacao': rid, 'type': 'child',
+                    'parentId': mae_id, 'parcela': f'{i + 1}/{len(parcelas)}', 'totalParcelas': len(parcelas),
+                    'empresa': extra.get('empresa', ''), 'vinculoTipo': extra.get('vinculoTipo', ''),
+                    'vinculoValor': extra.get('vinculoValor', ''), 'fornecedor': extra.get('fornecedor', ''),
+                    'tipoPagamento': extra.get('tipoPagamento', ''), 'natureza': extra.get('natureza', ''),
+                    'documento': extra.get('documento', ''), 'valor': float(valor_parcela),
+                    'vencimento': p.get('vencimento', ''), 'banco': '', 'forma': extra.get('forma', ''),
+                    'status': 'Aberto', 'anexos': filha_anexos, 'descricao': extra.get('descricao', ''),
+                    'valorPago': 0, 'jurosPago': 0, 'comprovantes': [], 'createdAt': agora, 'dataPagamento': '',
+                }
+                ContaPagar(
+                    record_id=filha_id, extra=filha_extra, type='child', parent_record_id=mae_id,
+                    parcela=filha_extra['parcela'], total_parcelas=len(parcelas), empresa=filha_extra['empresa'],
+                    vinculo_tipo=filha_extra['vinculoTipo'], vinculo_valor=filha_extra['vinculoValor'],
+                    fornecedor=filha_extra['fornecedor'], tipo=filha_extra['tipoPagamento'],
+                    natureza=filha_extra['natureza'], documento=filha_extra['documento'],
+                    valor=valor_parcela, vencimento=filha_extra['vencimento'], banco='',
+                    forma=filha_extra['forma'], status='Aberto', anexos=filha_anexos,
+                    comprovantes=[], valor_pago=_dec(0), data_pagamento='', juros_pago=_dec(0),
+                ).save()
+                nova_lista_parcelas.append({**p, 'contaPagarId': filha_id})
+
+            extra['status'] = 'Aprovado'
+            extra['aprovadoPor'] = nome_usuario
+            extra['faturado'] = {**faturado, 'maeContaPagarId': mae_id, 'parcelas': nova_lista_parcelas}
+        else:
+            cp_id = _gen_fin_id('CP')
+            cp_anexos = extra.get('anexos') if isinstance(extra.get('anexos'), list) else []
+            cp_extra = {
+                'id': cp_id, 'tipo': 'contaPagar', 'origemSolicitacao': rid, 'type': 'single',
+                'empresa': extra.get('empresa', ''), 'vinculoTipo': extra.get('vinculoTipo', ''),
+                'vinculoValor': extra.get('vinculoValor', ''), 'fornecedor': extra.get('fornecedor', ''),
+                'tipoPagamento': extra.get('tipoPagamento', ''), 'natureza': extra.get('natureza', ''),
+                'documento': extra.get('documento', ''), 'valor': extra.get('valor', 0),
+                'vencimento': extra.get('vencimento', ''), 'banco': '', 'forma': extra.get('forma', ''),
+                'status': 'Aberto', 'anexos': cp_anexos, 'descricao': extra.get('descricao', ''),
+                'valorPago': 0, 'jurosPago': 0, 'comprovantes': [], 'createdAt': agora, 'dataPagamento': '',
+            }
+            ContaPagar(
+                record_id=cp_id, extra=cp_extra, type='single', parent_record_id=None,
+                parcela='', total_parcelas=1, empresa=cp_extra['empresa'],
+                vinculo_tipo=cp_extra['vinculoTipo'], vinculo_valor=cp_extra['vinculoValor'],
+                fornecedor=cp_extra['fornecedor'], tipo=cp_extra['tipoPagamento'],
+                natureza=cp_extra['natureza'], documento=cp_extra['documento'],
+                valor=_dec(cp_extra['valor']), vencimento=cp_extra['vencimento'], banco='',
+                forma=cp_extra['forma'], status='Aberto', anexos=cp_anexos,
+                comprovantes=[], valor_pago=_dec(0), data_pagamento='', juros_pago=_dec(0),
+            ).save()
+
+            extra['status'] = 'Aprovado'
+            extra['aprovadoPor'] = nome_usuario
+
+        sol.status = 'Aprovado'
+        sol.extra = extra
+        sol.save(update_fields=['status', 'extra', 'updated_at'])
+
+    _registrar_log(request, 'atualizacao', 'Financeiro', f'Solicitação {rid} aprovada por {nome_usuario}.')
+    dispatch_collection_changed('financeiro')
+    return Response({'message': 'Solicitação aprovada.', 'financeiro': read_all()}, status=status.HTTP_200_OK)
+
+
 @api_view(['GET', 'POST', 'PUT'])
 def compras_data(request):
     """Estado de Compras (requisições do kanban + histórico de compras concluídas).

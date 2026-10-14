@@ -7,8 +7,8 @@ from .views import (
     criar_orcamento, renomear_empresa_prestadora, renomear_cliente,
     ordens_servico_por_cliente, ordens_servico_por_negocio, atualizar_status_os,
     atualizar_status_medicao,
-    financeiro_data, financeiro_solicitacao_criar, compras_data, almoxarifado_data, configuracoes_data,
-    logs_atividade,
+    financeiro_data, financeiro_solicitacao_criar, financeiro_solicitacao_decidir, compras_data, almoxarifado_data,
+    configuracoes_data, logs_atividade,
 )
 
 # Configuração do Router para ViewSets (Rotas automáticas)
@@ -29,6 +29,9 @@ urlpatterns = [
 
     # Solicitação de pagamento (append-only; aberta a todo autenticado — ver docstring)
     path('financeiro/solicitacao/', financeiro_solicitacao_criar, name='financeiro-solicitacao-criar'),
+
+    # Aprovar/reprovar UMA solicitação (update direto + lock, sem replace-all — ver docstring)
+    path('financeiro/solicitacao/<str:rid>/decidir/', financeiro_solicitacao_decidir, name='financeiro-solicitacao-decidir'),
 
     # Estado de compras (requisições do kanban + histórico; GET lê, POST substitui)
     path('compras/', compras_data, name='compras-data'),

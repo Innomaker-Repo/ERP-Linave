@@ -34,3 +34,21 @@ export const criarSolicitacaoPagamento = async (record: any): Promise<any[]> => 
   const response = await api.post('financeiro/solicitacao/', record);
   return Array.isArray(response.data?.financeiro) ? response.data.financeiro : [];
 };
+
+/**
+ * Aprova ou reprova UMA solicitação de pagamento — update direto no registro (com lock),
+ * não o replace-all acima. Evita a corrida de "ler tudo -> regravar tudo" que já fez
+ * aprovações perderem o campo `aprovadoPor` em produção quando duas aconteciam perto uma
+ * da outra (ver docstring de `financeiro_solicitacao_decidir` no backend). Já cria a(s)
+ * Conta(s) a Pagar correspondente(s) do lado do servidor — retorna a lista completa
+ * atualizada de FinRecord, igual ao replace-all, para o chamador não precisar mudar nada
+ * além de trocar a chamada.
+ */
+export const decidirSolicitacaoPagamento = async (
+  id: string,
+  acao: 'aprovar' | 'reprovar',
+  motivo?: string,
+): Promise<any[]> => {
+  const response = await api.post(`financeiro/solicitacao/${encodeURIComponent(id)}/decidir/`, { acao, motivo });
+  return Array.isArray(response.data?.financeiro) ? response.data.financeiro : [];
+};
