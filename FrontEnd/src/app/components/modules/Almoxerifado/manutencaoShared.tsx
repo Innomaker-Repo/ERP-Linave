@@ -146,7 +146,15 @@ export function fecharSaidaManutencao(
   };
 }
 
-const hoje = () => new Date().toISOString().slice(0, 10);
+// NÃO usar toISOString() aqui: ele converte pra UTC, então no fim do dia (horário do Brasil,
+// UTC-3) a data virava "amanhã". Monta a partir dos componentes locais do Date.
+const hoje = () => {
+  const d = new Date();
+  const ano = d.getFullYear();
+  const mes = String(d.getMonth() + 1).padStart(2, '0');
+  const dia = String(d.getDate()).padStart(2, '0');
+  return `${ano}-${mes}-${dia}`;
+};
 
 const fieldCls = 'w-full rounded-xl border border-white/10 bg-[#0b1220]/80 px-4 py-2.5 text-sm text-white outline-none shadow-sm transition placeholder:text-white/30 focus:border-amber-400 focus:ring-1 focus:ring-amber-400';
 const labelCls = 'mb-1.5 block text-[10px] font-black uppercase tracking-widest text-white/50';

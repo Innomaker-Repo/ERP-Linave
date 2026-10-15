@@ -1310,12 +1310,15 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
 
     if (collection === 'almoxerifado') {
       // Estoque/almoxarifado é um objeto agregado; persistido no SQL via replace (singleton).
+      //
+      // Mesmo cuidado do Financeiro/Compras (ver comentários acima): só atualiza o estado local
+      // DEPOIS de confirmar que o backend aceitou, e o erro PROPAGA em vez de só ir pro console —
+      // senão uma gravação que falhou (ou que partiu de uma cópia desatualizada e foi recusada
+      // pela rede de segurança do backend) mostrava "sucesso" pro usuário sem ter persistido nada.
+      // Quem chama saveEntity('almoxerifado', ...) precisa tratar essa rejeição (ver
+      // comAlmoxarifadoAtual em almoxarifadoSeguro.ts).
+      await syncAlmoxarifado(newData || {});
       setData((prevData: any) => ({ ...prevData, almoxerifado: newData }));
-      try {
-        await syncAlmoxarifado(newData || {});
-      } catch (error) {
-        console.error('Erro ao sincronizar almoxarifado no backend', error);
-      }
       return;
     }
 

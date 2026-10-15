@@ -3,6 +3,7 @@ import { CheckCircle2, Clock3, Download, Eye, Filter, Plus, Search, Wrench, X } 
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
 import { useErp } from '../../../context/ErpContext';
+import { comAlmoxarifadoAtual } from '../../../../services/almoxarifadoSeguro';
 import {
   EntradaManutencaoModal, SaidaManutencaoModal, criarEntradaManutencao, fecharSaidaManutencao,
   gerarIdManutencao, itemEstaEmManutencao, itemPossuiManutencao, nomeDoItemManutencao, patrimonioDoItem,
@@ -226,34 +227,50 @@ export function ManutencaoView({ searchQuery }: { searchQuery?: string }) {
     setEntradaAlvo({ row, numeroManutencao: gerarIdManutencao() });
   };
 
+  // As duas ações abaixo (confirmarEntrada/confirmarSaida) buscam o almoxerifado direto do
+  // backend (comAlmoxarifadoAtual) em vez de montar a escrita em cima de `tables`/
+  // `manutencaoHistorico` do contexto — que pode estar desatualizado bem nesse momento: o
+  // contexto reidrata `almoxerifado` sozinho a cada 45s/foco de aba (ErpContext.tsx), e perder
+  // o foco da janela pra escolher a foto de entrada/saída (seletor de arquivo/câmera) é uma
+  // forma trivial e comum do usuário disparar esse refresh no meio do registro. Se a escrita
+  // partisse da cópia do contexto, um refresh concorrente que ainda não tivesse chegado podia
+  // fazer o replace-all gravar por cima sem a mudança recém-feita — foi exatamente essa a causa
+  // de precisar registrar a saída mais de uma vez pro item realmente ficar disponível.
   const confirmarEntrada = async (dados: {
     data: string; motivo: string; responsavel: string; observacao: string; fotoUrl: string; fotoBackendId?: number;
   }) => {
     if (!entradaAlvo) return;
     const { row, numeroManutencao } = entradaAlvo;
 
-    const entrada: ManutencaoHistoricoItem = {
-      ...criarEntradaManutencao({ row, ...dados, origem: 'telaManutencao' }),
-      id: numeroManutencao,
-    };
+    const resultado = await comAlmoxarifadoAtual(async (base) => {
+      const baseTables = Array.isArray(base.tables) ? base.tables : [];
+      const baseHistorico: ManutencaoHistoricoItem[] = Array.isArray(base.manutencaoHistorico) ? base.manutencaoHistorico : [];
 
-    const nextTables = tables.map((table: any) => {
-      if (table.name !== row.tableName) return table;
-      return {
-        ...table,
-        rows: table.rows.map((r: any) => {
-          if (r.id !== row.id) return r;
-          const nextValues = { ...r.values, status: 'Em manutenção' };
-          return { ...r, values: nextValues, searchText: Object.values(nextValues).join(' ').toLowerCase() };
-        }),
+      const entrada: ManutencaoHistoricoItem = {
+        ...criarEntradaManutencao({ row, ...dados, origem: 'telaManutencao' }),
+        id: numeroManutencao,
       };
-    });
 
-    await saveEntity('almoxerifado', {
-      ...(almoxerifado || {}),
-      tables: nextTables,
-      manutencaoHistorico: [entrada, ...manutencaoHistorico],
+      const nextTables = baseTables.map((table: any) => {
+        if (table.name !== row.tableName) return table;
+        return {
+          ...table,
+          rows: table.rows.map((r: any) => {
+            if (r.id !== row.id) return r;
+            const nextValues = { ...r.values, status: 'Em manutenção' };
+            return { ...r, values: nextValues, searchText: Object.values(nextValues).join(' ').toLowerCase() };
+          }),
+        };
+      });
+
+      await saveEntity('almoxerifado', {
+        ...base,
+        tables: nextTables,
+        manutencaoHistorico: [entrada, ...baseHistorico],
+      });
+      return true;
     });
+    if (!resultado) return;
 
     setEntradaAlvo(null);
     setRegistrarAlvoId('');
@@ -265,29 +282,46 @@ export function ManutencaoView({ searchQuery }: { searchQuery?: string }) {
     observacao: string; fotoUrl: string; fotoBackendId?: number;
   }) => {
     if (!detalheAlvo) return;
-    const entradaAtual = entradaAbertaPorRowId.get(detalheAlvo.id);
-    if (!entradaAtual) return;
+    const alvo = detalheAlvo;
 
-    const fechada = fecharSaidaManutencao(entradaAtual, dados);
-    const nextHistorico = manutencaoHistorico.map((h) => (h.id === fechada.id ? fechada : h));
+    const resultado = await comAlmoxarifadoAtual(async (base) => {
+      const baseTables = Array.isArray(base.tables) ? base.tables : [];
+      const baseHistorico: ManutencaoHistoricoItem[] = Array.isArray(base.manutencaoHistorico) ? base.manutencaoHistorico : [];
 
-    const nextTables = tables.map((table: any) => {
-      if (table.name !== detalheAlvo.tableName) return table;
-      return {
-        ...table,
-        rows: table.rows.map((r: any) => {
-          if (r.id !== detalheAlvo.id) return r;
-          const nextValues = { ...r.values, status: 'Disponível' };
-          return { ...r, values: nextValues, searchText: Object.values(nextValues).join(' ').toLowerCase() };
-        }),
-      };
+      // Filtra por tableName + rowId (não só rowId, como o mapa usado na listagem) — ids podem
+      // se repetir entre tabelas diferentes, e aqui precisa achar exatamente a entrada aberta
+      // do item que o usuário está vendo no modal.
+      const entradaAtual = baseHistorico
+        .filter((h) => h.status === 'aberta' && h.rowId === alvo.id && h.tableName === alvo.tableName)
+        .sort((a, b) => b.entradaData.localeCompare(a.entradaData))[0];
+      if (!entradaAtual) {
+        toast.error('Esta manutenção já foi fechada (ou os dados mudaram). Recarregue a página.');
+        return false;
+      }
+
+      const fechada = fecharSaidaManutencao(entradaAtual, dados);
+      const nextHistorico = baseHistorico.map((h) => (h.id === fechada.id ? fechada : h));
+
+      const nextTables = baseTables.map((table: any) => {
+        if (table.name !== alvo.tableName) return table;
+        return {
+          ...table,
+          rows: table.rows.map((r: any) => {
+            if (r.id !== alvo.id) return r;
+            const nextValues = { ...r.values, status: 'Disponível' };
+            return { ...r, values: nextValues, searchText: Object.values(nextValues).join(' ').toLowerCase() };
+          }),
+        };
+      });
+
+      await saveEntity('almoxerifado', {
+        ...base,
+        tables: nextTables,
+        manutencaoHistorico: nextHistorico,
+      });
+      return true;
     });
-
-    await saveEntity('almoxerifado', {
-      ...(almoxerifado || {}),
-      tables: nextTables,
-      manutencaoHistorico: nextHistorico,
-    });
+    if (!resultado) return;
 
     setSaidaAberta(false);
     setDetalheAlvo(null);

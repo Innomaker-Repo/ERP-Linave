@@ -828,7 +828,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     // PRÓPRIO save (já vimos até 3 POSTs, um deles com estado incompleto). Espera a poeira baixar
     // e salva só o estado já assentado, nunca um instantâneo no meio do caminho.
     const timeoutId = window.setTimeout(() => {
-      void saveEntity('almoxerifado', {
+      saveEntity('almoxerifado', {
         version: 2,
         tables,
         gasTypes,
@@ -839,6 +839,9 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
         manutencaoHistorico,
         selectedForRomaneio: Array.from(selectedForRomaneio),
         imagensPorItem
+      }).catch((error: unknown) => {
+        console.error('Erro ao salvar Almoxarifado automaticamente:', error);
+        toast.error('Não foi possível salvar as últimas alterações do Estoque. Verifique sua conexão e tente novamente.');
       });
     }, 400);
     return () => window.clearTimeout(timeoutId);

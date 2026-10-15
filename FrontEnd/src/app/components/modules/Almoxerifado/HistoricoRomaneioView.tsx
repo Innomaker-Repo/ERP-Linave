@@ -450,6 +450,9 @@ export function HistoricoRomaneioView({ searchQuery }: HistoricoRomaneioViewProp
       });
 
       closeReturnModal();
+    } catch (error) {
+      console.error('Erro ao reverter romaneio no Almoxarifado:', error);
+      toast.error('Não foi possível salvar o retorno do romaneio. Verifique sua conexão e tente novamente.');
     } finally {
       setRevertingId('');
     }
