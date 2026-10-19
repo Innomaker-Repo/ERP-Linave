@@ -2,7 +2,7 @@
  * FINANCEIRO — Primitivos de UI (tema escuro do ERP)
  * Tags, cartões, métricas, campos de formulário e tabela reutilizados pelas views.
  * =======================================================================================*/
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Info, Trash2, Paperclip, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../ui/feedback';
@@ -262,6 +262,71 @@ export function Select({ children, ...rest }: React.SelectHTMLAttributes<HTMLSel
         {children}
       </select>
       <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-white/30">▼</span>
+    </div>
+  );
+}
+
+// Ignora acento/caixa na busca — "ferr" bate em "Ferragens" e em "Ferragens" acentuada do
+// mesmo jeito, sem o usuário precisar digitar igual ao cadastro.
+const normalizeBusca = (v: string): string =>
+  String(v || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+
+// Campo de texto com busca: digita livre (não trava em nenhuma opção, então aceita um
+// fornecedor que ainda não está cadastrado) e, por baixo, filtra `options` conforme o texto
+// pra sugerir os já cadastrados — clicar numa sugestão preenche o campo com ela. Dropdown
+// próprio (em vez de <datalist> nativo) porque o datalist do navegador não combina com o
+// tema escuro do app e o comportamento varia entre navegadores.
+export function AutocompleteInput({
+  value, onChange, options, placeholder, maxSugestoes = 20, inputClassName = '',
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: string[];
+  placeholder?: string;
+  maxSugestoes?: number;
+  inputClassName?: string;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const aoClicarFora = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setAberto(false);
+    };
+    document.addEventListener('mousedown', aoClicarFora);
+    return () => document.removeEventListener('mousedown', aoClicarFora);
+  }, []);
+
+  const termo = normalizeBusca(value);
+  const opcoesUnicas = Array.from(new Set(options.filter(Boolean)));
+  const sugestoes = (termo ? opcoesUnicas.filter((o) => normalizeBusca(o).includes(termo)) : opcoesUnicas)
+    .slice(0, maxSugestoes);
+
+  return (
+    <div ref={containerRef} className="relative">
+      <input
+        value={value}
+        onChange={(e) => { onChange(e.target.value); setAberto(true); }}
+        onFocus={() => setAberto(true)}
+        onKeyDown={(e) => { if (e.key === 'Escape') setAberto(false); }}
+        placeholder={placeholder}
+        autoComplete="off"
+        className={`${inputCls} ${inputClassName}`}
+      />
+      {aberto && sugestoes.length > 0 && (
+        <div className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-xl border border-white/10 bg-[#101f3d] shadow-xl shadow-black/40">
+          {sugestoes.map((o, i) => (
+            <button
+              key={`${o}-${i}`}
+              type="button"
+              onMouseDown={(e) => { e.preventDefault(); onChange(o); setAberto(false); }}
+              className="block w-full truncate px-3.5 py-2 text-left text-sm text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+            >
+              {o}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

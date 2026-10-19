@@ -925,6 +925,7 @@ def financeiro_solicitacao_decidir(request, rid):
                 'forma': extra.get('forma', ''), 'status': 'Parcelado', 'anexos': mae_anexos,
                 'descricao': extra.get('descricao', ''), 'valorPago': 0, 'jurosPago': 0,
                 'comprovantes': [], 'createdAt': agora, 'dataPagamento': '',
+                'departamentoPagamento': extra.get('departamentoPagamento', ''),
             }
             ContaPagar(
                 record_id=mae_id, extra=mae_extra, type='parent', parent_record_id=None,
@@ -953,6 +954,7 @@ def financeiro_solicitacao_decidir(request, rid):
                     'vencimento': p.get('vencimento', ''), 'banco': '', 'forma': extra.get('forma', ''),
                     'status': 'Aberto', 'anexos': filha_anexos, 'descricao': extra.get('descricao', ''),
                     'valorPago': 0, 'jurosPago': 0, 'comprovantes': [], 'createdAt': agora, 'dataPagamento': '',
+                    'departamentoPagamento': extra.get('departamentoPagamento', ''),
                 }
                 ContaPagar(
                     record_id=filha_id, extra=filha_extra, type='child', parent_record_id=mae_id,
@@ -981,6 +983,7 @@ def financeiro_solicitacao_decidir(request, rid):
                 'vencimento': extra.get('vencimento', ''), 'banco': '', 'forma': extra.get('forma', ''),
                 'status': 'Aberto', 'anexos': cp_anexos, 'descricao': extra.get('descricao', ''),
                 'valorPago': 0, 'jurosPago': 0, 'comprovantes': [], 'createdAt': agora, 'dataPagamento': '',
+                'departamentoPagamento': extra.get('departamentoPagamento', ''),
             }
             ContaPagar(
                 record_id=cp_id, extra=cp_extra, type='single', parent_record_id=None,

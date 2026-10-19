@@ -28,6 +28,22 @@ export const FORMAS_PAGAMENTO = [
 // anexar (ver modal "Pagar" em ContasPagarView.tsx, que dispensa esse campo pra essa forma).
 export const FORMA_DISPENSA_COMPROVANTE = 'Débito automático';
 
+// Departamento responsável/solicitante do pagamento — escolhido no momento de pagar uma
+// conta (modal "Pagar" em ContasPagarView.tsx) e gravado no registro, pra ficar visível em
+// qualquer lugar que consulte aquele pagamento depois (tabela, "Documentos", Histórico).
+// Lista fixa (diferente de `departamentos`, a lista editável usada como vínculo de OS vs.
+// Departamento em Contas Fixas/Solicitação — ver useFin.ts).
+export const DEPARTAMENTOS_PAGAMENTO = [
+  'RH',
+  'Financeiro',
+  'Compras',
+  'Suprimentos',
+  'Comercial',
+  'SMS',
+  'Logística',
+  'Operacional',
+];
+
 // Tipo de reembolso / adiantamento (usado em Solicitação e Contas a Pagar).
 export const TIPOS_REEMBOLSO = [
   'Reembolso',
@@ -42,15 +58,17 @@ export const TIPOS_REEMBOLSO = [
   'Outro',
 ];
 
-// Natureza da despesa (classificação contábil) — dropdown em Contas a Pagar.
+// Natureza fiscal do item comprado — dropdown em Contas a Pagar (cadastro/edição da conta,
+// Contas Fixas e coluna "Natureza" da tabela).
 export const NATUREZAS_CONTA_PAGAR = [
-  'Custo Direto',
-  'Custo Indireto',
-  'Despesas Administrativa',
-  'Despesas Financeira',
-  'Impostos e Taxas',
-  'Investimentos',
-  'Folha de Pagamento',
+  'Revenda',
+  'Uso E Consumo',
+  'Matéria-Prima',
+  'Imobilizado',
+  'Material De Serviços',
+  'Retorno',
+  'Devoluções',
+  'Outros',
 ];
 
 export const days = (d: string, n: number) => {

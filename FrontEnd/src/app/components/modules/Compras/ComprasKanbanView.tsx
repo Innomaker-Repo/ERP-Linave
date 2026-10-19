@@ -3,22 +3,24 @@ import { useErp } from '../../../context/ErpContext';
 import { comFinanceiroAtual } from '../../../../services/financeiroSeguro';
 import { comComprasAtual } from '../../../../services/comprasSeguro';
 import { formatNumeroOsDisplay } from '../../../../services/ordensServico';
-import { ArrowRight, Ban, Banknote, CalendarClock, CircleDollarSign, Eye, FileDown, Package, Plus, Send, ShoppingCart, Split, Trash2, Users, X } from 'lucide-react';
+import { ArrowRight, Ban, Banknote, CalendarClock, CircleDollarSign, Eye, FileDown, Package, Pencil, Plus, Send, ShoppingCart, Split, Trash2, Users, X } from 'lucide-react';
 import {
   APPROVAL_LIMIT,
   BOARD_COLUMNS,
   buildHistoricoRecord,
   formatCurrency,
   formatPedidoCompraNumero,
+  ordemCompraExtraVazia,
   parsePedidoCompraSeqAtual,
   purchaseStateLabel,
   type ItemCompra,
-  type PedidoCompraResumo,
+  type OrdemCompraExtraDados,
   type QuoteFornecedor,
   type QuoteItem,
   type RequisicaoCompra,
 } from './comprasLocal';
-import { handleDownloadPedidoCompraPDF } from './handleDownloadPedidoCompraPDF';
+import { handleDownloadCotacaoPDF } from './handleDownloadCotacaoPDF';
+import { handleDownloadOrdemCompraExcel, type EmpresaCompradoraDados, type FornecedorDocumentoDados } from './handleDownloadOrdemCompraExcel';
 import { recusarRequisicao } from './comprasAprovacaoShared';
 import { RecusarPedidoModal } from './RecusarPedidoModal';
 import { FinModal, Field, Input, Select, Textarea, Btn, boldOS } from '../Financeiro/finUi';
@@ -33,6 +35,9 @@ type QuoteSupplierDraft = {
   id: string;
   fornecedor: string;
   valor: string;
+  valorUnitario: string;
+  ipiPercentual: string;
+  icmsPercentual: string;
   prazoEntrega: string;
   condicaoPagamento: string;
 };
@@ -87,6 +92,9 @@ const createSupplierDraft = (seed?: Partial<QuoteSupplierDraft>): QuoteSupplierD
   id: seed?.id || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
   fornecedor: seed?.fornecedor || '',
   valor: seed?.valor || '',
+  valorUnitario: seed?.valorUnitario || '',
+  ipiPercentual: seed?.ipiPercentual || '',
+  icmsPercentual: seed?.icmsPercentual || '',
   prazoEntrega: seed?.prazoEntrega || '',
   condicaoPagamento: seed?.condicaoPagamento || '',
 });
@@ -123,6 +131,9 @@ const buildDraftRows = (request: RequisicaoCompra): QuoteRowDraft[] =>
             id: `${item.id}-${index}`,
             fornecedor: supplier.fornecedor,
             valor: supplier.valor ? String(supplier.valor) : '',
+            valorUnitario: supplier.valorUnitario ? String(supplier.valorUnitario) : '',
+            ipiPercentual: supplier.ipiPercentual ? String(supplier.ipiPercentual) : '',
+            icmsPercentual: supplier.icmsPercentual ? String(supplier.icmsPercentual) : '',
             prazoEntrega: supplier.prazoEntrega,
             condicaoPagamento: supplier.condicaoPagamento,
           })
@@ -154,6 +165,9 @@ const calculateBudgetDetails = (
     const fornecedores: QuoteFornecedor[] = row.fornecedores.map((supplier) => ({
       fornecedor: supplier.fornecedor.trim(),
       valor: parseCurrencyInput(supplier.valor),
+      valorUnitario: parseCurrencyInput(supplier.valorUnitario),
+      ipiPercentual: parseCurrencyInput(supplier.ipiPercentual),
+      icmsPercentual: parseCurrencyInput(supplier.icmsPercentual),
       prazoEntrega: supplier.prazoEntrega.trim(),
       condicaoPagamento: supplier.condicaoPagamento.trim(),
     }));
@@ -174,6 +188,9 @@ const calculateBudgetDetails = (
       fornecedorVencedor: winner ? winner.fornecedor : '',
       fornecedorSelecionado: selectedQuote?.fornecedor || '',
       valorSelecionado: selectedQuote ? selectedQuote.valor : null,
+      valorUnitarioSelecionado: selectedQuote ? selectedQuote.valorUnitario : null,
+      ipiPercentualSelecionado: selectedQuote?.ipiPercentual || 0,
+      icmsPercentualSelecionado: selectedQuote?.icmsPercentual || 0,
       prazoEntregaSelecionado: selectedQuote?.prazoEntrega || '',
       condicaoPagamentoSelecionada: selectedQuote?.condicaoPagamento || '',
       jaEmEstoque: row.jaEmEstoque,
@@ -199,6 +216,14 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
   // Recusar (com motivo) durante a cotação — devolve ao solicitante, ver comprasAprovacaoShared.ts.
   const [recusaAlvo, setRecusaAlvo] = useState<RequisicaoCompra | null>(null);
   const setBuyF = (k: keyof BuyFormState, v: string | boolean) => setBuyForm((prev) => ({ ...prev, [k]: v }));
+
+  // Modal "Dados complementares da Ordem de Compra" — condições comerciais que não fazem parte
+  // da cotação (ver OrdemCompraExtraDados em comprasLocal.ts), preenchidas antes de gerar o
+  // Excel do card de Compras. Persistidas por pedidoCompraNumero, pra não perder o preenchimento
+  // entre uma geração e outra.
+  const [ordemExtraModal, setOrdemExtraModal] = useState<{ requestId: string; chave: string } | null>(null);
+  const [ordemExtraForm, setOrdemExtraForm] = useState<OrdemCompraExtraDados>(ordemCompraExtraVazia());
+  const setOrdemExtraF = (k: keyof OrdemCompraExtraDados, v: string | number) => setOrdemExtraForm((prev) => ({ ...prev, [k]: v }));
 
   const supplierOptions = useMemo(
     () => (Array.isArray(fornecedores) ? fornecedores : []).filter((supplier: any) => supplier?.razaoSocial),
@@ -562,38 +587,76 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
     setRecusaAlvo(null);
   };
 
-  // Baixa o PDF do Pedido de Compra vinculado ao card do grupo (PC + fornecedor) — só os itens
-  // daquele grupo, não a requisição inteira.
-  const handleBaixarPedido = (card: PcCard) => {
+  // Empresa COMPRADORA (Linave/Servinave) pro timbre da Ordem de Compra — mesma regra do resto
+  // do ERP (empresaFromCC a partir do prefixo da OS), com CNPJ/endereço/e-mail vindos do
+  // cadastro em Configurações → Empresas Prestadoras (em branco se ainda não preenchido lá).
+  const empresaCompradoraDados = (request: RequisicaoCompra): EmpresaCompradoraDados => {
+    const nomeEmpresa = empresaFromCC(request.centroCusto, (empresasOptions[0] as Empresa) || 'Linave');
+    const cadastro = (config?.empresasPrestadoras || []).find(
+      (e: any) => String(e?.nome || '').trim().toLowerCase() === String(nomeEmpresa).trim().toLowerCase(),
+    );
+    return {
+      nome: cadastro?.nome || nomeEmpresa,
+      cnpj: cadastro?.cnpj || '',
+      enderecoLinha: cadastro?.endereco || '',
+      email: cadastro?.email || '',
+    };
+  };
+
+  // Dados do fornecedor pro timbre — procurado pelo nome na lista real de Fornecedores (o mesmo
+  // cadastro de onde o nome foi escolhido na cotação).
+  const fornecedorDocumentoDados = (nomeFornecedor: string): FornecedorDocumentoDados => {
+    const cadastro = supplierOptions.find((f: any) => String(f?.razaoSocial || '') === nomeFornecedor);
+    return {
+      razaoSocial: nomeFornecedor || '',
+      cnpj: cadastro?.cnpj || '',
+      enderecoLinha: cadastro?.endereco || '',
+      inscricaoEstadual: cadastro?.descricaoEstadual || '',
+    };
+  };
+
+  const chaveOrdemExtra = (card: PcCard) => card.pedidoCompraNumero || card.key;
+
+  const abrirOrdemExtraModal = (card: PcCard) => {
+    const chave = chaveOrdemExtra(card);
+    setOrdemExtraForm(card.request.ordensCompraExtra?.[chave] || ordemCompraExtraVazia());
+    setOrdemExtraModal({ requestId: card.request.id, chave });
+  };
+
+  const closeOrdemExtraModal = () => setOrdemExtraModal(null);
+
+  // Gera e baixa a Ordem de Compra (Excel) do card (PC + fornecedor) usando os dados já
+  // cotados + o que estiver salvo em `ordensCompraExtra` pra esse grupo (em branco se o usuário
+  // nunca abriu o modal de dados complementares pra esse pedido).
+  const gerarOrdemCompraExcel = (card: PcCard, extraOverride?: OrdemCompraExtraDados) => {
     const { request, itens } = card;
-    const resumo: PedidoCompraResumo = {
+    const chave = chaveOrdemExtra(card);
+    const extra = extraOverride || request.ordensCompraExtra?.[chave] || ordemCompraExtraVazia();
+    handleDownloadOrdemCompraExcel({
       numero: card.pedidoCompraNumero || request.pedidoCompraNumero || '—',
-      solicitacaoId: request.id,
       centroCusto: request.centroCusto,
       solicitante: request.solicitante,
-      departamento: request.departamento,
-      fornecedor: card.fornecedor || '',
-      fornecedorCnpj: '',
-      itens: itens.map((item) => {
-        const detail = (request.budgetDetails || []).find((d) => d.itemId === item.id) || null;
-        const valorTotal = detail?.valorSelecionado || 0;
-        return {
-          itemId: item.id,
-          nome: item.nome,
-          descricao: `${item.descricao || item.nome}${detail?.fornecedorSelecionado ? ` — ${detail.fornecedorSelecionado}` : ''}`,
-          qtd: item.qtd,
-          un: item.un,
-          valorUnitario: item.qtd > 0 ? valorTotal / item.qtd : valorTotal,
-          valorTotal,
-        };
-      }),
-      valorTotal: itens.reduce((sum, item) => sum + ((request.budgetDetails || []).find((d) => d.itemId === item.id)?.valorSelecionado || 0), 0),
-      prazoEntrega: '',
-      condicaoPagamento: '',
-      observacoes: '',
+      solicitanteEmail: request.solicitanteEmail,
+      itens,
+      budgetDetails: request.budgetDetails || [],
+      empresaCompradora: empresaCompradoraDados(request),
+      fornecedor: fornecedorDocumentoDados(card.fornecedor || ''),
+      extra,
       data: request.createdAt,
-    };
-    handleDownloadPedidoCompraPDF(resumo);
+    });
+  };
+
+  const salvarOrdemExtraEGerar = async () => {
+    if (!ordemExtraModal) return;
+    const { requestId, chave } = ordemExtraModal;
+    await patchRequest(requestId, (request) => ({
+      ...request,
+      ordensCompraExtra: { ...(request.ordensCompraExtra || {}), [chave]: ordemExtraForm },
+      updatedAt: new Date().toISOString(),
+    }));
+    const card = comprasCards.find((c) => chaveOrdemExtra(c) === chave && c.request.id === requestId);
+    if (card) gerarOrdemCompraExcel(card, ordemExtraForm);
+    closeOrdemExtraModal();
   };
 
 
@@ -790,7 +853,10 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
                               <button onClick={() => openQuoteModal(card.request.id, 'view')} title="Ver cotação" className="p-2 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-white/70">
                                 <Eye size={15} />
                               </button>
-                              <button onClick={() => handleBaixarPedido(card)} title="Baixar pedido" className="p-2 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-white/70">
+                              <button onClick={() => abrirOrdemExtraModal(card)} title="Dados complementares da Ordem de Compra" className="p-2 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-white/70">
+                                <Pencil size={15} />
+                              </button>
+                              <button onClick={() => gerarOrdemCompraExcel(card)} title="Baixar Ordem de Compra (Excel)" className="p-2 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-white/70">
                                 <FileDown size={15} />
                               </button>
                             </div>
@@ -854,12 +920,20 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
                             <span className="text-white/45 uppercase tracking-widest text-[10px] font-bold">Total do orçamento</span>
                             <strong className="text-white">{request.budgetValue ? formatCurrency(request.budgetValue) : 'Seleção pendente'}</strong>
                           </div>
-                          <div className="grid grid-cols-2 gap-1.5">
+                          <div className="grid grid-cols-3 gap-1.5">
                             <button onClick={() => openQuoteModal(request.id, 'edit')} className="w-full flex items-center justify-center gap-1.5 bg-sky-600 hover:bg-sky-500 text-white px-2.5 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider transition-all">
                               <Package size={12} /> Orçar
                             </button>
                             <button onClick={() => openQuoteModal(request.id, 'view')} disabled={!(request.budgetDetails || []).length} className="w-full flex items-center justify-center gap-1.5 bg-white/5 hover:bg-white/10 text-white px-2.5 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed">
-                              <Eye size={12} /> Ver orçamento
+                              <Eye size={12} /> Ver
+                            </button>
+                            <button
+                              onClick={() => handleDownloadCotacaoPDF(request)}
+                              disabled={!(request.budgetDetails || []).length}
+                              title="Baixar cotação (PDF)"
+                              className="w-full flex items-center justify-center gap-1.5 bg-white/5 hover:bg-white/10 text-white px-2.5 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              <FileDown size={12} /> PDF
                             </button>
                           </div>
                           <div className="grid grid-cols-2 gap-1.5">
@@ -1019,6 +1093,58 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
                                     <p className="text-white font-semibold">{supplier.valor ? formatCurrency(parseCurrencyInput(supplier.valor)) : '-'}</p>
                                     <p className="text-white/45 text-xs mt-1">{supplier.condicaoPagamento || 'Sem condição'}</p>
                                   </div>
+                                </>
+                              )}
+                            </div>
+
+                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                              {quoteModal.mode === 'edit' ? (
+                                <>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    className="w-full rounded-xl border border-white/10 bg-[#0b1220] p-3 text-white text-sm outline-none focus:border-emerald-500"
+                                    placeholder="Valor unitário"
+                                    value={supplier.valorUnitario}
+                                    onChange={(event) => updateQuoteSupplier(activeRequest.id, row.itemId, supplier.id, 'valorUnitario', event.target.value)}
+                                    disabled={row.jaEmEstoque}
+                                  />
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    className="w-full rounded-xl border border-white/10 bg-[#0b1220] p-3 text-white text-sm outline-none focus:border-amber-500"
+                                    placeholder="IPI (%)"
+                                    value={supplier.ipiPercentual}
+                                    onChange={(event) => updateQuoteSupplier(activeRequest.id, row.itemId, supplier.id, 'ipiPercentual', event.target.value)}
+                                    disabled={row.jaEmEstoque}
+                                  />
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    className="w-full rounded-xl border border-white/10 bg-[#0b1220] p-3 text-white text-sm outline-none focus:border-amber-500"
+                                    placeholder="ICMS (%)"
+                                    value={supplier.icmsPercentual}
+                                    onChange={(event) => updateQuoteSupplier(activeRequest.id, row.itemId, supplier.id, 'icmsPercentual', event.target.value)}
+                                    disabled={row.jaEmEstoque}
+                                  />
+                                </>
+                              ) : (
+                                <>
+                                  <div>
+                                    <p className="text-white/35 text-[10px] uppercase tracking-[0.2em] font-black">Valor unitário</p>
+                                    <p className="text-white text-sm mt-1">{supplier.valorUnitario ? formatCurrency(parseCurrencyInput(supplier.valorUnitario)) : '-'}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-white/35 text-[10px] uppercase tracking-[0.2em] font-black">IPI</p>
+                                    <p className="text-white text-sm mt-1">{supplier.ipiPercentual ? `${supplier.ipiPercentual}%` : '-'}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-white/35 text-[10px] uppercase tracking-[0.2em] font-black">ICMS</p>
+                                    <p className="text-white text-sm mt-1">{supplier.icmsPercentual ? `${supplier.icmsPercentual}%` : '-'}</p>
+                                  </div>
                                   <div>
                                     <p className="text-white/35 text-[10px] uppercase tracking-[0.2em] font-black">Prazo de entrega</p>
                                     <p className="text-white text-sm mt-1">{supplier.prazoEntrega || '-'}</p>
@@ -1154,6 +1280,45 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
                   <Banknote size={15} /> {buySaving ? 'Confirmando...' : (buyIsItem ? 'Comprar e gerar conta' : 'Contratar e gerar conta')}
                 </Btn>
               </div>
+            </div>
+          </form>
+        </FinModal>
+      )}
+
+      {ordemExtraModal && (
+        <FinModal
+          wide
+          title="Dados complementares da Ordem de Compra"
+          hint="Condições comerciais que não fazem parte da cotação — entram só no documento final (Excel). Ficam salvas pra próxima geração deste mesmo pedido."
+          onClose={closeOrdemExtraModal}
+        >
+          <form
+            className="grid grid-cols-12 gap-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void salvarOrdemExtraEGerar();
+            }}
+          >
+            <Field label="Condição de Venda" span={4}><Input value={ordemExtraForm.condicaoVenda} onChange={(e) => setOrdemExtraF('condicaoVenda', e.target.value)} /></Field>
+            <Field label="Transporte" span={4}><Input value={ordemExtraForm.transporte} onChange={(e) => setOrdemExtraF('transporte', e.target.value)} /></Field>
+            <Field label="Porto de Origem" span={4}><Input value={ordemExtraForm.portoOrigem} onChange={(e) => setOrdemExtraF('portoOrigem', e.target.value)} /></Field>
+
+            <Field label="Condição de Embarque" span={6}><Input value={ordemExtraForm.condicaoEmbarque} onChange={(e) => setOrdemExtraF('condicaoEmbarque', e.target.value)} /></Field>
+            <Field label="Condição de Entrega" span={6}><Input value={ordemExtraForm.condicaoEntrega} onChange={(e) => setOrdemExtraF('condicaoEntrega', e.target.value)} /></Field>
+
+            <Field label="Desconto (R$)" span={4}><Input type="number" step="0.01" min="0" value={ordemExtraForm.desconto || ''} onChange={(e) => setOrdemExtraF('desconto', num(e.target.value))} /></Field>
+            <Field label="Acréscimo (R$)" span={4}><Input type="number" step="0.01" min="0" value={ordemExtraForm.acrescimo || ''} onChange={(e) => setOrdemExtraF('acrescimo', num(e.target.value))} /></Field>
+            <Field label="Frete (R$)" span={4}><Input type="number" step="0.01" min="0" value={ordemExtraForm.frete || ''} onChange={(e) => setOrdemExtraF('frete', num(e.target.value))} /></Field>
+
+            <Field label="Vendedor — Nome" span={4}><Input value={ordemExtraForm.vendedorNome} onChange={(e) => setOrdemExtraF('vendedorNome', e.target.value)} /></Field>
+            <Field label="Vendedor — Tel/Cel" span={4}><Input value={ordemExtraForm.vendedorTelefone} onChange={(e) => setOrdemExtraF('vendedorTelefone', e.target.value)} /></Field>
+            <Field label="Local de Entrega" span={4}><Input value={ordemExtraForm.localEntrega} onChange={(e) => setOrdemExtraF('localEntrega', e.target.value)} /></Field>
+
+            <Field label="Dados Bancários do Fornecedor" span={12}><Textarea value={ordemExtraForm.dadosBancariosFornecedor} onChange={(e) => setOrdemExtraF('dadosBancariosFornecedor', e.target.value)} /></Field>
+
+            <div className="col-span-12 flex justify-end gap-2">
+              <Btn type="button" variant="ghost" onClick={closeOrdemExtraModal}>Cancelar</Btn>
+              <Btn type="submit" variant="green"><FileDown size={15} /> Salvar e baixar Ordem de Compra</Btn>
             </div>
           </form>
         </FinModal>

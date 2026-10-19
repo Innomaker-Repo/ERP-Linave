@@ -314,6 +314,7 @@ export function MeusPagamentosView() {
                     <p className="text-white/50 text-xs">
                       {isAdmin && <>Solicitante: <span className="text-white/85">{r.solicitante || '—'}</span> • </>}
                       Doc: {r.documento || '—'} • Criado em {br(String(r.createdAt || '').slice(0, 10))}
+                      {r.departamentoPagamento && <> • Departamento: {r.departamentoPagamento}</>}
                     </p>
                     {r.status === 'Reprovado' && (
                       <p className="mt-1 text-rose-300 text-xs">
@@ -375,6 +376,7 @@ export function MeusPagamentosView() {
                       {isAdmin && <>Solicitante: <span className="text-white/85">{r.solicitante || '—'}</span> • </>}
                       Doc: {r.documento || '—'}
                       {r.contaPagar?.status === 'Pago' && r.contaPagar?.dataPagamento && ` • Pago em ${br(r.contaPagar.dataPagamento)}`}
+                      {(r.contaPagar?.departamentoPagamento || r.departamentoPagamento) && ` • Departamento: ${r.contaPagar?.departamentoPagamento || r.departamentoPagamento}`}
                     </p>
                     <p className="mt-1 text-emerald-300/80 text-xs">Aprovado por: <span className="font-semibold">{r.aprovadoPor || '—'}</span></p>
                     <AnexosDaSolicitacao anexos={r.anexos} />

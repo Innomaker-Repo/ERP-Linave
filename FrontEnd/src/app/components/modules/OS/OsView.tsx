@@ -1074,6 +1074,22 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
     }
   };
 
+  const handleRemoverAssinaturaAprovacaoOS = async (osId: string) => {
+    const osItem = listaOS.find((item) => item.id === osId);
+    const atual = (osItem as any)?.documentoAssinaturaAprovacao;
+    if (!atual) return;
+    if (!(await confirmDialog({ message: 'Remover a assinatura de aprovação anexada?', danger: true, confirmText: 'Remover' }))) return;
+    try {
+      if (atual.backendId) {
+        try { await excluirDocumento(atual.backendId); } catch { /* segue mesmo se falhar */ }
+      }
+      await atualizarStatusOSPorId(osId, { documentoAssinaturaAprovacao: null });
+      toast.success('Assinatura removida.');
+    } catch (error) {
+      toast.error('Não foi possível remover a assinatura.');
+    }
+  };
+
   const handleAprovarOS = (osId: string) => {
     atualizarStatusOSPorId(osId, { statusAprovacao: 'aprovada', dataAprovacao: new Date().toISOString().split('T')[0] });
     toast.success('OS aprovada com sucesso.');
@@ -2166,6 +2182,12 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
                         className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-[11px] font-black uppercase transition"
                       >
                         <Download size={13} className="inline mr-1" /> Download
+                      </button>
+                      <button
+                        onClick={() => handleRemoverAssinaturaAprovacaoOS(selectedOS.id)}
+                        className="px-3 py-1.5 rounded-lg bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300 text-[11px] font-black uppercase transition"
+                      >
+                        <X size={13} className="inline mr-1" /> Remover
                       </button>
                     </>
                   )}

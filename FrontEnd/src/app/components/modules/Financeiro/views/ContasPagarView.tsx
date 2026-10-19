@@ -9,7 +9,7 @@ import {
   br, money, num, todayStr, genFinId, days, FORMAS_PAGAMENTO, TIPOS_REEMBOLSO,
   NATUREZAS_CONTA_PAGAR, CP_STATUS, documentoDuplicado, bancoLabel, FORMA_DISPENSA_COMPROVANTE,
   PERIODICIDADES, CATEGORIAS_CONTA_FIXA, avisosContasFixas, contaVencida, contaPaga,
-  diasAteVencimento, type AvisoContaFixa,
+  diasAteVencimento, DEPARTAMENTOS_PAGAMENTO, type AvisoContaFixa,
 } from '../finData';
 import { useFin, type FinRecord } from '../useFin';
 import { useFinFilters } from '../finFilters';
@@ -289,7 +289,7 @@ export function ContasPagarView() {
   // ---- Modal contas fixas (regras de recorrência) ----
   const fixaVazia = () => ({
     descricao: '', categoria: 'Luz', empresa: empresas[0] || 'Linave', fornecedor: '',
-    natureza: 'Despesas Administrativa', valor: '', periodicidade: 'mensal' as string,
+    natureza: '', valor: '', periodicidade: 'mensal' as string,
     diaVencimento: '10', inicio: todayStr, fim: '', forma: '', banco: '',
     antecedenciaAviso: '5', departamento: '', obs: '',
   });
@@ -306,7 +306,7 @@ export function ContasPagarView() {
     setFixa({
       descricao: r.descricao || '', categoria: r.categoria || 'Luz',
       empresa: String(r.empresa || empresas[0] || 'Linave'), fornecedor: r.fornecedor || '',
-      natureza: r.natureza || 'Despesas Administrativa', valor: String(r.valor || ''),
+      natureza: r.natureza || '', valor: String(r.valor || ''),
       periodicidade: r.periodicidade || 'mensal', diaVencimento: String(r.diaVencimento || '10'),
       inicio: r.inicio || todayStr, fim: r.fim || '', forma: r.forma || '', banco: r.banco || '',
       antecedenciaAviso: String(r.antecedenciaAviso ?? 5), departamento: r.departamento || '', obs: r.obs || '',
@@ -358,7 +358,7 @@ export function ContasPagarView() {
 
   // ---- Modal pagar ----
   const [pagando, setPagando] = useState<FinRecord | null>(null);
-  const [pay, setPay] = useState({ dataPagamento: todayStr, valorPago: '', banco: '', houveJuros: 'Não', jurosPago: '', motivoJuros: '' });
+  const [pay, setPay] = useState({ dataPagamento: todayStr, valorPago: '', banco: '', houveJuros: 'Não', jurosPago: '', motivoJuros: '', departamentoPagamento: '', vinculoValor: '' });
   const setPayF = (k: string, v: string) => setPay((p) => ({ ...p, [k]: v }));
   // Comprovantes já salvos na conta (de um pagamento parcial/correção anterior) + arquivos
   // novos ainda não enviados — mesmo padrão de anexosExistentes/novosAnexos acima: o upload
@@ -368,7 +368,7 @@ export function ContasPagarView() {
 
   const abrirPagamento = (p: FinRecord) => {
     setPagando(p);
-    setPay({ dataPagamento: todayStr, valorPago: String(p.valorPago || p.valor || ''), banco: p.banco || '', houveJuros: 'Não', jurosPago: '', motivoJuros: '' });
+    setPay({ dataPagamento: todayStr, valorPago: String(p.valorPago || p.valor || ''), banco: p.banco || '', houveJuros: 'Não', jurosPago: '', motivoJuros: '', departamentoPagamento: p.departamentoPagamento || '', vinculoValor: p.vinculoValor || '' });
     setComprovantesExistentes(Array.isArray(p.comprovantes) ? p.comprovantes : []);
     setNovosComprovantes([]);
   };
@@ -434,17 +434,17 @@ export function ContasPagarView() {
   const [verDocumentos, setVerDocumentos] = useState<FinRecord | null>(null);
 
   const exportarExcel = () => {
-    const head = ['Tipo', 'ID', 'Parcela', 'Empresa', 'Vínculo', 'Natureza', 'Fornecedor', 'Documento', 'Valor', 'Vencimento', 'Banco', 'Status', 'Pago em', 'Valor pago', 'Juros', 'Comprovantes'];
+    const head = ['Tipo', 'ID', 'Parcela', 'Empresa', 'Vínculo', 'Natureza', 'Fornecedor', 'Documento', 'Valor', 'Vencimento', 'Banco', 'Status', 'Pago em', 'Departamento', 'Valor pago', 'Juros', 'Comprovantes'];
     const linhas = rows.map((p) => [
       p.type || 'single', p.id, p.parcela || '-', p.empresa, `${p.vinculoTipo}: ${p.vinculoValor || ''}`, p.natureza || '',
       p.fornecedor, p.documento || '', num(p.valor), p.vencimento, p.banco || '', p.status || 'Aberto',
-      p.dataPagamento || '', num(p.valorPago), num(p.jurosPago), (p.comprovantes || []).join('|'),
+      p.dataPagamento || '', p.departamentoPagamento || '', num(p.valorPago), num(p.jurosPago), (p.comprovantes || []).join('|'),
     ]);
     // Resumo (totais) na última linha da planilha.
     const totValor = rows.reduce((s, p) => s + num(p.valor), 0);
     const totPago = rows.reduce((s, p) => s + num(p.valorPago), 0);
     const totJuros = rows.reduce((s, p) => s + num(p.jurosPago), 0);
-    linhas.push(['TOTAL', '', '', '', '', '', '', '', totValor, '', '', '', '', totPago, totJuros, '']);
+    linhas.push(['TOTAL', '', '', '', '', '', '', '', totValor, '', '', '', '', '', totPago, totJuros, '']);
 
     const planilha = XLSX.utils.aoa_to_sheet([head, ...linhas]);
     const workbook = XLSX.utils.book_new();
@@ -478,6 +478,9 @@ export function ContasPagarView() {
         jurosPago: houveJuros ? num(pay.jurosPago) : 0,
         motivoJuros: houveJuros ? pay.motivoJuros : '',
         comprovantes,
+        departamentoPagamento: pay.departamentoPagamento,
+        vinculoTipo: 'OS',
+        vinculoValor: pay.vinculoValor,
       });
       // Conta fixa: o pagamento encadeia a próxima competência. Avisar deixa explícito
       // que a conta "voltou" na lista de propósito, e para quando.
@@ -523,16 +526,16 @@ export function ContasPagarView() {
         </>}
       />
       <DataTable
-        minWidth={1650}
+        minWidth={1750}
         head={<>
           <Th>Tipo</Th><Th>Parcela</Th><Th>Empresa</Th><Th>Vínculo</Th><Th>Natureza</Th>
           <Th>Fornecedor</Th><Th>Doc</Th><Th>Valor</Th><Th>Vencimento</Th><Th>Banco</Th>
-          <Th>Status</Th><Th>Pago em</Th><Th>Juros</Th><Th>Comprov.</Th><Th>Ação</Th>
+          <Th>Status</Th><Th>Pago em</Th><Th>Departamento</Th><Th>Juros</Th><Th>Comprov.</Th><Th>Ação</Th>
         </>}
       >
         {rows.length === 0 ? (
           <EmptyRow
-            cols={15}
+            cols={16}
             text={
               origemFiltro === 'Fixas'
                 ? 'Nenhuma conta fixa no período (cadastre uma regra em "Contas fixas")'
@@ -575,6 +578,7 @@ export function ContasPagarView() {
             <Td className="text-white/60">{p.banco || '—'}</Td>
             <Td><StatusTag status={vencida ? 'Vencido' : (p.status || 'Aberto')} /></Td>
             <Td>{p.dataPagamento ? br(p.dataPagamento) : '-'}</Td>
+            <Td className="text-white/60">{p.departamentoPagamento || '—'}</Td>
             <Td>{p.jurosPago ? money(num(p.jurosPago)) : '-'}</Td>
             <Td>
               {(p.comprovantes || []).length ? (
@@ -775,7 +779,13 @@ export function ContasPagarView() {
           onClose={() => setPagando(null)}
         >
           <form className="grid grid-cols-12 gap-4" onSubmit={confirmarPagamento}>
-            <Field label="Conta" span={6}><Input value={`${pagando.fornecedor || ''} • ${money(num(pagando.valor))}`} disabled /></Field>
+            <Field label="Conta" span={3}><Input value={`${pagando.fornecedor || ''} • ${money(num(pagando.valor))}`} disabled /></Field>
+            <Field label={boldOS('OS vinculada')} span={3}>
+              <Select value={pay.vinculoValor} onChange={(e) => setPayF('vinculoValor', e.target.value)}>
+                <option value="">{oss.length ? 'Sem OS' : 'Nenhuma OS no ERP'}</option>
+                {oss.map((o, i) => <option key={`${o.numero}-${i}`} value={o.numero}>{o.numero} - {o.cliente}</option>)}
+              </Select>
+            </Field>
             <Field label="Quando paguei?" span={3}><Input type="date" value={pay.dataPagamento} onChange={(e) => setPayF('dataPagamento', e.target.value)} /></Field>
             <Field label="Valor pago" span={3}><MoneyInput value={pay.valorPago} onChange={(v) => setPayF('valorPago', v)} /></Field>
 
@@ -783,6 +793,12 @@ export function ContasPagarView() {
               <Select {...bancoSelectProps(pay.banco, (nome) => setPayF('banco', nome))}>
                 <option value="">{bancos.length ? 'Selecione...' : 'Cadastre um banco na aba Bancos'}</option>
                 {bancos.map((b) => <option key={b.id} value={b.id}>{bancoLabel(b)}</option>)}
+              </Select>
+            </Field>
+            <Field label="Departamento" span={6}>
+              <Select value={pay.departamentoPagamento} onChange={(e) => setPayF('departamentoPagamento', e.target.value)}>
+                <option value="">Selecione...</option>
+                {DEPARTAMENTOS_PAGAMENTO.map((d) => <option key={d} value={d}>{d}</option>)}
               </Select>
             </Field>
             <Field label="Houve juros?" span={6}>
@@ -852,7 +868,7 @@ export function ContasPagarView() {
       {verDocumentos && (
         <FinModal
           title={`Documentos — ${verDocumentos.id}`}
-          hint={`${verDocumentos.fornecedor || 'Fornecedor não informado'} · ${money(num(verDocumentos.valor))}`}
+          hint={`${verDocumentos.fornecedor || 'Fornecedor não informado'} · ${money(num(verDocumentos.valor))}${verDocumentos.departamentoPagamento ? ` · ${verDocumentos.departamentoPagamento}` : ''}`}
           onClose={() => setVerDocumentos(null)}
         >
           <div className="space-y-5">
@@ -1045,6 +1061,7 @@ export function ContasPagarView() {
             </Field>
             <Field label="Natureza" span={3}>
               <Select value={fixa.natureza} onChange={(e) => setFixaF('natureza', e.target.value)}>
+                <option value="">Selecione...</option>
                 {NATUREZAS_CONTA_PAGAR.map((n) => <option key={n}>{n}</option>)}
               </Select>
             </Field>

@@ -35,6 +35,15 @@ export const resolveApprovalRoute = (budgetValue: number | null | undefined): Ex
 export interface QuoteFornecedor {
   fornecedor: string;
   valor: number;
+  // Preço unitário — junto com `valor` (total), um deriva o outro conforme o campo que o
+  // usuário preenche primeiro (ver recalcularValorUnitarioOuTotal em ComprasKanbanView.tsx).
+  // Usado na Ordem de Compra (coluna "Preço Unitário").
+  valorUnitario: number;
+  // Alíquotas informadas na cotação — os VALORES de IPI/ICMS são sempre CALCULADOS a partir
+  // daqui (valorUnitario × qtd × percentual/100) na hora de montar a Ordem de Compra, nunca
+  // digitados diretamente (ver calcularImposto em handleDownloadOrdemCompraExcel.ts).
+  ipiPercentual: number;
+  icmsPercentual: number;
   prazoEntrega: string;
   condicaoPagamento: string;
 }
@@ -47,6 +56,9 @@ export interface QuoteItem {
   fornecedorVencedor: string;
   fornecedorSelecionado: string;
   valorSelecionado: number | null;
+  valorUnitarioSelecionado: number | null;
+  ipiPercentualSelecionado: number;
+  icmsPercentualSelecionado: number;
   prazoEntregaSelecionado: string;
   condicaoPagamentoSelecionada: string;
   jaEmEstoque: boolean;
@@ -99,9 +111,51 @@ export interface RequisicaoCompra {
   motivoRecusa?: string;
   recusadoPor?: string;
   recusadoEm?: string;
+  // Dados complementares da Ordem de Compra (condição de venda/transporte/porto/embarque/
+  // entrega, desconto/acréscimo/frete, vendedor, dados bancários, local de entrega) — não fazem
+  // parte da cotação em si, só do documento formal emitido em Compras. Chaveado pelo
+  // `pedidoCompraNumero` do grupo (1 solicitação pode gerar mais de um Pedido de Compra, um por
+  // fornecedor selecionado) — ver `OrdemCompraExtraModal`/`handleDownloadOrdemCompraExcel.ts`.
+  ordensCompraExtra?: Record<string, OrdemCompraExtraDados>;
   createdAt: string;
   updatedAt: string;
 }
+
+export interface OrdemCompraExtraDados {
+  condicaoVenda: string;
+  transporte: string;
+  portoOrigem: string;
+  condicaoEmbarque: string;
+  condicaoEntrega: string;
+  desconto: number;
+  acrescimo: number;
+  frete: number;
+  vendedorNome: string;
+  vendedorTelefone: string;
+  dadosBancariosFornecedor: string;
+  localEntrega: string;
+}
+
+export const ordemCompraExtraVazia = (): OrdemCompraExtraDados => ({
+  condicaoVenda: '', transporte: '', portoOrigem: '', condicaoEmbarque: '', condicaoEntrega: '',
+  desconto: 0, acrescimo: 0, frete: 0, vendedorNome: '', vendedorTelefone: '',
+  dadosBancariosFornecedor: '', localEntrega: '',
+});
+
+const normalizeOrdemCompraExtra = (source: any): OrdemCompraExtraDados => ({
+  condicaoVenda: String(source?.condicaoVenda || ''),
+  transporte: String(source?.transporte || ''),
+  portoOrigem: String(source?.portoOrigem || ''),
+  condicaoEmbarque: String(source?.condicaoEmbarque || ''),
+  condicaoEntrega: String(source?.condicaoEntrega || ''),
+  desconto: Number(source?.desconto || 0),
+  acrescimo: Number(source?.acrescimo || 0),
+  frete: Number(source?.frete || 0),
+  vendedorNome: String(source?.vendedorNome || ''),
+  vendedorTelefone: String(source?.vendedorTelefone || ''),
+  dadosBancariosFornecedor: String(source?.dadosBancariosFornecedor || ''),
+  localEntrega: String(source?.localEntrega || ''),
+});
 
 export interface FormState {
   solicitante: string;
@@ -180,6 +234,9 @@ export const normalizeRequests = (value: unknown): RequisicaoCompra[] => {
   const normalizeFornecedor = (source: any): QuoteFornecedor => ({
     fornecedor: String(source?.fornecedor || ''),
     valor: Number(source?.valor || 0),
+    valorUnitario: Number(source?.valorUnitario || 0),
+    ipiPercentual: Number(source?.ipiPercentual || 0),
+    icmsPercentual: Number(source?.icmsPercentual || 0),
     prazoEntrega: String(source?.prazoEntrega || ''),
     condicaoPagamento: String(source?.condicaoPagamento || ''),
   });
@@ -207,6 +264,9 @@ export const normalizeRequests = (value: unknown): RequisicaoCompra[] => {
       fornecedorVencedor: vencedor,
       fornecedorSelecionado: fornecedorSelecionado?.fornecedor || '',
       valorSelecionado: fornecedorSelecionado ? fornecedorSelecionado.valor : null,
+      valorUnitarioSelecionado: fornecedorSelecionado ? fornecedorSelecionado.valorUnitario : null,
+      ipiPercentualSelecionado: fornecedorSelecionado?.ipiPercentual || 0,
+      icmsPercentualSelecionado: fornecedorSelecionado?.icmsPercentual || 0,
       prazoEntregaSelecionado: fornecedorSelecionado?.prazoEntrega || '',
       condicaoPagamentoSelecionada: fornecedorSelecionado?.condicaoPagamento || '',
       jaEmEstoque: Boolean(quote?.jaEmEstoque),
@@ -266,6 +326,9 @@ export const normalizeRequests = (value: unknown): RequisicaoCompra[] => {
       motivoRecusa: item.motivoRecusa ? String(item.motivoRecusa) : undefined,
       recusadoPor: item.recusadoPor ? String(item.recusadoPor) : undefined,
       recusadoEm: item.recusadoEm ? String(item.recusadoEm) : undefined,
+      ordensCompraExtra: item.ordensCompraExtra && typeof item.ordensCompraExtra === 'object'
+        ? Object.fromEntries(Object.entries(item.ordensCompraExtra).map(([k, v]) => [k, normalizeOrdemCompraExtra(v)]))
+        : undefined,
       createdAt: String(item.createdAt || new Date().toISOString()),
       updatedAt: String(item.updatedAt || new Date().toISOString()),
     }))

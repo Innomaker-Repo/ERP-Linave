@@ -1017,7 +1017,17 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
                     <input type="file" multiple className="hidden" onChange={(e) => handleUploadNfe(e.target.files, 'cliente')} />
                   </label>
                   {(nfeForm.docsCliente || []).map((d: any, i: number) => (
-                    <p key={d.id || i} className="text-emerald-300/80 text-[11px] truncate mt-1">✓ {d.nome}</p>
+                    <span key={d.id || i} className="mt-1 flex items-center gap-1.5 text-[11px]">
+                      <a href={d.url} target="_blank" rel="noopener noreferrer" className="truncate text-emerald-300/80 hover:text-emerald-200 hover:underline">✓ {d.nome}</a>
+                      <button
+                        type="button"
+                        onClick={() => setNfeForm((f: any) => ({ ...f, docsCliente: (f?.docsCliente || []).filter((x: any) => x !== d) }))}
+                        className="shrink-0 rounded-full p-0.5 text-white/40 transition-colors hover:bg-red-500/20 hover:text-red-300"
+                        title="Remover anexo"
+                      >
+                        <X size={11} />
+                      </button>
+                    </span>
                   ))}
                 </NfeField>
                 <NfeField label="NF já emitida (opcional)">
@@ -1026,7 +1036,17 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
                     <input type="file" multiple className="hidden" onChange={(e) => handleUploadNfe(e.target.files, 'nf')} />
                   </label>
                   {(nfeForm.docsNf || []).map((d: any, i: number) => (
-                    <p key={d.id || i} className="text-amber-300/80 text-[11px] truncate mt-1">✓ {d.nome}</p>
+                    <span key={d.id || i} className="mt-1 flex items-center gap-1.5 text-[11px]">
+                      <a href={d.url} target="_blank" rel="noopener noreferrer" className="truncate text-amber-300/80 hover:text-amber-200 hover:underline">✓ {d.nome}</a>
+                      <button
+                        type="button"
+                        onClick={() => setNfeForm((f: any) => ({ ...f, docsNf: (f?.docsNf || []).filter((x: any) => x !== d) }))}
+                        className="shrink-0 rounded-full p-0.5 text-white/40 transition-colors hover:bg-red-500/20 hover:text-red-300"
+                        title="Remover anexo"
+                      >
+                        <X size={11} />
+                      </button>
+                    </span>
                   ))}
                 </NfeField>
               </div>

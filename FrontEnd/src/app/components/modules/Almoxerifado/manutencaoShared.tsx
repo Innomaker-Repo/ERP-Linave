@@ -58,22 +58,30 @@ const normalizeKeyLocal = (value: string): string =>
 export const EQUIPAMENTOS_TABLE_NAMES = ['EQUIPAMENTOS ELETRICOS', 'EXTENSÃO-CABOS', 'BOMBA HIDROJATO', 'INSTRUMENTOS', 'FERRAMENTAS', 'TALHAS', 'ESLINGAS'];
 
 // Tabelas cujos itens podem entrar em manutenção: TODAS as categorias do Almoxarifado —
-// Equipamentos, Materiais, Alugados (Equipamentos e Gases) e Caixa Metálica / Skid. Qualquer
-// item de qualquer tabela segue o mesmo fluxo (EntradaManutencaoModal, manutencaoHistorico,
-// bloqueio de alocação/romaneio enquanto em manutenção).
+// Equipamentos, Materiais, Alugados (Equipamentos e Gases), Caixa Metálica / Skid, Andaimes e
+// EPI/EPC. Qualquer item de qualquer tabela segue o mesmo fluxo (EntradaManutencaoModal,
+// manutencaoHistorico, bloqueio de alocação/romaneio enquanto em manutenção).
 export const MANUTENCAO_TABLE_NAMES = [
   ...EQUIPAMENTOS_TABLE_NAMES,
   'Materiais',
   'Caixa Metálica / Skid',
   'Andaimes',
+  'EPI/EPC',
   'Alugados - Equipamentos',
   'Alugados - Gases',
 ];
 
-// Item só pode entrar em manutenção se a tabela dele estiver em MANUTENCAO_TABLE_NAMES — não
-// depende mais de um flag por item.
-export const itemPossuiManutencao = (row: ManutencaoRow): boolean =>
-  MANUTENCAO_TABLE_NAMES.includes(row.tableName);
+// Item só pode entrar em manutenção se a tabela dele estiver em MANUTENCAO_TABLE_NAMES. Para
+// tabelas com a coluna "possuiManutencao" (hoje só EPI/EPC — nem todo EPI tem manutenção, ex.:
+// luva descartável), o flag por item manda: só "Sim" habilita. Tabelas sem essa coluna mantêm
+// o comportamento antigo (elegível só por estar na lista, sem flag por item).
+export const itemPossuiManutencao = (row: ManutencaoRow): boolean => {
+  if (!MANUTENCAO_TABLE_NAMES.includes(row.tableName)) return false;
+  if (row.values && 'possuiManutencao' in row.values) {
+    return normalizeKeyLocal(row.values.possuiManutencao || '') === 'sim';
+  }
+  return true;
+};
 
 // Mesma regra usada em EstoqueView (isNegativeStatus): qualquer status contendo "manut".
 export const itemEstaEmManutencao = (row: ManutencaoRow): boolean =>
@@ -86,7 +94,7 @@ export const nomeDoItemManutencao = (row: ManutencaoRow): string =>
   row.values?.fornecedor || row.values?.descricao || row.id;
 
 export const patrimonioDoItem = (row: ManutencaoRow): string =>
-  row.values?.patrimonio || row.values?.numeroSerial || row.values?.tag || '';
+  row.values?.patrimonio || row.values?.numeroSerial || row.values?.tag || row.values?.ca || '';
 
 export const gerarIdManutencao = (): string =>
   `MAN-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -287,8 +295,16 @@ export function EntradaManutencaoModal({ row, categoriaLabel, numeroManutencao, 
               className="block w-full text-xs text-white/70 file:mr-3 file:rounded-lg file:border-0 file:bg-amber-500/20 file:px-3 file:py-2 file:text-[11px] file:font-bold file:uppercase file:text-amber-200"
             />
             {previewUrl && (
-              <div className="mt-3 overflow-hidden rounded-lg border border-white/10">
+              <div className="relative mt-3 overflow-hidden rounded-lg border border-white/10">
                 <img src={previewUrl} alt="Prévia da foto de entrada" className="h-32 w-full object-cover" />
+                <button
+                  type="button"
+                  onClick={() => escolherFoto(null)}
+                  className="absolute right-2 top-2 rounded-full bg-black/70 p-1 text-white/80 transition hover:bg-black/90 hover:text-white"
+                  title="Remover foto"
+                >
+                  <X size={14} />
+                </button>
               </div>
             )}
           </div>
@@ -439,8 +455,16 @@ export function SaidaManutencaoModal({ itemLabel, onClose, onConfirm, uploadVinc
               className="block w-full text-xs text-white/70 file:mr-3 file:rounded-lg file:border-0 file:bg-emerald-500/20 file:px-3 file:py-2 file:text-[11px] file:font-bold file:uppercase file:text-emerald-200"
             />
             {previewUrl && (
-              <div className="mt-3 overflow-hidden rounded-lg border border-white/10">
+              <div className="relative mt-3 overflow-hidden rounded-lg border border-white/10">
                 <img src={previewUrl} alt="Prévia da foto de saída" className="h-32 w-full object-cover" />
+                <button
+                  type="button"
+                  onClick={() => escolherFoto(null)}
+                  className="absolute right-2 top-2 rounded-full bg-black/70 p-1 text-white/80 transition hover:bg-black/90 hover:text-white"
+                  title="Remover foto"
+                >
+                  <X size={14} />
+                </button>
               </div>
             )}
           </div>

@@ -18,14 +18,14 @@ function eventosDe(r: FinRecord): Evento[] {
   const ev: Evento[] = [];
   switch (r.tipo) {
     case 'solicitacao':
-      ev.push({ id: `${r.id}-c`, date: base, title: 'Solicitação criada', detail: `${r.fornecedor || ''} • ${money(num(r.valor))}`, autor: r.solicitante || 'Setor', tone: 'info' });
+      ev.push({ id: `${r.id}-c`, date: base, title: 'Solicitação criada', detail: `${r.fornecedor || ''} • ${money(num(r.valor))}${r.departamentoPagamento ? ` • ${r.departamentoPagamento}` : ''}`, autor: r.solicitante || 'Setor', tone: 'info' });
       if (r.status === 'Aprovado') ev.push({ id: `${r.id}-a`, date: base, title: 'Solicitação aprovada → Conta a Pagar', detail: `${r.id}`, autor: 'Financeiro', tone: 'ok' });
       if (r.status === 'Reprovado') ev.push({ id: `${r.id}-r`, date: base, title: 'Solicitação reprovada', detail: `${r.id}`, autor: 'Financeiro', tone: 'bad' });
       break;
     case 'contaPagar':
       ev.push({ id: `${r.id}-c`, date: base, title: 'Conta a pagar criada', detail: `${r.fornecedor || ''} • ${money(num(r.valor))}`, autor: 'Financeiro', tone: 'wait' });
       if (r.status === 'Pago') {
-        ev.push({ id: `${r.id}-p`, date: r.dataPagamento || base, title: 'Pagamento realizado', detail: `${money(num(r.valorPago))} • banco ${r.banco || '—'}`, autor: 'Financeiro', tone: 'ok' });
+        ev.push({ id: `${r.id}-p`, date: r.dataPagamento || base, title: 'Pagamento realizado', detail: `${money(num(r.valorPago))} • banco ${r.banco || '—'}${r.departamentoPagamento ? ` • ${r.departamentoPagamento}` : ''}`, autor: 'Financeiro', tone: 'ok' });
         if (num(r.jurosPago) > 0) ev.push({ id: `${r.id}-j`, date: r.dataPagamento || base, title: 'Juros informados', detail: `${money(num(r.jurosPago))}${r.motivoJuros ? ` • ${r.motivoJuros}` : ''}`, autor: 'Financeiro', tone: 'bad' });
         if ((r.comprovantes || []).length) ev.push({ id: `${r.id}-cp`, date: r.dataPagamento || base, title: 'Comprovante anexado', detail: (r.comprovantes as string[]).join(', '), autor: 'Financeiro', tone: 'neutral' });
       }

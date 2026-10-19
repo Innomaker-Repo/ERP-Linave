@@ -3336,18 +3336,40 @@ const obrasOrdenadas = useMemo(() => {
                             />
                           </div>
                         </div>
-                        <label className="mt-3 flex items-center justify-between gap-3 border border-dashed border-white/20 rounded-lg px-3 py-2.5 cursor-pointer hover:border-blue-400/50 transition">
-                          <span className="text-xs text-white/70 font-semibold">
-                            {card.tipo === 'orcamento' ? 'Anexar Orçamento Feito' : 'Anexar Proposta Feita'}
-                          </span>
-                          <span className="text-[11px] text-white/40 truncate max-w-[140px]">{card.arquivo?.nome || 'Nenhum arquivo'}</span>
-                          <input
-                            type="file"
-                            className="hidden"
-                            accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
-                            onChange={e => handleSelecionarArquivoImportarOs(card.tipo, e.target.files?.[0] || null)}
-                          />
-                        </label>
+                        {card.arquivo ? (
+                          <div className="mt-3 flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/5 py-2 pl-3 pr-1.5">
+                            <a
+                              href={card.arquivo.file ? URL.createObjectURL(card.arquivo.file) : undefined}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="min-w-0 truncate text-xs text-blue-300 hover:text-blue-200 hover:underline"
+                              title="Abrir em nova aba"
+                            >
+                              {card.arquivo.nome}
+                            </a>
+                            <button
+                              type="button"
+                              onClick={() => handleSelecionarArquivoImportarOs(card.tipo, null)}
+                              className="shrink-0 rounded-full p-1 text-white/40 transition-colors hover:bg-red-500/20 hover:text-red-300"
+                              title="Remover anexo"
+                            >
+                              <X size={13} />
+                            </button>
+                          </div>
+                        ) : (
+                          <label className="mt-3 flex items-center justify-between gap-3 border border-dashed border-white/20 rounded-lg px-3 py-2.5 cursor-pointer hover:border-blue-400/50 transition">
+                            <span className="text-xs text-white/70 font-semibold">
+                              {card.tipo === 'orcamento' ? 'Anexar Orçamento Feito' : 'Anexar Proposta Feita'}
+                            </span>
+                            <span className="text-[11px] text-white/40">Nenhum arquivo</span>
+                            <input
+                              type="file"
+                              className="hidden"
+                              accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+                              onChange={e => handleSelecionarArquivoImportarOs(card.tipo, e.target.files?.[0] || null)}
+                            />
+                          </label>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -3856,12 +3878,20 @@ const obrasOrdenadas = useMemo(() => {
                           <p className="text-white text-sm font-bold truncate">{doc.nome}</p>
                           <p className="text-white/40 text-xs">{formatFileSize(doc.tamanho)} • {new Date(doc.dataUpload).toLocaleDateString('pt-BR')}</p>
                         </div>
-                        <button
-                          onClick={() => handleRemoverDocumentoNegocio(doc.id)}
-                          className="px-3 py-1.5 rounded-lg bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300 text-xs font-black uppercase transition"
-                        >
-                          Remover
-                        </button>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            onClick={() => handleVerDocumentoNegocio(doc)}
+                            className="px-3 py-1.5 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/40 text-blue-300 text-xs font-black uppercase transition"
+                          >
+                            <Eye size={14} className="inline mr-1" /> Ver
+                          </button>
+                          <button
+                            onClick={() => handleRemoverDocumentoNegocio(doc.id)}
+                            className="px-3 py-1.5 rounded-lg bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300 text-xs font-black uppercase transition"
+                          >
+                            Remover
+                          </button>
+                        </div>
                       </div>
                     ))
                   ) : (

@@ -354,7 +354,7 @@ export function useFin() {
   // recalcula a conta mãe — quando todas as filhas estão pagas, a mãe vira "Pago".
   const pagarConta = async (
     id: string,
-    p: { dataPagamento: string; valorPago: number; banco: string; houveJuros: boolean; jurosPago: number; motivoJuros: string; comprovantes: string[] },
+    p: { dataPagamento: string; valorPago: number; banco: string; houveJuros: boolean; jurosPago: number; motivoJuros: string; comprovantes: string[]; departamentoPagamento: string; vinculoTipo?: string; vinculoValor?: string },
   ) => {
     return comFinanceiroAtual(async (listaAtual) => {
       let parentId: string | null = null;
@@ -371,6 +371,9 @@ export function useFin() {
           jurosPago: p.jurosPago,
           motivoJuros: p.motivoJuros,
           comprovantes: p.comprovantes,
+          departamentoPagamento: p.departamentoPagamento,
+          ...(p.vinculoTipo ? { vinculoTipo: p.vinculoTipo } : {}),
+          vinculoValor: p.vinculoValor ?? r.vinculoValor,
         };
       });
 
