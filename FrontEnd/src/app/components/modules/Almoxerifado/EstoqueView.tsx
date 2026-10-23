@@ -1120,10 +1120,21 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     toast.success(`Planilha gerada com ${visibleRows.length} item(ns).`);
   };
 
+  // Modo "public" (Consulta ao Estoque) é só leitura, então lê direto do estoque do contexto
+  // em vez da cópia local `tables` — essa tela não escreve nada, então não precisa (nem deve)
+  // herdar a trava de "hidrata uma vez só" que a tela de cadastro usa pra não se auto-sobrepor.
+  // Lendo do contexto, a Consulta acompanha o que o ErpContext já busca sozinho a cada 45s/foco
+  // de aba, sem precisar de F5 pra ver o que outra pessoa cadastrou enquanto a tela já estava
+  // aberta (antes, `tables` local congelava no que a tela tinha ao abrir e nunca mais mudava).
+  const publicSourceTables: StockTable[] = useMemo(() => {
+    if (mode !== 'public') return tables;
+    return Array.isArray(almoxerifado?.tables) ? almoxerifado.tables : [];
+  }, [mode, tables, almoxerifado]);
+
   const publicRows = useMemo(() => {
     const query = publicSearch.toLowerCase().trim();
 
-    return tables.flatMap((table) => table.rows.filter((row) => {
+    return publicSourceTables.flatMap((table) => (table.rows || []).filter((row) => {
       if (!query) return true;
 
       const searchableName = [
@@ -1138,7 +1149,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
 
       return searchableName.includes(query);
     }).map((row) => ({ ...row, tableName: table.name })));
-  }, [publicSearch, tables]);
+  }, [publicSearch, publicSourceTables]);
 
   const currentRegisterTable = useMemo(
     () => tables.find((table) => table.name === registerTableName) || tables[0],
