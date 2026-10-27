@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { getClientes, createCliente, updateCliente, deleteCliente as deleteClienteApi, getNegocios, getOrdensServico } from '../../services/comercialService';
 import { mapNegociosToObras, mapOrdensToOs } from '../../services/obrasMapper';
 import { pularNumerosReservados } from '../../services/numeroSequencial';
@@ -984,6 +984,14 @@ interface ErpContextData {
   saveFornecedor: (fornecedor: any) => Promise<any>;
   deleteFornecedor: (id: any) => Promise<void>;
   refreshMedicoes: () => Promise<any[]>;
+  // Re-hidrata todas as coleções do backend (mesmo fetch usado no polling de 45s/foco de
+  // aba) sem recarregar a página — usada pelo botão "Atualizar" do Header. Retorna false se a
+  // busca falhar (ex.: rede caiu), pra quem chamou poder avisar o usuário. Diferente do
+  // polling automático, também avança `manualRefreshTick` (ver abaixo).
+  refreshWorkspace: () => Promise<boolean>;
+  // Contador que só sobe numa chamada explícita de `refreshWorkspace` (nunca no polling
+  // automático) — ver comentário na declaração do estado, acima da função `hydrateWorkspace`.
+  manualRefreshTick: number;
   uploadFileToDrive: (file: File) => Promise<string | null>;
   pendingEditSolicitacaoId: string | null;
   setPendingEditSolicitacaoId: (id: string | null) => void;
@@ -1029,63 +1037,76 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     void checkTokens();
   }, []);
 
-  useEffect(() => {
-    let mounted = true;
-    // Evita rodar hidratações sobrepostas (ex.: o intervalo dispara bem na hora em que
-    // a aba também ganhou foco) — a mais nova espera a anterior terminar em vez de
-    // empilhar requisições redundantes.
-    let emAndamento = false;
+  // Ref (não state) pra não recriar `hydrateWorkspace` a cada render — o efeito abaixo
+  // depende dela via closure estável. `montadoRef` evita setState depois que o provider
+  // desmontar (logout/troca de sessão); `emAndamentoRef` evita hidratações sobrepostas (ex.:
+  // o intervalo de 45s disparar bem na hora em que a aba também ganhou foco, ou o usuário
+  // clicar "Atualizar" duas vezes).
+  const montadoRef = useRef(true);
+  const emAndamentoRef = useRef(false);
 
-    const hydrateWorkspace = async () => {
-      if (emAndamento) return;
-      emAndamento = true;
-      // Todos os dados vêm do SQL (sem blob de workspace). O estado já inicia com os
-      // defaults (createInitialData(null)); aqui só hidratamos as coleções do backend.
-      try {
-        const [backendClientes, backendFornecedores, backendFinanceiro, backendCompras, backendAlmox, backendNegocios, backendOrdens, backendConfiguracoes, backendMedicoes] = await Promise.all([
-          getClientes(),
-          getFornecedores(),
-          getFinanceiro(),
-          getCompras(),
-          getAlmoxarifado(),
-          getNegocios(),
-          getOrdensServico(),
-          getConfiguracoes(),
-          getMedicoes(),
-        ]);
-        if (!mounted) return;
-        const clientesMapa: Record<string, string> = {};
-        (Array.isArray(backendClientes) ? backendClientes : []).forEach((c: any) => {
-          clientesMapa[String(c.id)] = c.razaoSocial || c.razao_social || '';
-        });
-        const obrasFromSql = mapNegociosToObras(backendNegocios, clientesMapa);
-        const osFromSql = mapOrdensToOs(backendOrdens);
-        setData((prevData: any) => ({
-          ...prevData,
-          clientes: backendClientes,
-          fornecedores: backendFornecedores,
-          financeiro: backendFinanceiro,
-          compras: backendCompras.compras,
-          comprasHistorico: backendCompras.comprasHistorico,
-          almoxerifado: backendAlmox ?? prevData.almoxerifado,
-          obras: obrasFromSql,
-          os: osFromSql,
-          medicoes: backendMedicoes,
-          // config/listas: usa o que vier do SQL; senão mantém os defaults já carregados.
-          config: backendConfiguracoes.config ?? prevData.config,
-          listas: backendConfiguracoes.listas ?? prevData.listas,
-        }));
-      } catch (error) {
-        console.error('Erro ao carregar dados SQL (clientes/fornecedores/financeiro/compras)', error);
-      } finally {
-        emAndamento = false;
-        if (mounted) {
-          // Idempotente nas re-hidratações em segundo plano (loading já é false) — só
-          // encerra de fato a tela de carregamento na primeira chamada, no login.
-          setLoading(false);
-        }
+  // Incrementa só quando o usuário pede explicitamente (botão "Atualizar" do Header, via
+  // `refreshWorkspace` abaixo) — nunca nas re-hidratações automáticas (foco/45s). Telas que
+  // espelham o estado localmente pra proteger edição em andamento (ex.: EstoqueView.tsx) usam
+  // isso como sinal pra, só nesse caso, aceitar que o usuário QUER descartar o que está vendo
+  // e puxar a cópia atual do servidor por cima.
+  const [manualRefreshTick, setManualRefreshTick] = useState(0);
+
+  const hydrateWorkspace = useCallback(async (): Promise<boolean> => {
+    if (emAndamentoRef.current) return false;
+    emAndamentoRef.current = true;
+    // Todos os dados vêm do SQL (sem blob de workspace). O estado já inicia com os
+    // defaults (createInitialData(null)); aqui só hidratamos as coleções do backend.
+    try {
+      const [backendClientes, backendFornecedores, backendFinanceiro, backendCompras, backendAlmox, backendNegocios, backendOrdens, backendConfiguracoes, backendMedicoes] = await Promise.all([
+        getClientes(),
+        getFornecedores(),
+        getFinanceiro(),
+        getCompras(),
+        getAlmoxarifado(),
+        getNegocios(),
+        getOrdensServico(),
+        getConfiguracoes(),
+        getMedicoes(),
+      ]);
+      if (!montadoRef.current) return false;
+      const clientesMapa: Record<string, string> = {};
+      (Array.isArray(backendClientes) ? backendClientes : []).forEach((c: any) => {
+        clientesMapa[String(c.id)] = c.razaoSocial || c.razao_social || '';
+      });
+      const obrasFromSql = mapNegociosToObras(backendNegocios, clientesMapa);
+      const osFromSql = mapOrdensToOs(backendOrdens);
+      setData((prevData: any) => ({
+        ...prevData,
+        clientes: backendClientes,
+        fornecedores: backendFornecedores,
+        financeiro: backendFinanceiro,
+        compras: backendCompras.compras,
+        comprasHistorico: backendCompras.comprasHistorico,
+        almoxerifado: backendAlmox ?? prevData.almoxerifado,
+        obras: obrasFromSql,
+        os: osFromSql,
+        medicoes: backendMedicoes,
+        // config/listas: usa o que vier do SQL; senão mantém os defaults já carregados.
+        config: backendConfiguracoes.config ?? prevData.config,
+        listas: backendConfiguracoes.listas ?? prevData.listas,
+      }));
+      return true;
+    } catch (error) {
+      console.error('Erro ao carregar dados SQL (clientes/fornecedores/financeiro/compras)', error);
+      return false;
+    } finally {
+      emAndamentoRef.current = false;
+      if (montadoRef.current) {
+        // Idempotente nas re-hidratações em segundo plano (loading já é false) — só
+        // encerra de fato a tela de carregamento na primeira chamada, no login.
+        setLoading(false);
       }
-    };
+    }
+  }, []);
+
+  useEffect(() => {
+    montadoRef.current = true;
 
     // Só hidrata com sessão ativa. A API agora exige autenticação (antes respondia
     // AllowAny), então hidratar deslogado dispararia 401 em todas as coleções e o
@@ -1093,7 +1114,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     // recarregamento na própria tela de login.
     if (!userSession) {
       setLoading(false);
-      return () => { mounted = false; };
+      return () => { montadoRef.current = false; };
     }
 
     void hydrateWorkspace();
@@ -1105,7 +1126,9 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     // almoxarifado, clientes/fornecedores):
     //  - ao voltar o foco na aba (trocou de aba/app e retornou);
     //  - a cada 45s enquanto a aba estiver visível, pro caso comum de ficar com a aba
-    //    aberta e em foco por muito tempo vendo outro usuário mexer nos mesmos dados.
+    //    aberta e em foco por muito tempo vendo outro usuário mexer nos mesmos dados;
+    //  - sob demanda, pelo botão "Atualizar" do Header (via `refreshWorkspace`, que chama
+    //    esta mesma função e também avança `manualRefreshTick` — ver mais acima).
     // Isso não é tempo real (pra isso precisaria de WebSocket/Channels no backend
     // avisando o frontend na hora), mas fecha a maior parte do "só atualiza com F5".
     const refetchSeVisivel = () => {
@@ -1115,11 +1138,11 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     const intervalId = window.setInterval(refetchSeVisivel, 45000);
 
     return () => {
-      mounted = false;
+      montadoRef.current = false;
       window.removeEventListener('focus', refetchSeVisivel);
       window.clearInterval(intervalId);
     };
-  }, [userSession?.email]);
+  }, [userSession?.email, hydrateWorkspace]);
 
   // Tempo real (WebSocket) — ver docs/backlog/tempo-real-websockets.md. O backend só
   // avisa QUAL coleção mudou (ComercialApp/ws_notify.py); aqui busca só aquela coleção
@@ -1243,6 +1266,16 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
       console.error('Erro ao recarregar medições', error);
       return [];
     }
+  };
+
+  // Wrapper de `hydrateWorkspace` pra uso explícito (botão "Atualizar" do Header): além de
+  // buscar os dados de novo, avança `manualRefreshTick` quando dá certo — é esse avanço (não
+  // o polling automático) que telas como EstoqueView.tsx usam como permissão do usuário pra
+  // substituir o que elas têm em memória pelo que acabou de vir do servidor.
+  const refreshWorkspace = async (): Promise<boolean> => {
+    const ok = await hydrateWorkspace();
+    if (ok) setManualRefreshTick((t) => t + 1);
+    return ok;
   };
 
   const loginComGoogle = async (_token: string, _email: string) => {
@@ -1407,7 +1440,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
 
  
   return (
-    <ErpContext.Provider value={{ userSession, setUserSession, loading, loginComGoogle, loginDireto, logout, saveEntity, criarSolicitacaoFinanceiro, decidirSolicitacaoFinanceiro, saveListas, saveConfig, saveCliente, deleteCliente, saveFornecedor, deleteFornecedor, refreshMedicoes, uploadFileToDrive, pendingEditSolicitacaoId, setPendingEditSolicitacaoId, ...data }}>
+    <ErpContext.Provider value={{ userSession, setUserSession, loading, loginComGoogle, loginDireto, logout, saveEntity, criarSolicitacaoFinanceiro, decidirSolicitacaoFinanceiro, saveListas, saveConfig, saveCliente, deleteCliente, saveFornecedor, deleteFornecedor, refreshMedicoes, refreshWorkspace, manualRefreshTick, uploadFileToDrive, pendingEditSolicitacaoId, setPendingEditSolicitacaoId, ...data }}>
       {children}
     </ErpContext.Provider>
   );

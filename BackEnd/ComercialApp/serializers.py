@@ -606,6 +606,7 @@ class OrdemServicoSerializer(serializers.ModelSerializer):
     local = serializers.CharField(allow_blank=True, default='')
     supervisor_encarregado = serializers.CharField(allow_blank=True, default='')
     descricao_geral_servico = serializers.CharField(allow_blank=True, default='')
+    escopo_adicional = serializers.CharField(allow_blank=True, default='')
 
     cliente_id = serializers.PrimaryKeyRelatedField(
         queryset=Cliente.objects.all(),
@@ -629,7 +630,7 @@ class OrdemServicoSerializer(serializers.ModelSerializer):
             'negocio', 'negocio_id', 'negocio_detalhes',
             'projeto', 'equipamento', 'local', 'cc',
             'data_inicio_previsto', 'data_termino_previsto',
-            'supervisor_encarregado', 'descricao_geral_servico',
+            'supervisor_encarregado', 'descricao_geral_servico', 'escopo_adicional',
             'a_ser_incluido', 'mao_obra', 'horas_trabalhadas_servico',
             'status_os', 'status_envio', 'status_aprovacao',
             'fechada', 'data_fechamento',

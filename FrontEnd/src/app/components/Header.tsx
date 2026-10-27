@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useErp } from '../context/ErpContext';
-import { Search, UserCircle, LogOut, PanelLeft, Bell } from 'lucide-react';
+import { Search, UserCircle, LogOut, PanelLeft, Bell, RefreshCw } from 'lucide-react';
+import { toast } from 'sonner';
 import { useNotificacoes } from '../hooks/useNotificacoes';
 import { DEPARTMENTS, hasAccess } from '../navigation';
 
@@ -34,12 +35,28 @@ interface HeaderProps {
 }
 
 export function Header({ activeSection, searchQuery, setSearchQuery, onToggleSidebar, onNavigate }: HeaderProps) {
-  const { userSession, empresa, logout } = useErp();
+  const { userSession, empresa, logout, refreshWorkspace } = useErp();
   const { notificacoes, quantidadeNaoVista, marcarTodasVistas } = useNotificacoes();
   const [painelAberto, setPainelAberto] = useState(false);
   const painelRef = useRef<HTMLDivElement>(null);
   const [buscaAberta, setBuscaAberta] = useState(false);
   const buscaRef = useRef<HTMLDivElement>(null);
+  const [atualizando, setAtualizando] = useState(false);
+
+  // Busca os dados de novo do servidor sem recarregar a página (perde aba ativa, scroll,
+  // formulário aberto etc.) — mesma função que já roda sozinha a cada 45s/foco de aba
+  // (ErpContext.tsx), só que sob demanda. Não falla silenciosamente: avisa por toast.
+  const atualizarAgora = async () => {
+    if (atualizando) return;
+    setAtualizando(true);
+    try {
+      const ok = await refreshWorkspace?.();
+      if (ok) toast.success('Dados atualizados.');
+      else toast.error('Não foi possível atualizar agora. Verifique sua conexão e tente de novo.');
+    } finally {
+      setAtualizando(false);
+    }
+  };
 
   // Fecha o painel ao clicar fora dele.
   useEffect(() => {
@@ -116,6 +133,16 @@ export function Header({ activeSection, searchQuery, setSearchQuery, onToggleSid
         <h1 className="text-white font-black uppercase tracking-tighter text-xl">
           {activeSection === 'home' ? 'Início' : activeSection}
         </h1>
+
+        <button
+          onClick={atualizarAgora}
+          disabled={atualizando}
+          className="p-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-white/70 hover:text-white transition-all shrink-0 disabled:cursor-not-allowed disabled:opacity-50"
+          title="Atualizar dados desta página (sem recarregar o sistema)"
+          aria-label="Atualizar"
+        >
+          <RefreshCw size={16} className={atualizando ? 'animate-spin' : ''} />
+        </button>
 
         <div className="relative w-full max-w-md" ref={buscaRef}>
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20" size={18} />

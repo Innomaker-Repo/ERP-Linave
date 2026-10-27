@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
 import { comFinanceiroAtual } from '../../../../services/financeiroSeguro';
 import { comComprasAtual } from '../../../../services/comprasSeguro';
-import { formatNumeroOsDisplay } from '../../../../services/ordensServico';
+import { formatNumeroOsDisplay, getOsOptionValue, getOsStableValue } from '../../../../services/ordensServico';
 import { ArrowRight, Ban, Banknote, CalendarClock, CircleDollarSign, Eye, FileDown, Package, Pencil, Plus, Send, ShoppingCart, Split, Trash2, Users, X } from 'lucide-react';
 import {
   APPROVAL_LIMIT,
@@ -203,7 +203,7 @@ const calculateBudgetDetails = (
 };
 
 export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
-  const { userSession, fornecedores, compras, financeiro, config, saveEntity } = useErp() as any;
+  const { userSession, fornecedores, compras, financeiro, config, saveEntity, os, obras } = useErp() as any;
   const [requests, setRequests] = useState<RequisicaoCompra[]>(() => (Array.isArray(compras) ? compras : []));
   const [quoteModal, setQuoteModal] = useState<QuoteModalState>(null);
   const [quoteRows, setQuoteRows] = useState<Record<string, QuoteRowDraft[]>>({});
@@ -238,6 +238,20 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
       .filter(Boolean);
     return lista.length ? lista : ['Linave', 'Servinave'];
   }, [config]);
+
+  // Fallback de empresa pra `empresaFromCC` quando o centro de custo não tem prefixo
+  // reconhecível (caso das duas OS de uso interno, "1000"/"2000") — acha a OS pelo número e
+  // usa a `empresaPrestadora` do negócio vinculado (mesmo motivo/mesmo fix de
+  // Financeiro/finData.ts: sem isso, a 2000/Servinave sempre caía no padrão "Linave").
+  const empresaDaOsPorCentroCusto = (centroCusto: string): string | undefined => {
+    const alvo = String(centroCusto || '').trim();
+    if (!alvo) return undefined;
+    const osEncontrada = (Array.isArray(os) ? os : []).find((item: any) =>
+      String(getOsOptionValue(item)) === alvo || String(getOsStableValue(item)) === alvo
+    );
+    const obra = (Array.isArray(obras) ? obras : []).find((o: any) => o?.id === osEncontrada?.obraId);
+    return obra?.empresaPrestadora;
+  };
 
   const bancosOptions = useMemo<string[]>(
     () => (Array.isArray(financeiro) ? financeiro : []).filter((r: any) => r?.tipo === 'banco').map((b: any) => b.nome).filter(Boolean),
@@ -441,7 +455,7 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
     const isItem = (detail?.naturezaFornecimento || item.naturezaFornecimento) === 'ITEM';
 
     setBuyForm({
-      empresa: empresaFromCC(request.centroCusto, (empresasOptions[0] as Empresa) || 'Linave'),
+      empresa: empresaFromCC(request.centroCusto, (empresaDaOsPorCentroCusto(request.centroCusto) as Empresa) || (empresasOptions[0] as Empresa) || 'Linave'),
       fornecedor: detail?.fornecedorSelecionado || item.fornecedor || '',
       tipoPagamento: isItem ? 'Material' : 'Fornecedor',
       documento: '',
@@ -591,7 +605,7 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
   // do ERP (empresaFromCC a partir do prefixo da OS), com CNPJ/endereço/e-mail vindos do
   // cadastro em Configurações → Empresas Prestadoras (em branco se ainda não preenchido lá).
   const empresaCompradoraDados = (request: RequisicaoCompra): EmpresaCompradoraDados => {
-    const nomeEmpresa = empresaFromCC(request.centroCusto, (empresasOptions[0] as Empresa) || 'Linave');
+    const nomeEmpresa = empresaFromCC(request.centroCusto, (empresaDaOsPorCentroCusto(request.centroCusto) as Empresa) || (empresasOptions[0] as Empresa) || 'Linave');
     const cadastro = (config?.empresasPrestadoras || []).find(
       (e: any) => String(e?.nome || '').trim().toLowerCase() === String(nomeEmpresa).trim().toLowerCase(),
     );

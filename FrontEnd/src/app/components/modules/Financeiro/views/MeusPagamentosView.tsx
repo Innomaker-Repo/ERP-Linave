@@ -3,6 +3,7 @@ import { CheckCircle2, Clock3, FilePlus, Paperclip, Pencil, Search, Users, Walle
 import { useErp } from '../../../../context/ErpContext';
 import { useFinNavigate, FIN_SECTIONS } from '../finNav';
 import { matchesSolicitante, money, num, br, type FaturadoParcela } from '../finData';
+import { formatNumeroOsDisplay } from '../../../../../services/ordensServico';
 
 // Documentos anexados na solicitação (NF, boleto, recibo...) precisam continuar acessíveis
 // daqui — este é o único lugar onde o colaborador comum (sem acesso a Aprovações/Contas a
@@ -304,7 +305,7 @@ export function MeusPagamentosView() {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-amber-200">
-                        {r.vinculoValor ? `OS: ${r.vinculoValor}` : 'Sem OS'}
+                        {r.vinculoValor ? `OS: ${formatNumeroOsDisplay(r.vinculoValor)}` : 'Sem OS'}
                       </span>
                       <span className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-widest ${statusTone(r.status || 'Aguardando aprovação')}`}>
                         {r.status || 'Aguardando aprovação'}
@@ -365,7 +366,7 @@ export function MeusPagamentosView() {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-emerald-200">
-                        {r.vinculoValor ? `OS: ${r.vinculoValor}` : 'Sem OS'}
+                        {r.vinculoValor ? `OS: ${formatNumeroOsDisplay(r.vinculoValor)}` : 'Sem OS'}
                       </span>
                       <span className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-widest ${pagoTone(r.contaPagar?.status || 'Aberto')}`}>
                         {r.contaPagar?.status === 'Pago' ? 'Pago' : 'Aguardando pagamento'}

@@ -18,6 +18,7 @@ import {
   type ManutencaoHistoricoItem,
 } from './manutencaoShared';
 import { comAlmoxarifadoAtual } from '../../../../services/almoxarifadoSeguro';
+import { getLogoUrlForEmpresa } from '../../../utils/company';
 
 interface StockColumn {
   key: string;
@@ -625,7 +626,7 @@ const createRegisterValues = (table?: StockTable, baseValues: Record<string, str
 };
 
 export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
-  const { os, obras, almoxerifado, saveEntity, loading } = useErp();
+  const { os, obras, almoxerifado, saveEntity, loading, manualRefreshTick } = useErp();
 
   // Rótulo EXIBIDO da OS: "<número> — <embarcação>" (padrão do ERP). Só para a interface —
   // `getOsOptionLabel` continua sendo a identidade usada para casar/gravar valores, então
@@ -640,6 +641,12 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   // que acabou de ler (ou, numa corrida em que o contexto ainda não tinha entregue os dados
   // reais, uma cópia incompleta), o que já causou perda de dados real no Almoxarifado.
   const skipNextAutoSave = useRef(false);
+  // Último `manualRefreshTick` (ErpContext) já processado — quando o valor muda, é porque o
+  // usuário clicou "Atualizar" no Header, e é o único caso em que vale a pena substituir
+  // `tables`/etc. já hidratados pela cópia fresca do servidor (ver efeito de hidratação
+  // abaixo). Fora isso, essa tela nunca se resincroniza sozinha depois da primeira carga —
+  // de propósito, pra não apagar um cadastro em andamento.
+  const ultimoRefreshTickProcessado = useRef(manualRefreshTick);
   const [ordensServicoBackend, setOrdensServicoBackend] = useState<OrdemServicoResumo[]>([]);
   const [publicSearch, setPublicSearch] = useState<string>(searchQuery || '');
 
@@ -778,7 +785,20 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   }, [isEquipAllocateModalOpen, availableOS, os]);
 
   useEffect(() => {
-    if (loading || hasHydratedPersistedState.current) return;
+    // Refresh manual (botão "Atualizar" do Header) é a ÚNICA exceção à trava de "só hidrata
+    // uma vez": o usuário pediu explicitamente, então aceita a cópia do servidor por cima do
+    // que esta tela já tinha. Com o formulário de cadastro aberto, melhor não — substituir
+    // `tables` por baixo de um cadastro em andamento pode descasar `registerValues` da linha
+    // sendo editada, então nesse caso só avisa e deixa pra próxima vez.
+    const pediuRefreshManual = manualRefreshTick !== ultimoRefreshTickProcessado.current;
+    if (pediuRefreshManual && isRegisterOpen) {
+      toast.error('Feche o formulário de cadastro antes de atualizar os dados desta tela.');
+      ultimoRefreshTickProcessado.current = manualRefreshTick;
+      return;
+    }
+
+    if (loading || (hasHydratedPersistedState.current && !pediuRefreshManual)) return;
+    ultimoRefreshTickProcessado.current = manualRefreshTick;
 
     if (almoxerifado && typeof almoxerifado === 'object') {
       if (Array.isArray(almoxerifado.tables)) {
@@ -837,7 +857,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     }
 
     hasHydratedPersistedState.current = true;
-  }, [loading, almoxerifado]);
+  }, [loading, almoxerifado, manualRefreshTick, isRegisterOpen]);
 
   useEffect(() => {
     if (!hasHydratedPersistedState.current) return;
@@ -1053,7 +1073,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
 
       const matchesQuery = !query || (() => {
       const matchesColumns = visibleColumns.some((column) => valorDaCelula(row.values, column.key).toLowerCase().includes(query));
-      return matchesColumns || row.searchText.includes(query);
+      return matchesColumns || (row.searchText || '').includes(query);
       })();
 
       const matchesStatusFilter = !selectedStatusFilter || normalizeStatus(row.values.status) === selectedStatusFilter;
@@ -2266,7 +2286,19 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     const pesoTotalRomaneio = itemsPdf.reduce((soma, it) => soma + (Number(it.peso) || 0), 0);
 
     try {
-      const logoBase64 = await loadRomaneioLogoBase64();
+      // Logo do romaneio: segue a empresa da OS (prefixo VTS/SN = Servinave, LN = Linave — mesma
+      // convenção usada em todo o resto do ERP). O logoBase64 era buscado sem argumento nenhum
+      // antes (sempre o logo da Linave), então o romaneio de uma OS da Servinave sempre saía com
+      // o logo errado. Sem prefixo reconhecível (ex.: as duas OS de uso interno), cai pro
+      // empresaPrestadora do negócio vinculado.
+      const numeroOsUpper = String(romaneioOsId || '').trim().toUpperCase();
+      const obraDaOs = (Array.isArray(obras) ? obras : []).find((o: any) => o?.id === (selectedOs as any)?.obraId);
+      const empresaDoRomaneio = numeroOsUpper.startsWith('VTS') || numeroOsUpper.startsWith('SN')
+        ? 'Servinave'
+        : numeroOsUpper.startsWith('LN')
+          ? 'Linave'
+          : (obraDaOs?.empresaPrestadora || (selectedOs as any)?.negocio_detalhes?.empresa_prestadora || (selectedOs as any)?.empresa_prestadora || 'Linave');
+      const logoBase64 = await loadRomaneioLogoBase64(getLogoUrlForEmpresa(empresaDoRomaneio));
       const doc = gerarRomaneioPdf({
         cliente: resultado.osCliente,
         osLabel: effectiveOsLabel,
@@ -3515,7 +3547,10 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                                   min={1}
                                   max={estoque || undefined}
                                   value={qtdBaixa}
-                                  placeholder={String(estoque || '')}
+                                  // Dica "0" (não o estoque disponível): deixado em branco, é
+                                  // exatamente 0 que sai no romaneio (romaneioQtyForRow acima) —
+                                  // mostrar o estoque aqui sugeria, errado, que ele sairia inteiro.
+                                  placeholder="0"
                                   onChange={(e) => setRomaneioQuantities((prev) => ({ ...prev, [key]: e.target.value }))}
                                   className="h-9 w-20 rounded-lg border border-white/10 bg-[#0b1220]/80 px-2 text-center text-sm text-white placeholder:text-white/30 focus:border-amber-500/40 focus:outline-none"
                                 />

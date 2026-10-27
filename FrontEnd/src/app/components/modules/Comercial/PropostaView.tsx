@@ -5,6 +5,7 @@ import { Plus, X, FileText, CheckCircle, XCircle, ArrowLeft, Save, Download, Ref
 import { handleDownloadPropostaPDF } from '../CRM/handleDownloadPropostaPDF';
 import { handleDownloadOrcamentoPDF } from '../CRM/handleDownloadOrcamentoPDF';
 import { isEmpresaLinave, getLogoUrlForEmpresa } from '../../../utils/company';
+import { MoneyInput } from '../Financeiro/finUi';
 import PizZip from 'pizzip';
 import Docxtemplater from 'docxtemplater';
 import { saveAs } from 'file-saver';
@@ -534,7 +535,7 @@ export function PropostaView() {
                   <td className="px-3 py-2 min-w-[200px]"><input type="text" className={cellInput} value={it.descricao || ''} onChange={(e) => atualizarPrecoItem(it.id, 'descricao', e.target.value)} placeholder="Descrição" /></td>
                   {colunaVisivel('quantidade') && <td className="px-3 py-2"><input type="number" min="0" className={cellInput} value={String(it.quantidade ?? '')} onChange={(e) => atualizarPrecoItem(it.id, 'quantidade', e.target.value)} /></td>}
                   {colunaVisivel('unidade') && <td className="px-3 py-2"><input type="text" className={cellInput} value={it.unidade || ''} onChange={(e) => atualizarPrecoItem(it.id, 'unidade', e.target.value)} placeholder="serv." /></td>}
-                  <td className="px-3 py-2"><input type="text" className={cellInput} value={String(it.valorUnitario ?? '')} onChange={(e) => atualizarPrecoItem(it.id, 'valorUnitario', e.target.value)} placeholder="0,00" /></td>
+                  <td className="px-3 py-2"><MoneyInput bare className={cellInput} value={it.valorUnitario} onChange={(valorCru) => atualizarPrecoItem(it.id, 'valorUnitario', valorCru)} placeholder="0,00" /></td>
                   {colunaVisivel('dias') && <td className="px-3 py-2"><input type="number" min="0" className={cellInput} value={String(it.dias ?? '')} onChange={(e) => atualizarPrecoItem(it.id, 'dias', e.target.value)} /></td>}
                   <td className="px-3 py-2 text-white font-black whitespace-nowrap">R$ {(Number(it.total) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                   <td className="px-3 py-2 text-center"><button type="button" onClick={() => removerPrecoItem(it.id)} className="text-red-300 p-1"><X size={14} /></button></td>

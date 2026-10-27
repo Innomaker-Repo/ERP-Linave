@@ -8,6 +8,7 @@ import {
 } from '../finData';
 import { useFin } from '../useFin';
 import { uploadDocumento } from '../../../../../services/documentosService';
+import { formatNumeroOsDisplay } from '../../../../../services/ordensServico';
 import { toast } from 'sonner';
 
 const fornecedorNome = (f: any) =>
@@ -421,7 +422,7 @@ export function SolicitacaoView() {
           <Field label={boldOS('OS emitida')} span={3}>
             <Select value={form.vinculoValor} onChange={(e) => set('vinculoValor', e.target.value)}>
               <option value="">{oss.length ? 'Selecione...' : 'Nenhuma OS no ERP'}</option>
-              {oss.map((o, i) => <option key={`${o.numero}-${i}`} value={o.numero}>{o.numero} - {o.cliente}</option>)}
+              {oss.map((o, i) => <option key={`${o.numero}-${i}`} value={o.numero}>{formatNumeroOsDisplay(o.numero)} - {o.cliente}</option>)}
             </Select>
           </Field>
           <Field label="Departamento" span={3}>

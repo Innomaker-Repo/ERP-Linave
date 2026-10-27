@@ -4,8 +4,8 @@ import api from './api';
  * Serviço de Fornecedores (tabela SQL `comercialapp_fornecedor`).
  * Traduz entre o shape camelCase usado no frontend e o snake_case do backend,
  * preservando exatamente os campos que as telas já consomem
- * (razaoSocial, cnpj, contato, endereco, status, tipo, descricaoEstadual,
- *  naturezaFornecimento, criadoPor, criadoEm).
+ * (razaoSocial, cnpj, contato, endereco, cep, cidade, uf, banco, agencia, conta,
+ *  status, tipo, descricaoEstadual, naturezaFornecimento, criadoPor, criadoEm).
  */
 
 const resolveNatureza = (tipo?: string, natureza?: string) => {
@@ -19,6 +19,12 @@ const mapFromApi = (f: any) => ({
   cnpj: f.documento || '',
   contato: f.contato || '',
   endereco: f.endereco || '',
+  cep: f.cep || '',
+  cidade: f.cidade || '',
+  uf: f.uf || '',
+  banco: f.banco || '',
+  agencia: f.agencia || '',
+  conta: f.conta || '',
   status: f.status || 'Ativo',
   tipo: f.tipo || 'Serviços',
   descricaoEstadual: f.descricao_estadual || '',
@@ -32,6 +38,12 @@ const mapToApi = (f: any) => ({
   documento: f.cnpj || '',
   contato: f.contato || '',
   endereco: f.endereco || '',
+  cep: f.cep || '',
+  cidade: f.cidade || '',
+  uf: f.uf || '',
+  banco: f.banco || '',
+  agencia: f.agencia || '',
+  conta: f.conta || '',
   status: f.status || 'Ativo',
   tipo: f.tipo || 'Serviços',
   descricao_estadual: f.descricaoEstadual || '',

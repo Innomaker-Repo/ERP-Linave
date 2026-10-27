@@ -4,6 +4,7 @@ import { br, isOld, money } from '../finData';
 import { useFin } from '../useFin';
 import { useFinFilters } from '../finFilters';
 import { useErp } from '../../../../context/ErpContext';
+import { formatNumeroOsDisplay } from '../../../../../services/ordensServico';
 
 // Leitura real: previsão derivada das OS em aberto/andamento (não vem da NFe).
 export function PrevisaoView() {
@@ -56,7 +57,7 @@ export function PrevisaoView() {
               <Td className={venceu ? 'font-bold text-rose-300' : ''}>{br(o.dataTermino)}</Td>
               <Td><CompanyTag empresa={o.empresa} /></Td>
               <Td className="text-white">{o.cliente}</Td>
-              <Td className="font-black text-white">{o.numero}</Td>
+              <Td className="font-black text-white">{formatNumeroOsDisplay(o.numero)}</Td>
               <Td className="max-w-[320px] truncate text-white/60">{o.descricao || '-'}</Td>
               <Td className="font-bold text-white">{money(o.valor)}</Td>
               <Td className="font-bold text-emerald-300">{realizado > 0 ? money(realizado) : <span className="text-white/30">—</span>}</Td>

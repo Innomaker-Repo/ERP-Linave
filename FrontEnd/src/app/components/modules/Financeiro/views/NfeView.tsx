@@ -12,6 +12,7 @@ import { useFin } from '../useFin';
 import { useFinFilters } from '../finFilters';
 import { useErp } from '../../../../context/ErpContext';
 import { uploadDocumento } from '../../../../../services/documentosService';
+import { formatNumeroOsDisplay } from '../../../../../services/ordensServico';
 import { ReciboLocacaoFormModal, formInicialRecibo, linhaItem, totalDoRecibo } from './ReciboLocacaoFormModal';
 import { temServico, temLocacao } from '../../../../utils/modalidade';
 import { toast } from 'sonner';
@@ -538,7 +539,7 @@ export function NfeView() {
           return (
           <tr key={r.id} className={`transition-colors hover:bg-white/5 ${semNumero ? 'bg-amber-500/[0.06]' : ''}`}>
             <Td className="font-black text-white">{r.id}</Td>
-            <Td>{r.os}</Td>
+            <Td>{formatNumeroOsDisplay(r.os)}</Td>
             <Td><CompanyTag empresa={String(r.empresa)} /></Td>
             <Td className="text-white">{r.cliente}</Td>
             <Td className="font-bold text-white">{money(num(r.valor))}</Td>
@@ -612,7 +613,7 @@ export function NfeView() {
         return (
           <FinModal
             wide
-            title={`Emitir ${emitindoLabel} — ${emitindo.os}`}
+            title={`Emitir ${emitindoLabel} — ${formatNumeroOsDisplay(emitindo.os)}`}
             hint={emitindoEhRecibo
               ? 'Informe os % de imposto que se aplicam (opcional) e salve. Quem gera o documento, anexa e arquiva — criando a Conta a Receber já com esses impostos — é o botão "Emitir, anexar e arquivar" dentro de "Preencher / editar".'
               : 'Preencha os dados da nota. Ao arquivar, cria a Conta a Receber.'}
@@ -728,7 +729,7 @@ export function NfeView() {
             <Field label={boldOS('OS')} span={4}>
               <Select value={sf.os} onChange={(e) => escolherOs(e.target.value)}>
                 <option value="">{oss.length ? 'Selecione...' : 'Nenhuma OS'}</option>
-                {oss.map((o, i) => <option key={`${o.numero}-${i}`} value={o.numero}>{o.numero} - {o.cliente}</option>)}
+                {oss.map((o, i) => <option key={`${o.numero}-${i}`} value={o.numero}>{formatNumeroOsDisplay(o.numero)} - {o.cliente}</option>)}
               </Select>
             </Field>
             <Field label="Tipo" span={8}>
