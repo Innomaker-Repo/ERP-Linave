@@ -11,11 +11,13 @@ import { toast } from 'sonner';
 const round2 = (n: number) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 
 // Origem de cada linha (só rótulo/referência — TODAS as linhas são editáveis):
-//  - compra:  veio de uma compra APROVADA (kanban).
-//  - hh:      mão de obra vinda do timesheet (aba "Alocar HH").
-//  - medicao: item discretizado da última medição APROVADA (já com impostos).
-//  - manual:  linha adicionada à mão nesta planilha.
-type Origem = 'compra' | 'hh' | 'medicao' | 'manual';
+//  - compra:    veio de uma compra APROVADA (kanban) — requisição em COMPRADOS ou já no histórico.
+//  - pagamento: veio de uma Conta a Pagar aprovada (Financeiro → Solicitação/Contas a Pagar)
+//               vinculada à OS, que NÃO nasceu de uma compra (essas já entram por `compra`).
+//  - hh:        mão de obra vinda do timesheet (aba "Alocar HH").
+//  - medicao:   item discretizado da última medição APROVADA (já com impostos).
+//  - manual:    linha adicionada à mão nesta planilha.
+type Origem = 'compra' | 'pagamento' | 'hh' | 'medicao' | 'manual';
 
 interface LinhaCusto {
   id: string;
@@ -47,7 +49,7 @@ const normalizeLinha = (l: any): LinhaCusto => ({
   descricao: String(l?.descricao || ''),
   valor: num(l?.valor),
   data: String(l?.data || '').slice(0, 10),
-  origem: (['compra', 'hh', 'medicao', 'manual'].includes(l?.origem) ? l.origem : 'manual') as Origem,
+  origem: (['compra', 'pagamento', 'hh', 'medicao', 'manual'].includes(l?.origem) ? l.origem : 'manual') as Origem,
   ...(l?.quantidade != null ? { quantidade: num(l.quantidade) } : {}),
   ...(l?.unidade ? { unidade: String(l.unidade) } : {}),
   ...(l?.valorUnitario != null ? { valorUnitario: num(l.valorUnitario) } : {}),
@@ -88,17 +90,22 @@ export function CustoPorOsView() {
   const selected = useMemo(() => osList.find((o: any) => o.numero === osNumero) || null, [osList, osNumero]);
   const fechada = Boolean(selected?.fechada);
 
+  // Formas aceitas de vínculo com esta OS: hoje grava o NÚMERO DA OS; registros antigos
+  // (compra e conta a pagar) gravavam o NOME DA OBRA — as duas são aceitas para o histórico
+  // não sumir. Compartilhado por `linhasCompra` (campo `centroCusto`) e `linhasPagamento`
+  // (campo `vinculoValor`).
+  const aceitosOs = useMemo(
+    () => new Set([String(selected?.numero || '').trim(), String(selected?.obra?.nome || '').trim()].filter(Boolean)),
+    [selected],
+  );
+
   // ---- DERIVADO: compras APROVADAS vinculadas a esta OS -----------------------------------
-  // O vínculo compra→OS é o Centro de Custo da requisição. Hoje a solicitação de compra grava
-  // o NÚMERO DA OS; requisições antigas gravavam o NOME DA OBRA — as duas formas são aceitas
-  // aqui para o histórico não sumir. "Aprovada" = estágio COMPRADOS (a aprovação em Compras →
-  // Aprovações move o pedido para COMPRADOS) ou item já comprado (histórico). Pedidos ainda em
-  // APROVACAO (pendentes) NÃO contam. A natureza do item (Material/Serviço) define a categoria:
-  // Material → Materiais; Serviço → Serviços Terceirizados.
+  // O vínculo compra→OS é o Centro de Custo da requisição. "Aprovada" = estágio COMPRADOS (a
+  // aprovação em Compras → Aprovações move o pedido para COMPRADOS) ou item já comprado
+  // (histórico). Pedidos ainda em APROVACAO (pendentes) NÃO contam. A natureza do item
+  // (Material/Serviço) define a categoria: Material → Materiais; Serviço → Serviços Terceirizados.
   const linhasCompra = useMemo<LinhaCusto[]>(() => {
-    const aceitos = new Set(
-      [String(selected?.numero || '').trim(), String(selected?.obra?.nome || '').trim()].filter(Boolean),
-    );
+    const aceitos = aceitosOs;
     if (aceitos.size === 0) return [];
     const daOs = (r: any) => aceitos.has(String(r?.centroCusto || '').trim());
     const out: LinhaCusto[] = [];
@@ -151,7 +158,38 @@ export function CustoPorOsView() {
       });
 
     return out;
-  }, [selected, compras, comprasHistorico]);
+  }, [aceitosOs, compras, comprasHistorico]);
+
+  // ---- DERIVADO: contas a pagar APROVADAS vinculadas a esta OS, fora do fluxo de Compras ----
+  // Toda Conta a Pagar só existe depois que a solicitação foi APROVADA (nasce já aprovada, do
+  // lado do servidor — ver `approveSolicitacao`/`pagarConta` em useFin.ts), então basta ler o
+  // tipo `contaPagar`: não há necessidade de filtrar por status. É isso que atende "conta por
+  // conta a pagar aprovada, mesmo que não tenha sido paga ainda" — status (Aberto, Parcelado,
+  // Vencido, Pago...) não importa aqui, só o vínculo com a OS.
+  // `origemCompra: true` é excluído de propósito: esse pagamento já nasce com o MESMO valor de
+  // uma compra confirmada em `handleConfirmBuy` (ComprasKanbanView.tsx) e já está contado acima
+  // via `comprasHistorico` — somar os dois contaria a mesma compra em dobro.
+  // `type === 'parent'` (conta-mãe de um parcelamento) também é excluído: o valor dela é o MESMO
+  // total das parcelas filhas (`type: 'child'`), que já entram uma a uma — somar a mãe também
+  // duplicaria o valor inteiro da conta.
+  const linhasPagamento = useMemo<LinhaCusto[]>(() => {
+    if (aceitosOs.size === 0) return [];
+    return (Array.isArray(financeiro) ? financeiro : [])
+      .filter((r: any) => r?.tipo === 'contaPagar'
+        && r?.vinculoTipo === 'OS'
+        && aceitosOs.has(String(r?.vinculoValor || '').trim())
+        && !r?.origemCompra
+        && r?.type !== 'parent'
+        && num(r?.valor) > 0)
+      .map((r: any) => ({
+        id: `pag-${r.id}`,
+        categoria: 'Outros', // sem classificação Material × Serviço confiável nesta origem — editável
+        descricao: `Pagamento: ${[r.fornecedor, r.documento].filter(Boolean).join(' — ') || r.tipoPagamento || 'conta a pagar'}`,
+        valor: num(r.valor),
+        data: String(r.vencimento || r.dataPagamento || r.createdAt || '').slice(0, 10),
+        origem: 'pagamento' as Origem,
+      }));
+  }, [aceitosOs, financeiro]);
 
   // ---- MÃO DE OBRA: valor VIVO do timesheet (aba "Alocar HH") -----------------------------
   // NÃO é uma linha da planilha. Antes era, e por isso "não entrava na conta": uma vez salva,
@@ -259,10 +297,13 @@ export function CustoPorOsView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [medicaoAtual, dicionario, selected]);
 
-  // A planilha é semeada pela medição E pelas compras aprovadas (COMPRADOS + histórico), que
-  // entram como linhas editáveis no Real (Materiais/Serviços Terceirizados conforme a natureza
-  // do item). Mão de obra continua fora — é valor vivo do timesheet.
-  const derivadas = useMemo<LinhaCusto[]>(() => [...seedMedicao, ...linhasCompra], [seedMedicao, linhasCompra]);
+  // A planilha é semeada pela medição, pelas compras aprovadas (COMPRADOS + histórico) E pelas
+  // contas a pagar aprovadas fora do fluxo de Compras, que entram como linhas editáveis no Real.
+  // Mão de obra continua fora — é valor vivo do timesheet.
+  const derivadas = useMemo<LinhaCusto[]>(
+    () => [...seedMedicao, ...linhasCompra, ...linhasPagamento],
+    [seedMedicao, linhasCompra, linhasPagamento],
+  );
 
   // ---- Planilha persistida (todas as linhas ficam aqui e são editáveis) --------------------
   const sheetRecord = useMemo(
@@ -285,7 +326,8 @@ export function CustoPorOsView() {
   const loadedRef = useRef<string | null>(null);
   useEffect(() => {
     const compraSig = linhasCompra.map((l) => l.id).sort().join(',');
-    const chave = `${osNumero}::${medicaoAtual?.id ?? ''}::${compraSig}`;
+    const pagamentoSig = linhasPagamento.map((l) => l.id).sort().join(',');
+    const chave = `${osNumero}::${medicaoAtual?.id ?? ''}::${compraSig}::${pagamentoSig}`;
     if (loadedRef.current === chave) return;
     loadedRef.current = chave;
     const brutas: LinhaCusto[] = (sheetRecord && Array.isArray(sheetRecord.linhas)) ? sheetRecord.linhas.map(normalizeLinha) : [];
@@ -296,14 +338,20 @@ export function CustoPorOsView() {
     //               sumiu da derivação (ex.: item saiu de COMPRADOS para o histórico, mudando de
     //               `cmp-` para `cmph-`) é descartada aqui e volta pela derivação com o id novo —
     //               é o que evita contar a mesma compra duas vezes;
+    //  - pagamentos: mesma lógica das compras — mantidos só enquanto a conta a pagar que os
+    //               originou ainda está aprovada e vinculada a esta OS (fora do fluxo de Compras);
     //  - resumos  : os 3 lump sums do orçamento da versão antiga (hoje é item a item);
     //  - medições anteriores: só valem os itens da medição vigente.
     const prefixoAtual = medicaoAtual ? `med-${medicaoAtual.id}-` : null;
     const idsCompraDerivados = new Set(linhasCompra.map((l) => l.id));
+    const idsPagamentoDerivados = new Set(linhasPagamento.map((l) => l.id));
     const salvas = brutas.filter((l) => {
       if (l.origem === 'hh' || l.id.startsWith('hh-')) return false;
       if (l.origem === 'compra' || l.id.startsWith('cmp-') || l.id.startsWith('cmph-')) {
         return idsCompraDerivados.has(l.id);
+      }
+      if (l.origem === 'pagamento' || l.id.startsWith('pag-')) {
+        return idsPagamentoDerivados.has(l.id);
       }
       if (l.origem !== 'medicao') return true;
       if (LEGACY_MED_IDS.has(l.id)) return false;
@@ -313,7 +361,7 @@ export function CustoPorOsView() {
     const novas = derivadas.filter((d) => !idsSalvos.has(d.id));
     setLinhas([...salvas, ...novas]);
     setSujo(false);
-  }, [osNumero, sheetRecord, derivadas, medicaoAtual, linhasCompra]);
+  }, [osNumero, sheetRecord, derivadas, medicaoAtual, linhasCompra, linhasPagamento]);
 
   // Edita um campo da linha. Mexer em quantidade/valor unitário recalcula o total (qtd × unit.);
   // editar o total direto é sempre permitido e simplesmente sobrescreve o valor.
@@ -380,7 +428,7 @@ export function CustoPorOsView() {
   const exportarCsv = () => {
     const ativas = linhas.filter((l) => !l.removido);
     const brNum = (n: number) => (Number(n) || 0).toFixed(2).replace('.', ',');
-    const origemLabel: Record<Origem, string> = { compra: 'Compra', hh: 'Timesheet (H.H)', medicao: 'Medição', manual: 'Manual' };
+    const origemLabel: Record<Origem, string> = { compra: 'Compra', pagamento: 'Conta a Pagar', hh: 'Timesheet (H.H)', medicao: 'Medição', manual: 'Manual' };
     const categorias = [...ORDEM_CATEGORIAS, ...Array.from(new Set(ativas.map((l) => l.categoria))).filter((c) => !ORDEM_CATEGORIAS.includes(c))];
 
     const out: string[][] = [];
@@ -437,6 +485,7 @@ export function CustoPorOsView() {
   const totalMedicao = somaDe((l) => l.origem === 'medicao');
   const totalManual = somaDe((l) => l.origem === 'manual');
   const totalCompra = somaDe((l) => l.origem === 'compra');
+  const totalPagamento = somaDe((l) => l.origem === 'pagamento');
   const totalPlanilha = round2(linhasVisiveis.reduce((s, l) => s + num(l.valor), 0));
   // REAL = planilha (medição com suas alterações + compras aprovadas + linhas manuais) + timesheet.
   // O timesheet entra aqui como valor vivo, não como linha salva.
@@ -507,6 +556,7 @@ export function CustoPorOsView() {
 
   const origemTag = (origem: Origem) => (
     origem === 'compra' ? <span className="text-[11px] font-bold text-violet-300">Compra</span>
+      : origem === 'pagamento' ? <span className="text-[11px] font-bold text-amber-300">Conta a Pagar</span>
       : origem === 'hh' ? <span className="text-[11px] font-bold text-sky-300">Timesheet</span>
       : origem === 'medicao' ? <span className="text-[11px] font-bold text-emerald-300/80">Medição</span>
       : <span className="text-[11px] font-bold text-white/50">Manual</span>
@@ -514,7 +564,7 @@ export function CustoPorOsView() {
 
   return (
     <FinCard>
-      <Toolbar title={boldOS('Custo por OS')} hint={boldOS('Real = itens da última medição (discretizados e editáveis) + compras aprovadas + linhas manuais + timesheet da aba Alocar HH. Comparado com o preço da proposta. OS fechada fica somente leitura.')} />
+      <Toolbar title={boldOS('Custo por OS')} hint={boldOS('Real = itens da última medição (discretizados e editáveis) + compras aprovadas + contas a pagar aprovadas + linhas manuais + timesheet da aba Alocar HH. Comparado com o preço da proposta. OS fechada fica somente leitura.')} />
 
       {/* OS (compartilhada pelas duas abas) */}
       <div className="mb-4">
@@ -588,15 +638,17 @@ export function CustoPorOsView() {
                 <span className="text-white/25">+</span>
                 <span className="text-white/40">Compras aprovadas: <span className="text-violet-300">{money(totalCompra)}</span></span>
                 <span className="text-white/25">+</span>
+                <span className="text-white/40">Contas a pagar aprovadas: <span className="text-amber-300">{money(totalPagamento)}</span></span>
+                <span className="text-white/25">+</span>
                 <span className="text-white/40">Linhas manuais: <span className="text-white/70">{money(totalManual)}</span></span>
                 <span className="text-white/25">+</span>
                 <span className="text-white/40">Timesheet (H.H): <span className="text-sky-300">{money(totalHH)}</span></span>
                 <span className="text-white/25">=</span>
                 <span className="text-white/40">Real: <span className="text-emerald-300">{money(totalCusto)}</span></span>
               </div>
-              {totalCompra > 0 && totalMedicao > 0 && (
+              {[totalCompra > 0, totalPagamento > 0, totalMedicao > 0].filter(Boolean).length > 1 && (
                 <p className="mt-2 text-white/30 normal-case tracking-normal font-normal text-[11px]">
-                  Atenção: compras e medição estão <strong className="text-white/50">somadas</strong>. Se um material aparece nas duas origens, remova a linha duplicada para não contar em dobro.
+                  Atenção: medição, compras e contas a pagar estão <strong className="text-white/50">somadas</strong>. Se o mesmo custo aparece em mais de uma origem, remova a linha duplicada para não contar em dobro.
                 </p>
               )}
             </div>
@@ -708,6 +760,7 @@ export function CustoPorOsView() {
           <p className="mt-2 text-[10px] text-white/40">
             Valores de medição já vêm <strong className="text-white/60">com impostos</strong> (margem, O.H e imposto no serviço; imposto de locação nos alocados) e são <strong className="text-white/60">100% editáveis</strong> aqui.
             Compras aprovadas (estágio “Comprados” + histórico) entram como linhas de <strong className="text-white/60">Materiais</strong> ou <strong className="text-white/60">Serviços Terceirizados</strong> conforme a natureza do item.
+            Contas a pagar aprovadas e vinculadas a esta OS (Solicitação de Pagamento ou lançamento direto em Contas a Pagar) também entram — <strong className="text-white/60">conta desde a aprovação, mesmo sem ter sido paga ainda</strong>; as que já vieram de uma compra (acima) não entram de novo.
             Mão de obra <strong className="text-white/60">não</strong> vem da medição: é o total vivo do timesheet da aba “Alocar HH” e acompanha automaticamente o que for lançado lá.
           </p>
 
@@ -767,7 +820,7 @@ export function CustoPorOsView() {
           </div>
 
           <div className="mt-4 flex flex-wrap items-center justify-end gap-6 border-t border-white/10 pt-4">
-            <p className="text-white/50 text-xs uppercase font-black tracking-widest">Medição + manuais: <span className="text-emerald-300/80">{money(totalPlanilha)}</span></p>
+            <p className="text-white/50 text-xs uppercase font-black tracking-widest">Medição + compras + pagamentos + manuais: <span className="text-emerald-300/80">{money(totalPlanilha)}</span></p>
             <p className="text-white/50 text-xs uppercase font-black tracking-widest">H.H (timesheet): <span className="text-sky-300">{money(totalHH)}</span></p>
             <p className="text-white/50 text-xs uppercase font-black tracking-widest">{boldOS('Real da OS: ')}<span className="text-emerald-300 text-lg">{money(totalCusto)}</span></p>
           </div>

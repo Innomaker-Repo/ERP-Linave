@@ -48,9 +48,15 @@ class Fornecedor(models.Model):
     documento = models.CharField(max_length=20, null=True, blank=True)  # CNPJ/CPF (não-único: dados legados podem repetir/vazio)
     contato = models.CharField(max_length=255, null=True, blank=True)
     endereco = models.TextField(null=True, blank=True)
+    cep = models.CharField(max_length=10, null=True, blank=True)
+    cidade = models.CharField(max_length=100, null=True, blank=True)
+    uf = models.CharField(max_length=2, null=True, blank=True)
+    banco = models.CharField(max_length=100, null=True, blank=True)
+    agencia = models.CharField(max_length=20, null=True, blank=True)
+    conta = models.CharField(max_length=30, null=True, blank=True)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='Ativo')
     tipo = models.CharField(max_length=20, choices=TIPO_CHOICES, default='Serviços')
-    descricao_estadual = models.CharField(max_length=100, null=True, blank=True)
+    descricao_estadual = models.CharField(max_length=100, null=True, blank=True)  # "Insc. Estadual" no frontend
     natureza_fornecimento = models.CharField(max_length=10, choices=NATUREZA_CHOICES, default='SERVICO')
     criado_por_nome = models.CharField(max_length=150, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -504,7 +510,10 @@ class OrdemServico(models.Model):
     
     # Descrição
     descricao_geral_servico = models.TextField()
-    
+    # Texto livre, somado ao escopo (impresso logo abaixo dele na OS) para informações
+    # específicas desta OS que não constavam na proposta original.
+    escopo_adicional = models.TextField(blank=True, default='')
+
     # Itens a serem incluídos (JSONField com booleanos)
     a_ser_incluido = models.JSONField(default=dict, blank=True)  # ex: {certificado_gas: True, ventilacao: False, ...}
     

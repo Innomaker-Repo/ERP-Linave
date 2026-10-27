@@ -78,6 +78,7 @@ export function ManutencaoView({ searchQuery }: { searchQuery?: string }) {
   const [entradaAlvo, setEntradaAlvo] = useState<{ row: StockRowLike; numeroManutencao: string } | null>(null);
   const [detalheAlvo, setDetalheAlvo] = useState<StockRowLike | null>(null);
   const [saidaAberta, setSaidaAberta] = useState(false);
+  const [fotoAmpliada, setFotoAmpliada] = useState<string | null>(null);
 
   const tables = useMemo(() => (Array.isArray(almoxerifado?.tables) ? almoxerifado.tables : []), [almoxerifado?.tables]);
   const manutencaoHistorico: ManutencaoHistoricoItem[] = useMemo(
@@ -600,11 +601,15 @@ export function ManutencaoView({ searchQuery }: { searchQuery?: string }) {
         )}
       </div>
 
-      {/* MODAL: Detalhe do item (comparação de foto + timeline) */}
+      {/* MODAL: Detalhe do item — última manutenção em destaque + tabela com as anteriores */}
       {detalheAlvo && (() => {
         const timeline = timelineDoItem(detalheAlvo);
         const aberta = entradaAbertaPorRowId.get(detalheAlvo.id);
         const maisRecente = timeline[0];
+        const anteriores = timeline.slice(1);
+        const campoCls = 'min-w-0';
+        const rotuloCls = 'text-[9px] font-black uppercase tracking-widest text-white/30';
+        const valorCls = 'mt-0.5 text-sm text-white break-words';
         return (
           <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
             <div className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-[24px] border border-white/10 bg-[#0d1830] shadow-2xl shadow-black/50">
@@ -618,57 +623,127 @@ export function ManutencaoView({ searchQuery }: { searchQuery?: string }) {
                 </button>
               </div>
 
-              <div className="space-y-4 overflow-y-auto p-6">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="rounded-xl border border-white/5 bg-[#0b1220]/40 p-4">
-                    <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-white/40">Entrada em manutenção</p>
-                    {maisRecente?.entradaFotoUrl ? (
-                      <img src={maisRecente.entradaFotoUrl} alt="Foto de entrada" className="h-48 w-full rounded-lg object-cover" />
-                    ) : (
-                      <div className="grid h-48 place-items-center rounded-lg bg-black/20 text-[11px] uppercase tracking-widest text-white/25">Sem foto</div>
+              <div className="space-y-5 overflow-y-auto p-6">
+                {!maisRecente ? (
+                  <p className="text-xs text-white/40">Nenhum ciclo de manutenção registrado ainda.</p>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <p className="text-[11px] font-black uppercase tracking-widest text-white">Última manutenção <span className="text-white/30">· Nº {maisRecente.id}</span></p>
+                      {maisRecente.status === 'concluida' ? (
+                        <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-emerald-300">Concluída</span>
+                      ) : (
+                        <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-amber-300">Em aberto</span>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="rounded-xl border border-white/5 bg-[#0b1220]/40 p-4">
+                        <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-white/40">Foto de entrada</p>
+                        {maisRecente.entradaFotoUrl ? (
+                          <button type="button" onClick={() => setFotoAmpliada(maisRecente.entradaFotoUrl!)} className="block w-full">
+                            <img src={maisRecente.entradaFotoUrl} alt="Foto de entrada" className="h-48 w-full cursor-zoom-in rounded-lg object-cover transition hover:opacity-80" />
+                          </button>
+                        ) : (
+                          <div className="grid h-48 place-items-center rounded-lg bg-black/20 text-[11px] uppercase tracking-widest text-white/25">Sem foto</div>
+                        )}
+                      </div>
+                      <div className="rounded-xl border border-white/5 bg-[#0b1220]/40 p-4">
+                        <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-white/40">Foto de saída</p>
+                        {maisRecente.saidaFotoUrl ? (
+                          <button type="button" onClick={() => setFotoAmpliada(maisRecente.saidaFotoUrl!)} className="block w-full">
+                            <img src={maisRecente.saidaFotoUrl} alt="Foto de saída" className="h-48 w-full cursor-zoom-in rounded-lg object-cover transition hover:opacity-80" />
+                          </button>
+                        ) : (
+                          <div className="grid h-48 place-items-center rounded-lg bg-black/20 text-[11px] uppercase tracking-widest text-white/25">Aguardando saída</div>
+                        )}
+                      </div>
+                    </div>
+                    {(maisRecente.entradaFotoUrl || maisRecente.saidaFotoUrl) && (
+                      <p className="-mt-3 text-[11px] text-white/30">Clique em uma foto para ampliar.</p>
                     )}
-                  </div>
-                  <div className="rounded-xl border border-white/5 bg-[#0b1220]/40 p-4">
-                    <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-white/40">Saída da manutenção</p>
-                    {maisRecente?.saidaFotoUrl ? (
-                      <img src={maisRecente.saidaFotoUrl} alt="Foto de saída" className="h-48 w-full rounded-lg object-cover" />
+
+                    <div className="rounded-xl border border-white/5 bg-[#0b1220]/40 p-4">
+                      <p className="mb-3 text-[10px] font-black uppercase tracking-widest text-white/40">Entrada em manutenção</p>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+                        <div className={campoCls}><p className={rotuloCls}>Data de entrada</p><p className={valorCls}>{br(maisRecente.entradaData)}</p></div>
+                        <div className={campoCls}><p className={rotuloCls}>Responsável pelo registro</p><p className={valorCls}>{maisRecente.entradaResponsavel || '—'}</p></div>
+                        <div className={campoCls}><p className={rotuloCls}>Motivo</p><p className={valorCls}>{maisRecente.entradaMotivo || '—'}</p></div>
+                        <div className={campoCls}><p className={rotuloCls}>Origem</p><p className={valorCls}>{ORIGEM_LABEL[maisRecente.origem] || maisRecente.origem}</p></div>
+                        <div className="col-span-2"><p className={rotuloCls}>Observações da entrada</p><p className={valorCls}>{maisRecente.entradaObs || '—'}</p></div>
+                      </div>
+                    </div>
+
+                    {maisRecente.status === 'concluida' ? (
+                      <div className="rounded-xl border border-emerald-500/10 bg-emerald-500/[0.03] p-4">
+                        <p className="mb-3 text-[10px] font-black uppercase tracking-widest text-emerald-300/70">Saída da manutenção</p>
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+                          <div className={campoCls}><p className={rotuloCls}>Data de saída</p><p className={valorCls}>{br(maisRecente.saidaData)}</p></div>
+                          <div className={campoCls}><p className={rotuloCls}>Custo da manutenção</p><p className={valorCls}>{formatarMoeda(maisRecente.saidaCusto)}</p></div>
+                          <div className={campoCls}><p className={rotuloCls}>Serviço realizado</p><p className={valorCls}>{maisRecente.saidaServico || '—'}</p></div>
+                          <div className={campoCls}><p className={rotuloCls}>Peças / materiais utilizados</p><p className={valorCls}>{maisRecente.saidaPecas || '—'}</p></div>
+                          <div className={campoCls}><p className={rotuloCls}>Responsável pela manutenção</p><p className={valorCls}>{maisRecente.saidaResponsavel || '—'}</p></div>
+                          <div className={campoCls}><p className={rotuloCls}>Responsável pela liberação</p><p className={valorCls}>{maisRecente.saidaLiberadoPor || '—'}</p></div>
+                          <div className="col-span-2"><p className={rotuloCls}>Observações finais</p><p className={valorCls}>{maisRecente.saidaObs || '—'}</p></div>
+                        </div>
+                      </div>
                     ) : (
-                      <div className="grid h-48 place-items-center rounded-lg bg-black/20 text-[11px] uppercase tracking-widest text-white/25">Aguardando saída</div>
+                      <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.04] p-4 text-sm font-bold text-amber-300">
+                        Em aberto — aguardando registrar a saída
+                      </div>
                     )}
-                  </div>
-                </div>
+                  </>
+                )}
 
                 <div className="rounded-xl border border-white/5 bg-[#0b1220]/40 p-4">
-                  <p className="mb-3 text-[10px] font-black uppercase tracking-widest text-white/40">Histórico</p>
-                  {timeline.length === 0 ? (
-                    <p className="text-xs text-white/40">Nenhum ciclo de manutenção registrado ainda.</p>
+                  <p className="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-white/40">
+                    Manutenções anteriores
+                    {anteriores.length > 0 && (
+                      <span className="rounded-full bg-white/10 px-2 py-0.5 text-[9px] text-white/50">{anteriores.length}</span>
+                    )}
+                  </p>
+                  {anteriores.length === 0 ? (
+                    <p className="text-xs text-white/40">Nenhuma manutenção anterior registrada.</p>
                   ) : (
-                    <div className="space-y-3">
-                      {timeline.map((h) => (
-                        <div key={h.id} className="rounded-lg border-l-2 border-amber-500 bg-white/[0.02] px-4 py-3 text-sm leading-relaxed text-white/70">
-                          <p className="mb-1 text-[10px] font-black uppercase tracking-widest text-white/30">Nº {h.id}</p>
-
-                          <p className="text-base font-bold text-white">{br(h.entradaData)} — Entrada em manutenção</p>
-                          <p>Motivo: {h.entradaMotivo || '—'}</p>
-                          <p>Responsável pelo registro: {h.entradaResponsavel || '—'}</p>
-                          <p>Observações da entrada: {h.entradaObs || '—'}</p>
-                          <p className="text-white/40">Origem: {ORIGEM_LABEL[h.origem] || h.origem}</p>
-
-                          {h.status === 'concluida' ? (
-                            <div className="mt-2 border-t border-white/10 pt-2 text-emerald-200/80">
-                              <p className="text-base font-bold text-emerald-200">{br(h.saidaData)} — Saída da manutenção</p>
-                              <p>Serviço realizado: {h.saidaServico || '—'}</p>
-                              <p>Peças / materiais utilizados: {h.saidaPecas || '—'}</p>
-                              <p>Custo da manutenção: {formatarMoeda(h.saidaCusto)}</p>
-                              <p>Responsável pela manutenção: {h.saidaResponsavel || '—'}</p>
-                              <p>Responsável pela liberação: {h.saidaLiberadoPor || '—'}</p>
-                              <p>Observações finais: {h.saidaObs || '—'}</p>
-                            </div>
-                          ) : (
-                            <p className="mt-2 border-t border-white/10 pt-2 font-bold text-amber-300/80">Em aberto — aguardando registrar a saída</p>
-                          )}
-                        </div>
-                      ))}
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-white/5 text-[9px] uppercase tracking-widest text-white/40">
+                            <th className="px-3 py-2 text-left">Entrada / saída</th>
+                            <th className="px-3 py-2 text-left">Serviço / motivo</th>
+                            <th className="px-3 py-2 text-left">Custo</th>
+                            <th className="px-3 py-2 text-left">Fotos</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                          {anteriores.map((h) => (
+                            <tr key={h.id}>
+                              <td className="px-3 py-2.5 text-white/80">
+                                <p>{br(h.entradaData)}</p>
+                                <p className="text-white/40">{br(h.saidaData)}</p>
+                                <p className="mt-0.5 text-[9px] uppercase tracking-widest text-white/25">Nº {h.id}</p>
+                              </td>
+                              <td className="max-w-[220px] px-3 py-2.5 text-white/70">{h.saidaServico || h.entradaMotivo || '—'}</td>
+                              <td className="px-3 py-2.5 text-white/70">{formatarMoeda(h.saidaCusto)}</td>
+                              <td className="px-3 py-2.5">
+                                <div className="flex items-center gap-1.5">
+                                  {h.entradaFotoUrl && (
+                                    <button type="button" onClick={() => setFotoAmpliada(h.entradaFotoUrl!)} title="Foto de entrada">
+                                      <img src={h.entradaFotoUrl} alt="Foto de entrada" className="h-8 w-8 rounded-full border border-white/10 object-cover transition hover:opacity-70" />
+                                    </button>
+                                  )}
+                                  {h.saidaFotoUrl && (
+                                    <button type="button" onClick={() => setFotoAmpliada(h.saidaFotoUrl!)} title="Foto de saída">
+                                      <img src={h.saidaFotoUrl} alt="Foto de saída" className="h-8 w-8 rounded-full border border-white/10 object-cover transition hover:opacity-70" />
+                                    </button>
+                                  )}
+                                  {!h.entradaFotoUrl && !h.saidaFotoUrl && <span className="text-white/25">—</span>}
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
                   )}
                 </div>
@@ -690,6 +765,23 @@ export function ManutencaoView({ searchQuery }: { searchQuery?: string }) {
           </div>
         );
       })()}
+
+      {/* MODAL: foto ampliada (entrada/saída, atual ou de um ciclo anterior) */}
+      {fotoAmpliada && (
+        <div
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-black/90 p-6"
+          onClick={() => setFotoAmpliada(null)}
+        >
+          <button
+            type="button"
+            onClick={() => setFotoAmpliada(null)}
+            className="absolute right-6 top-6 rounded-full bg-white/10 p-2.5 text-white hover:bg-white/20"
+          >
+            <X size={20} />
+          </button>
+          <img src={fotoAmpliada} alt="Foto ampliada" className="max-h-full max-w-full rounded-xl object-contain shadow-2xl" />
+        </div>
+      )}
 
       {/* MODAL: Entrada em Manutenção (via "Registrar Manutenção") */}
       {entradaAlvo && (

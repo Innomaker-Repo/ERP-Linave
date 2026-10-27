@@ -15,6 +15,7 @@ import { formatDateBR } from '../../../utils/formatDate';
 import { isEmpresaLinave, getLogoUrlForEmpresa } from '../../../utils/company';
 import { uploadDocumento, excluirDocumento } from '../../../../services/documentosService';
 import { formatarNumeroSequencial } from '../../../../services/numeroSequencial';
+import { formatNumeroOsDisplay } from '../../../../services/ordensServico';
 import { MODALIDADES, temServico, temLocacao, modalidadeLabel } from '../../../utils/modalidade';
 // Substitua as importações antigas por esta única:
 import {
@@ -2557,7 +2558,6 @@ const initialServico: Servico = {
 const obrasOrdenadas = useMemo(() => {
     return negociosBackend.filter((obra: any) => {
       if (obra.categoria === 'Arquivado') return false;
-      if (obra.usoInterno) return false; // negócios de uso interno não aparecem no CRM
       if (!passaFiltroOs(obra)) return false;
       if (!searchQuery) return true;
 
@@ -2678,7 +2678,7 @@ const obrasOrdenadas = useMemo(() => {
             >
               <option value="">Todos</option>
               {osDisponiveis.map((numero: string) => (
-                <option key={numero} value={numero}>{numero}</option>
+                <option key={numero} value={numero}>{formatNumeroOsDisplay(numero)}</option>
               ))}
             </select>
           </label>

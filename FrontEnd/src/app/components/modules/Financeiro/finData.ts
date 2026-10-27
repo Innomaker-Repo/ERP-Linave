@@ -468,10 +468,13 @@ export const mapOsToFinanceiro = (os: any, obra?: any): OS => {
   // "VTS"/"SN" (quase sempre, já que cc raramente carrega esse prefixo).
   // `empresa_prestadora` do negócio também pode ser editado depois (tela "Editar
   // Negócio") sem regenerar o número já emitido — só serve de fallback pros números sem
-  // prefixo reconhecível (ex.: "1000"/"2000" de USO INTERNO).
-  const empresaPorTexto = (os?.empresa_prestadora || os?.empresaPrestadora)
-    ? (String(os.empresa_prestadora ?? os.empresaPrestadora).toLowerCase().includes('servi') ? 'Servinave' : 'Linave')
-    : 'Linave';
+  // prefixo reconhecível (ex.: "1000"/"2000" de USO INTERNO). `mapOrdemToOs` (obrasMapper.ts)
+  // não bota esse campo na própria OS, então `os.empresa_prestadora` é sempre vazio na
+  // prática — o `obra` vinculado (já recebido aqui como parâmetro) é quem de fato carrega
+  // `empresaPrestadora` (obrasMapper.ts:55). Sem isso, toda OS sem prefixo reconhecível
+  // (as duas de uso interno) caía sempre em "Linave", mesmo a 2000 (Servinave).
+  const bruto = os?.empresa_prestadora || os?.empresaPrestadora || obra?.empresaPrestadora || obra?.empresa_prestadora;
+  const empresaPorTexto = bruto ? (String(bruto).toLowerCase().includes('servi') ? 'Servinave' : 'Linave') : 'Linave';
   const empresa = empresaFromCC(numero || cc, empresaPorTexto);
   return {
     numero: numero || '—',

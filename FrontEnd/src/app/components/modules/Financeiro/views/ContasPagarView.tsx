@@ -14,6 +14,7 @@ import {
 import { useFin, type FinRecord } from '../useFin';
 import { useFinFilters } from '../finFilters';
 import { uploadDocumento, listarDocumentos, excluirDocumento } from '../../../../../services/documentosService';
+import { formatNumeroOsDisplay } from '../../../../../services/ordensServico';
 import { confirmDialog, promptDialog } from '../../../ui/feedback';
 import { toast } from 'sonner';
 
@@ -436,7 +437,7 @@ export function ContasPagarView() {
   const exportarExcel = () => {
     const head = ['Tipo', 'ID', 'Parcela', 'Empresa', 'Vínculo', 'Natureza', 'Fornecedor', 'Documento', 'Valor', 'Vencimento', 'Banco', 'Status', 'Pago em', 'Departamento', 'Valor pago', 'Juros', 'Comprovantes'];
     const linhas = rows.map((p) => [
-      p.type || 'single', p.id, p.parcela || '-', p.empresa, `${p.vinculoTipo}: ${p.vinculoValor || ''}`, p.natureza || '',
+      p.type || 'single', p.id, p.parcela || '-', p.empresa, `${p.vinculoTipo}: ${p.vinculoTipo === 'OS' ? formatNumeroOsDisplay(p.vinculoValor) : (p.vinculoValor || '')}`, p.natureza || '',
       p.fornecedor, p.documento || '', num(p.valor), p.vencimento, p.banco || '', p.status || 'Aberto',
       p.dataPagamento || '', p.departamentoPagamento || '', num(p.valorPago), num(p.jurosPago), (p.comprovantes || []).join('|'),
     ]);
@@ -569,7 +570,7 @@ export function ContasPagarView() {
             </Td>
             <Td>{p.parcela || '-'}</Td>
             <Td><CompanyTag empresa={String(p.empresa)} /></Td>
-            <Td className="text-white/60">{boldOS(p.vinculoTipo)}: {p.vinculoValor || '-'}</Td>
+            <Td className="text-white/60">{boldOS(p.vinculoTipo)}: {p.vinculoValor ? (p.vinculoTipo === 'OS' ? formatNumeroOsDisplay(p.vinculoValor) : p.vinculoValor) : '-'}</Td>
             <Td className="text-white/60">{p.natureza || '—'}</Td>
             <Td className="text-white">{p.fornecedor}</Td>
             <Td>{p.documento || '-'}</Td>
@@ -644,7 +645,7 @@ export function ContasPagarView() {
             <Field label={boldOS('OS')} span={3}>
               <Select value={form.vinculoValor} onChange={(e) => setF('vinculoValor', e.target.value)}>
                 <option value="">{oss.length ? 'Selecione...' : 'Nenhuma OS'}</option>
-                {oss.map((o, i) => <option key={`${o.numero}-${i}`} value={o.numero}>{o.numero} - {o.cliente}</option>)}
+                {oss.map((o, i) => <option key={`${o.numero}-${i}`} value={o.numero}>{formatNumeroOsDisplay(o.numero)} - {o.cliente}</option>)}
               </Select>
             </Field>
             <Field label="Tipo (reembolso/adiantamento)" span={3}>
@@ -783,7 +784,7 @@ export function ContasPagarView() {
             <Field label={boldOS('OS vinculada')} span={3}>
               <Select value={pay.vinculoValor} onChange={(e) => setPayF('vinculoValor', e.target.value)}>
                 <option value="">{oss.length ? 'Sem OS' : 'Nenhuma OS no ERP'}</option>
-                {oss.map((o, i) => <option key={`${o.numero}-${i}`} value={o.numero}>{o.numero} - {o.cliente}</option>)}
+                {oss.map((o, i) => <option key={`${o.numero}-${i}`} value={o.numero}>{formatNumeroOsDisplay(o.numero)} - {o.cliente}</option>)}
               </Select>
             </Field>
             <Field label="Quando paguei?" span={3}><Input type="date" value={pay.dataPagamento} onChange={(e) => setPayF('dataPagamento', e.target.value)} /></Field>

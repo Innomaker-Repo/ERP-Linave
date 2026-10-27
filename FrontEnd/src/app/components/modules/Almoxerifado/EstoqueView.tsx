@@ -17,6 +17,8 @@ import {
   EntradaManutencaoModal, EQUIPAMENTOS_TABLE_NAMES, MANUTENCAO_TABLE_NAMES, criarEntradaManutencao, gerarIdManutencao, itemEstaEmManutencao, itemPossuiManutencao,
   type ManutencaoHistoricoItem,
 } from './manutencaoShared';
+import { comAlmoxarifadoAtual } from '../../../../services/almoxarifadoSeguro';
+import { getLogoUrlForEmpresa } from '../../../utils/company';
 
 interface StockColumn {
   key: string;
@@ -624,7 +626,7 @@ const createRegisterValues = (table?: StockTable, baseValues: Record<string, str
 };
 
 export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
-  const { os, obras, almoxerifado, saveEntity, loading } = useErp();
+  const { os, obras, almoxerifado, saveEntity, loading, manualRefreshTick } = useErp();
 
   // Rótulo EXIBIDO da OS: "<número> — <embarcação>" (padrão do ERP). Só para a interface —
   // `getOsOptionLabel` continua sendo a identidade usada para casar/gravar valores, então
@@ -639,6 +641,12 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   // que acabou de ler (ou, numa corrida em que o contexto ainda não tinha entregue os dados
   // reais, uma cópia incompleta), o que já causou perda de dados real no Almoxarifado.
   const skipNextAutoSave = useRef(false);
+  // Último `manualRefreshTick` (ErpContext) já processado — quando o valor muda, é porque o
+  // usuário clicou "Atualizar" no Header, e é o único caso em que vale a pena substituir
+  // `tables`/etc. já hidratados pela cópia fresca do servidor (ver efeito de hidratação
+  // abaixo). Fora isso, essa tela nunca se resincroniza sozinha depois da primeira carga —
+  // de propósito, pra não apagar um cadastro em andamento.
+  const ultimoRefreshTickProcessado = useRef(manualRefreshTick);
   const [ordensServicoBackend, setOrdensServicoBackend] = useState<OrdemServicoResumo[]>([]);
   const [publicSearch, setPublicSearch] = useState<string>(searchQuery || '');
 
@@ -777,7 +785,20 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   }, [isEquipAllocateModalOpen, availableOS, os]);
 
   useEffect(() => {
-    if (loading || hasHydratedPersistedState.current) return;
+    // Refresh manual (botão "Atualizar" do Header) é a ÚNICA exceção à trava de "só hidrata
+    // uma vez": o usuário pediu explicitamente, então aceita a cópia do servidor por cima do
+    // que esta tela já tinha. Com o formulário de cadastro aberto, melhor não — substituir
+    // `tables` por baixo de um cadastro em andamento pode descasar `registerValues` da linha
+    // sendo editada, então nesse caso só avisa e deixa pra próxima vez.
+    const pediuRefreshManual = manualRefreshTick !== ultimoRefreshTickProcessado.current;
+    if (pediuRefreshManual && isRegisterOpen) {
+      toast.error('Feche o formulário de cadastro antes de atualizar os dados desta tela.');
+      ultimoRefreshTickProcessado.current = manualRefreshTick;
+      return;
+    }
+
+    if (loading || (hasHydratedPersistedState.current && !pediuRefreshManual)) return;
+    ultimoRefreshTickProcessado.current = manualRefreshTick;
 
     if (almoxerifado && typeof almoxerifado === 'object') {
       if (Array.isArray(almoxerifado.tables)) {
@@ -836,7 +857,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     }
 
     hasHydratedPersistedState.current = true;
-  }, [loading, almoxerifado]);
+  }, [loading, almoxerifado, manualRefreshTick, isRegisterOpen]);
 
   useEffect(() => {
     if (!hasHydratedPersistedState.current) return;
@@ -1052,7 +1073,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
 
       const matchesQuery = !query || (() => {
       const matchesColumns = visibleColumns.some((column) => valorDaCelula(row.values, column.key).toLowerCase().includes(query));
-      return matchesColumns || row.searchText.includes(query);
+      return matchesColumns || (row.searchText || '').includes(query);
       })();
 
       const matchesStatusFilter = !selectedStatusFilter || normalizeStatus(row.values.status) === selectedStatusFilter;
@@ -1119,10 +1140,21 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     toast.success(`Planilha gerada com ${visibleRows.length} item(ns).`);
   };
 
+  // Modo "public" (Consulta ao Estoque) é só leitura, então lê direto do estoque do contexto
+  // em vez da cópia local `tables` — essa tela não escreve nada, então não precisa (nem deve)
+  // herdar a trava de "hidrata uma vez só" que a tela de cadastro usa pra não se auto-sobrepor.
+  // Lendo do contexto, a Consulta acompanha o que o ErpContext já busca sozinho a cada 45s/foco
+  // de aba, sem precisar de F5 pra ver o que outra pessoa cadastrou enquanto a tela já estava
+  // aberta (antes, `tables` local congelava no que a tela tinha ao abrir e nunca mais mudava).
+  const publicSourceTables: StockTable[] = useMemo(() => {
+    if (mode !== 'public') return tables;
+    return Array.isArray(almoxerifado?.tables) ? almoxerifado.tables : [];
+  }, [mode, tables, almoxerifado]);
+
   const publicRows = useMemo(() => {
     const query = publicSearch.toLowerCase().trim();
 
-    return tables.flatMap((table) => table.rows.filter((row) => {
+    return publicSourceTables.flatMap((table) => (table.rows || []).filter((row) => {
       if (!query) return true;
 
       const searchableName = [
@@ -1137,7 +1169,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
 
       return searchableName.includes(query);
     }).map((row) => ({ ...row, tableName: table.name })));
-  }, [publicSearch, tables]);
+  }, [publicSearch, publicSourceTables]);
 
   const currentRegisterTable = useMemo(
     () => tables.find((table) => table.name === registerTableName) || tables[0],
@@ -1365,7 +1397,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     setBaixaTargetRow(null);
   };
 
-  const handleConfirmBaixa = () => {
+  const handleConfirmBaixa = async () => {
     if (!baixaTargetRow) return;
 
     const itemName = baixaTargetRow.values.material || baixaTargetRow.values.fornecedor || baixaTargetRow.values.equipamento || baixaTargetRow.values.item || 'item';
@@ -1387,33 +1419,55 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     const osLabel = selectedOs ? getOsOptionLabel(selectedOs as any) : osId;
     const osLocal = selectedOs ? getOsLocalExecution(selectedOs) : '';
 
-    setBaixasHistorico((prev) => [
-      {
-        id: `baixa-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        dataBaixa,
-        tableName: baixaTargetRow.tableName,
-        itemLabel: itemName,
-        statusAnterior: baixaTargetRow.values.status || '',
-        motivo,
-        osId,
-        osLabel,
-        localizacao: baixaTargetRow.values.localizacao || osLocal || '',
-        serviceOS: osLabel,
-        snapshot: { ...baixaTargetRow.values }
-      },
-      ...prev
-    ]);
+    const novaBaixa = {
+      id: `baixa-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      dataBaixa,
+      tableName: baixaTargetRow.tableName,
+      itemLabel: itemName,
+      statusAnterior: baixaTargetRow.values.status || '',
+      motivo,
+      osId,
+      osLabel,
+      localizacao: baixaTargetRow.values.localizacao || osLocal || '',
+      serviceOS: osLabel,
+      snapshot: { ...baixaTargetRow.values }
+    };
 
-    setTables((previous) => previous.map((table) => {
-      if (table.name !== baixaTargetRow.tableName) return table;
-      return {
-        ...table,
-        rows: table.rows.filter((currentRow) => currentRow.id !== baixaTargetRow.id)
-      };
-    }));
+    // Mesmo motivo de `handleSaveRegister`: dar baixa REMOVE uma linha, então é a operação mais
+    // exposta à trava anti-encolhimento do backend se a cópia local de `tables` estiver
+    // desatualizada (ver comentário detalhado em handleSaveRegister). Busca o estado atual do
+    // servidor e aplica a remoção em cima dele, não da cópia local.
+    const resultado = await comAlmoxarifadoAtual(async (base) => {
+      const baseTables = Array.isArray(base.tables) ? base.tables : [];
+      const baseAllocations = Array.isArray(base.allocations) ? base.allocations : [];
+      const baseBaixasHistorico = Array.isArray(base.baixasHistorico) ? base.baixasHistorico : [];
+
+      const nextTables = baseTables.map((table: any) => {
+        if (table.name !== baixaTargetRow.tableName) return table;
+        return { ...table, rows: table.rows.filter((row: StockRow) => row.id !== baixaTargetRow.id) };
+      });
+      const nextAllocations = baixaTargetRow.tableName === 'Alugados - Gases'
+        ? baseAllocations.filter((allocation: GasAllocation) => allocation.supplierRowId !== baixaTargetRow.id)
+        : baseAllocations;
+      const nextBaixasHistorico = [novaBaixa, ...baseBaixasHistorico];
+
+      await saveEntity('almoxerifado', {
+        ...base,
+        tables: nextTables,
+        allocations: nextAllocations,
+        baixasHistorico: nextBaixasHistorico,
+      });
+      return { nextTables, nextAllocations, nextBaixasHistorico };
+    });
+
+    if (!resultado) return;
+
+    skipNextAutoSave.current = true;
+    setTables(resultado.nextTables);
+    setAllocations(resultado.nextAllocations);
+    setBaixasHistorico(resultado.nextBaixasHistorico);
 
     if (baixaTargetRow.tableName === 'Alugados - Gases') {
-      setAllocations((previous) => previous.filter((allocation) => allocation.supplierRowId !== baixaTargetRow.id));
       setExpandedGasRows((previous) => {
         const next = new Set(previous);
         next.delete(baixaTargetRow.id);
@@ -1514,7 +1568,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     return 'material';
   };
 
-  const handleSaveRegister = () => {
+  const handleSaveRegister = async () => {
     const table = tables.find((item) => item.name === registerTableName);
     if (!table) return;
     const wasEditing = Boolean(editingRowTarget && editingRowTarget.tableName === table.name);
@@ -1543,28 +1597,57 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       return;
     }
 
-    payload.item = payload.item || generateItemId(table.name, table.rows.length);
+    // Busca o almoxerifado direto do backend em vez de montar a escrita em cima de `tables` do
+    // componente — mesmo motivo de `comAlmoxarifadoAtual` em ManutencaoView.tsx/
+    // almoxarifadoSeguro.ts: o contexto reidrata `almoxerifado` sozinho a cada 45s/foco de aba,
+    // mas essa tela usa estado local espelhado + auto-save (debounce de 400ms), então uma
+    // hidratação concorrente que o componente já ignorou (ver `hasHydratedPersistedState`) deixa
+    // `tables` divergente do servidor. Cadastrar em cima dessa cópia desatualizada tinha dois
+    // efeitos: (1) `generateItemId`/`makeRow` geravam o MESMO id pra duas pessoas cadastrando
+    // quase ao mesmo tempo na mesma categoria (o índice vem de `table.rows.length`, que cada
+    // cópia local via diferente), colidindo/sobrescrevendo uma linha em vez de criar duas; e (2)
+    // salvar o objeto inteiro com menos linhas do que o servidor já tinha (porque a cópia local
+    // não tinha o que outra pessoa cadastrou enquanto isso) esbarrava na trava anti-encolhimento
+    // do backend (`ALMOXARIFADO_QUEDA_FRACAO_MAXIMA` em views.py) e a operação era recusada —
+    // mais provável justamente nas categorias recém-criadas, por terem poucas linhas (qualquer
+    // cadastro concorrente já passa da metade) e serem cadastradas em rajada por várias pessoas
+    // logo que a categoria aparece.
+    const resultado = await comAlmoxarifadoAtual(async (base) => {
+      const baseTables = Array.isArray(base.tables) ? base.tables : [];
+      const baseTableIndex = baseTables.findIndex((item: any) => item.name === table.name);
+      const baseRows = baseTableIndex >= 0 ? (baseTables[baseTableIndex].rows || []) : [];
 
-    const existingRowIndex = editingRowTarget && editingRowTarget.tableName === table.name
-      ? table.rows.findIndex((row) => row.id === editingRowTarget.rowId)
-      : -1;
-    const rowIndex = existingRowIndex >= 0 ? existingRowIndex : table.rows.length;
-    const nextRow = makeRow(payload, table.name, rowIndex, editingRowTarget?.rowId);
+      const existingRowIndex = wasEditing
+        ? baseRows.findIndex((row: StockRow) => row.id === editingRowTarget!.rowId)
+        : -1;
+      const rowIndex = existingRowIndex >= 0 ? existingRowIndex : baseRows.length;
+      const nextRow = makeRow(payload, table.name, rowIndex, editingRowTarget?.rowId);
 
-    setTables((previous) =>
-      previous.map((item) => (
-        item.name === table.name
-          ? editingRowTarget && editingRowTarget.tableName === table.name
-            ? { ...item, rows: item.rows.map((row) => (row.id === editingRowTarget.rowId ? nextRow : row)) }
-            : { ...item, rows: [nextRow, ...item.rows] }
-          : item
-      ))
-    );
+      const nextRows = existingRowIndex >= 0
+        ? baseRows.map((row: StockRow) => (row.id === editingRowTarget!.rowId ? nextRow : row))
+        : [nextRow, ...baseRows];
+
+      const nextTable = { ...table, rows: nextRows };
+      const nextTables = baseTableIndex >= 0
+        ? baseTables.map((item: any, idx: number) => (idx === baseTableIndex ? nextTable : item))
+        : [...baseTables, nextTable];
+
+      await saveEntity('almoxerifado', { ...base, tables: nextTables });
+      return { nextTables, nextRow };
+    });
+
+    if (!resultado) return;
+
+    // Evita que o auto-save (disparado pelo `setTables` abaixo) regrave por cima com uma cópia
+    // que, no instante do debounce, já pode estar de novo desatualizada em relação ao que
+    // acabou de ser salvo — o resultado já é o que está no servidor.
+    skipNextAutoSave.current = true;
+    setTables(resultado.nextTables);
 
     setFiltro('');
     setIsRegisterOpen(false);
     setEditingRowTarget(null);
-    setActiveRowTarget(wasEditing ? { tableName: table.name, rowId: nextRow.id } : null);
+    setActiveRowTarget(wasEditing ? { tableName: table.name, rowId: resultado.nextRow.id } : null);
   };
 
   // Trocar o Status pra "Em manutenção" no formulário de edição abre o modal guiado (foto +
@@ -1606,19 +1689,35 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       }),
       id: numeroManutencao,
     };
-    setManutencaoHistorico((previous) => [entrada, ...previous]);
 
-    setTables((previous) => previous.map((table) => {
-      if (table.name !== row.tableName) return table;
-      return {
-        ...table,
-        rows: table.rows.map((r) => {
-          if (r.id !== row.id) return r;
-          const nextValues = { ...r.values, status: 'Em manutenção' };
-          return { ...r, values: nextValues, searchText: Object.values(nextValues).join(' ').toLowerCase() };
-        }),
-      };
-    }));
+    // Mesmo motivo de handleSaveRegister/handleConfirmBaixa: busca o estado atual do servidor
+    // em vez de gravar em cima da cópia local de `tables`, que pode estar desatualizada.
+    const resultado = await comAlmoxarifadoAtual(async (base) => {
+      const baseTables = Array.isArray(base.tables) ? base.tables : [];
+      const baseManutencaoHistorico: ManutencaoHistoricoItem[] = Array.isArray(base.manutencaoHistorico) ? base.manutencaoHistorico : [];
+
+      const nextTables = baseTables.map((table: any) => {
+        if (table.name !== row.tableName) return table;
+        return {
+          ...table,
+          rows: table.rows.map((r: StockRow) => {
+            if (r.id !== row.id) return r;
+            const nextValues = { ...r.values, status: 'Em manutenção' };
+            return { ...r, values: nextValues, searchText: Object.values(nextValues).join(' ').toLowerCase() };
+          }),
+        };
+      });
+      const nextManutencaoHistorico = [entrada, ...baseManutencaoHistorico];
+
+      await saveEntity('almoxerifado', { ...base, tables: nextTables, manutencaoHistorico: nextManutencaoHistorico });
+      return { nextTables, nextManutencaoHistorico };
+    });
+
+    if (!resultado) return;
+
+    skipNextAutoSave.current = true;
+    setTables(resultado.nextTables);
+    setManutencaoHistorico(resultado.nextManutencaoHistorico);
 
     setManutencaoEntradaAlvo(null);
     // Fecha o formulário de edição junto — evita misturar essa mudança de status (já
@@ -1731,13 +1830,29 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     const confirmRemoval = await confirmDialog({ message: 'Deseja desalocar este item?', danger: true, confirmText: 'Desalocar' });
     if (!confirmRemoval) return;
 
-    setTables((prevTables) =>
-      prevTables.map((table) => {
-        if (table.name !== row.tableName) return table;
+    const novoEvento: AllocationHistoricoItem = {
+      id: `desal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      action: 'desalocar',
+      kind: row.tableName === 'Alugados - Equipamentos' ? 'equipamentos' : row.tableName === 'Materiais' ? 'materiais' : 'outros',
+      dataEvento: new Date().toISOString(),
+      osId: row.values.serviceOS || '',
+      osLabel: row.values.serviceOS || '',
+      itemLabel: row.values.material || row.values.equipamento || row.values.modelo || row.values.item || 'Item',
+      tableName: row.tableName,
+      local: row.values.localizacao || ''
+    };
 
+    // Mesmo motivo das demais ações: busca o estado atual do servidor antes de gravar, em vez
+    // de partir da cópia local de `tables`.
+    const resultado = await comAlmoxarifadoAtual(async (base) => {
+      const baseTables = Array.isArray(base.tables) ? base.tables : [];
+      const baseAlocacoesHistorico = Array.isArray(base.alocacoesHistorico) ? base.alocacoesHistorico : [];
+
+      const nextTables = baseTables.map((table: any) => {
+        if (table.name !== row.tableName) return table;
         return {
           ...table,
-          rows: table.rows.map((currentRow) => {
+          rows: table.rows.map((currentRow: StockRow) => {
             if (currentRow.id !== row.id) return currentRow;
 
             const nextValues = { ...currentRow.values };
@@ -1747,32 +1862,24 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
               nextValues.status = getDefaultStatusForTable(currentRow.tableName);
             }
 
-            return {
-              ...currentRow,
-              values: nextValues,
-            };
+            return { ...currentRow, values: nextValues };
           })
         };
-      })
-    );
+      });
+      const nextAlocacoesHistorico = [novoEvento, ...baseAlocacoesHistorico];
 
-    setAlocacoesHistorico((prev) => [
-      {
-        id: `desal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        action: 'desalocar',
-        kind: row.tableName === 'Alugados - Equipamentos' ? 'equipamentos' : row.tableName === 'Materiais' ? 'materiais' : 'outros',
-        dataEvento: new Date().toISOString(),
-        osId: row.values.serviceOS || '',
-        osLabel: row.values.serviceOS || '',
-        itemLabel: row.values.material || row.values.equipamento || row.values.modelo || row.values.item || 'Item',
-        tableName: row.tableName,
-        local: row.values.localizacao || ''
-      },
-      ...prev
-    ]);
+      await saveEntity('almoxerifado', { ...base, tables: nextTables, alocacoesHistorico: nextAlocacoesHistorico });
+      return { nextTables, nextAlocacoesHistorico };
+    });
+
+    if (!resultado) return;
+
+    skipNextAutoSave.current = true;
+    setTables(resultado.nextTables);
+    setAlocacoesHistorico(resultado.nextAlocacoesHistorico);
   };
 
-  const handleSaveEquipAllocation = () => {
+  const handleSaveEquipAllocation = async () => {
     if (!equipAllocateForm.local || !equipAllocateForm.osId) {
       toast.error('Por favor, preencha o local e selecione a OS.');
       return;
@@ -1781,45 +1888,53 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     const { osLabel, osLocal } = resolveSelectedOsData(equipAllocateForm.osId);
     const effectiveLocal = osLocal || equipAllocateForm.local;
 
-    setTables((prevTables) =>
-      prevTables.map((table) => {
-        if (table.name === equipAllocateForm.tableName) {
-          return {
-            ...table,
-            rows: table.rows.map((row) => {
-              if (row.id === equipAllocateForm.rowId) {
-                return {
-                  ...row,
-                  values: {
-                    ...row.values,
-                    status: 'Alocado',
-                    localizacao: effectiveLocal,
-                    serviceOS: equipAllocateForm.osId
-                  }
-                };
-              }
-              return row;
-            })
-          };
-        }
-        return table;
-      })
-    );
+    const novoEvento: AllocationHistoricoItem = {
+      id: `aloc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      action: 'alocar',
+      kind: equipAllocateForm.tableName === 'Alugados - Equipamentos' ? 'equipamentos' : equipAllocateForm.tableName === 'Materiais' ? 'materiais' : 'outros',
+      dataEvento: new Date().toISOString(),
+      osId: equipAllocateForm.osId,
+      osLabel,
+      itemLabel: equipAllocateForm.equipName,
+      tableName: equipAllocateForm.tableName,
+      local: effectiveLocal
+    };
 
-    setAlocacoesHistorico((prev) => [
-      {
-        id: `aloc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        action: 'alocar',
-        kind: equipAllocateForm.tableName === 'Alugados - Equipamentos' ? 'equipamentos' : equipAllocateForm.tableName === 'Materiais' ? 'materiais' : 'outros',
-        dataEvento: new Date().toISOString(),
-        osId: equipAllocateForm.osId,
-        osLabel,
-        itemLabel: equipAllocateForm.equipName,
-        tableName: equipAllocateForm.tableName,
-        local: effectiveLocal
-      },
-      ...prev
-    ]);
+    // Mesmo motivo das demais ações: busca o estado atual do servidor antes de gravar, em vez
+    // de partir da cópia local de `tables`.
+    const resultado = await comAlmoxarifadoAtual(async (base) => {
+      const baseTables = Array.isArray(base.tables) ? base.tables : [];
+      const baseAlocacoesHistorico = Array.isArray(base.alocacoesHistorico) ? base.alocacoesHistorico : [];
+
+      const nextTables = baseTables.map((table: any) => {
+        if (table.name !== equipAllocateForm.tableName) return table;
+        return {
+          ...table,
+          rows: table.rows.map((row: StockRow) => {
+            if (row.id !== equipAllocateForm.rowId) return row;
+            return {
+              ...row,
+              values: {
+                ...row.values,
+                status: 'Alocado',
+                localizacao: effectiveLocal,
+                serviceOS: equipAllocateForm.osId
+              }
+            };
+          })
+        };
+      });
+      const nextAlocacoesHistorico = [novoEvento, ...baseAlocacoesHistorico];
+
+      await saveEntity('almoxerifado', { ...base, tables: nextTables, alocacoesHistorico: nextAlocacoesHistorico });
+      return { nextTables, nextAlocacoesHistorico };
+    });
+
+    if (!resultado) return;
+
+    skipNextAutoSave.current = true;
+    setTables(resultado.nextTables);
+    setAlocacoesHistorico(resultado.nextAlocacoesHistorico);
 
     setIsEquipAllocateModalOpen(false);
     setEquipAllocateForm({ rowId: '', tableName: '', equipName: '', local: '', osId: '' });
@@ -1891,7 +2006,9 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     const effectiveOsLocal = osLocal || '';
 
     // Valida as quantidades de TODOS os itens quantificáveis (com coluna de quantidade)
-    // antes de aplicar qualquer mudança: obrigatória e nunca acima do estoque.
+    // antes de aplicar qualquer mudança: obrigatória e nunca acima do estoque. Validação rápida
+    // em cima do que a tela já tem — a validação que realmente decide roda de novo lá embaixo,
+    // em cima do estoque fresco do servidor.
     for (const { tableName, row } of selectedRows) {
       if (getRomaneioItemKind(tableName) === 'gas') continue;
       const estoque = estoqueDaLinha(row);
@@ -1910,79 +2027,135 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     }
 
     const timestamp = new Date().toISOString();
+    const selectedKeys = Array.from(selectedForRomaneio);
 
-    // Define o tratamento de cada item conforme seu tipo:
-    // - material -> baixa (deduz a quantidade escolhida);
-    // - gás      -> deduz as quantidades atuais por tipo (saem do estoque, retornam por quantidade);
-    // - demais   -> alocação do item inteiro.
-    const romaneioItems = selectedRows.map(({ tableName, row }) => {
-      const kind = getRomaneioItemKind(tableName);
-      const key = keyForRow(tableName, row.id);
+    // Mesmo motivo de `handleSaveRegister`/`handleConfirmBaixa`: o romaneio pode CONSUMIR
+    // totalmente um material (linha sai da tabela) e mexe em 3 históricos de uma vez
+    // (alocacoesHistorico/baixasHistorico/romaneiosHistorico) — a operação em lote mais exposta
+    // de todo o Almoxarifado à trava anti-encolhimento do backend se partir da cópia local.
+    // Por isso todo o cálculo (inclusive a revalidação de estoque) roda em cima do `base`
+    // buscado na hora, não da `selectedRows` de cima (que só serve pra validação rápida/feedback
+    // imediato de UI).
+    const resultado = await comAlmoxarifadoAtual(async (base) => {
+      const baseTables = Array.isArray(base.tables) ? base.tables : [];
 
-      if (kind === 'material') {
-        const estoque = parseEstoqueQty(row.values.quantidade);
-        const baixaQty = Math.min(estoque, Math.max(0, parseEstoqueQty(romaneioQuantities[key] ?? '')));
-        const restante = Math.max(0, estoque - baixaQty);
+      const baseSelectedRows: { tableName: string; row: StockRow }[] = [];
+      for (const key of selectedKeys) {
+        const [tableName, rowId] = key.split('::');
+        const table = baseTables.find((t: any) => t.name === tableName);
+        const row = table?.rows.find((r: StockRow) => r.id === rowId);
+        if (table && row) baseSelectedRows.push({ tableName: table.name, row });
+      }
+
+      if (baseSelectedRows.length === 0) {
+        toast.error('Os itens selecionados não existem mais no estoque atual. Recarregue a página e tente de novo.');
+        return false;
+      }
+
+      for (const { tableName, row } of baseSelectedRows) {
+        if (getRomaneioItemKind(tableName) === 'gas') continue;
+        const estoque = estoqueDaLinha(row);
+        if (estoque <= 0) continue;
+        const key = keyForRow(tableName, row.id);
+        const qty = parseEstoqueQty(romaneioQuantities[key] ?? '');
+        const nome = row.values.material || row.values.equipamento || row.values.item || row.id;
+        if (qty > estoque) {
+          toast.error(`O estoque de "${nome}" mudou (alguém mais atualizou o Almoxarifado). Recarregue a página e confira as quantidades.`);
+          return false;
+        }
+      }
+
+      // Define o tratamento de cada item conforme seu tipo:
+      // - material -> baixa (deduz a quantidade escolhida);
+      // - gás      -> deduz as quantidades atuais por tipo (saem do estoque, retornam por quantidade);
+      // - demais   -> alocação do item inteiro.
+      const romaneioItems = baseSelectedRows.map(({ tableName, row }) => {
+        const kind = getRomaneioItemKind(tableName);
+        const key = keyForRow(tableName, row.id);
+
+        if (kind === 'material') {
+          const estoque = parseEstoqueQty(row.values.quantidade);
+          const baixaQty = Math.min(estoque, Math.max(0, parseEstoqueQty(romaneioQuantities[key] ?? '')));
+          const restante = Math.max(0, estoque - baixaQty);
+          const nextValues = {
+            ...row.values,
+            quantidade: String(restante),
+            serviceOS: effectiveOsLabel,
+            localizacao: effectiveOsLocal || row.values.localizacao,
+          };
+          return {
+            tableName,
+            rowId: row.id,
+            mode: 'baixa' as const,
+            kind,
+            itemLabel: row.values.material || row.values.item || row.id,
+            quantidade: String(baixaQty),
+            removed: restante <= 0,
+            snapshotBefore: { ...row.values },
+            snapshotAfter: nextValues,
+          };
+        }
+
+        if (kind === 'gas') {
+          // Registra a quantidade atual de cada gás (sai do estoque) e zera na linha.
+          const gasQuantities: Record<string, number> = {};
+          const nextValues = { ...row.values };
+          getGasKeys(row.values).forEach((gasKey) => {
+            const atual = parseEstoqueQty(row.values[gasKey]);
+            if (atual > 0) gasQuantities[gasKey] = atual;
+            nextValues[gasKey] = '0';
+          });
+          nextValues.total = '0';
+          const totalSaida = Object.values(gasQuantities).reduce((soma, valor) => soma + valor, 0);
+          return {
+            tableName,
+            rowId: row.id,
+            mode: 'alocacao' as const,
+            kind,
+            itemLabel: row.values.fornecedor || row.values.item || row.id,
+            quantidade: String(totalSaida),
+            gasQuantities,
+            removed: false,
+            snapshotBefore: { ...row.values },
+            snapshotAfter: nextValues,
+          };
+        }
+
+        // Equipamento/alugado: se houver coluna de quantidade, deduz a quantidade ESCOLHIDA
+        // (alocação parcial, limitada ao estoque); senão, aloca o item inteiro (1 unidade).
+        const estoqueEquip = estoqueDaLinha(row);
+        const itemLabelEquip = row.values.material || row.values.equipamento || row.values.fornecedor || row.values.item || row.id;
+
+        if (estoqueEquip > 0) {
+          const saida = Math.min(estoqueEquip, Math.max(0, parseEstoqueQty(romaneioQuantities[key] ?? '')));
+          const restante = Math.max(0, estoqueEquip - saida);
+          const fieldKey = (row.values.quantidade ?? '') !== '' ? 'quantidade' : 'qtd';
+          const nextValues = {
+            ...row.values,
+            [fieldKey]: String(restante),
+            // Só marca a linha inteira como alocada à OS quando esgota o estoque disponível.
+            serviceOS: restante <= 0 ? effectiveOsLabel : row.values.serviceOS,
+            localizacao: restante <= 0 ? (effectiveOsLocal || row.values.localizacao) : row.values.localizacao,
+            status: restante <= 0 ? 'Alocado' : row.values.status,
+          };
+          return {
+            tableName,
+            rowId: row.id,
+            mode: 'alocacao' as const,
+            kind,
+            itemLabel: itemLabelEquip,
+            quantidade: String(saida),
+            removed: false,
+            snapshotBefore: { ...row.values },
+            snapshotAfter: nextValues,
+          };
+        }
+
         const nextValues = {
           ...row.values,
-          quantidade: String(restante),
           serviceOS: effectiveOsLabel,
           localizacao: effectiveOsLocal || row.values.localizacao,
-        };
-        return {
-          tableName,
-          rowId: row.id,
-          mode: 'baixa' as const,
-          kind,
-          itemLabel: row.values.material || row.values.item || row.id,
-          quantidade: String(baixaQty),
-          removed: restante <= 0,
-          snapshotBefore: { ...row.values },
-          snapshotAfter: nextValues,
-        };
-      }
-
-      if (kind === 'gas') {
-        // Registra a quantidade atual de cada gás (sai do estoque) e zera na linha.
-        const gasQuantities: Record<string, number> = {};
-        const nextValues = { ...row.values };
-        getGasKeys(row.values).forEach((gasKey) => {
-          const atual = parseEstoqueQty(row.values[gasKey]);
-          if (atual > 0) gasQuantities[gasKey] = atual;
-          nextValues[gasKey] = '0';
-        });
-        nextValues.total = '0';
-        const totalSaida = Object.values(gasQuantities).reduce((soma, valor) => soma + valor, 0);
-        return {
-          tableName,
-          rowId: row.id,
-          mode: 'alocacao' as const,
-          kind,
-          itemLabel: row.values.fornecedor || row.values.item || row.id,
-          quantidade: String(totalSaida),
-          gasQuantities,
-          removed: false,
-          snapshotBefore: { ...row.values },
-          snapshotAfter: nextValues,
-        };
-      }
-
-      // Equipamento/alugado: se houver coluna de quantidade, deduz a quantidade ESCOLHIDA
-      // (alocação parcial, limitada ao estoque); senão, aloca o item inteiro (1 unidade).
-      const estoqueEquip = estoqueDaLinha(row);
-      const itemLabelEquip = row.values.material || row.values.equipamento || row.values.fornecedor || row.values.item || row.id;
-
-      if (estoqueEquip > 0) {
-        const saida = Math.min(estoqueEquip, Math.max(0, parseEstoqueQty(romaneioQuantities[key] ?? '')));
-        const restante = Math.max(0, estoqueEquip - saida);
-        const fieldKey = (row.values.quantidade ?? '') !== '' ? 'quantidade' : 'qtd';
-        const nextValues = {
-          ...row.values,
-          [fieldKey]: String(restante),
-          // Só marca a linha inteira como alocada à OS quando esgota o estoque disponível.
-          serviceOS: restante <= 0 ? effectiveOsLabel : row.values.serviceOS,
-          localizacao: restante <= 0 ? (effectiveOsLocal || row.values.localizacao) : row.values.localizacao,
-          status: restante <= 0 ? 'Alocado' : row.values.status,
+          status: 'Alocado',
         };
         return {
           tableName,
@@ -1990,118 +2163,121 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
           mode: 'alocacao' as const,
           kind,
           itemLabel: itemLabelEquip,
-          quantidade: String(saida),
+          quantidade: '1',
           removed: false,
           snapshotBefore: { ...row.values },
           snapshotAfter: nextValues,
         };
-      }
+      });
 
-      const nextValues = {
-        ...row.values,
-        serviceOS: effectiveOsLabel,
-        localizacao: effectiveOsLocal || row.values.localizacao,
-        status: 'Alocado',
-      };
-      return {
-        tableName,
-        rowId: row.id,
-        mode: 'alocacao' as const,
-        kind,
-        itemLabel: itemLabelEquip,
-        quantidade: '1',
-        removed: false,
-        snapshotBefore: { ...row.values },
-        snapshotAfter: nextValues,
-      };
-    });
+      const byKey = new Map(romaneioItems.map((item) => [keyForRow(item.tableName, item.rowId), item]));
 
-    const byKey = new Map(romaneioItems.map((item) => [keyForRow(item.tableName, item.rowId), item]));
+      // Aplica no estoque: materiais totalmente consumidos saem da tabela;
+      // os demais (baixa parcial ou alocação) têm os valores atualizados.
+      const nextTables = baseTables.map((table: any) => ({
+        ...table,
+        rows: table.rows.flatMap((row: StockRow) => {
+          const item = byKey.get(keyForRow(table.name, row.id));
+          if (!item) return [row];
+          if (item.removed) return [];
+          return [{
+            ...row,
+            values: item.snapshotAfter,
+            searchText: Object.values(item.snapshotAfter).join(' ').toLowerCase(),
+          }];
+        })
+      }));
 
-    // Aplica no estoque: materiais totalmente consumidos saem da tabela;
-    // os demais (baixa parcial ou alocação) têm os valores atualizados.
-    setTables((prev) => prev.map((table) => ({
-      ...table,
-      rows: table.rows.flatMap((row) => {
-        const item = byKey.get(keyForRow(table.name, row.id));
-        if (!item) return [row];
-        if (item.removed) return [];
-        return [{
-          ...row,
-          values: item.snapshotAfter,
-          searchText: Object.values(item.snapshotAfter).join(' ').toLowerCase(),
-        }];
-      })
-    })));
-
-    const novosEventos = romaneioItems.map((item) => ({
-      id: `aloc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      action: (item.mode === 'baixa' ? 'baixa' : 'alocar') as AllocationHistoricoItem['action'],
-      kind: (item.kind === 'gas'
-        ? 'gases'
-        : item.tableName === 'Alugados - Equipamentos'
-          ? 'equipamentos'
-          : item.tableName === 'Materiais'
-            ? 'materiais'
-            : 'outros') as AllocationHistoricoItem['kind'],
-      dataEvento: timestamp,
-      osId: romaneioOsId,
-      osLabel: effectiveOsLabel,
-      itemLabel: item.itemLabel,
-      tableName: item.tableName,
-      quantity: (item.mode === 'baixa' || item.kind === 'gas') ? (Number(item.quantidade) || undefined) : undefined,
-      local: effectiveOsLocal || item.snapshotBefore.localizacao || '',
-    }));
-
-    setAlocacoesHistorico((prev) => [...novosEventos, ...prev]);
-
-    // Histórico de baixa registra apenas os materiais consumidos.
-    const baixaItems = romaneioItems.filter((item) => item.mode === 'baixa');
-    if (baixaItems.length > 0) {
-      setBaixasHistorico((prev) => [
-        ...baixaItems.map((item) => ({
-          id: `baixa-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          dataBaixa: timestamp,
-          tableName: item.tableName,
-          itemLabel: `${item.itemLabel} (x${item.quantidade})`,
-          statusAnterior: item.snapshotBefore.status || '',
-          osId: romaneioOsId,
-          osLabel: effectiveOsLabel,
-          localizacao: effectiveOsLocal || item.snapshotBefore.localizacao || '',
-          serviceOS: effectiveOsLabel,
-          snapshot: { ...item.snapshotBefore },
-        })),
-        ...prev
-      ]);
-    }
-
-    // Romaneio só é considerado de "baixa" (sem devolução) quando todos os itens são materiais.
-    const romaneioModeResolvido = romaneioItems.every((item) => item.mode === 'baixa') ? 'baixa' : 'alocacao';
-
-    const osCliente = cleanValue(
-      (selectedOs as any)?.cliente_detalhes?.razao_social
-      || (selectedOs as any)?.cliente_detalhes?.razaoSocial
-      || (selectedOs as any)?.cliente
-      || ''
-    );
-
-    setRomaneiosHistorico((prev) => [
-      {
-        id: `rom-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        createdAt: timestamp,
-        mode: romaneioModeResolvido,
+      const novosEventos = romaneioItems.map((item) => ({
+        id: `aloc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        action: (item.mode === 'baixa' ? 'baixa' : 'alocar') as AllocationHistoricoItem['action'],
+        kind: (item.kind === 'gas'
+          ? 'gases'
+          : item.tableName === 'Alugados - Equipamentos'
+            ? 'equipamentos'
+            : item.tableName === 'Materiais'
+              ? 'materiais'
+              : 'outros') as AllocationHistoricoItem['kind'],
+        dataEvento: timestamp,
         osId: romaneioOsId,
         osLabel: effectiveOsLabel,
-        osLocal: effectiveOsLocal,
-        osCliente,
-        items: romaneioItems.map(({ removed, ...rest }) => rest),
-      },
-      ...prev
-    ]);
+        itemLabel: item.itemLabel,
+        tableName: item.tableName,
+        quantity: (item.mode === 'baixa' || item.kind === 'gas') ? (Number(item.quantidade) || undefined) : undefined,
+        local: effectiveOsLocal || item.snapshotBefore.localizacao || '',
+      }));
+
+      const baseAlocacoesHistorico = Array.isArray(base.alocacoesHistorico) ? base.alocacoesHistorico : [];
+      const nextAlocacoesHistorico = [...novosEventos, ...baseAlocacoesHistorico];
+
+      // Histórico de baixa registra apenas os materiais consumidos.
+      const baixaItems = romaneioItems.filter((item) => item.mode === 'baixa');
+      const baseBaixasHistorico = Array.isArray(base.baixasHistorico) ? base.baixasHistorico : [];
+      const nextBaixasHistorico = baixaItems.length > 0
+        ? [
+          ...baixaItems.map((item) => ({
+            id: `baixa-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            dataBaixa: timestamp,
+            tableName: item.tableName,
+            itemLabel: `${item.itemLabel} (x${item.quantidade})`,
+            statusAnterior: item.snapshotBefore.status || '',
+            osId: romaneioOsId,
+            osLabel: effectiveOsLabel,
+            localizacao: effectiveOsLocal || item.snapshotBefore.localizacao || '',
+            serviceOS: effectiveOsLabel,
+            snapshot: { ...item.snapshotBefore },
+          })),
+          ...baseBaixasHistorico
+        ]
+        : baseBaixasHistorico;
+
+      // Romaneio só é considerado de "baixa" (sem devolução) quando todos os itens são materiais.
+      const romaneioModeResolvido = romaneioItems.every((item) => item.mode === 'baixa') ? 'baixa' : 'alocacao';
+
+      const osCliente = cleanValue(
+        (selectedOs as any)?.cliente_detalhes?.razao_social
+        || (selectedOs as any)?.cliente_detalhes?.razaoSocial
+        || (selectedOs as any)?.cliente
+        || ''
+      );
+
+      const baseRomaneiosHistorico = Array.isArray(base.romaneiosHistorico) ? base.romaneiosHistorico : [];
+      const nextRomaneiosHistorico = [
+        {
+          id: `rom-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          createdAt: timestamp,
+          mode: romaneioModeResolvido,
+          osId: romaneioOsId,
+          osLabel: effectiveOsLabel,
+          osLocal: effectiveOsLocal,
+          osCliente,
+          items: romaneioItems.map(({ removed, ...rest }) => rest),
+        },
+        ...baseRomaneiosHistorico
+      ];
+
+      await saveEntity('almoxerifado', {
+        ...base,
+        tables: nextTables,
+        alocacoesHistorico: nextAlocacoesHistorico,
+        baixasHistorico: nextBaixasHistorico,
+        romaneiosHistorico: nextRomaneiosHistorico,
+      });
+
+      return { nextTables, nextAlocacoesHistorico, nextBaixasHistorico, nextRomaneiosHistorico, romaneioItems, baseSelectedRows, osCliente };
+    });
+
+    if (!resultado) return;
+
+    skipNextAutoSave.current = true;
+    setTables(resultado.nextTables);
+    setAlocacoesHistorico(resultado.nextAlocacoesHistorico);
+    setBaixasHistorico(resultado.nextBaixasHistorico);
+    setRomaneiosHistorico(resultado.nextRomaneiosHistorico);
 
     // Peso (kg) por item do romaneio = peso unitário (da linha) × quantidade que saiu.
-    const rowByKeyPeso = new Map(selectedRows.map(({ tableName, row }) => [keyForRow(tableName, row.id), row]));
-    const itemsPdf = romaneioItems.map((item) => {
+    const rowByKeyPeso = new Map(resultado.baseSelectedRows.map(({ tableName, row }) => [keyForRow(tableName, row.id), row]));
+    const itemsPdf = resultado.romaneioItems.map((item) => {
       const rowOrigem = rowByKeyPeso.get(keyForRow(item.tableName, item.rowId));
       const pesoUnit = parseEstoqueQty(rowOrigem?.values.peso);
       const pesoLinha = pesoUnit > 0 ? pesoUnit * (Number(item.quantidade) || 0) : 0;
@@ -2110,9 +2286,21 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     const pesoTotalRomaneio = itemsPdf.reduce((soma, it) => soma + (Number(it.peso) || 0), 0);
 
     try {
-      const logoBase64 = await loadRomaneioLogoBase64();
+      // Logo do romaneio: segue a empresa da OS (prefixo VTS/SN = Servinave, LN = Linave — mesma
+      // convenção usada em todo o resto do ERP). O logoBase64 era buscado sem argumento nenhum
+      // antes (sempre o logo da Linave), então o romaneio de uma OS da Servinave sempre saía com
+      // o logo errado. Sem prefixo reconhecível (ex.: as duas OS de uso interno), cai pro
+      // empresaPrestadora do negócio vinculado.
+      const numeroOsUpper = String(romaneioOsId || '').trim().toUpperCase();
+      const obraDaOs = (Array.isArray(obras) ? obras : []).find((o: any) => o?.id === (selectedOs as any)?.obraId);
+      const empresaDoRomaneio = numeroOsUpper.startsWith('VTS') || numeroOsUpper.startsWith('SN')
+        ? 'Servinave'
+        : numeroOsUpper.startsWith('LN')
+          ? 'Linave'
+          : (obraDaOs?.empresaPrestadora || (selectedOs as any)?.negocio_detalhes?.empresa_prestadora || (selectedOs as any)?.empresa_prestadora || 'Linave');
+      const logoBase64 = await loadRomaneioLogoBase64(getLogoUrlForEmpresa(empresaDoRomaneio));
       const doc = gerarRomaneioPdf({
-        cliente: osCliente,
+        cliente: resultado.osCliente,
         osLabel: effectiveOsLabel,
         enderecoEntrega: effectiveOsLocal,
         dataEmissao: timestamp,
@@ -2123,8 +2311,8 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       doc.save(`romaneio-${effectiveOsLabel || romaneioOsId}.pdf`);
     } catch (e) {
       console.error('Erro ao gerar pdf do romaneio', e);
-      // A baixa do estoque já foi gravada acima (setRomaneiosHistorico) mesmo se o PDF falhar
-      // — sem o toast, o usuário achava que também tinha saído o documento, sem nenhum aviso.
+      // A baixa do estoque já foi gravada acima (saveEntity) mesmo se o PDF falhar — sem o
+      // toast, o usuário achava que também tinha saído o documento, sem nenhum aviso.
       toast.error('Romaneio registrado, mas não foi possível gerar o PDF. Baixe de novo pelo Histórico de Romaneio.');
     }
 
@@ -3359,7 +3547,10 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                                   min={1}
                                   max={estoque || undefined}
                                   value={qtdBaixa}
-                                  placeholder={String(estoque || '')}
+                                  // Dica "0" (não o estoque disponível): deixado em branco, é
+                                  // exatamente 0 que sai no romaneio (romaneioQtyForRow acima) —
+                                  // mostrar o estoque aqui sugeria, errado, que ele sairia inteiro.
+                                  placeholder="0"
                                   onChange={(e) => setRomaneioQuantities((prev) => ({ ...prev, [key]: e.target.value }))}
                                   className="h-9 w-20 rounded-lg border border-white/10 bg-[#0b1220]/80 px-2 text-center text-sm text-white placeholder:text-white/30 focus:border-amber-500/40 focus:outline-none"
                                 />

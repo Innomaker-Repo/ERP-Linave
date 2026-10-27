@@ -6,6 +6,7 @@ import { getNegocioPorId } from '../../../../services/comercialService';
 import { mapNegocioToObra } from '../../../../services/obrasMapper';
 import { getLogoUrlForEmpresa } from '../../../utils/company';
 import { boldOS } from '../../../utils/osHighlight';
+import { formatNumeroOsDisplay } from '../../../../services/ordensServico';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../ui/feedback';
 import {
@@ -171,8 +172,7 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
       .map((item: any) => item.obraId)
   );
 
-  // Exclui as OS internas (1000 Linave / 2000 Servinave) — café/papel etc. não vão pra produção.
-  const obrasElegiveis = listaObras.filter((o: any) => obrasComOSEnviada.has(o.id) && !o.usoInterno);
+  const obrasElegiveis = listaObras.filter((o: any) => obrasComOSEnviada.has(o.id));
 
   // Opções do filtro de empresa vêm dos próprios projetos elegíveis (não de um filtro já
   // aplicado), pra lista de opções não encolher quando uma empresa já está selecionada.
@@ -657,9 +657,23 @@ export function ObrasView({ searchQuery }: { searchQuery: string }) {
                   </div>
                 )}
 
-                <div className="w-full bg-[#0b1220] p-4 rounded-2xl border border-white/5 flex justify-between items-center mb-4">
-                  <p className="text-[9px] text-white/30 font-black uppercase flex items-center gap-2"><Hash size={12}/> {boldOS('OS enviadas')}</p>
-                  <span className="text-emerald-400 text-xs font-bold">{totalOSEnviada}/{osDoNegocio.length}</span>
+                <div className="w-full bg-[#0b1220] p-4 rounded-2xl border border-white/5 mb-4">
+                  <div className="flex justify-between items-center">
+                    <p className="text-[9px] text-white/30 font-black uppercase flex items-center gap-2"><Hash size={12}/> {boldOS('OS enviadas')}</p>
+                    <span className="text-emerald-400 text-xs font-bold">{totalOSEnviada}/{osDoNegocio.length}</span>
+                  </div>
+                  {osDoNegocio.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-3">
+                      {osDoNegocio.map((item: any) => (
+                        <span
+                          key={item.id || item.backendId || item.ordemServicoNumero}
+                          className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-amber-300"
+                        >
+                          {formatNumeroOsDisplay(item.ordemServicoNumero)}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {osConsolidadaEnviada && (

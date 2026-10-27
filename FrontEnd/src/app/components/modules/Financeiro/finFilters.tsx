@@ -4,14 +4,16 @@
  * O período é uma FAIXA de datas (início → fim, com dia) aplicada a todas as telas.
  * =======================================================================================*/
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Building2, Landmark, CalendarRange, ArrowRight, SlidersHorizontal, X } from 'lucide-react';
+import { Building2, Landmark, CalendarRange, ArrowRight, SlidersHorizontal, X, FileText } from 'lucide-react';
 import { Select } from './finUi';
 import { useFin } from './useFin';
 import { days, todayStr, bancoLabel } from './finData';
+import { formatNumeroOsDisplay } from '../../../../services/ordensServico';
 
 export interface FinFilterState {
   empresa: string;
   banco: string;
+  os: string; // número cru da OS (igual ao que fica gravado nos registros) — 'Todas' = sem filtro
   dataInicio: string; // YYYY-MM-DD (inclusive) — vazio = sem limite inferior
   dataFim: string;    // YYYY-MM-DD (inclusive) — vazio = sem limite superior
 }
@@ -23,7 +25,7 @@ interface FinFiltersCtx {
   match: (rec: any) => boolean;
 }
 
-const DEFAULTS: FinFilterState = { empresa: 'Todas', banco: 'Todos', dataInicio: '', dataFim: '' };
+const DEFAULTS: FinFilterState = { empresa: 'Todas', banco: 'Todos', os: 'Todas', dataInicio: '', dataFim: '' };
 
 // Data (qualquer formato ...YYYY-MM-DD...) relevante de um registro financeiro.
 const dataDoRegistro = (rec: any): string =>
@@ -36,6 +38,15 @@ const dataDoRegistro = (rec: any): string =>
     rec?.createdAt ||
     '',
   ).slice(0, 10);
+
+// Número da OS vinculada a um registro financeiro — o campo que carrega varia por tipo:
+// NFe/solicitação de NFe usa `os`; Conta a Pagar/Solicitação usa `vinculoValor` (só quando
+// `vinculoTipo === 'OS'`, já que o mesmo campo também guarda Departamento); Conta a Receber e
+// Recibo de Locação usam `ordemServicoNumero`. Todos guardam o mesmo número cru da OS (ex.:
+// "LN-0003/26"), então a comparação é direta, sem normalização extra.
+const osDoRegistro = (rec: any): string => String(
+  rec?.os || rec?.ordemServicoNumero || (rec?.vinculoTipo === 'OS' ? rec?.vinculoValor : '') || '',
+).trim();
 
 const Ctx = createContext<FinFiltersCtx | null>(null);
 
@@ -67,6 +78,10 @@ export function FinFiltersProvider({ view = '', children }: { view?: string; chi
       const b = rec?.banco || rec?.bancoRecebimento;
       if (b && b !== filters.banco) return false; // só exclui registros que têm banco
     }
+    // Diferente de empresa/banco (que só excluem quando o campo diverge), aqui a intenção é
+    // isolar tudo o que pertence àquela OS — então um registro sem nenhum vínculo de OS
+    // (conta de Departamento, cadastro de banco etc.) também sai da lista filtrada.
+    if (filters.os !== 'Todas' && osDoRegistro(rec) !== filters.os) return false;
     if (filters.dataInicio || filters.dataFim) {
       const d = dataDoRegistro(rec);
       // Registros sem data ficam visíveis (mesma regra do filtro antigo por mês).
@@ -165,13 +180,20 @@ function PresetChip({ label, active, onClick }: { label: string; active: boolean
 
 export function FinFiltersBar({ view = '' }: { view?: string }) {
   const { filters, setFilters } = useFinFilters();
-  const { empresas, records } = useFin();
+  const { empresas, records, oss } = useFin();
   const bancos = records('banco').filter((b) => b.nome) as Array<{ id: string; nome: string; empresa?: string }>;
+  // Uma opção por número de OS real (ctx.os já vem sem duplicata) — sem a "—" que
+  // mapOsToFinanceiro usa quando a OS não tem número resolvido.
+  const osList = useMemo(
+    () => [...oss].filter((o) => o.numero && o.numero !== '—').sort((a, b) => a.numero.localeCompare(b.numero)),
+    [oss],
+  );
   const presets = presetsDaView(view);
 
   const ativos =
     (filters.empresa !== 'Todas' ? 1 : 0) +
     (filters.banco !== 'Todos' ? 1 : 0) +
+    (filters.os !== 'Todas' ? 1 : 0) +
     (filters.dataInicio || filters.dataFim ? 1 : 0);
 
   // Mantém a faixa coerente: fim nunca antes do início (e vice-versa).
@@ -237,6 +259,17 @@ export function FinFiltersBar({ view = '' }: { view?: string }) {
           >
             <option value="Todos">Todos os bancos</option>
             {bancos.map((b) => <option key={b.id} value={b.id}>{bancoLabel(b)}</option>)}
+          </Select>
+        </div>
+
+        {/* OS */}
+        <div className="min-w-[168px] flex-1">
+          <span className={grpLabel}><FileText size={12} /> OS</span>
+          <Select value={filters.os} onChange={(e) => setFilters((f) => ({ ...f, os: e.target.value }))}>
+            <option value="Todas">Todas as OS</option>
+            {osList.map((o) => (
+              <option key={o.numero} value={o.numero}>{formatNumeroOsDisplay(o.numero)} - {o.cliente}</option>
+            ))}
           </Select>
         </div>
 
