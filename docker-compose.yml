@@ -3,10 +3,29 @@ networks:
   erp-network:
     driver: bridge
 
+# Rotação dos logs de cada container: no máximo 5 arquivos de 10 MB. Sem isto o log
+# cresce sem limite (o daphne grava uma linha por conexão/desconexão o dia todo) até
+# encher o disco — e disco cheio derruba o MySQL.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+# Teto de memória por container (mem_limit): se um processo disparar, o Docker reinicia
+# só aquele container em vez de a máquina inteira travar (provável causa das quedas de
+# 23/10). Valores padrão abaixo; ajuste no .env (MEM_LIMIT_*) conforme a RAM do servidor
+# — ver `docker stats --no-stream`. Teto não é reserva: a soma pode passar da RAM total.
+
 services:
   traefik:
     image: traefik:v3.7
     container_name: erp_traefik
+    # Sem isto o Traefik (porta de entrada 80/443) ficava parado depois de um reinício do
+    # servidor e o site seguia fora do ar com todo o resto de pé (23/10, 15:50–16:19).
+    restart: always
+    logging: *logging
+    mem_limit: ${MEM_LIMIT_TRAEFIK:-256m}
     ports:
       - "80:80"       # Porta padrão web HTTP (Acesse http://localhost)
       - "443:443"     # Porta padrão web HTTPS (Acesse https://localhost)
@@ -25,6 +44,8 @@ services:
     image: mysql:8.0
     container_name: erp_database
     restart: always
+    logging: *logging
+    mem_limit: ${MEM_LIMIT_DATABASE:-1g}
     environment:
       MYSQL_DATABASE: ${MYSQL_DATABASE}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
@@ -52,6 +73,13 @@ services:
     image: redis:7-alpine
     container_name: erp_redis
     restart: always
+    logging: *logging
+    mem_limit: ${MEM_LIMIT_REDIS:-128m}
+    # Sem gravação em disco: o Redis só guarda dado descartável (quem está conectado no
+    # tempo real, refeito quando os navegadores reconectam; contadores de limite de login
+    # por minuto). Os bloqueios de login ficam no MySQL. Isto evita a cópia do processo a
+    # cada 5 min para salvar (o risco do aviso "Memory overcommit" no log).
+    command: redis-server --save "" --appendonly no
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -65,6 +93,8 @@ services:
     build: ./BackEnd  # Compila usando o Dockerfile do seu backend
     container_name: erp_backend
     restart: always
+    logging: *logging
+    mem_limit: ${MEM_LIMIT_BACKEND:-1g}
     volumes:
       # Documentos enviados pelos usuários (MEDIA_ROOT). SEM este volume os anexos
       # ficam na camada gravável do container e somem a cada `up --build`.
@@ -84,6 +114,9 @@ services:
       - DJANGO_ALLOWED_HOSTS=${ALLOWED_HOSTS}
       - DJANGO_CORS_ALLOWED_ORIGINS=${DJANGO_CORS_ALLOWED_ORIGINS}
       - REDIS_URL=redis://redis:6379/0
+      # Senha inicial do usuário admin (setup_admin). Sem ela, é gerada uma aleatória e
+      # impressa uma vez no log (`docker logs erp_backend`).
+      - DJANGO_ADMIN_PASSWORD=${DJANGO_ADMIN_PASSWORD:-}
     depends_on:
         database:
           condition: service_healthy
@@ -103,7 +136,10 @@ services:
       - "traefik.http.middlewares.backend-secure-headers.headers.browserXssFilter=true"
       - "traefik.http.middlewares.backend-secure-headers.headers.contentTypeNosniff=true"
       - "traefik.http.middlewares.backend-secure-headers.headers.frameDeny=true"
-      - "traefik.http.middlewares.backend-secure-headers.headers.contentSecurityPolicy=default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self';"
+      # HSTS: o navegador passa a só usar HTTPS neste domínio por 1 ano. Sem
+      # includeSubDomains/preload de propósito (afetaria outros subdomínios da empresa).
+      - "traefik.http.middlewares.backend-secure-headers.headers.stsSeconds=31536000"
+      - "traefik.http.middlewares.backend-secure-headers.headers.contentSecurityPolicy=default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';"
 
   # --- WEBSOCKET: DAPHNE (tempo real) ---
   # Mesma imagem do backend, processo à parte rodando daphne em vez de gunicorn — HTTP
@@ -113,6 +149,8 @@ services:
     build: ./BackEnd
     container_name: erp_ws
     restart: always
+    logging: *logging
+    mem_limit: ${MEM_LIMIT_WS:-512m}
     command: python -m daphne -b 0.0.0.0 -p 8001 ERP_Linave_BackEnd.asgi:application
     environment:
       - DB_HOST=database
@@ -147,6 +185,8 @@ services:
     build: ./FrontEnd
     container_name: erp_frontend
     restart: always
+    logging: *logging
+    mem_limit: ${MEM_LIMIT_FRONTEND:-128m}
     volumes:
       # Mesmo volume do backend, somente leitura: o nginx serve /media/ direto do disco.
       - media_data:/usr/share/nginx/media:ro
@@ -170,8 +210,11 @@ services:
       - "traefik.http.routers.frontend.middlewares=secure-headers"
       - "traefik.http.middlewares.secure-headers.headers.browserXssFilter=true"
       - "traefik.http.middlewares.secure-headers.headers.contentTypeNosniff=true"
-      - "traefik.http.middlewares.secure-headers.headers.frameDeny=true"
-      - "traefik.http.middlewares.secure-headers.headers.contentSecurityPolicy=default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self';"
+      - "traefik.http.middlewares.secure-headers.headers.customFrameOptionsValue=SAMEORIGIN"
+      # HSTS: o navegador passa a só usar HTTPS neste domínio por 1 ano. Sem
+      # includeSubDomains/preload de propósito (afetaria outros subdomínios da empresa).
+      - "traefik.http.middlewares.secure-headers.headers.stsSeconds=31536000"
+      - "traefik.http.middlewares.secure-headers.headers.contentSecurityPolicy=default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-src 'self' blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self';"
 
 volumes:
   mysql_data:

@@ -3,10 +3,11 @@
 O `AuthMiddlewareStack` padrão do Channels é baseado em sessão/cookie — este projeto
 autentica 100% via JWT Bearer no header (ver `FrontEnd/src/services/api.ts`), e o
 navegador não permite header customizado no handshake do WebSocket. Por isso o token
-viaja na query string (`wss://.../ws/workspace/?token=...`) e é validado aqui, com o
-mesmo `SIMPLE_JWT`/`djangorestframework-simplejwt` já usado na API REST.
+viaja no único header que o navegador deixa definir, o `Sec-WebSocket-Protocol`:
+`new WebSocket(url, ['erp-jwt', token])` (ver FrontEnd/src/services/realtime.ts). NÃO na
+query string — URL acaba nos logs de acesso do daphne/Traefik, e o token junto.
+Validado aqui com o mesmo `SIMPLE_JWT`/`djangorestframework-simplejwt` da API REST.
 """
-from urllib.parse import parse_qs
 
 from channels.db import database_sync_to_async
 from channels.middleware import BaseMiddleware
@@ -26,11 +27,23 @@ def _usuario_do_token(token_str):
         return AnonymousUser()
 
 
+# Primeiro item do Sec-WebSocket-Protocol; o segundo é o token. O consumer devolve este
+# nome no accept() — o navegador derruba a conexão se o servidor não escolher um dos
+# subprotocolos que ele ofereceu.
+SUBPROTOCOLO_JWT = 'erp-jwt'
+
+
+def token_do_subprotocolo(scope):
+    subprotocolos = list(scope.get('subprotocols') or [])
+    if len(subprotocolos) >= 2 and subprotocolos[0] == SUBPROTOCOLO_JWT:
+        return subprotocolos[1]
+    return None
+
+
 class JWTAuthMiddleware(BaseMiddleware):
-    """Resolve `scope['user']` a partir do `?token=` da query string do WebSocket."""
+    """Resolve `scope['user']` a partir do token enviado no Sec-WebSocket-Protocol."""
 
     async def __call__(self, scope, receive, send):
-        query_string = scope.get('query_string', b'').decode('utf-8')
-        token = parse_qs(query_string).get('token', [None])[0]
+        token = token_do_subprotocolo(scope)
         scope['user'] = await _usuario_do_token(token) if token else AnonymousUser()
         return await super().__call__(scope, receive, send)

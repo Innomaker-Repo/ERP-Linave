@@ -236,6 +236,12 @@ class User(AbstractUser):
     # Permissões granulares por item do menu (usado apenas para role='usuario')
     permissoes = models.JSONField(default=dict, blank=True)
 
+    # Proteção contra força bruta no login (ver FlexTokenSerializer): conta senhas erradas
+    # seguidas; ao chegar no limite a conta fica bloqueada até um admin desbloquear
+    # (painel de Usuários, ou `manage.py desbloquear_usuario <cpf>`).
+    tentativas_login_falhas = models.PositiveSmallIntegerField(default=0)
+    login_bloqueado = models.BooleanField(default=False)
+
     workspace = models.ForeignKey(
         'Workspace',
         on_delete=models.SET_NULL,
@@ -955,8 +961,11 @@ class ConfiguracaoApp(models.Model):
 #   - categoria:    "slot"/subtipo do documento dentro do vínculo (ver CATEGORIA_CHOICES)
 
 def documento_upload_path(instance, filename):
+    # Pasta aleatória por arquivo: o nginx serve /media/ sem checar login, então o caminho
+    # não pode ser adivinhável a partir do nome do arquivo (ex.: documentos/financeiro/nf.pdf).
+    import uuid
     tipo = (instance.vinculo_tipo or 'gerais').strip() or 'gerais'
-    return f'documentos/{tipo}/{filename}'
+    return f'documentos/{tipo}/{uuid.uuid4().hex}/{filename}'
 
 
 class Documento(models.Model):
@@ -983,6 +992,9 @@ class Documento(models.Model):
     categoria = models.CharField(max_length=40, choices=CATEGORIA_CHOICES, default='outro')
     vinculo_tipo = models.CharField(max_length=40, blank=True, default='')
     vinculo_id = models.CharField(max_length=120, blank=True, default='')
+    # CPF de quem enviou — base do controle de acesso (DocumentoViewSet). Texto, não FK, para
+    # o documento sobreviver à exclusão do usuário. Vazio em documentos antigos (antes do campo).
+    enviado_por = models.CharField(max_length=14, blank=True, default='', db_index=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -995,6 +1007,24 @@ class Documento(models.Model):
         return f'{self.nome_original or self.arquivo.name} ({self.vinculo_tipo}:{self.vinculo_id})'
 #--------------------- Fim Documentos ------------------
 #--------------------- Fim Configurações ------------------
+
+#--------------------- Bloqueio de login por IP ------------------
+class LoginBloqueioIP(models.Model):
+    """Senhas erradas de UMA origem (IP) para UMA conta — ver auth_backends.py. Ao chegar no
+    limite, só essa origem fica bloqueada para essa conta: quem tenta adivinhar a senha de
+    outra pessoa não consegue, com isso, trancar o dono fora do sistema."""
+    usuario = models.ForeignKey('User', on_delete=models.CASCADE, related_name='bloqueios_ip')
+    ip = models.CharField(max_length=45)  # cabe IPv6
+    falhas = models.PositiveSmallIntegerField(default=0)
+    bloqueado = models.BooleanField(default=False)
+    atualizado_em = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [('usuario', 'ip')]
+
+    def __str__(self):
+        return f'{self.usuario_id} @ {self.ip} ({self.falhas} falha(s){", bloqueado" if self.bloqueado else ""})'
+
 
 #--------------------- Log de Atividades ------------------
 class LogAtividade(models.Model):

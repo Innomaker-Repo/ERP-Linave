@@ -15,6 +15,18 @@ from .models import (
 
 # ----------------- Documentos ------------------
 
+# Tudo que as telas de upload aceitam hoje (PDF, imagens, Office, CSV e o XML da NF-e).
+# Fora daqui de propósito: html/htm/xhtml/svg/js e afins, que o navegador executa.
+DOCUMENTO_EXTENSOES_PERMITIDAS = {
+    'pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'heic',
+    'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'csv', 'txt', 'xml', 'zip',
+}
+DOCUMENTO_CONTENT_TYPES_PROIBIDOS = {
+    'text/html', 'application/xhtml+xml', 'image/svg+xml', 'text/javascript', 'application/javascript',
+}
+DOCUMENTO_TAMANHO_MAXIMO = 25 * 1024 * 1024
+
+
 class DocumentoSerializer(serializers.ModelSerializer):
     # `arquivo` é o binário recebido no upload (write-only); na leitura expomos `url`.
     arquivo = serializers.FileField(write_only=True)
@@ -27,15 +39,37 @@ class DocumentoSerializer(serializers.ModelSerializer):
         model = Documento
         fields = [
             'id', 'arquivo', 'url', 'nome_original', 'tipo', 'tamanho',
-            'categoria', 'vinculo_tipo', 'vinculo_id', 'uploaded_at',
+            'categoria', 'vinculo_tipo', 'vinculo_id', 'enviado_por', 'uploaded_at',
         ]
-        read_only_fields = ['url', 'tamanho', 'uploaded_at']
+        read_only_fields = ['url', 'tamanho', 'enviado_por', 'uploaded_at']
 
     def get_url(self, obj):
         try:
             return obj.arquivo.url if obj.arquivo else None
         except ValueError:
             return None
+
+    def validate_arquivo(self, arquivo):
+        # Os anexos são servidos no MESMO domínio do ERP (/media/, nginx) — um .html/.svg
+        # aberto ali roda script com acesso ao JWT do localStorage de quem abriu (XSS
+        # armazenado). Por isso só passam extensões da lista abaixo (o nginx decide o
+        # Content-Type pela extensão), e o nginx ainda força download de tudo que não for
+        # PDF/imagem (ver FrontEnd/default.conf).
+        nome = str(getattr(arquivo, 'name', '') or '')
+        extensao = nome.rsplit('.', 1)[-1].lower() if '.' in nome else ''
+        if extensao not in DOCUMENTO_EXTENSOES_PERMITIDAS:
+            raise serializers.ValidationError(
+                f'Tipo de arquivo não permitido (.{extensao or "?"}). '
+                f'Envie: {", ".join(sorted(DOCUMENTO_EXTENSOES_PERMITIDAS))}.'
+            )
+        content_type = str(getattr(arquivo, 'content_type', '') or '').split(';')[0].strip().lower()
+        if content_type in DOCUMENTO_CONTENT_TYPES_PROIBIDOS:
+            raise serializers.ValidationError('Tipo de arquivo não permitido.')
+        if getattr(arquivo, 'size', 0) > DOCUMENTO_TAMANHO_MAXIMO:
+            raise serializers.ValidationError(
+                f'Arquivo maior que o limite de {DOCUMENTO_TAMANHO_MAXIMO // (1024 * 1024)} MB.'
+            )
+        return arquivo
 
 
 # ----------------- Core ------------------
@@ -52,8 +86,17 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = ['cpf', 'nome', 'email', 'cargo', 'departamento',
                   'is_staff', 'is_superuser', 'is_active', 'password',
-                  'role', 'permissoes']
-        read_only_fields = ['is_superuser', 'is_staff']
+                  'role', 'permissoes', 'login_bloqueado', 'tentativas_login_falhas']
+        # login_bloqueado é gravável, mas só por admin: o autoatendimento ("Meu Perfil") só
+        # aceita email/password (UserViewSet.CAMPOS_AUTOATENDIMENTO).
+        read_only_fields = ['is_superuser', 'is_staff', 'tentativas_login_falhas']
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # O painel mostra "Bloqueado" (e o botão de desbloquear) também quando só alguma
+        # origem (IP) está bloqueada para esta conta — ver auth_backends.py.
+        data['login_bloqueado'] = bool(instance.login_bloqueado) or instance.bloqueios_ip.filter(bloqueado=True).exists()
+        return data
 
     def validate_password(self, value):
         if value:
@@ -66,12 +109,24 @@ class UserSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         password = validated_data.pop('password', None)
         user = User(**validated_data)
-        user.set_password(password or User.objects.make_random_password())
+        if password:
+            user.set_password(password)
+        else:
+            # make_random_password() foi removido no Django 5.1 (dava 500). Sem senha, a conta
+            # nasce sem poder logar até o admin definir uma — mais seguro que uma senha
+            # aleatória que ninguém conhece.
+            user.set_unusable_password()
         user.save()
         return user
 
     def update(self, instance, validated_data):
         password = validated_data.pop('password', None)
+        if validated_data.get('login_bloqueado') is False:
+            # Desbloqueio pelo admin: a conta e todas as origens (IPs) bloqueadas, zerando as
+            # contagens — senão a próxima senha errada já rebloqueia.
+            from .auth_backends import desbloquear
+            desbloquear(User.objects.filter(pk=instance.pk))
+            instance.tentativas_login_falhas = 0
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         if password:

@@ -32,11 +32,19 @@ export function getBackendUrl(path = ''): string {
 }
 
 // Mesma origem relativa que getBackendBaseUrl() (dev: proxy do Vite; produção: Traefik
-// roteando por path) — só troca o protocolo HTTP(S) por WS(S).
-export function getRealtimeWsUrl(token: string): string {
+// roteando por path) — só troca o protocolo HTTP(S) por WS(S). O token NÃO vai na URL
+// (acabaria nos logs de acesso do daphne/Traefik): vai no Sec-WebSocket-Protocol, ver
+// realtimeWsProtocols().
+export function getRealtimeWsUrl(): string {
   const wsProtocol = getCurrentProtocol() === 'https:' ? 'wss:' : 'ws:';
   const host = typeof window !== 'undefined' && window.location?.host
     ? window.location.host
     : `${getCurrentHost()}:5173`;
-  return `${wsProtocol}//${host}/ws/workspace/?token=${encodeURIComponent(token)}`;
+  return `${wsProtocol}//${host}/ws/workspace/`;
+}
+
+// Subprotocolos do handshake: ['erp-jwt', <token>] — o backend (ComercialApp/ws_auth.py)
+// lê o token do segundo item e responde com 'erp-jwt'.
+export function realtimeWsProtocols(token: string): string[] {
+  return ['erp-jwt', token];
 }

@@ -8,7 +8,7 @@ import { getCompras, syncCompras, syncComprasHistorico } from '../../services/co
 import { getAlmoxarifado, syncAlmoxarifado } from '../../services/almoxarifadoService';
 import { getConfiguracoes, syncConfig, syncListas } from '../../services/configuracoesService';
 import { getMedicoes } from '../../services/medicoesService';
-import { getStoredSession as getAuthSession, getStoredTokens, storeSession, clearTokens, refreshAccessToken } from '../../services/authService';
+import { getStoredSession as getAuthSession, getStoredTokens, storeSession, clearTokens, refreshAccessToken, renovarCookieMidia, encerrarCookieMidia } from '../../services/authService';
 import { connectRealtime } from '../../services/realtime';
 import { toast } from 'sonner';
 
@@ -1025,7 +1025,11 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
       if (!stored) return;
 
       const { access } = getStoredTokens();
-      if (access) return; // Access token presente: tudo OK.
+      if (access) {
+        // Access token presente: tudo OK — só garante o cookie que libera os anexos.
+        void renovarCookieMidia();
+        return;
+      }
 
       // Sem access token, tenta renovar.
       const newAccess = await refreshAccessToken();
@@ -1435,7 +1439,11 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
   const logout = () => {
     clearTokens();
     setUserSession(null);
-    window.location.href = '/';
+    // Espera o backend apagar o cookie de anexos antes de recarregar (a navegação
+    // cancelaria a requisição no meio).
+    void encerrarCookieMidia().finally(() => {
+      window.location.href = '/';
+    });
   };
 
  

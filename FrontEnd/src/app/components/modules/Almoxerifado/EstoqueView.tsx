@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Anchor, Cable, CheckCircle2, ChevronDown, ChevronUp, ClipboardList, Container, Download, Droplets, Flame, Gauge, Hammer, HardHat, Layers3, Link2, MapPin, Microscope, Package, Plus, Search, Table2, Trash2, Wrench, X, Zap } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import * as XLSX from 'xlsx';
+import { baixarPlanilha } from '../../../utils/planilhaExcel';
 import { Badge } from '../../../modules/shared/ui/badge';
 import { Input } from '../../../modules/shared/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../modules/shared/ui/select';
@@ -1220,12 +1220,9 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       })
     );
 
-    const planilha = XLSX.utils.aoa_to_sheet([cabecalho, ...linhas]);
-    const workbook = XLSX.utils.book_new();
     const nomeAba = (selectedCategory === 'Equipamentos' && selectedType === ALL_TYPES_VALUE ? 'Todos os tipos' : (selectedType || selectedCategory))
       .replace(/[:\\/?*[\]]/g, '-')
       .slice(0, 31) || 'Estoque';
-    XLSX.utils.book_append_sheet(workbook, planilha, nomeAba);
 
     const identificadorArquivo = selectedCategory === 'Todos'
       ? 'todas-as-categorias'
@@ -1239,7 +1236,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/(^-|-$)/g, '');
 
-    XLSX.writeFile(workbook, `${nomeArquivo}.xlsx`);
+    void baixarPlanilha(`${nomeArquivo}.xlsx`, nomeAba, [cabecalho, ...linhas]);
     toast.success(`Planilha gerada com ${visibleRows.length} item(ns).`);
   };
 

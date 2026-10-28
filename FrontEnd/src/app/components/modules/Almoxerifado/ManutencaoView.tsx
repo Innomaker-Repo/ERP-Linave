@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { CheckCircle2, Clock3, Download, Eye, Filter, Plus, Search, Wrench, X } from 'lucide-react';
 import { toast } from 'sonner';
-import * as XLSX from 'xlsx';
+import { baixarPlanilha } from '../../../utils/planilhaExcel';
 import { useErp } from '../../../context/ErpContext';
 import { comAlmoxarifadoAtual } from '../../../../services/almoxarifadoSeguro';
 import {
@@ -186,9 +186,6 @@ export function ManutencaoView({ searchQuery }: { searchQuery?: string }) {
       ];
     });
 
-    const planilha = XLSX.utils.aoa_to_sheet([cabecalho, ...linhas]);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, planilha, 'Historico Manutencao');
 
     const partesNome = ['historico-manutencao'];
     if (categoriaFiltro) partesNome.push(categoriaFiltro);
@@ -204,7 +201,7 @@ export function ManutencaoView({ searchQuery }: { searchQuery?: string }) {
       .replace(/-+/g, '-')
       .replace(/(^-|-$)/g, '');
 
-    XLSX.writeFile(workbook, `${nomeArquivo}.xlsx`);
+    void baixarPlanilha(`${nomeArquivo}.xlsx`, 'Historico Manutencao', [cabecalho, ...linhas]);
     toast.success(`Planilha gerada com ${historicoFechado.length} registro(s).`);
   };
 

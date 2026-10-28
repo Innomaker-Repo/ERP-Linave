@@ -50,7 +50,14 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
+    # Atrás do Traefik o REMOTE_ADDR é o do proxy; com 1 proxy confiável o DRF usa o IP real
+    # do cliente (último do X-Forwarded-For) pra limitar tentativas de login por IP.
+    'NUM_PROXIES': int(os.environ.get('DJANGO_NUM_PROXIES', '1')),
 }
+
+# Tentativas de login por IP (LoginRateThrottle em ComercialApp/views.py). Escritórios saem
+# todos pelo mesmo IP, por isso não é baixo demais.
+LOGIN_THROTTLE_RATE = os.environ.get('LOGIN_THROTTLE_RATE', '20/min')
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(hours=8),
@@ -88,7 +95,12 @@ SECURE_BROWSER_XSS_FILTER = True
 
 # Confia nos cabeçalhos de HTTPS que o Traefik vai enviar (Crucial para quando colocar SSL)
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-#SECURE_SSL_REDIRECT = True  # Redireciona tudo de HTTP para HTTPS
+# SECURE_SSL_REDIRECT fica DESLIGADO de propósito: o Traefik já redireciona HTTP -> HTTPS na
+# borda, e o nginx do frontend fala com o Django por HTTP interno (auth_request de /media/) —
+# um redirect ali viraria erro 500 no download de todo anexo.
+
+# HSTS (o Traefik também envia; aqui cobre acesso direto ao Django). Só em produção.
+SECURE_HSTS_SECONDS = 0 if DEBUG else int(os.environ.get('DJANGO_HSTS_SECONDS', '31536000'))
 
 # Em produção (HTTPS via Traefik) o cookie só pode trafegar por HTTPS. Em
 # localhost (DEBUG=True, sem certificado) isso impediria o navegador de
@@ -103,6 +115,9 @@ CORS_ALLOWED_ORIGINS = [origin.strip() for origin in DJANGO_CORS.split(',')]
 
 ROOT_URLCONF = 'ERP_Linave_BackEnd.urls'
 AUTH_USER_MODEL = 'ComercialApp.User'
+# Recusa conta bloqueada por excesso de senhas erradas — vale pra API (/token/) e pro admin
+# do Django. Ver ComercialApp/auth_backends.py.
+AUTHENTICATION_BACKENDS = ['ComercialApp.auth_backends.BloqueioLoginBackend']
 
 TEMPLATES = [
     {
@@ -138,6 +153,17 @@ CHANNEL_LAYERS = {
         }
         if REDIS_URL else
         {'BACKEND': 'channels.layers.InMemoryChannelLayer'}
+    )
+}
+
+# Cache: contagem do limite de login por IP e dos logins inexistentes. Precisa ser
+# compartilhado entre os 3 workers do gunicorn, então usa o mesmo Redis do tempo real em
+# produção; sem REDIS_URL (dev, um processo) a memória local basta.
+CACHES = {
+    'default': (
+        {'BACKEND': 'django.core.cache.backends.redis.RedisCache', 'LOCATION': REDIS_URL}
+        if REDIS_URL else
+        {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}
     )
 }
 

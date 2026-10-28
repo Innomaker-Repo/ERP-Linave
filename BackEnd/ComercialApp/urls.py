@@ -4,12 +4,14 @@ from .views import (
     NegocioViewSet, ClienteViewSet, OrdemServicoViewSet,
     PropostaComercialViewSet, TemplatePropostaViewSet, FornecedorViewSet, MedicaoViewSet,
     DocumentoViewSet, UserViewSet, usuario_me,
-    criar_orcamento, renomear_empresa_prestadora, renomear_cliente,
+    criar_orcamento, renomear_empresa_prestadora, renomear_cliente, renomear_fornecedor,
     ordens_servico_por_cliente, ordens_servico_por_negocio, atualizar_status_os,
     atualizar_status_medicao,
     financeiro_data, financeiro_solicitacao_criar, financeiro_solicitacao_decidir, compras_data, almoxarifado_data,
-    configuracoes_data, logs_atividade,
+    configuracoes_data, logs_atividade, sessao_media_cookie, sessao_logout,
 )
+from .media_auth import media_auth
+
 
 # Configuração do Router para ViewSets (Rotas automáticas)
 router = DefaultRouter()
@@ -51,11 +53,19 @@ urlpatterns = [
     # Renomeia cliente em cascata (medições já criadas — o resto referencia por FK)
     path('clientes/renomear/', renomear_cliente, name='renomear-cliente'),
 
+    # Renomeia fornecedor em cascata (texto copiado nos registros do Financeiro)
+    path('fornecedores/renomear/', renomear_fornecedor, name='renomear-fornecedor'),
+
     # Filtros de Ordens de Serviço
     path('os-por-cliente/<int:cliente_id>/', ordens_servico_por_cliente, name='os-por-cliente'),
     path('os-por-negocio/<int:negocio_id>/', ordens_servico_por_negocio, name='os-por-negocio'),
     path('ordens-servico/<int:pk>/atualizar-status/', atualizar_status_os, name='atualizar-status-os'),
     path('medicoes/<int:pk>/atualizar-status/', atualizar_status_medicao, name='atualizar-status-medicao'),
+
+    # Download autenticado de /media/: alvo do auth_request do nginx + cookie de sessão de mídia
+    path('media-auth/', media_auth, name='media-auth'),
+    path('sessao/media-cookie/', sessao_media_cookie, name='sessao-media-cookie'),
+    path('sessao/logout/', sessao_logout, name='sessao-logout'),
 
     # Usuário autenticado atual
     path('usuarios/me/', usuario_me, name='usuario-me'),

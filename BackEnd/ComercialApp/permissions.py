@@ -54,6 +54,16 @@ def escreve_em_tudo(user):
     return role_de(user) in ('admin', 'gerente')
 
 
+def tem_permissao_modulo(user, chaves):
+    """Admin/gerente, ou role `usuario` com ao menos uma das `chaves` marcada no painel."""
+    if escreve_em_tudo(user):
+        return True
+    permissoes = getattr(user, 'permissoes', None)
+    if not isinstance(permissoes, dict):
+        return False
+    return any(permissoes.get(chave) is True for chave in chaves)
+
+
 class IsAdmin(BasePermission):
     """Recurso exclusivo de administrador (usuários, logs)."""
     message = 'Apenas administradores podem acessar este recurso.'

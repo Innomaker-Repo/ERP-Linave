@@ -28,7 +28,10 @@ export function LoginPage({ onLoginSuccess }: { onLoginSuccess: (user: any) => v
       onLoginSuccess(session);
     } catch (e: any) {
       setTentativas((t) => t + 1);
-      setErro('credenciais_invalidas');
+      // O backend conta as tentativas por conta: avisa a partir da 3ª senha errada e
+      // bloqueia na 5ª — essa mensagem precisa chegar ao usuário como veio.
+      const detail = e?.response?.data?.detail;
+      setErro(typeof detail === 'string' && detail ? detail : 'credenciais_invalidas');
     } finally {
       setLoading(false);
     }

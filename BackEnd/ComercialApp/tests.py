@@ -1344,6 +1344,189 @@ class FinanceiroReplaceAllGuardTests(APITestCase):
         self.assertEqual(SolicitacaoPagamento.objects.count(), 1)
 
 
+class ComprasEscopoPorUsuarioTests(APITestCase):
+    """compras_data: usuário comum só lê/grava/apaga as próprias compras; admin e gerente
+    têm acesso a todas. Antes, qualquer autenticado zerava o kanban inteiro com
+    POST {"compras": []}."""
+
+    def setUp(self):
+        criar_admin('adm-cmp', 'Admin@teste1')
+        criar_gerente('ger-cmp', 'Admin@teste1')
+        criar_usuario('ana-cmp', 'Admin@teste1')
+        User.objects.create_user(cpf='bia-cmp', password='Admin@teste1', nome='Bia',
+                                 email='bia@test.com', role='usuario', permissoes={})
+        self._logar('adm-cmp')
+        resp = self.client.post(f'{BASE}/compras/', {
+            'compras': [
+                {'id': 'REQ-ANA', 'solicitante': 'Usuario Teste', 'solicitanteCpf': 'ana-cmp'},
+                {'id': 'REQ-BIA', 'solicitante': 'Bia', 'solicitanteCpf': 'bia-cmp'},
+                {'id': 'REQ-LEGADO-BIA', 'solicitante': 'Bia'},
+            ],
+            'comprasHistorico': [
+                {'id': 'H-ANA', 'solicitanteEmail': 'user@test.com'},
+                {'id': 'H-BIA', 'solicitanteEmail': 'bia@test.com'},
+            ],
+        }, format='json')
+        self.assertEqual(resp.status_code, 200)
+
+    def _logar(self, cpf, senha='Admin@teste1'):
+        resp = obter_token(self.client, cpf, senha)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {resp.data["access"]}')
+
+    def _ids_no_banco(self):
+        from .models import RequisicaoCompra, CompraHistorico
+        return (set(RequisicaoCompra.objects.values_list('record_id', flat=True)),
+                set(CompraHistorico.objects.values_list('record_id', flat=True)))
+
+    def test_usuario_comum_le_so_as_proprias(self):
+        self._logar('ana-cmp')
+        resp = self.client.get(f'{BASE}/compras/')
+        self.assertEqual([r['id'] for r in resp.data['compras']], ['REQ-ANA'])
+        self.assertEqual([r['id'] for r in resp.data['comprasHistorico']], ['H-ANA'])
+
+    def test_compra_legada_casa_pelo_nome(self):
+        self._logar('bia-cmp')
+        resp = self.client.get(f'{BASE}/compras/')
+        self.assertEqual({r['id'] for r in resp.data['compras']}, {'REQ-BIA', 'REQ-LEGADO-BIA'})
+
+    def test_lista_vazia_de_usuario_comum_so_apaga_as_proprias(self):
+        self._logar('ana-cmp')
+        resp = self.client.post(f'{BASE}/compras/', {'compras': [], 'comprasHistorico': []}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        compras, historico = self._ids_no_banco()
+        self.assertEqual(compras, {'REQ-BIA', 'REQ-LEGADO-BIA'})
+        self.assertEqual(historico, {'H-BIA'})
+
+    def test_usuario_comum_cria_a_propria_sem_mexer_nas_outras(self):
+        self._logar('ana-cmp')
+        resp = self.client.post(f'{BASE}/compras/', {'compras': [
+            {'id': 'REQ-ANA', 'solicitanteCpf': 'ana-cmp'},
+            {'id': 'REQ-ANA-2', 'solicitanteCpf': 'ana-cmp'},
+        ]}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual({r['id'] for r in resp.data['compras']}, {'REQ-ANA', 'REQ-ANA-2'})
+        self.assertEqual(self._ids_no_banco()[0], {'REQ-ANA', 'REQ-ANA-2', 'REQ-BIA', 'REQ-LEGADO-BIA'})
+
+    def test_registro_sem_identidade_e_carimbado_com_o_cpf_do_usuario(self):
+        from .models import RequisicaoCompra
+        self._logar('ana-cmp')
+        resp = self.client.post(f'{BASE}/compras/', {'compras': [{'id': 'REQ-ANON'}]}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(RequisicaoCompra.objects.get(record_id='REQ-ANON').extra['solicitanteCpf'], 'ana-cmp')
+
+    def test_recusa_compra_de_outra_pessoa_no_payload(self):
+        self._logar('ana-cmp')
+        resp = self.client.post(f'{BASE}/compras/', {'compras': [
+            {'id': 'REQ-NOVA', 'solicitanteCpf': 'bia-cmp'},
+        ]}, format='json')
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(self._ids_no_banco()[0], {'REQ-ANA', 'REQ-BIA', 'REQ-LEGADO-BIA'})
+
+    def test_recusa_tomar_compra_alheia_reenviando_com_o_proprio_cpf(self):
+        from .models import RequisicaoCompra
+        self._logar('ana-cmp')
+        resp = self.client.post(f'{BASE}/compras/', {'compras': [
+            {'id': 'REQ-BIA', 'solicitanteCpf': 'ana-cmp', 'stage': 'COMPRADOS'},
+        ]}, format='json')
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(RequisicaoCompra.objects.get(record_id='REQ-BIA').extra['solicitanteCpf'], 'bia-cmp')
+
+    def test_recusa_no_historico_desfaz_tambem_as_compras(self):
+        self._logar('ana-cmp')
+        resp = self.client.post(f'{BASE}/compras/', {
+            'compras': [],
+            'comprasHistorico': [{'id': 'H-BIA', 'solicitanteEmail': 'user@test.com'}],
+        }, format='json')
+        self.assertEqual(resp.status_code, 403)
+        self.assertIn('REQ-ANA', self._ids_no_banco()[0])
+
+    def test_gerente_le_e_grava_todas(self):
+        self._logar('ger-cmp')
+        resp = self.client.get(f'{BASE}/compras/')
+        self.assertEqual(len(resp.data['compras']), 3)
+        resp = self.client.post(f'{BASE}/compras/', {'compras': [
+            {'id': 'REQ-BIA', 'solicitanteCpf': 'bia-cmp', 'stage': 'COMPRADOS'},
+        ]}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self._ids_no_banco()[0], {'REQ-BIA'})
+
+    def test_recusa_queda_drastica_acima_do_piso(self):
+        self._logar('adm-cmp')
+        muitas = [{'id': f'REQ-{i:03d}', 'solicitanteCpf': 'bia-cmp'} for i in range(12)]
+        self.assertEqual(self.client.post(f'{BASE}/compras/', {'compras': muitas}, format='json').status_code, 200)
+        resp = self.client.post(f'{BASE}/compras/', {'compras': []}, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(len(self._ids_no_banco()[0]), 12)
+
+    def test_payload_que_nao_e_lista_retorna_400(self):
+        self._logar('ana-cmp')
+        resp = self.client.post(f'{BASE}/compras/', {'compras': 'x'}, format='json')
+        self.assertEqual(resp.status_code, 400)
+
+
+class ComprasPermissoesDoPainelTests(APITestCase):
+    """Quem tem a permissão de Compras no painel acessa todas as compras daquela coleção
+    (COMPRAS_ACESSO em views.py); sem ela, só as próprias."""
+
+    def setUp(self):
+        criar_admin('adm-cp', 'Admin@teste1')
+        for cpf, perms in (('comprador', {'kanbanCompras': True}), ('aprovador', {'aprovarComercial': True}),
+                           ('hist', {'historicoCompras': True}), ('estoq', {'itensAdicionar': True}),
+                           ('custo', {'finCustoOs': True}), ('zeca', {})):
+            User.objects.create_user(cpf=cpf, password='Admin@teste1', nome=cpf, email=f'{cpf}@cp.com',
+                                     role='usuario', permissoes=perms)
+        self._logar('adm-cp')
+        self.client.post(f'{BASE}/compras/', {
+            'compras': [{'id': 'REQ-1', 'solicitanteCpf': 'zeca', 'stage': 'SOLICITACOES'}],
+            'comprasHistorico': [{'id': 'H-1', 'solicitanteCpf': 'zeca', 'purchaseState': 'comprado'}],
+        }, format='json')
+
+    def _logar(self, cpf):
+        token = obter_token(self.client, cpf, 'Admin@teste1').data['access']
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+
+    def _get(self, cpf):
+        self._logar(cpf)
+        r = self.client.get(f'{BASE}/compras/')
+        return {r2['id'] for r2 in r.data['compras']}, {r2['id'] for r2 in r.data['comprasHistorico']}
+
+    def _alterar(self, cpf, chave, rid, **campos):
+        self._logar(cpf)
+        base = self.client.get(f'{BASE}/compras/').data[chave]
+        novo = [({**r, **campos} if r['id'] == rid else r) for r in base]
+        return self.client.post(f'{BASE}/compras/', {chave: novo}, format='json').status_code
+
+    def test_leitura_por_permissao(self):
+        self.assertEqual(self._get('comprador'), ({'REQ-1'}, {'H-1'}))
+        self.assertEqual(self._get('aprovador'), ({'REQ-1'}, {'H-1'}))
+        self.assertEqual(self._get('custo'), ({'REQ-1'}, {'H-1'}))
+        self.assertEqual(self._get('hist'), (set(), {'H-1'}))
+        self.assertEqual(self._get('estoq'), (set(), {'H-1'}))
+
+    def test_comprador_e_aprovador_alteram_requisicao_alheia(self):
+        self.assertEqual(self._alterar('comprador', 'compras', 'REQ-1', stage='COMPRADOS'), 200)
+        self.assertEqual(self._alterar('aprovador', 'compras', 'REQ-1', stage='AGUARDANDO_FIN'), 200)
+
+    def test_historico_e_estoque_alteram_historico_alheio(self):
+        self.assertEqual(self._alterar('hist', 'comprasHistorico', 'H-1', nfeStatus='recebida'), 200)
+        self.assertEqual(self._alterar('estoq', 'comprasHistorico', 'H-1', purchaseState='estoque'), 200)
+
+    def test_quem_so_le_nao_altera_mas_pode_reenviar_inalterado(self):
+        from .models import RequisicaoCompra
+        self.assertEqual(self._alterar('custo', 'compras', 'REQ-1', stage='COMPRADOS'), 403)
+        self.assertEqual(self._alterar('custo', 'compras', 'REQ-1'), 200)  # lista inalterada
+        self.assertEqual(RequisicaoCompra.objects.get(record_id='REQ-1').extra['stage'], 'SOLICITACOES')
+        self.assertEqual(self._alterar('aprovador', 'comprasHistorico', 'H-1', purchaseState='estoque'), 403)
+
+    def test_sem_permissao_nao_ve_nem_altera_as_dos_outros(self):
+        User.objects.create_user(cpf='bia-cp', password='Admin@teste1', nome='Bia', email='bia@cp.com',
+                                 role='usuario', permissoes={})
+        self.assertEqual(self._get('bia-cp'), (set(), set()))
+        self._logar('bia-cp')
+        r = self.client.post(f'{BASE}/compras/', {'compras': [{'id': 'REQ-1', 'solicitanteCpf': 'zeca', 'stage': 'X'}]}, format='json')
+        self.assertEqual(r.status_code, 403)
+
+
 class FinanceiroLeituraRestritaTests(APITestCase):
     """GET /comercial/financeiro/ — usuário sem NENHUMA permissão de Financeiro não pode ler
     solicitação de pagamento (nome, fornecedor, valor, motivo) nem os campos sensíveis de
@@ -1389,7 +1572,7 @@ class FinanceiroLeituraRestritaTests(APITestCase):
         self.assertNotIn('valor', conta)
 
     def test_usuario_com_permissao_financeira_ve_tudo(self):
-        criar_usuario('user-com-perm', permissoes={'finSolicitacao': True})
+        criar_usuario('user-com-perm', permissoes={'finPagar': True})
         self._logar('user-com-perm')
         resp = self.client.get(f'{BASE}/financeiro/')
         sol = next((r for r in resp.data if r.get('id') == 'SP-SIGILO'), None)
@@ -1397,6 +1580,15 @@ class FinanceiroLeituraRestritaTests(APITestCase):
         self.assertEqual(sol.get('solicitante'), 'Fulano Sigiloso')
         conta = next(r for r in resp.data if r.get('id') == 'CP-SIGILO')
         self.assertEqual(conta.get('fornecedor'), 'Fornecedor Confidencial')
+
+    def test_so_finsolicitacao_nao_e_equipe_financeira(self):
+        # finSolicitacao é só a tela de pedir pagamento — não libera ler o Financeiro inteiro.
+        criar_usuario('user-so-sol', permissoes={'finSolicitacao': True})
+        self._logar('user-so-sol')
+        resp = self.client.get(f'{BASE}/financeiro/')
+        self.assertIsNone(next((r for r in resp.data if r.get('id') == 'SP-SIGILO'), None))
+        conta = next(r for r in resp.data if r.get('id') == 'CP-SIGILO')
+        self.assertNotIn('fornecedor', conta)
 
     def test_gerente_ve_tudo(self):
         criar_gerente('ger-leitura')
@@ -1923,6 +2115,29 @@ class DocumentoViewSetTests(APITestCase):
         r = self._upload()
         self.assertEqual(r.status_code, 201)
 
+    def _upload_arquivo(self, nome, conteudo=b'x', content_type='application/octet-stream'):
+        return self.client.post(f'{BASE}/documentos/', {
+            'arquivo': self.SimpleUploadedFile(nome, conteudo, content_type=content_type),
+            'vinculo_tipo': 'negocio', 'vinculo_id': str(self.neg.id), 'categoria': 'outro',
+        }, format='multipart')
+
+    def test_recusa_extensoes_que_o_navegador_executa(self):
+        # XSS armazenado: anexos são servidos no mesmo domínio do ERP.
+        from .models import Documento
+        for nome, ct in (('x.html', 'text/html'), ('x.htm', 'text/html'), ('x.svg', 'image/svg+xml'),
+                         ('x.xhtml', 'application/xhtml+xml'), ('x.js', 'text/javascript'), ('sem_extensao', '')):
+            with self.subTest(nome=nome):
+                self.assertEqual(self._upload_arquivo(nome, b'<script>alert(1)</script>', ct).status_code, 400)
+        self.assertEqual(Documento.objects.count(), 0)
+
+    def test_recusa_content_type_html_mesmo_com_extensao_permitida(self):
+        self.assertEqual(self._upload_arquivo('nota.pdf', b'<script></script>', 'text/html').status_code, 400)
+
+    def test_aceita_tipos_usados_pelas_telas(self):
+        for nome in ('nf.pdf', 'foto.JPG', 'foto.png', 'planilha.xlsx', 'extrato.csv', 'nfe.xml', 'contrato.docx'):
+            with self.subTest(nome=nome):
+                self.assertEqual(self._upload_arquivo(nome).status_code, 201)
+
     def test_listar_documentos_retorna_200(self):
         self._upload()
         r = self.client.get(f'{BASE}/documentos/')
@@ -2181,3 +2396,842 @@ class LevantamentoPropertiesTests(TestCase):
 
     def test_arquivos_negocio_falsy_sem_arquivo(self):
         self.assertFalse(bool(self.lev.arquivos_negocio))
+
+
+# =============================================================================
+# SETUP_ADMIN — SEM SENHA FIXA NO CÓDIGO
+# =============================================================================
+
+class SetupAdminTests(TestCase):
+    """A senha do admin nunca é fixa: vem de DJANGO_ADMIN_PASSWORD ou é gerada. E um admin
+    que ainda usa a senha antiga publicada no repositório ('Admin@linave') tem ela trocada
+    até no `--if-missing` (o modo que roda a cada deploy)."""
+
+    def _rodar(self, *args, env=None):
+        import os
+        from io import StringIO
+        from unittest import mock
+        from django.core.management import call_command
+        saida = StringIO()
+        with mock.patch.dict(os.environ, env or {}, clear=False):
+            if env is None:
+                os.environ.pop('DJANGO_ADMIN_PASSWORD', None)
+            call_command('setup_admin', *args, stdout=saida)
+        return saida.getvalue()
+
+    def test_cria_admin_com_senha_do_ambiente(self):
+        self._rodar('--if-missing', env={'DJANGO_ADMIN_PASSWORD': 'Ambiente@Forte1'})
+        admin = User.objects.get(cpf='admin')
+        self.assertTrue(admin.check_password('Ambiente@Forte1'))
+        self.assertFalse(admin.check_password('Admin@linave'))
+
+    def test_sem_variavel_gera_senha_aleatoria_valida(self):
+        saida = self._rodar('--if-missing')
+        admin = User.objects.get(cpf='admin')
+        self.assertFalse(admin.check_password('Admin@linave'))
+        senha = saida.split('Senha gerada: ')[1].split()[0]
+        self.assertTrue(admin.check_password(senha))
+        SenhaSeguraValidator().validate(senha)
+
+    def test_if_missing_troca_senha_padrao_antiga(self):
+        User.objects.create_user(cpf='admin', password='Admin@linave', nome='Administrador',
+                                 email='admin@linave.com.br', role='admin')
+        saida = self._rodar('--if-missing')
+        admin = User.objects.get(cpf='admin')
+        self.assertFalse(admin.check_password('Admin@linave'))
+        self.assertIn('ATENÇÃO', saida)
+
+    def test_if_missing_nao_mexe_em_admin_com_senha_propria(self):
+        User.objects.create_user(cpf='admin', password='Minha@Senha9', nome='Administrador',
+                                 email='admin@linave.com.br', role='admin')
+        self._rodar('--if-missing')
+        self.assertTrue(User.objects.get(cpf='admin').check_password('Minha@Senha9'))
+
+
+# =============================================================================
+# DOCUMENTOS — CONTROLE DE ACESSO POR DONO / MÓDULO / FLUXO
+# =============================================================================
+
+class DocumentoAcessoTests(APITestCase):
+    """Usuário comum só vê documento que ele enviou, de módulo em que tem permissão, ou de um
+    fluxo em que é o solicitante (solicitação de pagamento/conta gerada dela, compra).
+    Excluir: só quem enviou, admin/gerente ou quem tem permissão no módulo."""
+
+    def setUp(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        self.SimpleUploadedFile = SimpleUploadedFile
+        criar_admin('adm-doc', 'Admin@teste1')
+        criar_gerente('ger-doc', 'Admin@teste1')
+        User.objects.create_user(cpf='ana-doc', password='Admin@teste1', nome='Ana',
+                                 email='ana@doc.com', role='usuario', permissoes={})
+        User.objects.create_user(cpf='bia-doc', password='Admin@teste1', nome='Bia',
+                                 email='bia@doc.com', role='usuario', permissoes={})
+        User.objects.create_user(cpf='fin-doc', password='Admin@teste1', nome='Fin',
+                                 email='fin@doc.com', role='usuario', permissoes={'finPagar': True})
+
+        # Ana pediu um pagamento (SP-ANA) e uma compra (REQ-ANA); o admin aprovou e gerou a CP-ANA.
+        self._logar('adm-doc')
+        self.client.post(f'{BASE}/financeiro/', [
+            {'id': 'SP-ANA', 'tipo': 'solicitacao', 'solicitanteCpf': 'ana-doc', 'valor': 10},
+            {'id': 'CP-ANA', 'tipo': 'contaPagar', 'origemSolicitacao': 'SP-ANA', 'valor': 10},
+            {'id': 'SP-BIA', 'tipo': 'solicitacao', 'solicitanteCpf': 'bia-doc', 'valor': 10},
+        ], format='json')
+        self.client.post(f'{BASE}/compras/', {'compras': [{'id': 'REQ-ANA', 'solicitanteCpf': 'ana-doc'}]}, format='json')
+
+        self.docs = {
+            'comprovante_ana': self._upload('financeiro', 'CP-ANA', 'fin_comprovante'),
+            'anexo_sp_bia': self._upload('financeiro', 'SP-BIA', 'fin_anexo'),
+            'nf_compra_ana': self._upload('compras', 'REQ-ANA', 'outro'),
+            'negocio': self._upload('negocio', '1', 'negocio'),
+        }
+        self._logar('bia-doc')
+        self.docs['enviado_bia'] = self._upload('financeiro', 'SP-BIA', 'fin_anexo')
+
+    def _logar(self, cpf):
+        resp = obter_token(self.client, cpf, 'Admin@teste1')
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {resp.data["access"]}')
+
+    def _upload(self, vinculo_tipo, vinculo_id, categoria):
+        r = self.client.post(f'{BASE}/documentos/', {
+            'arquivo': self.SimpleUploadedFile('a.pdf', b'%PDF', content_type='application/pdf'),
+            'vinculo_tipo': vinculo_tipo, 'vinculo_id': vinculo_id, 'categoria': categoria,
+        }, format='multipart')
+        self.assertEqual(r.status_code, 201, r.content)
+        return r.data['id']
+
+    def _visiveis(self):
+        r = self.client.get(f'{BASE}/documentos/')
+        self.assertEqual(r.status_code, 200)
+        ids = {d['id'] for d in r.data}
+        return {nome for nome, pk in self.docs.items() if pk in ids}
+
+    def test_upload_registra_quem_enviou(self):
+        from .models import Documento
+        self.assertEqual(Documento.objects.get(pk=self.docs['enviado_bia']).enviado_por, 'bia-doc')
+
+    def test_solicitante_ve_anexos_do_proprio_fluxo(self):
+        self._logar('ana-doc')
+        self.assertEqual(self._visiveis(), {'comprovante_ana', 'nf_compra_ana'})
+
+    def test_usuario_ve_o_que_enviou_e_nao_o_resto(self):
+        self._logar('bia-doc')
+        # SP-BIA é dela: vê o próprio upload e o anexo do admin na solicitação dela.
+        self.assertEqual(self._visiveis(), {'anexo_sp_bia', 'enviado_bia'})
+
+    def test_permissao_no_modulo_ve_documentos_do_modulo(self):
+        self._logar('fin-doc')
+        self.assertEqual(self._visiveis(), {'comprovante_ana', 'anexo_sp_bia', 'enviado_bia'})
+
+    def test_gerente_ve_tudo(self):
+        self._logar('ger-doc')
+        self.assertEqual(self._visiveis(), set(self.docs))
+
+    def test_documento_de_outro_responde_404(self):
+        self._logar('ana-doc')
+        self.assertEqual(self.client.get(f"{BASE}/documentos/{self.docs['negocio']}/").status_code, 404)
+        self.assertEqual(self.client.delete(f"{BASE}/documentos/{self.docs['anexo_sp_bia']}/").status_code, 404)
+
+    def test_solicitante_le_mas_nao_apaga_comprovante_do_financeiro(self):
+        self._logar('ana-doc')
+        self.assertEqual(self.client.get(f"{BASE}/documentos/{self.docs['comprovante_ana']}/").status_code, 200)
+        self.assertEqual(self.client.delete(f"{BASE}/documentos/{self.docs['comprovante_ana']}/").status_code, 404)
+
+    def test_quem_enviou_pode_apagar(self):
+        self._logar('bia-doc')
+        self.assertEqual(self.client.delete(f"{BASE}/documentos/{self.docs['enviado_bia']}/").status_code, 204)
+
+    def test_permissao_no_modulo_pode_apagar(self):
+        self._logar('fin-doc')
+        self.assertEqual(self.client.delete(f"{BASE}/documentos/{self.docs['comprovante_ana']}/").status_code, 204)
+
+    def test_caminho_do_arquivo_nao_e_adivinhavel(self):
+        from .models import Documento
+        nome = Documento.objects.get(pk=self.docs['negocio']).arquivo.name
+        self.assertRegex(nome, r'^documentos/negocio/[0-9a-f]{32}/a\.pdf$')
+
+
+# =============================================================================
+# LOGIN — BLOQUEIO APÓS 5 SENHAS ERRADAS
+# =============================================================================
+
+class LoginBloqueioTests(APITestCase):
+    """Aviso a partir da 3ª senha errada, bloqueio na 5ª; nem a senha certa entra depois;
+    só admin desbloqueia; login certo antes do limite zera a contagem."""
+
+    def setUp(self):
+        criar_admin('adm-lock', 'Admin@teste1')
+        criar_usuario('ana-lock', 'Admin@teste1')
+
+    def _tentar(self, senha, identifier='ana-lock'):
+        return self.client.post('/token/', {'identifier': identifier, 'password': senha}, format='json')
+
+    def test_aviso_a_partir_da_terceira_e_bloqueio_na_quinta(self):
+        for _ in range(2):
+            r = self._tentar('errada')
+            self.assertEqual(r.status_code, 401)
+            self.assertNotIn('restante', r.data['detail'])
+        self.assertIn('2 tentativa(s) restante(s)', self._tentar('errada').data['detail'])
+        self.assertIn('1 tentativa(s) restante(s)', self._tentar('errada').data['detail'])
+        r = self._tentar('errada')
+        self.assertIn('bloqueada', r.data['detail'])
+        self.assertTrue(_origem_bloqueada('ana-lock'))
+
+    def test_bloqueado_nao_entra_nem_com_senha_certa(self):
+        for _ in range(5):
+            self._tentar('errada')
+        r = self._tentar('Admin@teste1')
+        self.assertEqual(r.status_code, 401)
+        self.assertIn('bloqueada', r.data['detail'])
+
+    def test_bloqueio_tambem_vale_pelo_email(self):
+        for _ in range(5):
+            self._tentar('errada', identifier='user@test.com')
+        self.assertTrue(_origem_bloqueada('ana-lock'))
+
+    def test_login_certo_zera_a_contagem(self):
+        for _ in range(4):
+            self._tentar('errada')
+        self.assertEqual(self._tentar('Admin@teste1').status_code, 200)
+        self.assertEqual(User.objects.get(cpf='ana-lock').tentativas_login_falhas, 0)
+
+    def test_bloqueio_gera_log(self):
+        for _ in range(5):
+            self._tentar('errada')
+        self.assertTrue(LogAtividade.objects.filter(usuario_cpf='ana-lock', descricao__contains='bloqueado').exists())
+
+    def test_admin_desbloqueia(self):
+        for _ in range(5):
+            self._tentar('errada')
+        token = obter_token(self.client, 'adm-lock', 'Admin@teste1').data['access']
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+        r = self.client.patch(f'{BASE}/usuarios/ana-lock/', {'login_bloqueado': False}, format='json')
+        self.assertEqual(r.status_code, 200)
+        self.client.credentials()
+        u = User.objects.get(cpf='ana-lock')
+        self.assertFalse(u.login_bloqueado)
+        self.assertFalse(_origem_bloqueada('ana-lock'))
+        self.assertEqual(u.tentativas_login_falhas, 0)
+        self.assertEqual(self._tentar('Admin@teste1').status_code, 200)
+
+    def test_nao_admin_nao_desbloqueia(self):
+        criar_gerente('bia-lock', 'Admin@teste1')
+        User.objects.filter(cpf='ana-lock').update(login_bloqueado=True)
+        # Gerente não é admin: o painel de usuários é exclusivo de admin.
+        token = obter_token(self.client, 'bia-lock', 'Admin@teste1').data['access']
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+        self.assertEqual(self.client.patch(f'{BASE}/usuarios/ana-lock/', {'login_bloqueado': False}, format='json').status_code, 403)
+        self.assertEqual(self.client.patch(f'{BASE}/usuarios/bia-lock/', {'login_bloqueado': False}, format='json').status_code, 403)
+        self.assertTrue(User.objects.get(cpf='ana-lock').login_bloqueado)
+
+    def test_comando_desbloquear_usuario(self):
+        from io import StringIO
+        from django.core.management import call_command
+        User.objects.filter(cpf='adm-lock').update(login_bloqueado=True, tentativas_login_falhas=5)
+        call_command('desbloquear_usuario', 'adm-lock', stdout=StringIO())
+        self.assertFalse(User.objects.get(cpf='adm-lock').login_bloqueado)
+
+
+# =============================================================================
+# CORREÇÕES DO DIAGNÓSTICO — 500s, VALIDAÇÃO DE STATUS, TOKEN DO WEBSOCKET
+# =============================================================================
+
+class UsuarioSemSenhaTests(APITestCase):
+    """make_random_password() não existe mais no Django 6 — criar sem senha dava 500."""
+
+    def test_admin_cria_usuario_sem_senha_e_ele_nao_consegue_logar(self):
+        autenticar_admin(self.client)
+        r = self.client.post(f'{BASE}/usuarios/', {'cpf': 'sem-senha', 'nome': 'Sem Senha',
+                                                   'email': 'sem@senha.com', 'role': 'usuario'}, format='json')
+        self.assertEqual(r.status_code, 201)
+        self.assertFalse(User.objects.get(cpf='sem-senha').has_usable_password())
+
+
+class CriarOrcamentoItensInvalidosTests(APITestCase):
+    """criar_orcamento repassava o JSON direto pro create(**item): campo desconhecido = 500."""
+
+    def setUp(self):
+        autenticar_admin(self.client)
+        self.neg = criar_negocio(criar_cliente())
+
+    def _post(self, **itens):
+        return self.client.post(f'{BASE}/orcamentos/criar/', {
+            'levantamento': {'negocio_id': self.neg.id, 'cliente_id': self.neg.cliente_id}, **itens,
+        }, format='json')
+
+    def test_campo_desconhecido_e_ignorado(self):
+        from .models import MDO
+        r = self._post(mao_de_obra=[{'fnc': 'Soldador', 'qnt': 2, 'campo_que_nao_existe': 1, 'id': 99}])
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(MDO.objects.get().fnc, 'Soldador')
+
+    def test_valor_invalido_retorna_400_e_nao_grava_nada(self):
+        from .models import Orcamento
+        r = self._post(materiais=[{'item': 'Tubo', 'unidade': 'm', 'qnt': 'não é número'}])
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(Orcamento.objects.count(), 0)
+
+    def test_negocio_inexistente_retorna_404(self):
+        r = self.client.post(f'{BASE}/orcamentos/criar/', {'levantamento': {'negocio_id': 999999}}, format='json')
+        self.assertEqual(r.status_code, 404)
+
+    def test_duracao_com_acento_continua_aceita(self):
+        from .models import Ativ_prevista
+        self.assertEqual(self._post(atividades=[{'atividade': 'Montagem', 'duração': 3}]).status_code, 200)
+        self.assertEqual(Ativ_prevista.objects.get().duracao, 3)
+
+
+class AtualizarStatusOsValidacaoTests(APITestCase):
+
+    def setUp(self):
+        autenticar_admin(self.client)
+        cli = criar_cliente()
+        self.os = _criar_os(cli, criar_negocio(cli), numero='OS-VAL1')
+
+    def test_status_fora_das_choices_retorna_400(self):
+        for campo in ('status_os', 'status_envio', 'status_aprovacao'):
+            with self.subTest(campo=campo):
+                r = self.client.patch(f'{BASE}/ordens-servico/{self.os.id}/atualizar-status/', {campo: 'hackeado'}, format='json')
+                self.assertEqual(r.status_code, 400)
+        self.os.refresh_from_db()
+        self.assertEqual(self.os.status_os, 'rascunho')
+
+    def test_status_valido_continua_funcionando(self):
+        r = self.client.patch(f'{BASE}/ordens-servico/{self.os.id}/atualizar-status/',
+                              {'status_os': 'emproducao', 'status_aprovacao': 'aprovada'}, format='json')
+        self.assertEqual(r.status_code, 200)
+        self.os.refresh_from_db()
+        self.assertEqual(self.os.status_os, 'emproducao')
+        self.assertIsNotNone(self.os.data_aprovacao)
+
+
+class WebSocketAuthTests(TestCase):
+    """Token do WebSocket vai no Sec-WebSocket-Protocol (['erp-jwt', token]), não na URL."""
+
+    def _conectar(self, path='/ws/workspace/', subprotocols=None):
+        from asgiref.sync import async_to_sync
+        from channels.testing import WebsocketCommunicator
+        from ERP_Linave_BackEnd.routing import application
+
+        async def _tentar():
+            comunicador = WebsocketCommunicator(application, path, subprotocols=subprotocols)
+            conectado, subprotocolo = await comunicador.connect()
+            await comunicador.disconnect()
+            return conectado, subprotocolo
+        return async_to_sync(_tentar)()
+
+    def _token(self):
+        from rest_framework_simplejwt.tokens import AccessToken
+        return str(AccessToken.for_user(criar_admin('adm-ws')))
+
+    def test_conecta_com_token_no_subprotocolo(self):
+        conectado, subprotocolo = self._conectar(subprotocols=['erp-jwt', self._token()])
+        self.assertTrue(conectado)
+        self.assertEqual(subprotocolo, 'erp-jwt')
+
+    def _fechamento_sem_login(self, path='/ws/workspace/', subprotocols=None):
+        """Sem login válido a conexão é aceita e fechada na hora com 4401 (o navegador
+        precisa do código para saber que deve renovar o token) — sem entrar no grupo."""
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+        from channels.testing import WebsocketCommunicator
+        from ERP_Linave_BackEnd.routing import application
+
+        async def _tentar():
+            comunicador = WebsocketCommunicator(application, path, subprotocols=subprotocols)
+            await comunicador.connect()
+            saida = await comunicador.receive_output(timeout=1)
+            # Um aviso enviado ao grupo depois disso não pode chegar a essa conexão.
+            await get_channel_layer().group_send('workspace', {'type': 'workspace.notify', 'collection': 'financeiro'})
+            self.assertTrue(await comunicador.receive_nothing(timeout=0.2))
+            await comunicador.disconnect()
+            return saida
+        return async_to_sync(_tentar)()
+
+    def test_token_na_query_string_nao_e_mais_aceito(self):
+        saida = self._fechamento_sem_login(path=f'/ws/workspace/?token={self._token()}')
+        self.assertEqual(saida, {'type': 'websocket.close', 'code': 4401})
+
+    def test_sem_token_ou_token_invalido_fecha_com_4401(self):
+        self.assertEqual(self._fechamento_sem_login(), {'type': 'websocket.close', 'code': 4401})
+        self.assertEqual(self._fechamento_sem_login(subprotocols=['erp-jwt', 'token-falso']),
+                         {'type': 'websocket.close', 'code': 4401})
+
+
+class LoginBloqueioAdminDjangoTests(TestCase):
+    """O admin do Django (/jamanta-fiscal/) tem login próprio — precisa contar e respeitar o
+    mesmo bloqueio da API, senão vira a porta dos fundos da força bruta."""
+
+    URL = '/jamanta-fiscal/login/'
+
+    def setUp(self):
+        criar_admin('adm-dj', 'Admin@teste1')
+
+    def _tentar(self, senha):
+        return self.client.post(self.URL, {'username': 'adm-dj', 'password': senha})
+
+    def test_senhas_erradas_no_admin_bloqueiam_a_conta(self):
+        for _ in range(5):
+            self._tentar('errada')
+        self.assertTrue(_origem_bloqueada('adm-dj'))
+
+    def test_conta_bloqueada_nao_entra_no_admin_nem_na_api(self):
+        User.objects.filter(cpf='adm-dj').update(login_bloqueado=True)
+        self._tentar('Admin@teste1')
+        self.assertNotIn('_auth_user_id', self.client.session)
+        r = self.client.post('/token/', {'identifier': 'adm-dj', 'password': 'Admin@teste1'},
+                             content_type='application/json')
+        self.assertEqual(r.status_code, 401)
+
+    def test_falhas_misturando_api_e_admin_somam(self):
+        for _ in range(3):
+            self._tentar('errada')
+        r = self.client.post('/token/', {'identifier': 'adm-dj', 'password': 'errada'},
+                             content_type='application/json')
+        self.assertIn('1 tentativa(s) restante(s)', r.json()['detail'])
+
+
+# =============================================================================
+# FINANCEIRO — ESCRITA RESTRITA DE QUEM NÃO É EQUIPE FINANCEIRA
+# =============================================================================
+
+class FinanceiroEscritaRestritaTests(APITestCase):
+    """Quem tem só finSolicitacao (ou só Compras/Gestão) reescrevia o Financeiro inteiro pelo
+    replace-all. Agora só mexe nas próprias solicitações (e Compras só cria conta a pagar)."""
+
+    def setUp(self):
+        criar_admin('adm-fe', 'Admin@teste1')
+        User.objects.create_user(cpf='ana-fe', password='Admin@teste1', nome='Ana', email='ana@fe.com',
+                                 role='usuario', permissoes={'finSolicitacao': True})
+        User.objects.create_user(cpf='cmp-fe', password='Admin@teste1', nome='Comprador', email='cmp@fe.com',
+                                 role='usuario', permissoes={'kanbanCompras': True})
+        User.objects.create_user(cpf='fin-fe', password='Admin@teste1', nome='Fin', email='fin@fe.com',
+                                 role='usuario', permissoes={'finPagar': True})
+        self._logar('adm-fe')
+        r = self.client.post(f'{BASE}/financeiro/', [
+            {'id': 'BANCO-1', 'tipo': 'banco', 'nome': 'Banco Real', 'saldo': 100},
+            {'id': 'SP-ANA', 'tipo': 'solicitacao', 'solicitanteCpf': 'ana-fe', 'valor': 10, 'status': 'Aguardando aprovação'},
+            {'id': 'SP-OUTRO', 'tipo': 'solicitacao', 'solicitanteCpf': 'outro', 'valor': 99, 'fornecedor': 'Sigiloso'},
+            {'id': 'CP-1', 'tipo': 'contaPagar', 'status': 'Aberto', 'fornecedor': 'Forn X', 'valor': 500},
+        ], format='json')
+        self.assertEqual(r.status_code, 200)
+
+    def _logar(self, cpf):
+        resp = obter_token(self.client, cpf, 'Admin@teste1')
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {resp.data["access"]}')
+
+    def _base(self):
+        return self.client.get(f'{BASE}/financeiro/').data
+
+    def _banco(self):
+        from .financeiro_sync import read_all
+        return {r['id']: r for r in read_all()}
+
+    def test_so_finsolicitacao_nao_forja_banco(self):
+        self._logar('ana-fe')
+        base = self._base()
+        forjado = [({**r, 'saldo': 999999} if r['id'] == 'BANCO-1' else r) for r in base]
+        self.assertEqual(self.client.post(f'{BASE}/financeiro/', forjado, format='json').status_code, 403)
+        self.assertEqual(self._banco()['BANCO-1']['saldo'], 100)
+
+    def test_so_finsolicitacao_nao_cria_banco_nem_conta(self):
+        self._logar('ana-fe')
+        for novo in ({'id': 'B-NOVO', 'tipo': 'banco'}, {'id': 'CP-NOVA', 'tipo': 'contaPagar', 'valor': 1}):
+            with self.subTest(tipo=novo['tipo']):
+                self.assertEqual(self.client.post(f'{BASE}/financeiro/', [*self._base(), novo], format='json').status_code, 403)
+
+    def test_lista_vazia_nao_apaga_nada_alem_das_proprias(self):
+        self._logar('ana-fe')
+        # Só pode excluir a própria solicitação; o resto que ela vê precisa voltar intacto.
+        r = self.client.post(f'{BASE}/financeiro/', [], format='json')
+        self.assertEqual(r.status_code, 403)
+        self.assertEqual(set(self._banco()), {'BANCO-1', 'SP-ANA', 'SP-OUTRO', 'CP-1'})
+
+    def test_edita_e_exclui_a_propria_solicitacao_sem_afetar_o_resto(self):
+        self._logar('ana-fe')
+        base = self._base()
+        self.assertNotIn('SP-OUTRO', {r['id'] for r in base})  # não vê a dos outros
+        editado = [({**r, 'valor': 20} if r['id'] == 'SP-ANA' else r) for r in base]
+        self.assertEqual(self.client.post(f'{BASE}/financeiro/', editado, format='json').status_code, 200)
+        banco = self._banco()
+        self.assertEqual(banco['SP-ANA']['valor'], 20)
+        # Solicitação alheia e conta a pagar (que ela só via aparada) continuam completas.
+        self.assertEqual(banco['SP-OUTRO']['fornecedor'], 'Sigiloso')
+        self.assertEqual(banco['CP-1']['fornecedor'], 'Forn X')
+
+        sem_a_dela = [r for r in self._base() if r['id'] != 'SP-ANA']
+        self.assertEqual(self.client.post(f'{BASE}/financeiro/', sem_a_dela, format='json').status_code, 200)
+        self.assertEqual(set(self._banco()), {'BANCO-1', 'SP-OUTRO', 'CP-1'})
+
+    def test_nao_transfere_a_propria_solicitacao_para_outro(self):
+        self._logar('ana-fe')
+        base = [({**r, 'solicitanteCpf': 'outro'} if r['id'] == 'SP-ANA' else r) for r in self._base()]
+        self.client.post(f'{BASE}/financeiro/', base, format='json')
+        self.assertEqual(self._banco()['SP-ANA']['solicitanteCpf'], 'ana-fe')
+
+    def test_compras_cria_conta_mas_nao_altera_existente(self):
+        self._logar('cmp-fe')
+        base = self._base()
+        nova = {'id': 'CP-COMPRA', 'tipo': 'contaPagar', 'valor': 50, 'fornecedor': 'Forn Y'}
+        self.assertEqual(self.client.post(f'{BASE}/financeiro/', [nova, *base], format='json').status_code, 200)
+        self.assertIn('CP-COMPRA', self._banco())
+        alterada = [({**r, 'status': 'Pago'} if r['id'] == 'CP-1' else r) for r in self._base()]
+        self.assertEqual(self.client.post(f'{BASE}/financeiro/', alterada, format='json').status_code, 403)
+
+    def test_equipe_financeira_continua_com_acesso_total(self):
+        self._logar('fin-fe')
+        base = [({**r, 'saldo': 150} if r['id'] == 'BANCO-1' else r) for r in self._base()]
+        self.assertEqual(self.client.post(f'{BASE}/financeiro/', base, format='json').status_code, 200)
+        self.assertEqual(self._banco()['BANCO-1']['saldo'], 150)
+
+    def test_criar_solicitacao_nao_nasce_aprovada_nem_em_nome_de_outro(self):
+        self._logar('ana-fe')
+        r = self.client.post(f'{BASE}/financeiro/solicitacao/', {
+            'id': 'SP-GOLPE', 'valor': 1, 'status': 'Aprovado', 'aprovadoPor': 'Gerente',
+            'solicitanteCpf': 'outro',
+        }, format='json')
+        self.assertEqual(r.status_code, 201)
+        criada = self._banco()['SP-GOLPE']
+        self.assertEqual(criada['status'], 'Aguardando aprovação')
+        self.assertNotIn('aprovadoPor', criada)
+        self.assertEqual(criada['solicitanteCpf'], 'ana-fe')
+        # A resposta não devolve o Financeiro inteiro pra quem não é da equipe.
+        self.assertNotIn('SP-OUTRO', {x['id'] for x in r.data['financeiro']})
+
+
+# =============================================================================
+# /media/ AUTENTICADO — COOKIE erp_media + auth_request DO NGINX
+# =============================================================================
+
+class MediaAutenticadaTests(APITestCase):
+    """O nginx pergunta a /comercial/media-auth/ (X-Original-URI) antes de servir um anexo.
+    Sem cookie de sessão -> 401; documento fora do alcance -> 403; liberado -> 204."""
+
+    def setUp(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        criar_admin('adm-md', 'Admin@teste1')
+        User.objects.create_user(cpf='ana-md', password='Admin@teste1', nome='Ana', email='ana@md.com',
+                                 role='usuario', permissoes={})
+        self._login('adm-md')
+        r = self.client.post(f'{BASE}/documentos/', {
+            'arquivo': SimpleUploadedFile('nf.pdf', b'%PDF', content_type='application/pdf'),
+            'vinculo_tipo': 'financeiro', 'vinculo_id': 'CP-X', 'categoria': 'fin_comprovante',
+        }, format='multipart')
+        self.url = r.data['url']
+        self.client.cookies.clear()
+
+    def _login(self, cpf):
+        r = self.client.post('/token/', {'identifier': cpf, 'password': 'Admin@teste1'}, format='json')
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {r.data["access"]}')
+        return r
+
+    def _checar(self, url, cookie=None):
+        from django.test import Client
+        headers = {'HTTP_X_ORIGINAL_URI': url}
+        if cookie is not None:
+            headers['HTTP_COOKIE'] = f'erp_media={cookie}'
+        return Client().get(f'{BASE}/media-auth/', **headers).status_code
+
+    def test_login_grava_cookie_httponly_restrito_a_media(self):
+        r = self._login('ana-md')
+        cookie = r.cookies['erp_media']
+        self.assertEqual(cookie.value, r.data['access'])
+        self.assertTrue(cookie['httponly'])
+        self.assertEqual(cookie['path'], '/media/')
+
+    def test_refresh_renova_o_cookie(self):
+        r = self._login('ana-md')
+        r = self.client.post('/token/refresh/', {'refresh': r.data['refresh']}, format='json')
+        self.assertEqual(r.cookies['erp_media'].value, r.data['access'])
+
+    def test_sem_cookie_ou_cookie_invalido_e_401(self):
+        self.assertEqual(self._checar(self.url), 401)
+        self.assertEqual(self._checar(self.url, 'token-falso'), 401)
+
+    def test_dono_do_acesso_baixa_e_quem_nao_tem_acesso_recebe_403(self):
+        admin = self._login('adm-md').data['access']
+        ana = self._login('ana-md').data['access']
+        self.assertEqual(self._checar(self.url, admin), 204)
+        self.assertEqual(self._checar(self.url, ana), 403)
+
+    def test_arquivo_sem_documento_exige_so_login(self):
+        ana = self._login('ana-md').data['access']
+        self.assertEqual(self._checar('/media/documentos_negocios/antigo.pdf', ana), 204)
+        self.assertEqual(self._checar('/media/documentos_negocios/antigo.pdf'), 401)
+
+    def test_caminho_fora_de_media_ou_com_ponto_ponto_e_403(self):
+        admin = self._login('adm-md').data['access']
+        self.assertEqual(self._checar('/comercial/financeiro/', admin), 403)
+        self.assertEqual(self._checar('/media/../BackEnd/db.sqlite3', admin), 403)
+
+    def test_usuario_desativado_perde_acesso(self):
+        ana = self._login('ana-md').data['access']
+        User.objects.filter(cpf='ana-md').update(is_active=False)
+        self.assertEqual(self._checar('/media/documentos_negocios/antigo.pdf', ana), 401)
+
+    def test_media_cookie_regrava_a_partir_do_bearer(self):
+        access = self._login('ana-md').data['access']
+        r = self.client.post(f'{BASE}/sessao/media-cookie/')
+        self.assertEqual(r.status_code, 204)
+        self.assertEqual(r.cookies['erp_media'].value, access)
+
+    def test_logout_apaga_o_cookie_mesmo_com_token_vencido(self):
+        self.client.credentials(HTTP_AUTHORIZATION='Bearer token-vencido')
+        r = self.client.post(f'{BASE}/sessao/logout/')
+        self.assertEqual(r.status_code, 204)
+        self.assertEqual(r.cookies['erp_media'].value, '')
+
+    def test_servir_media_em_dev_aplica_a_mesma_checagem(self):
+        from django.test import RequestFactory
+        from .media_auth import servir_media
+        rf = RequestFactory()
+        caminho = self.url.split('/media/', 1)[1]
+        self.assertEqual(servir_media(rf.get(self.url), caminho).status_code, 401)
+        req = rf.get(self.url)
+        req.COOKIES['erp_media'] = self._login('ana-md').data['access']
+        self.assertEqual(servir_media(req, caminho).status_code, 403)
+
+
+# =============================================================================
+# LOGIN — SEM REVELAR CONTAS, LIMITE POR IP, DESATIVAÇÃO DERRUBA SESSÕES
+# =============================================================================
+
+class LoginSemRevelarContaTests(APITestCase):
+    """CPF/e-mail inexistente responde igual a uma conta real — mensagens não revelam quem
+    tem conta no sistema."""
+
+    def setUp(self):
+        from django.core.cache import cache
+        cache.clear()
+        criar_usuario('ana-enum', 'Admin@teste1')
+
+    def _respostas(self, identifier):
+        return [
+            (r.status_code, r.data['detail'])
+            for r in (self.client.post('/token/', {'identifier': identifier, 'password': 'errada'}, format='json')
+                      for _ in range(6))
+        ]
+
+    def test_cpf_inexistente_e_indistinguivel_de_um_real(self):
+        self.assertEqual(self._respostas('cpf-que-nao-existe'), self._respostas('ana-enum'))
+
+    def test_email_inexistente_tambem(self):
+        self.assertEqual(self._respostas('ninguem@test.com'), self._respostas('user@test.com'))
+
+
+class LoginThrottleTests(APITestCase):
+
+    def setUp(self):
+        from django.core.cache import cache
+        cache.clear()
+
+    def test_limite_de_tentativas_por_ip(self):
+        from django.test import override_settings
+        with override_settings(LOGIN_THROTTLE_RATE='3/min'):
+            codigos = [self.client.post('/token/', {'identifier': f'x{i}', 'password': 'y'}, format='json').status_code
+                       for i in range(4)]
+        self.assertEqual(codigos, [401, 401, 401, 429])
+
+    def test_mensagem_em_portugues(self):
+        from django.test import override_settings
+        with override_settings(LOGIN_THROTTLE_RATE='1/min'):
+            self.client.post('/token/', {'identifier': 'a', 'password': 'b'}, format='json')
+            r = self.client.post('/token/', {'identifier': 'a', 'password': 'b'}, format='json')
+        self.assertIn('Muitas tentativas de login', r.data['detail'])
+
+
+class DesativarUsuarioDerrubaSessaoTests(APITestCase):
+    """Pra tirar alguém do sistema de propósito, desativar (is_active=False) já invalida na
+    hora o access e o refresh token — ao contrário do bloqueio por senha errada, que de
+    propósito não derruba a sessão de quem já estava logado (quem erra é o atacante)."""
+
+    def test_desativado_perde_access_e_refresh(self):
+        criar_usuario('ana-off', 'Admin@teste1')
+        tokens = obter_token(self.client, 'ana-off', 'Admin@teste1').data
+        User.objects.filter(cpf='ana-off').update(is_active=False)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {tokens['access']}")
+        self.assertEqual(self.client.get(f'{BASE}/usuarios/me/').status_code, 401)
+        self.client.credentials()
+        self.assertEqual(self.client.post('/token/refresh/', {'refresh': tokens['refresh']}, format='json').status_code, 401)
+
+
+class ConfiguracoesListasPermissaoTests(APITestCase):
+
+    def setUp(self):
+        criar_usuario('ana-cfg', 'Admin@teste1')
+        User.objects.create_user(cpf='fin-cfg', password='Admin@teste1', nome='Fin', email='fin@cfg.com',
+                                 role='usuario', permissoes={'finPagar': True})
+
+    def _post(self, cpf):
+        token = obter_token(self.client, cpf, 'Admin@teste1').data['access']
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+        return self.client.post(f'{BASE}/configuracoes/', {'listas': {'departamentos': []}}, format='json')
+
+    def test_usuario_comum_nao_altera_listas(self):
+        self.assertEqual(self._post('ana-cfg').status_code, 403)
+
+    def test_equipe_financeira_altera_listas(self):
+        self.assertEqual(self._post('fin-cfg').status_code, 200)
+
+
+class PreencherAutorDocumentosAntigosTests(TestCase):
+    """Migração 0011: autor de documento antigo vem do log de upload (mesma descrição,
+    horário mais próximo, no máximo 10 min, cada log usado uma vez)."""
+
+    def _doc(self, nome, quando):
+        from django.core.files.base import ContentFile
+        from .models import Documento
+        doc = Documento(nome_original=nome, vinculo_tipo='financeiro', vinculo_id='SP-1', categoria='fin_anexo')
+        doc.arquivo.save(nome, ContentFile(b'x'), save=True)
+        Documento.objects.filter(pk=doc.pk).update(uploaded_at=quando)
+        return doc.pk
+
+    def _log(self, cpf, descricao, quando):
+        log = LogAtividade.objects.create(usuario_cpf=cpf, usuario_nome=cpf, acao='criacao',
+                                          modulo='Documentos', descricao=descricao)
+        LogAtividade.objects.filter(pk=log.pk).update(timestamp=quando)
+
+    def test_preenche_pelo_log_mais_proximo(self):
+        import importlib
+        from datetime import timedelta
+        from io import StringIO
+        from unittest import mock
+        from django.apps import apps
+        from django.utils import timezone
+        from .models import Documento
+
+        t0 = timezone.now() - timedelta(days=30)
+        desc = 'nf.pdf (financeiro:SP-1)'
+        # Dois uploads idênticos, de pessoas diferentes, com 1h de diferença.
+        doc_ana = self._doc('nf.pdf', t0)
+        doc_bia = self._doc('nf.pdf', t0 + timedelta(hours=1))
+        self._log('ana', desc, t0 + timedelta(seconds=1))
+        self._log('bia', desc, t0 + timedelta(hours=1, seconds=1))
+        # Documento cujo único log está fora da janela de 10 min: fica sem autor.
+        doc_longe = self._doc('outro.pdf', t0)
+        self._log('ze', 'outro.pdf (financeiro:SP-1)', t0 + timedelta(hours=2))
+        # Documento sem log nenhum.
+        doc_sem = self._doc('semlog.pdf', t0)
+
+        migracao = importlib.import_module('ComercialApp.migrations.0011_preencher_enviado_por_documentos')
+        with mock.patch('sys.stdout', new=StringIO()):
+            migracao.preencher(apps, None)
+
+        autores = dict(Documento.objects.values_list('pk', 'enviado_por'))
+        self.assertEqual(autores[doc_ana], 'ana')
+        self.assertEqual(autores[doc_bia], 'bia')
+        self.assertEqual(autores[doc_longe], '')
+        self.assertEqual(autores[doc_sem], '')
+
+    def test_autor_ve_documento_antigo_depois_da_migracao(self):
+        import importlib
+        from io import StringIO
+        from unittest import mock
+        from django.apps import apps
+        from django.utils import timezone
+
+        criar_usuario('autor-old', 'Admin@teste1')
+        agora = timezone.now()
+        pk = self._doc('velho.pdf', agora)
+        self._log('autor-old', 'velho.pdf (financeiro:SP-1)', agora)
+        with mock.patch('sys.stdout', new=StringIO()):
+            importlib.import_module('ComercialApp.migrations.0011_preencher_enviado_por_documentos').preencher(apps, None)
+
+        token = obter_token(APIClient(), 'autor-old', 'Admin@teste1').data['access']
+        c = APIClient()
+        c.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+        self.assertEqual(c.get(f'{BASE}/documentos/{pk}/').status_code, 200)
+
+
+def _origem_bloqueada(cpf):
+    from .models import LoginBloqueioIP
+    return LoginBloqueioIP.objects.filter(usuario_id=cpf, bloqueado=True).exists()
+
+
+class LoginBloqueioPorOrigemTests(APITestCase):
+    """Errar a senha de outra pessoa bloqueia só a SUA origem (IP) para aquela conta — o dono
+    continua entrando de outro lugar. 20 falhas somando todas as origens bloqueiam a conta."""
+
+    def setUp(self):
+        from django.core.cache import cache
+        cache.clear()
+        criar_admin('adm-or', 'Admin@teste1')
+        criar_usuario('ana-or', 'Admin@teste1')
+
+    def _tentar(self, senha, ip):
+        return self.client.post('/token/', {'identifier': 'ana-or', 'password': senha}, format='json',
+                                REMOTE_ADDR=ip, HTTP_X_FORWARDED_FOR=ip)
+
+    def test_atacante_nao_tranca_o_dono_fora(self):
+        for _ in range(5):
+            self._tentar('errada', '203.0.113.9')
+        self.assertIn('bloqueada', self._tentar('Admin@teste1', '203.0.113.9').data['detail'])
+        # O dono, de outra rede, entra normalmente.
+        self.assertEqual(self._tentar('Admin@teste1', '198.51.100.7').status_code, 200)
+        self.assertFalse(User.objects.get(cpf='ana-or').login_bloqueado)
+
+    def test_vinte_falhas_de_varias_origens_bloqueiam_a_conta(self):
+        for i in range(20):
+            self._tentar('errada', f'203.0.113.{i // 4}')  # 4 por IP: nenhum IP chega a 5
+        self.assertTrue(User.objects.get(cpf='ana-or').login_bloqueado)
+        r = self._tentar('Admin@teste1', '198.51.100.7')
+        self.assertEqual(r.status_code, 401)
+        self.assertIn('bloqueada', r.data['detail'])
+
+    def test_painel_mostra_bloqueado_e_admin_libera_a_origem(self):
+        for _ in range(5):
+            self._tentar('errada', '203.0.113.9')
+        token = obter_token(APIClient(), 'adm-or', 'Admin@teste1').data['access']
+        admin = APIClient()
+        admin.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+        lista = {u['cpf']: u for u in admin.get(f'{BASE}/usuarios/').data}
+        self.assertTrue(lista['ana-or']['login_bloqueado'])
+        self.assertEqual(admin.patch(f'{BASE}/usuarios/ana-or/', {'login_bloqueado': False}, format='json').status_code, 200)
+        self.assertFalse(_origem_bloqueada('ana-or'))
+        self.assertEqual(self._tentar('Admin@teste1', '203.0.113.9').status_code, 200)
+
+    def test_comando_desbloquear_libera_origens(self):
+        from io import StringIO
+        from django.core.management import call_command
+        for _ in range(5):
+            self._tentar('errada', '203.0.113.9')
+        call_command('desbloquear_usuario', 'ana-or', stdout=StringIO())
+        self.assertFalse(_origem_bloqueada('ana-or'))
+
+
+class RenomearFornecedorTests(APITestCase):
+    """A cascata de renomear fornecedor roda no servidor — alcança registros que quem só tem
+    acesso a Compras nem enxerga (solicitações alheias, contas a pagar completas)."""
+
+    def setUp(self):
+        criar_admin('adm-rf', 'Admin@teste1')
+        User.objects.create_user(cpf='cmp-rf', password='Admin@teste1', nome='Comprador', email='cmp@rf.com',
+                                 role='usuario', permissoes={'fornecedores': True})
+        criar_usuario('zeca-rf', 'Admin@teste1')
+        self._logar('adm-rf')
+        self.client.post(f'{BASE}/financeiro/', [
+            {'id': 'SP-1', 'tipo': 'solicitacao', 'solicitanteCpf': 'outro', 'fornecedor': 'Forn Velho'},
+            {'id': 'CP-1', 'tipo': 'contaPagar', 'fornecedor': 'Forn Velho', 'valor': 10},
+            {'id': 'CP-2', 'tipo': 'contaPagar', 'fornecedor': 'Outro Forn', 'valor': 10},
+        ], format='json')
+
+    def _logar(self, cpf):
+        token = obter_token(self.client, cpf, 'Admin@teste1').data['access']
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+
+    def test_quem_so_tem_compras_renomeia_em_tudo(self):
+        from .financeiro_sync import read_all
+        from .models import ContaPagar
+        self._logar('cmp-rf')
+        r = self.client.post(f'{BASE}/fornecedores/renomear/', {'de': 'Forn Velho', 'para': 'Forn Novo'}, format='json')
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data['registros_atualizados'], 2)
+        dados = {x['id']: x for x in read_all()}
+        self.assertEqual(dados['SP-1']['fornecedor'], 'Forn Novo')
+        self.assertEqual(dados['CP-1']['fornecedor'], 'Forn Novo')
+        self.assertEqual(dados['CP-2']['fornecedor'], 'Outro Forn')
+        self.assertEqual(ContaPagar.objects.get(record_id='CP-1').fornecedor, 'Forn Novo')
+
+    def test_sem_permissao_recebe_403(self):
+        self._logar('zeca-rf')
+        r = self.client.post(f'{BASE}/fornecedores/renomear/', {'de': 'Forn Velho', 'para': 'X'}, format='json')
+        self.assertEqual(r.status_code, 403)

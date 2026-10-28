@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, Download, Save, Banknote, Split, Paperclip, CalendarClock, Repeat, AlertTriangle, Power, Files, RefreshCw, Trash2 } from 'lucide-react';
-import * as XLSX from 'xlsx';
+import { baixarPlanilha } from '../../../../utils/planilhaExcel';
 import {
   FinCard, Toolbar, DataTable, Th, Td, Btn, StatusTag, CompanyTag, TypeTag, Pill, EmptyRow,
   FinModal, Field, Input, MoneyInput, Select, Textarea, Kpi, DeleteBtn, labelCls, boldOS, FileInput,
@@ -447,10 +447,7 @@ export function ContasPagarView() {
     const totJuros = rows.reduce((s, p) => s + num(p.jurosPago), 0);
     linhas.push(['TOTAL', '', '', '', '', '', '', '', totValor, '', '', '', '', '', totPago, totJuros, '']);
 
-    const planilha = XLSX.utils.aoa_to_sheet([head, ...linhas]);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, planilha, 'Contas a Pagar');
-    XLSX.writeFile(workbook, 'contas_a_pagar.xlsx');
+    void baixarPlanilha('contas_a_pagar.xlsx', 'Contas a Pagar', [head, ...linhas]);
   };
 
   const confirmarPagamento = async (e: React.FormEvent) => {

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
-import { comFinanceiroAtual } from '../../../../services/financeiroSeguro';
+import { renomearFornecedorCascata } from '../../../../services/fornecedoresService';
 import { Factory, Plus, Save, X, Edit2, Trash2, Phone, MapPin } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -21,7 +21,7 @@ const FORNECEDOR_VAZIO = {
 };
 
 export function FornecedoresView({ searchQuery }: { searchQuery: string }) {
-  const { fornecedores, saveFornecedor, userSession, financeiro, saveEntity } = useErp() as any;
+  const { fornecedores, saveFornecedor, userSession, financeiro } = useErp() as any;
   const [showForm, setShowForm] = useState(false);
   const [selectedFornecedor, setSelectedFornecedor] = useState<any | null>(null);
   const [fornecedor, setFornecedor] = useState<any>(FORNECEDOR_VAZIO);
@@ -122,18 +122,14 @@ export function FornecedoresView({ searchQuery }: { searchQuery: string }) {
 
       // Fornecedor não é referenciado por FK em nenhum outro cadastro (diferente de
       // Empresa/Cliente) — só aparece como texto copiado nas Solicitações de Pagamento e
-      // Contas a Pagar do Financeiro. Propaga a renomeação pra lá.
+      // Contas a Pagar do Financeiro. A cascata roda no backend: quem só tem acesso a
+      // Compras não enxerga esses registros completos, então não daria pra fazê-la daqui.
       const novaRazaoSocial = (novoRegistro.razaoSocial || '').trim();
       if (editandoId != null && razaoSocialOriginal && novaRazaoSocial && razaoSocialOriginal !== novaRazaoSocial) {
-        await comFinanceiroAtual(async (base) => {
-          const temNoFinanceiro = base.some((r: any) => r.fornecedor === razaoSocialOriginal);
-          if (!temNoFinanceiro) return;
-          const financeiroAtualizado = base.map((r: any) =>
-            r.fornecedor === razaoSocialOriginal ? { ...r, fornecedor: novaRazaoSocial } : r
-          );
-          await saveEntity('financeiro', financeiroAtualizado);
+        const { registros_atualizados } = await renomearFornecedorCascata(razaoSocialOriginal, novaRazaoSocial);
+        if (registros_atualizados > 0) {
           toast.info('Fornecedor renomeado — solicitações e contas a pagar já criadas foram atualizadas.');
-        });
+        }
       }
 
       fecharForm();

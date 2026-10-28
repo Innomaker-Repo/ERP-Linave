@@ -1,11 +1,11 @@
-import * as XLSX from 'xlsx-js-style';
+import { baixarPlanilhaEstilizada, type CelulaEstilizada, type IntervaloMesclado } from '../../../utils/planilhaExcel';
 import type { ItemCompra, OrdemCompraExtraDados, QuoteFornecedor, RequisicaoCompra } from './comprasLocal';
 import { formatNumeroOsDisplay } from '../../../../services/ordensServico';
 
 /* =========================================================================================
  * ORDEM DE COMPRA (Excel) — substitui o antigo PDF de "Pedido de Compra" no card de Compras
- * do Kanban. Réplica (com `xlsx-js-style`, já que o `xlsx` puro usado no resto do app não
- * aplica cor/borda/mescla ao gravar) do modelo comercial de Ordem de Compra em duas variantes
+ * do Kanban. Réplica (gerada pelo ExcelJS — cor/borda/mescla por célula, ver
+ * utils/planilhaExcel.ts) do modelo comercial de Ordem de Compra em duas variantes
  * de papel timbrado — Linave e Servinave — decididas por `empresaFromCC(centroCusto)`.
  *
  * Os dados vêm de três lugares:
@@ -89,18 +89,14 @@ const estiloTotalGeralValor = estiloBase({ font: { bold: true, sz: 10 }, fill: {
 const estiloTextoLivre = estiloBase({ font: { sz: 9 }, alignment: { horizontal: 'left', vertical: 'top' } });
 const estiloAssinatura = estiloBase({ font: { bold: true, sz: 9 }, alignment: { horizontal: 'center', vertical: 'top' } });
 
-const NUM_COLS = 13; // A..M
 
 export const handleDownloadOrdemCompraExcel = (params: GerarOrdemCompraParams) => {
-  const ws: XLSX.WorkSheet = {};
-  const merges: XLSX.Range[] = [];
+  const celulas = new Map<string, CelulaEstilizada & { linha: number; coluna: number }>();
+  const merges: IntervaloMesclado[] = [];
   let r = 0;
 
-  const addr = (c: number, row: number) => XLSX.utils.encode_cell({ r: row, c });
-
   const setCell = (c: number, row: number, value: string | number, style: any = estiloCelulaTabela) => {
-    const isNum = typeof value === 'number';
-    ws[addr(c, row)] = { v: value, t: isNum ? 'n' : 's', s: style };
+    celulas.set(`${row}:${c}`, { linha: row, coluna: c, valor: value, estilo: style });
   };
 
   // Aplica o mesmo estilo (borda/preenchimento) em todas as células do intervalo — garante que
@@ -112,7 +108,7 @@ export const handleDownloadOrdemCompraExcel = (params: GerarOrdemCompraParams) =
         setCell(cc, rr, rr === row1 && cc === c1 ? value : '', style);
       }
     }
-    if (c1 !== c2 || row1 !== row2) merges.push({ s: { r: row1, c: c1 }, e: { r: row2, c: c2 } });
+    if (c1 !== c2 || row1 !== row2) merges.push({ linhaInicio: row1, colunaInicio: c1, linhaFim: row2, colunaFim: c2 });
   };
 
   const linhaVazia = () => { r += 1; };
@@ -288,7 +284,7 @@ export const handleDownloadOrdemCompraExcel = (params: GerarOrdemCompraParams) =
       .filter((v): v is string => Boolean(v)),
   ));
   if (condicoesPagamento.length) {
-    ws[addr(0, r - 1)].v = condicoesPagamento.join(' | ');
+    celulas.get(`${r - 1}:0`)!.valor = condicoesPagamento.join(' | ');
   }
   linhaVazia();
 
@@ -344,16 +340,10 @@ export const handleDownloadOrdemCompraExcel = (params: GerarOrdemCompraParams) =
   setRange(6, r, 12, r, `Data: ${new Date().toLocaleDateString('pt-BR')}`, estiloTextoLivre);
   r += 1;
 
-  ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r, c: NUM_COLS - 1 } });
-  ws['!merges'] = merges;
-  ws['!cols'] = [
-    { wch: 6 }, { wch: 7 }, { wch: 8 }, { wch: 14 }, { wch: 14 }, { wch: 14 },
-    { wch: 12 }, { wch: 13 }, { wch: 13 }, { wch: 9 }, { wch: 11 }, { wch: 9 }, { wch: 11 },
-  ];
-
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Ordem de Compra');
   const nomeArquivo = `Ordem_Compra_${params.numero}.xlsx`;
-  XLSX.writeFile(wb, nomeArquivo);
+  void baixarPlanilhaEstilizada(nomeArquivo, 'Ordem de Compra', celulas, merges, [
+    6, 7, 8, 14, 14, 14,
+    12, 13, 13, 9, 11, 9, 11,
+  ]);
   return { nomeArquivo };
 };

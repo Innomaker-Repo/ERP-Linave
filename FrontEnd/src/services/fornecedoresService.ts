@@ -79,3 +79,13 @@ export const updateFornecedor = async (id: any, fornecedor: any) => {
 export const deleteFornecedor = async (id: any) => {
   await api.delete(`fornecedores/${id}/`);
 };
+
+/**
+ * Renomeia um fornecedor em cascata no Financeiro (solicitações, contas a pagar etc. guardam
+ * o nome como texto). Roda no backend, que enxerga todos os registros — ver
+ * renomear_fornecedor em ComercialApp/views.py.
+ */
+export const renomearFornecedorCascata = async (de: string, para: string) => {
+  const response = await api.post('fornecedores/renomear/', { de, para });
+  return response.data as { registros_atualizados: number };
+};

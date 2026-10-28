@@ -1,11 +1,17 @@
 from rest_framework import viewsets, status, serializers as drf_serializers
 from rest_framework.response import Response
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, authentication_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
-from django.db import transaction
+from rest_framework.exceptions import AuthenticationFailed, Throttled
+from rest_framework.throttling import SimpleRateThrottle
+from django.db import transaction, DataError, IntegrityError
+from django.db.models import Q
+from django.contrib.auth.hashers import make_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+from .media_auth import definir_cookie_media, apagar_cookie_media
 from .models import (
     Cliente, Negocio, Servico, ItemAlocacao,
     Levantamento, MDO, Material, Servico_terceirizado, Orcamento, Ativ_prevista, Resumo_orcamento,
@@ -18,10 +24,13 @@ from .serializers import (
     DocumentoSerializer, UserSerializer
 )
 from .permissions import (
-    IsAdmin, permissao_modulo, eh_admin, escreve_em_tudo,
+    IsAdmin, permissao_modulo, eh_admin, escreve_em_tudo, tem_permissao_modulo,
     COMERCIAL, PRODUCAO, FINANCEIRO, COMPRAS_GESTAO, SUPRIMENTOS,
 )
 from .ws_notify import dispatch_collection_changed
+from .auth_backends import (
+    LOGIN_MAX_TENTATIVAS, LOGIN_AVISO_A_PARTIR_DE, falhas_da_origem, ip_do_cliente, origem_bloqueada,
+)
 
 
 # --- Log de atividades ---
@@ -62,6 +71,49 @@ class LogMixin:
         instance.delete()
 
 
+# --- Proteção contra força bruta no login ---
+# A contagem e o bloqueio em si ficam em auth_backends.py (valem também pro admin do Django).
+# Aqui só se monta a mensagem: aviso a partir da LOGIN_AVISO_A_PARTIR_DE-ésima senha errada,
+# bloqueio na LOGIN_MAX_TENTATIVAS-ésima.
+LOGIN_MSG_INVALIDO = 'CPF/e-mail ou senha inválidos.'
+LOGIN_MSG_BLOQUEADO = (
+    f'Conta bloqueada após {LOGIN_MAX_TENTATIVAS} tentativas de senha incorreta. '
+    'Procure o administrador do sistema para desbloquear.'
+)
+
+
+def _mensagem_por_falhas(falhas, bloqueado=False):
+    if bloqueado or falhas >= LOGIN_MAX_TENTATIVAS:
+        return LOGIN_MSG_BLOQUEADO
+    if falhas >= LOGIN_AVISO_A_PARTIR_DE:
+        restantes = LOGIN_MAX_TENTATIVAS - falhas
+        return (f'{LOGIN_MSG_INVALIDO} Atenção: {restantes} tentativa(s) restante(s) '
+                'antes de a conta ser bloqueada.')
+    return LOGIN_MSG_INVALIDO
+
+
+def _falha_login_inexistente(identifier, request):
+    """Contagem "de mentira" (no cache, 24h, por login + IP — igual à de uma conta real) para
+    logins que não existem — só pra que a resposta seja indistinguível."""
+    import hashlib
+    from django.core.cache import cache
+
+    base = f'{identifier.strip().lower()}|{ip_do_cliente(request)}'
+    chave = 'login-inexistente:' + hashlib.sha256(base.encode()).hexdigest()
+    falhas = (cache.get(chave) or 0) + 1
+    cache.set(chave, falhas, 60 * 60 * 24)
+    return _mensagem_por_falhas(falhas)
+
+
+def _mensagem_falha_login(user_obj, request):
+    """Mensagem para o usuário depois de uma senha errada (a falha já foi contada pelo
+    sinal user_login_failed — ver auth_backends.contar_falha_login). O aviso de "restam N"
+    é da origem (IP) de quem está tentando; conta bloqueada por inteiro também vale."""
+    user_obj.refresh_from_db(fields=['login_bloqueado'])
+    falhas, origem_bloq = falhas_da_origem(user_obj, request)
+    return _mensagem_por_falhas(falhas, origem_bloq or user_obj.login_bloqueado)
+
+
 # --- Login flexível (CPF ou e-mail) ---
 class FlexTokenSerializer(TokenObtainPairSerializer):
     def __init__(self, *args, **kwargs):
@@ -73,19 +125,58 @@ class FlexTokenSerializer(TokenObtainPairSerializer):
         identifier = attrs.pop('identifier', '').strip()
 
         if '@' in identifier:
-            try:
-                user_obj = User.objects.get(email__iexact=identifier)
-                attrs['cpf'] = user_obj.cpf
-            except User.DoesNotExist:
-                raise drf_serializers.ValidationError({'detail': 'Credenciais inválidas.'})
+            user_obj = User.objects.filter(email__iexact=identifier).first()
         else:
-            attrs['cpf'] = identifier
+            user_obj = User.objects.filter(cpf=identifier).first()
 
-        return super().validate(attrs)
+        if user_obj is None:
+            # Login inexistente responde EXATAMENTE como um existente (mesmo 401, mesmos
+            # avisos de tentativas restantes, mesmo "conta bloqueada" na 5ª) — senão as
+            # mensagens revelariam quais CPFs/e-mails têm conta no sistema.
+            # Roda um hash de senha à toa, como o ModelBackend do Django faz: sem isso a
+            # resposta sairia mais rápido e o TEMPO revelaria que a conta não existe.
+            make_password(attrs.get('password') or '')
+            mensagem = _falha_login_inexistente(identifier, self.context.get('request'))
+            codigo = 'login_bloqueado' if mensagem == LOGIN_MSG_BLOQUEADO else 'credenciais_invalidas'
+            raise AuthenticationFailed(mensagem, code=codigo)
+        attrs['cpf'] = user_obj.cpf
+
+        # Bloqueada (a conta, ou esta origem para esta conta): nem a senha certa entra até
+        # um admin desbloquear.
+        if user_obj.login_bloqueado or origem_bloqueada(user_obj, self.context.get('request')):
+            raise AuthenticationFailed(LOGIN_MSG_BLOQUEADO, code='login_bloqueado')
+
+        try:
+            return super().validate(attrs)
+        except AuthenticationFailed:
+            mensagem = _mensagem_falha_login(user_obj, self.context.get('request'))
+            codigo = 'login_bloqueado' if mensagem == LOGIN_MSG_BLOQUEADO else 'credenciais_invalidas'
+            raise AuthenticationFailed(mensagem, code=codigo)
+
+
+class LoginRateThrottle(SimpleRateThrottle):
+    """Limite de tentativas de login por IP (todas as contas somadas). O bloqueio por conta
+    não impede alguém de varrer CPFs ou travar várias contas em sequência; isto freia.
+    Taxa em settings.LOGIN_THROTTLE_RATE (lida a cada pedido, não congelada no import)."""
+    scope = 'login'
+
+    def get_rate(self):
+        from django.conf import settings
+        return getattr(settings, 'LOGIN_THROTTLE_RATE', '20/min')
+
+    def get_cache_key(self, request, view):
+        return self.cache_format % {'scope': self.scope, 'ident': self.get_ident(request)}
 
 
 class FlexTokenView(TokenObtainPairView):
     serializer_class = FlexTokenSerializer
+    throttle_classes = [LoginRateThrottle]
+
+    def throttled(self, request, wait):
+        raise Throttled(wait, detail=(
+            f'Muitas tentativas de login a partir desta rede. Aguarde {int(wait or 60)} segundo(s) '
+            'e tente novamente.'
+        ))
 
     def post(self, request, *args, **kwargs):
         response = super().post(request, *args, **kwargs)
@@ -105,7 +196,34 @@ class FlexTokenView(TokenObtainPairView):
                 )
             except Exception:
                 pass
+            definir_cookie_media(response, response.data.get('access', ''))
         return response
+
+
+class MediaCookieTokenRefreshView(TokenRefreshView):
+    """/token/refresh/ que também renova o cookie de download dos anexos (ver media_auth)."""
+
+    def post(self, request, *args, **kwargs):
+        response = super().post(request, *args, **kwargs)
+        if response.status_code == 200:
+            definir_cookie_media(response, response.data.get('access', ''))
+        return response
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def sessao_media_cookie(request):
+    """(Re)grava o cookie de anexos a partir do Bearer atual — pra sessões que já estavam
+    abertas antes do cookie existir, chamado pelo frontend ao restaurar a sessão."""
+    return definir_cookie_media(Response(status=status.HTTP_204_NO_CONTENT), str(request.auth))
+
+
+@api_view(['POST'])
+@authentication_classes([])  # token vencido no header não pode impedir o logout
+@permission_classes([AllowAny])
+def sessao_logout(request):
+    """Apaga o cookie de anexos no logout (o JWT em si vive no localStorage do frontend)."""
+    return apagar_cookie_media(Response(status=status.HTTP_204_NO_CONTENT))
 
 
 # --- Usuários ---
@@ -184,8 +302,6 @@ class ClienteViewSet(LogMixin, viewsets.ModelViewSet):
             instance = serializer.save()
             _registrar_log(request, 'criacao', self.LOG_MODULO, str(instance))
             return Response(serializer.data, status=status.HTTP_201_CREATED)
-
-        print(serializer.errors)
 
         return Response(
             serializer.errors,
@@ -311,7 +427,57 @@ def renomear_cliente(request):
     return Response({'medicoes_atualizadas': medicoes_atualizadas})
 
 
+# Renomeia um fornecedor em cascata no Financeiro. Fornecedor não é FK em lugar nenhum: o nome
+# é copiado como texto nas solicitações de pagamento, contas a pagar etc. Roda no servidor
+# (e não pelo replace-all da tela) porque quem só tem acesso a Compras não enxerga esses
+# registros completos — a cascata feita no navegador simplesmente não os alcançava.
+@api_view(['POST'])
+@permission_classes([permissao_modulo(*COMPRAS_GESTAO, *FINANCEIRO)])
+def renomear_fornecedor(request):
+    from .models import (
+        Banco, SolicitacaoPagamento, ContaPagar, NotaFiscal, ContaReceber,
+        EstudoLocacao, ReciboLocacao, FinanceiroExtra,
+    )
+
+    de = str(request.data.get('de') or '').strip()
+    para = str(request.data.get('para') or '').strip()
+    if not de or not para:
+        return Response({'error': 'Informe "de" e "para".'}, status=status.HTTP_400_BAD_REQUEST)
+    if de == para:
+        return Response({'registros_atualizados': 0})
+
+    atualizados = 0
+    with transaction.atomic():
+        for model in (Banco, SolicitacaoPagamento, ContaPagar, NotaFiscal, ContaReceber,
+                      EstudoLocacao, ReciboLocacao, FinanceiroExtra):
+            tem_coluna = any(f.name == 'fornecedor' for f in model._meta.concrete_fields)
+            for inst in model.objects.select_for_update().only('pk', 'extra'):
+                extra = inst.extra if isinstance(inst.extra, dict) else {}
+                if extra.get('fornecedor') != de:
+                    continue
+                campos = {'extra': {**extra, 'fornecedor': para}}
+                if tem_coluna:
+                    campos['fornecedor'] = para
+                model.objects.filter(pk=inst.pk).update(**campos)
+                atualizados += 1
+
+    _registrar_log(request, 'atualizacao', 'Fornecedores',
+                   f'Fornecedor renomeado "{de}" -> "{para}" ({atualizados} registro(s) do Financeiro)')
+    if atualizados:
+        dispatch_collection_changed('financeiro')
+    return Response({'registros_atualizados': atualizados})
+
+
 #ORÇAMENTOS
+def _campos_do_model(model, item):
+    """Filtra `item` para os campos editáveis do model (sem pk nem o FK `orcamento`)."""
+    nomes = {
+        f.name for f in model._meta.concrete_fields
+        if not f.primary_key and f.name != 'orcamento'
+    }
+    return {k: v for k, v in item.items() if k in nomes}
+
+
 # --- Funções Customizadas ---
 @api_view(['POST'])
 @permission_classes([permissao_modulo('orcamentos', 'crm')])
@@ -330,6 +496,11 @@ def criar_orcamento(request):
 
         if not negocio_id:
             return Response({'error': 'negocio_id é obrigatório no levantamento.'}, status=status.HTTP_400_BAD_REQUEST)
+        # Id inexistente estourava IntegrityError (FK) no get_or_create abaixo -> 500.
+        if not Negocio.objects.filter(pk=negocio_id).exists():
+            return Response({'error': 'Negócio não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+        if cliente_id and not Cliente.objects.filter(pk=cliente_id).exists():
+            return Response({'error': 'Cliente não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
         levantamento_instance, _ = Levantamento.objects.get_or_create(
             negocio_id=negocio_id,
@@ -393,20 +564,25 @@ def criar_orcamento(request):
         orcamento_instance.terceirizados.all().delete()
         orcamento_instance.atividades.all().delete()
 
-        for item in request.data.get('mao_de_obra', []):
-            safe = {k: v for k, v in item.items() if k not in ('id', 'orcamento')}
-            MDO.objects.create(orcamento=orcamento_instance, **safe)
-        for item in request.data.get('materiais', []):
-            safe = {k: v for k, v in item.items() if k not in ('id', 'orcamento')}
-            Material.objects.create(orcamento=orcamento_instance, **safe)
-        for item in request.data.get('terceirizados', []):
-            safe = {k: v for k, v in item.items() if k not in ('id', 'orcamento')}
-            Servico_terceirizado.objects.create(orcamento=orcamento_instance, **safe)
-        for item in request.data.get('atividades', []):
-            safe = {k: v for k, v in item.items() if k not in ('id', 'orcamento')}
-            if 'duração' in safe and 'duracao' not in safe:
-                safe['duracao'] = safe.pop('duração')
-            Ativ_prevista.objects.create(orcamento=orcamento_instance, **safe)
+        # Itens: só os campos que existem no model (campo desconhecido no JSON dava TypeError
+        # -> 500) e valor inválido (ex.: texto num campo numérico) vira 400, desfazendo a
+        # transação inteira em vez de deixar o orçamento pela metade.
+        for chave, model in (('mao_de_obra', MDO), ('materiais', Material),
+                             ('terceirizados', Servico_terceirizado), ('atividades', Ativ_prevista)):
+            for item in request.data.get(chave) or []:
+                if not isinstance(item, dict):
+                    continue
+                if 'duração' in item and 'duracao' not in item:
+                    item = {**item, 'duracao': item['duração']}
+                dados = _campos_do_model(model, item)
+                try:
+                    with transaction.atomic():
+                        model.objects.create(orcamento=orcamento_instance, **dados)
+                except (DjangoValidationError, ValueError, TypeError, DataError, IntegrityError) as exc:
+                    transaction.set_rollback(True)
+                    detalhe = exc.message_dict if hasattr(exc, 'message_dict') else str(exc)
+                    return Response({'error': f'Item inválido em "{chave}".', 'detalhe': detalhe},
+                                    status=status.HTTP_400_BAD_REQUEST)
 
         # Itens de locação: replace-all na fonte (o Negócio), agora com precificação.
         # Só age quando a chave é enviada (orçamento de serviço puro não mexe na alocação).
@@ -584,11 +760,17 @@ def configuracoes_data(request):
     payload = request.data if isinstance(request.data, dict) else {}
 
     # `config` são os dados da empresa (nome, CNPJ, empresas prestadoras) — só admin.
-    # `listas` são auxiliares (departamentos, categorias) e o Financeiro grava nelas
-    # ao cadastrar um departamento novo (useFin), então segue liberada a autenticados.
+    # `listas` são auxiliares (departamentos, categorias): quem grava é o Financeiro, ao
+    # cadastrar um departamento novo (useFin.addDepartamento) — então admin/gerente e equipe
+    # financeira. Antes qualquer autenticado podia substituir (e zerar) as listas.
     if 'config' in payload and not eh_admin(request.user):
         return Response(
             {'detail': 'Apenas administradores podem alterar as configurações da empresa.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    if 'listas' in payload and not _equipe_financeira(request.user):
+        return Response(
+            {'detail': 'Apenas administradores, gerentes e a equipe financeira podem alterar as listas auxiliares.'},
             status=status.HTTP_403_FORBIDDEN,
         )
 
@@ -691,11 +873,108 @@ def _financeiro_contagem_atual():
 _FINANCEIRO_CAMPOS_CONTAPAGAR_PUBLICOS = {'id', 'tipo', 'status', 'documento', 'anexos'}
 
 
+# "Equipe financeira": quem tem alguma permissão do Financeiro ALÉM de finSolicitacao. Só
+# finSolicitacao é a tela "Solicitação de Pagamento", que qualquer colaborador usa pra pedir
+# um pagamento — não faz da pessoa alguém que pode ler/alterar o Financeiro inteiro.
+FINANCEIRO_EQUIPE = tuple(chave for chave in FINANCEIRO if chave != 'finSolicitacao')
+
+
+def _equipe_financeira(user):
+    return tem_permissao_modulo(user, FINANCEIRO_EQUIPE)
+
+
 def _sem_permissao_financeira(user):
-    permissoes = getattr(user, 'permissoes', None)
-    if not isinstance(permissoes, dict):
+    return not _equipe_financeira(user)
+
+
+class FinanceiroEscritaNegada(Exception):
+    """Escrita restrita tentou criar/alterar/apagar algo fora do alcance do usuário."""
+
+
+def _canon(registro):
+    import json
+    return json.dumps(registro, sort_keys=True, default=str)
+
+
+def _financeiro_mesclar_escrita_restrita(payload, user):
+    """Replace-all de quem NÃO é equipe financeira (só finSolicitacao e/ou Compras/Gestão).
+
+    Essa pessoa leu uma visão restrita (GET: sem solicitações alheias, contas a pagar só
+    com campos públicos) e manda essa visão de volta com a mudança dela. Aqui a lista final
+    é montada a partir do BANCO, aplicando só o que ela pode mudar:
+      * solicitação PRÓPRIA: criar, editar e excluir (aprovar/reprovar segue barrado adiante).
+        O dono é sempre carimbado pelo servidor — nunca dá pra criar/transferir em nome de outro;
+      * conta a pagar NOVA, se tiver permissão de Compras/Gestão (Kanban de Compras gera a
+        conta ao comprar) — nunca alterar/excluir uma existente;
+      * campo `fornecedor`, se tiver a permissão 'fornecedores' (renomear fornecedor em cascata).
+    Registro que ela não vê é preservado como está; qualquer outra diferença em relação ao
+    que ela recebeu (banco, NFe, conta de outro, solicitação alheia...) -> FinanceiroEscritaNegada.
+    """
+    from .financeiro_sync import read_all
+
+    completos = {r['id']: r for r in read_all()}
+    visao = {r['id']: r for r in _financeiro_restringir_para_leitor_sem_acesso(read_all(), user)}
+    pode_criar_conta = tem_permissao_modulo(user, COMPRAS_GESTAO)
+    pode_renomear_fornecedor = tem_permissao_modulo(user, ('fornecedores',))
+
+    enviados = {}
+    for registro in payload:
+        if isinstance(registro, dict) and str(registro.get('id') or '').strip():
+            enviados.setdefault(str(registro['id']).strip(), registro)
+
+    resultado = []
+    for rid, completo in completos.items():
+        if rid not in visao:
+            if rid in enviados:
+                raise FinanceiroEscritaNegada(rid)
+            resultado.append(completo)  # solicitação alheia: invisível e intocável
+            continue
+        visto, novo = visao[rid], enviados.get(rid)
+        if novo is None:
+            if completo.get('tipo') == 'solicitacao' and _solicitacao_do_usuario(completo, user):
+                continue  # excluiu a própria solicitação
+            raise FinanceiroEscritaNegada(rid)
+        if _canon(novo) == _canon(visto):
+            resultado.append(completo)  # inalterado (contaPagar volta completa, não aparada)
+            continue
+        if completo.get('tipo') == 'solicitacao' and novo.get('tipo') == 'solicitacao'                 and _solicitacao_do_usuario(completo, user):
+            # O dono vem do banco: edita a própria, mas não a transfere pra outra pessoa.
+            resultado.append({**novo, 'solicitanteCpf': completo.get('solicitanteCpf', ''),
+                              'solicitanteEmail': completo.get('solicitanteEmail', '')})
+            continue
+        mudados = {k for k in set(visto) | set(novo) if visto.get(k) != novo.get(k)}
+        if pode_renomear_fornecedor and mudados == {'fornecedor'}:
+            resultado.append({**completo, 'fornecedor': novo.get('fornecedor')})
+            continue
+        raise FinanceiroEscritaNegada(rid)
+
+    for rid, novo in enviados.items():
+        if rid in completos:
+            continue
+        if novo.get('tipo') == 'solicitacao':
+            # Solicitação nova é sempre de quem está enviando.
+            resultado.append({**novo, 'solicitanteCpf': str(getattr(user, 'cpf', '') or ''),
+                              'solicitanteEmail': str(getattr(user, 'email', '') or '')})
+        elif novo.get('tipo') == 'contaPagar' and pode_criar_conta:
+            resultado.append(novo)
+        else:
+            raise FinanceiroEscritaNegada(rid)
+    return resultado
+
+
+def _solicitacao_do_usuario(registro, user):
+    """A solicitação de pagamento (dict do FinRecord) foi criada pelo `user`?"""
+    cpf_usuario = str(getattr(user, 'cpf', '') or '').strip()
+    email_usuario = str(getattr(user, 'email', '') or '').strip().lower()
+    if not cpf_usuario and not email_usuario:
+        return False
+    cpf_registro = str(registro.get('solicitanteCpf') or '').strip()
+    email_registro = str(registro.get('solicitanteEmail') or '').strip().lower()
+    if cpf_usuario and cpf_registro and cpf_registro == cpf_usuario:
         return True
-    return not any(permissoes.get(chave) is True for chave in FINANCEIRO)
+    if email_usuario and email_registro and email_registro == email_usuario:
+        return True
+    return False
 
 
 def _financeiro_restringir_para_leitor_sem_acesso(dados, user=None):
@@ -710,23 +989,9 @@ def _financeiro_restringir_para_leitor_sem_acesso(dados, user=None):
     só as de outras pessoas são removidas. Sem essa exceção, o autor nunca veria o que ele mesmo
     criou em "Meus Pagamentos".
     """
-    cpf_usuario = str(getattr(user, 'cpf', '') or '').strip()
-    email_usuario = str(getattr(user, 'email', '') or '').strip().lower()
-
-    def _e_do_proprio_usuario(registro):
-        if not cpf_usuario and not email_usuario:
-            return False
-        cpf_registro = str(registro.get('solicitanteCpf') or '').strip()
-        email_registro = str(registro.get('solicitanteEmail') or '').strip().lower()
-        if cpf_usuario and cpf_registro and cpf_registro == cpf_usuario:
-            return True
-        if email_usuario and email_registro and email_registro == email_usuario:
-            return True
-        return False
-
     restantes = [
         r for r in dados
-        if r.get('tipo') != 'solicitacao' or _e_do_proprio_usuario(r)
+        if r.get('tipo') != 'solicitacao' or _solicitacao_do_usuario(r, user)
     ]
     for r in restantes:
         if r.get('tipo') == 'contaPagar':
@@ -748,17 +1013,30 @@ def financeiro_data(request):
     """
     from .financeiro_sync import read_all, replace_all
 
-    if request.method == 'GET':
+    equipe = _equipe_financeira(request.user)
+
+    def _visao():
         dados = read_all()
-        if not escreve_em_tudo(request.user) and _sem_permissao_financeira(request.user):
-            dados = _financeiro_restringir_para_leitor_sem_acesso(dados, request.user)
-        return Response(dados, status=status.HTTP_200_OK)
+        return dados if equipe else _financeiro_restringir_para_leitor_sem_acesso(dados, request.user)
+
+    if request.method == 'GET':
+        return Response(_visao(), status=status.HTTP_200_OK)
 
     payload = request.data
     if isinstance(payload, dict):
         payload = payload.get('financeiro', payload.get('data', []))
     if not isinstance(payload, list):
         return Response({'error': 'Esperado um array de registros financeiros.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Quem não é equipe financeira só altera o que é dele — ver _financeiro_mesclar_escrita_restrita.
+    if not equipe:
+        try:
+            payload = _financeiro_mesclar_escrita_restrita(payload, request.user)
+        except FinanceiroEscritaNegada:
+            return Response(
+                {'error': 'Você só pode criar, alterar ou excluir as suas próprias solicitações de pagamento.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
     contagem_atual = _financeiro_contagem_atual()
     if contagem_atual >= FINANCEIRO_QUEDA_PISO_MINIMO and len(payload) < contagem_atual * FINANCEIRO_QUEDA_FRACAO_MAXIMA:
@@ -794,7 +1072,7 @@ def financeiro_data(request):
     total = replace_all(payload)
     _registrar_log(request, 'atualizacao', 'Financeiro', f'Registros financeiros sincronizados ({total} itens).')
     dispatch_collection_changed('financeiro')
-    return Response({'message': 'Financeiro sincronizado.', 'total': total, 'financeiro': read_all()}, status=status.HTTP_200_OK)
+    return Response({'message': 'Financeiro sincronizado.', 'total': total, 'financeiro': _visao()}, status=status.HTTP_200_OK)
 
 
 @api_view(['POST'])
@@ -817,13 +1095,23 @@ def financeiro_solicitacao_criar(request):
         return Response({'error': 'Campo "id" é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
     if SolicitacaoPagamento.objects.filter(record_id=rid).exists():
         return Response({'error': 'Já existe uma solicitação com este id.'}, status=status.HTTP_409_CONFLICT)
-    record.setdefault('status', 'Aguardando aprovação')
+    # Sempre nasce aguardando aprovação (antes era setdefault: dava pra criar já "Aprovado"
+    # e pular a gerência) e sempre em nome de quem está logado (não dá pra pedir em nome
+    # de outra pessoa nem "adotar" a solicitação de alguém).
+    record['status'] = 'Aguardando aprovação'
+    for campo in ('aprovadoPor', 'reprovadoPor', 'motivoReprovacao'):
+        record.pop(campo, None)
+    record['solicitanteCpf'] = str(getattr(request.user, 'cpf', '') or '')
+    record['solicitanteEmail'] = str(getattr(request.user, 'email', '') or '')
 
     instance = _build_instance('solicitacao', record)
     instance.save()
     _registrar_log(request, 'criacao', 'Financeiro', f'Solicitação de pagamento {rid} criada.')
     dispatch_collection_changed('financeiro')
-    return Response({'message': 'Solicitação enviada.', 'financeiro': read_all()}, status=status.HTTP_201_CREATED)
+    dados = read_all()
+    if _sem_permissao_financeira(request.user):
+        dados = _financeiro_restringir_para_leitor_sem_acesso(dados, request.user)
+    return Response({'message': 'Solicitação enviada.', 'financeiro': dados}, status=status.HTTP_201_CREATED)
 
 
 def _gen_fin_id(prefix):
@@ -1008,45 +1296,117 @@ def financeiro_solicitacao_decidir(request, rid):
     return Response({'message': 'Solicitação aprovada.', 'financeiro': read_all()}, status=status.HTTP_200_OK)
 
 
+# Mesma rede de segurança do Financeiro/Almoxarifado, aplicada ao escopo que o replace-all
+# vai substituir (tudo, para quem grava todas; só as compras do próprio usuário, para os demais).
+COMPRAS_QUEDA_PISO_MINIMO = 10
+COMPRAS_QUEDA_FRACAO_MAXIMA = 0.5
+
+# Quem enxerga/altera TODAS as compras, por coleção, segundo a permissão do painel de
+# Usuários & Acessos (admin e gerente sempre). Sem nenhuma delas, a pessoa só lê, grava e
+# apaga as PRÓPRIAS compras (é o "Minhas Compras"/abrir requisição, liberado a todos).
+COMPRAS_ACESSO = {
+    'compras': {  # requisições do kanban
+        'ler': ('kanbanCompras', 'aprovarComercial', 'aprovarFinanceiro', 'finCustoOs'),
+        'gravar': ('kanbanCompras', 'aprovarComercial', 'aprovarFinanceiro'),
+    },
+    'comprasHistorico': {
+        # Histórico de Compras anexa a NF-e; Itens para Adicionar marca "no estoque";
+        # o Kanban é quem move o pedido para o histórico ao finalizar.
+        'ler': ('kanbanCompras', 'aprovarComercial', 'aprovarFinanceiro', 'historicoCompras',
+                'itensAdicionar', 'finCustoOs'),
+        'gravar': ('kanbanCompras', 'historicoCompras', 'itensAdicionar'),
+    },
+}
+
+
 @api_view(['GET', 'POST', 'PUT'])
 def compras_data(request):
     """Estado de Compras (requisições do kanban + histórico de compras concluídas).
 
-    SEM permissão de módulo de propósito (fica só no IsAuthenticated padrão): as telas
-    "Compras / Requisições" e "Minhas Compras" são liberadas a TODO usuário na Sidebar
-    — qualquer colaborador pode abrir uma requisição —, então exigir kanbanCompras aqui
-    quebraria o fluxo de solicitação.
+    SEM permissão de módulo na view (fica só no IsAuthenticated padrão): abrir requisição e
+    "Minhas Compras" são liberados a TODO usuário. O escopo é decidido por coleção em
+    COMPRAS_ACESSO:
+      * quem tem permissão de leitura vê todas; os demais só as próprias
+        (solicitanteCpf/e-mail/nome — ver compras_sync.pertence_ao_usuario);
+      * quem tem permissão de gravação substitui a coleção inteira; os demais só as
+        próprias — as de outras pessoas nunca são apagadas, e alterar uma delas é 403
+        (reenviá-la inalterada é aceito: quem lê tudo manda a lista inteira de volta).
 
     GET  -> {'compras': [...requisições...], 'comprasHistorico': [...histórico...]}
     POST/PUT -> recebe {'compras'?: [...], 'comprasHistorico'?: [...]} e substitui
             (replace-all) apenas a(s) coleção(ões) presente(s) no corpo.
     """
-    from .compras_sync import read_requisicoes, read_historico, replace_requisicoes, replace_historico
+    from .compras_sync import (
+        ComprasSemPermissao, contar_do_usuario,
+        read_requisicoes, read_historico, replace_requisicoes, replace_historico,
+        read_requisicoes_do_usuario, read_historico_do_usuario,
+        replace_requisicoes_do_usuario, replace_historico_do_usuario,
+    )
+    from .models import RequisicaoCompra, CompraHistorico
+
+    user = request.user
+
+    def pode(chave, acao):
+        return tem_permissao_modulo(user, COMPRAS_ACESSO[chave][acao])
+
+    colecoes = (
+        ('compras', RequisicaoCompra, read_requisicoes, read_requisicoes_do_usuario,
+         replace_requisicoes, replace_requisicoes_do_usuario),
+        ('comprasHistorico', CompraHistorico, read_historico, read_historico_do_usuario,
+         replace_historico, replace_historico_do_usuario),
+    )
+
+    def _resposta():
+        dados = {
+            chave: (ler_tudo() if pode(chave, 'ler') else ler_proprias(user))
+            for chave, _m, ler_tudo, ler_proprias, *_ in colecoes
+        }
+        return Response(dados, status=status.HTTP_200_OK)
 
     if request.method == 'GET':
-        return Response(
-            {'compras': read_requisicoes(), 'comprasHistorico': read_historico()},
-            status=status.HTTP_200_OK,
-        )
+        return _resposta()
 
     payload = request.data if isinstance(request.data, dict) else {}
-    if 'compras' in payload:
-        replace_requisicoes(payload.get('compras') or [])
-    if 'comprasHistorico' in payload:
-        replace_historico(payload.get('comprasHistorico') or [])
-    partes = [k for k in ('compras', 'comprasHistorico') if k in payload]
-    _registrar_log(request, 'atualizacao', 'Compras', f'Compras atualizadas: {", ".join(partes)}.')
-    if partes:
-        dispatch_collection_changed('compras')
-    return Response(
-        {'compras': read_requisicoes(), 'comprasHistorico': read_historico()},
-        status=status.HTTP_200_OK,
-    )
+    partes = [chave for chave, *_ in colecoes if chave in payload]
 
-    return Response(
-        {'compras': read_requisicoes(), 'comprasHistorico': read_historico()},
-        status=status.HTTP_200_OK,
-    )
+    for chave, model, *_ in colecoes:
+        if chave not in payload:
+            continue
+        if not isinstance(payload.get(chave) or [], list):
+            return Response({'error': f'"{chave}" deve ser uma lista.'}, status=status.HTTP_400_BAD_REQUEST)
+        contagem_atual = model.objects.count() if pode(chave, 'gravar') else contar_do_usuario(model, user)
+        contagem_nova = len(payload.get(chave) or [])
+        if contagem_atual >= COMPRAS_QUEDA_PISO_MINIMO and contagem_nova < contagem_atual * COMPRAS_QUEDA_FRACAO_MAXIMA:
+            return Response(
+                {
+                    'error': (
+                        f'Operação recusada: a lista enviada ({contagem_nova} registro(s)) é muito menor que '
+                        f'o total atual ({contagem_atual}). Isso indica uma cópia desatualizada de Compras, '
+                        f'que apagaria dados. Recarregue a página e tente novamente.'
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    try:
+        with transaction.atomic():
+            for chave, _m, _lt, _lp, gravar_tudo, gravar_proprias in colecoes:
+                if chave not in payload:
+                    continue
+                if pode(chave, 'gravar'):
+                    gravar_tudo(payload.get(chave) or [])
+                else:
+                    gravar_proprias(payload.get(chave) or [], user)
+    except ComprasSemPermissao:
+        return Response(
+            {'error': 'Você não tem permissão para alterar compras de outras pessoas.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    if partes:
+        _registrar_log(request, 'atualizacao', 'Compras', f'Compras atualizadas: {", ".join(partes)}.')
+        dispatch_collection_changed('compras')
+    return _resposta()
 
 
 @api_view(['GET'])
@@ -1115,7 +1475,20 @@ def atualizar_status_os(request, pk):
     """
     try:
         ordem_servico = OrdemServico.objects.get(id=pk)
-        
+
+        # Só valores das choices do model — antes qualquer texto era gravado direto.
+        for campo, choices in (
+            ('status_os', OrdemServico.STATUS_OS_CHOICES),
+            ('status_envio', OrdemServico.STATUS_ENVIO_CHOICES),
+            ('status_aprovacao', OrdemServico.STATUS_APROVACAO_CHOICES),
+        ):
+            validos = [valor for valor, _ in choices]
+            if campo in request.data and request.data[campo] not in validos:
+                return Response(
+                    {'error': f'{campo} inválido. Valores aceitos: {", ".join(validos)}.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         # Atualizar status se fornecido
         if 'status_os' in request.data:
             ordem_servico.status_os = request.data['status_os']
@@ -1244,6 +1617,57 @@ class MedicaoViewSet(LogMixin, viewsets.ModelViewSet):
 
 # --------------------- Documentos (upload genérico) ---------------------
 
+# vinculo_tipo -> chaves do painel que dão acesso aos documentos daquele módulo
+# (as mesmas que liberam escrita no módulo — ver permission_classes de cada ViewSet).
+DOCUMENTO_MODULOS = {
+    'financeiro': FINANCEIRO,
+    'negocio': (*COMERCIAL, *PRODUCAO),
+    'os': (*COMERCIAL, *PRODUCAO, *FINANCEIRO),
+    'medicao': ('medicao', 'crm', 'finalizadosComercial', *FINANCEIRO),
+    'almoxarifado': (*SUPRIMENTOS, *COMPRAS_GESTAO),
+    'compras': COMPRAS_GESTAO,
+}
+
+def _documento_ids_do_fluxo(user):
+    """(vinculo_tipo, ids) dos registros em que o usuário participa como solicitante."""
+    from .models import SolicitacaoPagamento, ContaPagar, RequisicaoCompra, CompraHistorico
+    from .compras_sync import pertence_ao_usuario
+
+    solicitacoes = {
+        s.record_id for s in SolicitacaoPagamento.objects.only('record_id', 'extra')
+        if isinstance(s.extra, dict) and _solicitacao_do_usuario(s.extra, user)
+    }
+    contas = {
+        c.record_id for c in ContaPagar.objects.only('record_id', 'extra')
+        if isinstance(c.extra, dict) and str(c.extra.get('origemSolicitacao') or '') in solicitacoes
+    }
+    compras = {
+        x.record_id for model in (RequisicaoCompra, CompraHistorico)
+        for x in model.objects.only('record_id', 'extra')
+        if pertence_ao_usuario(x.extra if isinstance(x.extra, dict) else {}, user)
+    }
+    return (('financeiro', solicitacoes | contas), ('compras', compras))
+
+
+def documentos_visiveis(user, para_alterar=False):
+    """Documentos que `user` pode ver (ou, com `para_alterar`, excluir/editar) — regra
+    descrita no DocumentoViewSet. Usada também pra liberar o download em /media/
+    (ver media_auth)."""
+    qs = Documento.objects.all()
+    if escreve_em_tudo(user):
+        return qs
+    # vinculo_tipo é texto livre e há variações de caixa ('OS' e 'os').
+    acesso = Q(enviado_por=str(getattr(user, 'cpf', '') or ''))
+    for tipo, chaves in DOCUMENTO_MODULOS.items():
+        if tem_permissao_modulo(user, chaves):
+            acesso |= Q(vinculo_tipo__iexact=tipo)
+    if not para_alterar:
+        for tipo, ids in _documento_ids_do_fluxo(user):
+            if ids:
+                acesso |= Q(vinculo_tipo__iexact=tipo, vinculo_id__in=ids)
+    return qs.filter(acesso)
+
+
 class DocumentoViewSet(LogMixin, viewsets.ModelViewSet):
     """Upload e recuperação de documentos (genérico, reutilizável).
 
@@ -1252,6 +1676,17 @@ class DocumentoViewSet(LogMixin, viewsets.ModelViewSet):
             linha no banco guarda caminho + metadados.
     - GET   ?vinculo_tipo=&vinculo_id=&categoria= filtra os documentos de um vínculo.
     - DELETE remove o registro (e o arquivo do disco).
+
+    Acesso (mesma lógica do Financeiro/"Meus Pagamentos"): admin e gerente veem tudo.
+    Os demais veem só documentos
+      * que eles mesmos enviaram (`enviado_por`);
+      * de um módulo em que têm permissão no painel (ver DOCUMENTO_MODULOS) — quem trabalha
+        no Financeiro vê os anexos do Financeiro, e assim por diante;
+      * ligados a um fluxo de que participam: anexos da própria solicitação de pagamento
+        (e das contas a pagar geradas a partir dela) e das próprias compras.
+    Excluir/editar: só quem enviou, admin/gerente ou quem tem permissão no módulo — participar
+    do fluxo dá leitura, não exclusão (o solicitante não apaga o comprovante do Financeiro).
+    Documento fora do alcance do usuário responde 404, não 403, para não revelar que existe.
     """
     queryset = Documento.objects.all()
     serializer_class = DocumentoSerializer
@@ -1259,7 +1694,9 @@ class DocumentoViewSet(LogMixin, viewsets.ModelViewSet):
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        qs = documentos_visiveis(
+            self.request.user, para_alterar=self.action in ('destroy', 'update', 'partial_update'),
+        )
         params = self.request.query_params
         vinculo_tipo = params.get('vinculo_tipo')
         vinculo_id = params.get('vinculo_id')
@@ -1277,7 +1714,8 @@ class DocumentoViewSet(LogMixin, viewsets.ModelViewSet):
         nome = getattr(arquivo, 'name', '') or self.request.data.get('nome_original', '')
         tamanho = getattr(arquivo, 'size', 0) or 0
         content_type = getattr(arquivo, 'content_type', '') or self.request.data.get('tipo', '')
-        instance = serializer.save(nome_original=nome, tamanho=tamanho, tipo=content_type)
+        instance = serializer.save(nome_original=nome, tamanho=tamanho, tipo=content_type,
+                                   enviado_por=str(getattr(self.request.user, 'cpf', '') or ''))
         _registrar_log(self.request, 'criacao', 'Documentos', str(instance))
 
     def perform_destroy(self, instance):

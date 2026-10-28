@@ -9,17 +9,45 @@
  * Não substitui o polling, é um complemento: se o socket cair e não reconectar a tempo,
  * o polling de 45s/foco continua sendo a rede de segurança.
  * =======================================================================================*/
-import { AUTH_ACCESS_KEY } from './authService';
-import { getRealtimeWsUrl } from './network';
+import { AUTH_ACCESS_KEY, refreshAccessToken } from './authService';
+import { getRealtimeWsUrl, realtimeWsProtocols } from './network';
 
 const BACKOFF_INICIAL_MS = 1000;
 const BACKOFF_MAXIMO_MS = 30000;
+
+// Fechamento pelo backend por login ausente/vencido (ComercialApp/consumers.py).
+const CODIGO_SEM_LOGIN = 4401;
 
 export function connectRealtime(onCollectionChanged: (collection: string) => void): () => void {
   let socket: WebSocket | null = null;
   let reconectarTimeoutId: ReturnType<typeof setTimeout> | null = null;
   let backoffAtualMs = BACKOFF_INICIAL_MS;
   let desconectadoPeloChamador = false;
+  // Já renovou o token desde a última conexão aceita? Se o backend recusar de novo logo
+  // depois de uma renovação (usuário desativado, p. ex.), para de insistir em vez de
+  // entrar em loop renovando.
+  let jaRenovouToken = false;
+
+  // Token vencido: uma aba parada em segundo plano não faz chamada REST, então o
+  // interceptor do api.ts nunca renova o token por ela — sem isto o socket tentaria com
+  // o mesmo token vencido a cada 30s, para sempre (os WSREJECT do log de 23/10).
+  const renovarTokenEReconectar = async () => {
+    if (jaRenovouToken) {
+      console.warn('[tempo real] sessão recusada mesmo após renovar o token — reconexão suspensa.');
+      return;
+    }
+    jaRenovouToken = true;
+    const novoToken = await refreshAccessToken();
+    if (desconectadoPeloChamador) return;
+    if (!novoToken) {
+      // Refresh também venceu: a próxima chamada REST leva ao login. Um novo login
+      // recria esta conexão (ErpContext depende de userSession).
+      console.warn('[tempo real] não foi possível renovar a sessão — reconexão suspensa.');
+      return;
+    }
+    backoffAtualMs = BACKOFF_INICIAL_MS;
+    conectar();
+  };
 
   const agendarReconexao = () => {
     if (desconectadoPeloChamador) return;
@@ -43,7 +71,7 @@ export function connectRealtime(onCollectionChanged: (collection: string) => voi
     }
 
     try {
-      socket = new WebSocket(getRealtimeWsUrl(token));
+      socket = new WebSocket(getRealtimeWsUrl(), realtimeWsProtocols(token));
     } catch {
       agendarReconexao();
       return;
@@ -64,8 +92,17 @@ export function connectRealtime(onCollectionChanged: (collection: string) => voi
       }
     };
 
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       socket = null;
+      // Registro de diagnóstico (F12 > Console): em 23/10 as conexões caíam a cada ~24s.
+      // 1006 = cortada sem aviso (rede, proxy, antivírus); 1000/1001 = fechada por alguém
+      // de propósito; 4401 = sem login válido.
+      console.info(`[tempo real] conexão fechada — código ${event.code}${event.reason ? ` (${event.reason})` : ''}`);
+      if (event.code === CODIGO_SEM_LOGIN) {
+        void renovarTokenEReconectar();
+        return;
+      }
+      jaRenovouToken = false;
       agendarReconexao();
     };
 

@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Save, Download, FileText, Eye, Paperclip } from 'lucide-react';
-import * as XLSX from 'xlsx';
+import { baixarPlanilha } from '../../../../utils/planilhaExcel';
 import {
   FinCard, Toolbar, DataTable, Th, Td, Btn, StatusTag, CompanyTag, AlertBar, InfoBar, EmptyRow,
   FinModal, Field, Input, MoneyInput, Select, Textarea, ImpostosPanel, DeleteBtn,
@@ -164,10 +164,7 @@ export function ContasReceberView() {
       soma((r) => num(r.valorLiquido ?? r.valor)),
       '', '', '', soma((r) => num(r.valorRecebido)), '', '',
     ]);
-    const planilha = XLSX.utils.aoa_to_sheet([head, ...linhas]);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, planilha, 'Contas a Receber');
-    XLSX.writeFile(workbook, 'contas_a_receber.xlsx');
+    void baixarPlanilha('contas_a_receber.xlsx', 'Contas a Receber', [head, ...linhas]);
   };
 
   return (
