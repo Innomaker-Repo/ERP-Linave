@@ -17,6 +17,7 @@ import { uploadDocumento, excluirDocumento } from '../../../../services/document
 import { formatarNumeroSequencial } from '../../../../services/numeroSequencial';
 import { formatNumeroOsDisplay } from '../../../../services/ordensServico';
 import { MODALIDADES, temServico, temLocacao, modalidadeLabel } from '../../../utils/modalidade';
+import { MoneyInput } from '../Financeiro/finUi';
 // Substitua as importações antigas por esta única:
 import {
     getNegocios,
@@ -2642,7 +2643,7 @@ const obrasOrdenadas = useMemo(() => {
                   <td className="px-2 py-2"><input className={cellInputClass} value={it.descricao} onChange={e => atualizarItemPrecoImportarOs(categoria, it.id, 'descricao', e.target.value)} placeholder="Descrição" /></td>
                   <td className="px-2 py-2"><input type="number" min="0" className={cellInputClass} value={String(it.quantidade)} onChange={e => atualizarItemPrecoImportarOs(categoria, it.id, 'quantidade', e.target.value)} /></td>
                   <td className="px-2 py-2"><input className={cellInputClass} value={it.unidade} onChange={e => atualizarItemPrecoImportarOs(categoria, it.id, 'unidade', e.target.value)} placeholder="serv." /></td>
-                  <td className="px-2 py-2"><input className={cellInputClass} value={String(it.valorUnitario)} onChange={e => atualizarItemPrecoImportarOs(categoria, it.id, 'valorUnitario', e.target.value)} placeholder="0,00" /></td>
+                  <td className="px-2 py-2"><MoneyInput bare className={cellInputClass} value={it.valorUnitario} onChange={valorCru => atualizarItemPrecoImportarOs(categoria, it.id, 'valorUnitario', valorCru)} placeholder="0,00" /></td>
                   <td className="px-2 py-2"><input type="number" min="0" className={cellInputClass} value={String(it.dias)} onChange={e => atualizarItemPrecoImportarOs(categoria, it.id, 'dias', e.target.value)} /></td>
                   <td className="px-2 py-2 text-white font-black whitespace-nowrap">R$ {(Number(it.total) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                   <td className="px-2 py-2 text-center"><button type="button" onClick={() => removerItemPrecoImportarOs(categoria, it.id)} className="text-red-300 p-1"><X size={13} /></button></td>
@@ -3579,7 +3580,7 @@ const obrasOrdenadas = useMemo(() => {
                             <td className="px-2 py-2"><input className={cellInputClass} value={item.unidade} onChange={e => atualizarMaterialImportarOs(item.id, { unidade: e.target.value })} /></td>
                             <td className="px-2 py-2"><input type="number" className={cellInputClass} value={item.quantidade} onChange={e => atualizarMaterialImportarOs(item.id, { quantidade: e.target.value })} /></td>
                             <td className="px-2 py-2"><input type="number" className={cellInputClass} value={item.pesoFator} onChange={e => atualizarMaterialImportarOs(item.id, { pesoFator: e.target.value })} /></td>
-                            <td className="px-2 py-2"><input type="number" className={cellInputClass} value={item.custoUnit} onChange={e => atualizarMaterialImportarOs(item.id, { custoUnit: e.target.value })} /></td>
+                            <td className="px-2 py-2"><MoneyInput bare className={cellInputClass} value={item.custoUnit} onChange={valorCru => atualizarMaterialImportarOs(item.id, { custoUnit: valorCru })} /></td>
                             <td className="px-2 py-2"><input type="number" className={`${cellInputClass} bg-white/5 cursor-not-allowed`} value={item.valorTotal} readOnly disabled /></td>
                             <td className="px-2 py-2">
                               <select className={cellInputClass} value={item.origemTerceiros} onChange={e => atualizarMaterialImportarOs(item.id, { origemTerceiros: e.target.value as 'Sim' | 'Nao' })}>
@@ -3638,7 +3639,7 @@ const obrasOrdenadas = useMemo(() => {
                             <td className="px-2 py-2"><input className={cellInputClass} value={item.unidade} onChange={e => atualizarTerceirizadoImportarOs(item.id, { unidade: e.target.value })} /></td>
                             <td className="px-2 py-2"><input type="number" className={cellInputClass} value={item.quantidade} onChange={e => atualizarTerceirizadoImportarOs(item.id, { quantidade: e.target.value })} /></td>
                             <td className="px-2 py-2"><input type="number" className={cellInputClass} value={item.pesoFator} onChange={e => atualizarTerceirizadoImportarOs(item.id, { pesoFator: e.target.value })} /></td>
-                            <td className="px-2 py-2"><input type="number" className={cellInputClass} value={item.custoUnit} onChange={e => atualizarTerceirizadoImportarOs(item.id, { custoUnit: e.target.value })} /></td>
+                            <td className="px-2 py-2"><MoneyInput bare className={cellInputClass} value={item.custoUnit} onChange={valorCru => atualizarTerceirizadoImportarOs(item.id, { custoUnit: valorCru })} /></td>
                             <td className="px-2 py-2"><input type="number" className={`${cellInputClass} bg-white/5 cursor-not-allowed`} value={item.valorTotal} readOnly disabled /></td>
                             <td className="px-2 py-2"><input className={cellInputClass} value={item.observacao} onChange={e => atualizarTerceirizadoImportarOs(item.id, { observacao: e.target.value })} /></td>
                             <td className="px-2 py-2 text-center">

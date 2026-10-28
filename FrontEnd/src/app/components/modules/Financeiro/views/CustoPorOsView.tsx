@@ -111,16 +111,22 @@ export function CustoPorOsView() {
     const out: LinhaCusto[] = [];
 
     // (a) Itens ainda dentro de requisições aprovadas (COMPRADOS) e não comprados individualmente
-    //     (valor = cotação selecionada). Ao ser comprado, o item sai da requisição e passa a
-    //     contar pelo histórico (b) — não há sobreposição.
+    //     (valor = cotação selecionada, quando já houver). Ao ser comprado, o item sai da
+    //     requisição e passa a contar pelo histórico (b) — não há sobreposição.
+    // Antes, um item sem cotação ainda selecionada (valorSelecionado vazio — comum: a requisição
+    // já foi aprovada, mas ninguém escolheu fornecedor/preço no Kanban ainda) era descartado
+    // em silêncio — a compra "sumia" do Custo por OS até alguém lançar o preço, mesmo já
+    // aprovada. Agora entra com valor 0 (editável, como toda linha desta planilha), pra não
+    // ficar invisível. Só quem realmente NÃO deve entrar é item já em estoque (jaEmEstoque):
+    // não representa uma compra nova, não tem custo a lançar aqui.
     (Array.isArray(compras) ? compras : [])
       .filter((r: any) => r?.stage === 'COMPRADOS' && daOs(r))
       .forEach((r: any) => {
         const details = Array.isArray(r?.budgetDetails) ? r.budgetDetails : [];
         (Array.isArray(r?.itens) ? r.itens : []).forEach((it: any) => {
           const d = details.find((x: any) => x.itemId === it.id) || null;
+          if (d?.jaEmEstoque) return;
           const valor = num(d?.valorSelecionado);
-          if (valor <= 0) return;
           const natureza = d?.naturezaFornecimento || it?.naturezaFornecimento || 'SERVICO';
           // valorSelecionado é o total do item (a cotação é pela quantidade pedida). Discretiza
           // em qtd/unidade/valor unitário para o custo ficar item a item, como a medição.
@@ -128,7 +134,7 @@ export function CustoPorOsView() {
           out.push({
             id: `cmp-${r.id}-${it.id}`,
             categoria: categoriaCompra(natureza),
-            descricao: `Compra: ${it.descricao || it.nome || 'item'}`,
+            descricao: `Compra: ${it.descricao || it.nome || 'item'}${valor <= 0 ? ' (aguardando cotação)' : ''}`,
             valor,
             data: String(r?.updatedAt || r?.createdAt || '').slice(0, 10),
             origem: 'compra',

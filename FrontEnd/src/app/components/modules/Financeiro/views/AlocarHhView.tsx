@@ -1,8 +1,10 @@
 /* =========================================================================================
  * FINANCEIRO — Alocar H.H (sub-aba de Custo por OS)
- * Folha de ponto tabular (pessoas × dias, cada dia com Normal / HE 0,5 / HE 1,0) → resumo por
- * cargo (HN / HE 0,5 / HE 1,0) → valor por cargo → custo de H.H da OS + documento de custo.
- * Regras (da planilha): HN = qtd×valor; HE 100% (1,0) = qtd×valor×2; HE 50% (0,5) = qtd×valor×1,5.
+ * Folha de ponto tabular (pessoas × dias, cada dia com Normal / HE 0,5 / HE 1,0 / HE 0,2) →
+ * resumo por cargo (HN / HE 0,5 / HE 1,0 / HE 0,2) → valor por cargo → custo de H.H da OS +
+ * documento de custo.
+ * Regras (da planilha): HN = qtd×valor; HE 100% (1,0) = qtd×valor×2; HE 50% (0,5) = qtd×valor×1,5;
+ * HE 0,2 (adicional noturno, +20%) = qtd×valor×1,2.
  * =======================================================================================*/
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, Trash2, Save, Download, Lock, Users, X } from 'lucide-react';
@@ -39,10 +41,10 @@ const CARGOS_HH = [
   'Eletricista', 'Pintor', 'Maçariqueiro', '1/2 Oficial', 'TST', 'Esmerilhador', 'Mecânico',
 ];
 
-type Horas = { hn: number; he05: number; he10: number };
+type Horas = { hn: number; he05: number; he10: number; he02: number };
 type Pessoa = { id: string; nome: string; cargo: string; horas: Record<string, Horas> };
 
-const normHoras = (h: any): Horas => ({ hn: num(h?.hn), he05: num(h?.he05), he10: num(h?.he10) });
+const normHoras = (h: any): Horas => ({ hn: num(h?.hn), he05: num(h?.he05), he10: num(h?.he10), he02: num(h?.he02) });
 const normPessoa = (p: any): Pessoa => ({
   id: String(p?.id || `hh-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`),
   nome: String(p?.nome || ''),
@@ -97,7 +99,7 @@ export function AlocarHhView({ osNumero, selected, outrosCustos = [] }: { osNume
   const setHora = (id: string, dia: string, campo: keyof Horas, v: string) =>
     setPessoas((ps) => ps.map((p) => {
       if (p.id !== id) return p;
-      const atual = p.horas[dia] || { hn: 0, he05: 0, he10: 0 };
+      const atual = p.horas[dia] || { hn: 0, he05: 0, he10: 0, he02: 0 };
       return { ...p, horas: { ...p.horas, [dia]: { ...atual, [campo]: num(v) } } };
     }));
 
@@ -110,34 +112,35 @@ export function AlocarHhView({ osNumero, selected, outrosCustos = [] }: { osNume
   const removeDia = (idx: number) => setDias((d) => d.filter((_, i) => i !== idx));
 
   const totaisPessoa = (p: Pessoa): Horas => {
-    let hn = 0, he05 = 0, he10 = 0;
-    dias.forEach((dia) => { const h = p.horas[dia]; if (h) { hn += num(h.hn); he05 += num(h.he05); he10 += num(h.he10); } });
-    return { hn: round2(hn), he05: round2(he05), he10: round2(he10) };
+    let hn = 0, he05 = 0, he10 = 0, he02 = 0;
+    dias.forEach((dia) => { const h = p.horas[dia]; if (h) { hn += num(h.hn); he05 += num(h.he05); he10 += num(h.he10); he02 += num(h.he02); } });
+    return { hn: round2(hn), he05: round2(he05), he10: round2(he10), he02: round2(he02) };
   };
 
   // ---- resumo por cargo (campo LIVRE: agrupa por string igual, ignorando espaços/caixa) ----
   const resumo = useMemo(() => {
-    const map = new Map<string, { label: string; hn: number; he05: number; he10: number }>();
+    const map = new Map<string, { label: string; hn: number; he05: number; he10: number; he02: number }>();
     pessoas.forEach((p) => {
       const label = (p.cargo || '').trim() || '(sem cargo)';
       const key = normCargoKey(label);
       const t = totaisPessoa(p);
-      const cur = map.get(key) || { label, hn: 0, he05: 0, he10: 0 };
-      map.set(key, { label: cur.label, hn: round2(cur.hn + t.hn), he05: round2(cur.he05 + t.he05), he10: round2(cur.he10 + t.he10) });
+      const cur = map.get(key) || { label, hn: 0, he05: 0, he10: 0, he02: 0 };
+      map.set(key, { label: cur.label, hn: round2(cur.hn + t.hn), he05: round2(cur.he05 + t.he05), he10: round2(cur.he10 + t.he10), he02: round2(cur.he02 + t.he02) });
     });
-    return Array.from(map.values()).map((v) => ({ cargo: v.label, hn: v.hn, he05: v.he05, he10: v.he10 }));
+    return Array.from(map.values()).map((v) => ({ cargo: v.label, hn: v.hn, he05: v.he05, he10: v.he10, he02: v.he02 }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pessoas, dias]);
 
-  const totResumo = useMemo(() => resumo.reduce((s, r) => ({ hn: s.hn + r.hn, he05: s.he05 + r.he05, he10: s.he10 + r.he10 }), { hn: 0, he05: 0, he10: 0 }), [resumo]);
+  const totResumo = useMemo(() => resumo.reduce((s, r) => ({ hn: s.hn + r.hn, he05: s.he05 + r.he05, he10: s.he10 + r.he10, he02: s.he02 + r.he02 }), { hn: 0, he05: 0, he10: 0, he02: 0 }), [resumo]);
 
-  // ---- custo por cargo (HN×v ; HE1,0×v×2 ; HE0,5×v×1,5) ----
+  // ---- custo por cargo (HN×v ; HE1,0×v×2 ; HE0,5×v×1,5 ; HE0,2×v×1,2 — adicional noturno, +20%) ----
   const custos = useMemo(() => resumo.map((r) => {
     const rate = num(rates[r.cargo]);
     const custoHN = round2(r.hn * rate);
     const custoHE10 = round2(r.he10 * rate * 2);
     const custoHE05 = round2(r.he05 * rate * 1.5);
-    return { ...r, rate, custoHN, custoHE10, custoHE05, total: round2(custoHN + custoHE10 + custoHE05) };
+    const custoHE02 = round2(r.he02 * rate * 1.2);
+    return { ...r, rate, custoHN, custoHE10, custoHE05, custoHE02, total: round2(custoHN + custoHE10 + custoHE05 + custoHE02) };
   }), [resumo, rates]);
   const totalHH = round2(custos.reduce((s, c) => s + c.total, 0));
 
@@ -195,7 +198,7 @@ export function AlocarHhView({ osNumero, selected, outrosCustos = [] }: { osNume
     handleDownloadCustoHhPDF({
       os: osNumero,
       empresaNome,
-      empresaRazao: linave ? 'W.L.M LINAVE Serviços Navais e Offshore' : (prestadora?.nome || empresaNome),
+      empresaRazao: linave ? 'LINAVE Serviços Navais e Offshore' : (prestadora?.nome || empresaNome),
       cnpj: linave ? '34.282.247/0001-60' : (prestadora?.cnpj || ''),
       cliente: clienteNome,
       escopo,
@@ -245,7 +248,7 @@ export function AlocarHhView({ osNumero, selected, outrosCustos = [] }: { osNume
             <button onClick={addPessoa} disabled={fechada} className="px-2.5 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-[11px] font-black uppercase disabled:opacity-40">+ Pessoa</button>
           </div>
         </div>
-        <p className="text-white/30 text-[10px] mb-2">Cada dia tem 3 campos: <span className="text-white/60 font-bold">N</span> (normal), <span className="text-white/60 font-bold">0,5</span> (HE 50%) e <span className="text-white/60 font-bold">1,0</span> (HE 100%).</p>
+        <p className="text-white/30 text-[10px] mb-2">Cada dia tem 4 campos: <span className="text-white/60 font-bold">N</span> (normal), <span className="text-white/60 font-bold">0,5</span> (HE 50%), <span className="text-white/60 font-bold">1,0</span> (HE 100%) e <span className="text-white/60 font-bold">0,2</span> (adicional noturno, +20%).</p>
 
         <ScrollXTop>
           <table className="text-xs border-collapse">
@@ -259,18 +262,19 @@ export function AlocarHhView({ osNumero, selected, outrosCustos = [] }: { osNume
                       <input type="date" value={d} onChange={(e) => setDiaData(idx, e.target.value)} disabled={fechada} className="w-[110px] bg-[#101f3d] border border-white/10 rounded px-1 py-0.5 text-white text-[10px] [color-scheme:dark]" />
                       {!fechada && <button onClick={() => removeDia(idx)} className="text-red-300 hover:text-red-200" title="Remover dia"><X size={11} /></button>}
                     </div>
-                    <div className="mt-1 flex justify-center gap-1 text-[9px] text-white/40 font-bold"><span className="w-14">N</span><span className="w-14">0,5</span><span className="w-14">1,0</span></div>
+                    <div className="mt-1 flex justify-center gap-1 text-[9px] text-white/40 font-bold"><span className="w-14">N</span><span className="w-14">0,5</span><span className="w-14">1,0</span><span className="w-14">0,2</span></div>
                   </th>
                 ))}
                 <th className="border border-white/10 px-2 py-2 text-center bg-emerald-500/10 min-w-[60px]">HN</th>
                 <th className="border border-white/10 px-2 py-2 text-center bg-amber-500/10 min-w-[60px]">HE 0,5</th>
                 <th className="border border-white/10 px-2 py-2 text-center bg-sky-500/10 min-w-[60px]">HE 1,0</th>
+                <th className="border border-white/10 px-2 py-2 text-center bg-violet-500/10 min-w-[60px]">HE 0,2</th>
                 <th className="border border-white/10 px-1 py-2"></th>
               </tr>
             </thead>
             <tbody>
               {pessoas.length === 0 && (
-                <tr><td colSpan={6 + dias.length} className="border border-white/10 px-3 py-4 text-white/40 text-center">Nenhuma pessoa. Clique em "+ Pessoa" e "+ Dia" para montar a folha.</td></tr>
+                <tr><td colSpan={7 + dias.length} className="border border-white/10 px-3 py-4 text-white/40 text-center">Nenhuma pessoa. Clique em "+ Pessoa" e "+ Dia" para montar a folha.</td></tr>
               )}
               {pessoas.map((p) => {
                 const t = totaisPessoa(p);
@@ -283,13 +287,14 @@ export function AlocarHhView({ osNumero, selected, outrosCustos = [] }: { osNume
                       <input list="cargos-hh" value={p.cargo} onChange={(e) => setPessoaCampo(p.id, 'cargo', e.target.value)} disabled={fechada} className="w-full min-w-[150px] bg-[#101f3d] border border-white/10 rounded px-2 py-1 text-white text-xs" placeholder="Cargo" />
                     </td>
                     {dias.map((d) => {
-                      const h = p.horas[d] || { hn: 0, he05: 0, he10: 0 };
+                      const h = p.horas[d] || { hn: 0, he05: 0, he10: 0, he02: 0 };
                       return (
                         <td key={d} className="border border-white/10 p-1">
                           <div className="flex justify-center gap-1">
                             <input type="number" min="0" step="0.5" value={h.hn || ''} onChange={(e) => setHora(p.id, d, 'hn', e.target.value)} disabled={fechada} className={cellInput} />
                             <input type="number" min="0" step="0.5" value={h.he05 || ''} onChange={(e) => setHora(p.id, d, 'he05', e.target.value)} disabled={fechada} className={`${cellInput} text-amber-200`} />
                             <input type="number" min="0" step="0.5" value={h.he10 || ''} onChange={(e) => setHora(p.id, d, 'he10', e.target.value)} disabled={fechada} className={`${cellInput} text-sky-200`} />
+                            <input type="number" min="0" step="0.5" value={h.he02 || ''} onChange={(e) => setHora(p.id, d, 'he02', e.target.value)} disabled={fechada} className={`${cellInput} text-violet-200`} />
                           </div>
                         </td>
                       );
@@ -297,6 +302,7 @@ export function AlocarHhView({ osNumero, selected, outrosCustos = [] }: { osNume
                     <td className="border border-white/10 px-2 py-1 text-center font-black text-emerald-300">{t.hn}</td>
                     <td className="border border-white/10 px-2 py-1 text-center font-black text-amber-300">{t.he05}</td>
                     <td className="border border-white/10 px-2 py-1 text-center font-black text-sky-300">{t.he10}</td>
+                    <td className="border border-white/10 px-2 py-1 text-center font-black text-violet-300">{t.he02}</td>
                     <td className="border border-white/10 px-1 py-1 text-center">
                       {!fechada && <button onClick={() => removePessoa(p.id)} className="p-1 rounded bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300"><Trash2 size={12} /></button>}
                     </td>
@@ -320,17 +326,19 @@ export function AlocarHhView({ osNumero, selected, outrosCustos = [] }: { osNume
                 <th className="border border-white/10 px-3 py-2 text-right">HN</th>
                 <th className="border border-white/10 px-3 py-2 text-right">HE 0,5 (50%)</th>
                 <th className="border border-white/10 px-3 py-2 text-right">HE 1,0 (100%)</th>
+                <th className="border border-white/10 px-3 py-2 text-right">HE 0,2 (noturno)</th>
               </tr>
             </thead>
             <tbody>
               {resumo.length === 0 ? (
-                <tr><td colSpan={4} className="border border-white/10 px-3 py-3 text-white/40 text-center">Sem horas lançadas.</td></tr>
+                <tr><td colSpan={5} className="border border-white/10 px-3 py-3 text-white/40 text-center">Sem horas lançadas.</td></tr>
               ) : resumo.map((r) => (
                 <tr key={r.cargo} className="text-white">
                   <td className="border border-white/10 px-3 py-2">{r.cargo}</td>
                   <td className="border border-white/10 px-3 py-2 text-right text-emerald-300 font-bold">{r.hn}</td>
                   <td className="border border-white/10 px-3 py-2 text-right text-amber-300 font-bold">{r.he05}</td>
                   <td className="border border-white/10 px-3 py-2 text-right text-sky-300 font-bold">{r.he10}</td>
+                  <td className="border border-white/10 px-3 py-2 text-right text-violet-300 font-bold">{r.he02}</td>
                 </tr>
               ))}
               {resumo.length > 0 && (
@@ -339,6 +347,7 @@ export function AlocarHhView({ osNumero, selected, outrosCustos = [] }: { osNume
                   <td className="border border-white/10 px-3 py-2 text-right">{round2(totResumo.hn)}</td>
                   <td className="border border-white/10 px-3 py-2 text-right">{round2(totResumo.he05)}</td>
                   <td className="border border-white/10 px-3 py-2 text-right">{round2(totResumo.he10)}</td>
+                  <td className="border border-white/10 px-3 py-2 text-right">{round2(totResumo.he02)}</td>
                 </tr>
               )}
             </tbody>
@@ -349,7 +358,7 @@ export function AlocarHhView({ osNumero, selected, outrosCustos = [] }: { osNume
       {/* Valor por cargo → custo */}
       <div className="rounded-xl border border-white/10 bg-[#0b1220] p-4">
         <h3 className="text-emerald-300 text-xs font-black uppercase tracking-widest mb-1">Valor por cargo → custo de H.H</h3>
-        <p className="text-white/30 text-[10px] mb-3">Informe o valor da hora (R$) de cada cargo. HN = qtd×valor · HE 50% = qtd×valor×1,5 · HE 100% = qtd×valor×2.</p>
+        <p className="text-white/30 text-[10px] mb-3">Informe o valor da hora (R$) de cada cargo. HN = qtd×valor · HE 50% = qtd×valor×1,5 · HE 100% = qtd×valor×2 · HE 0,2 (adicional noturno) = qtd×valor×1,2.</p>
         <div className="overflow-x-auto">
           <table className="w-full text-xs border-collapse">
             <thead>
@@ -359,12 +368,13 @@ export function AlocarHhView({ osNumero, selected, outrosCustos = [] }: { osNume
                 <th className="border border-white/10 px-3 py-2 text-right">Custo HN</th>
                 <th className="border border-white/10 px-3 py-2 text-right">Custo HE 50%</th>
                 <th className="border border-white/10 px-3 py-2 text-right">Custo HE 100%</th>
+                <th className="border border-white/10 px-3 py-2 text-right">Custo HE 0,2 (noturno)</th>
                 <th className="border border-white/10 px-3 py-2 text-right">Total cargo</th>
               </tr>
             </thead>
             <tbody>
               {custos.length === 0 ? (
-                <tr><td colSpan={6} className="border border-white/10 px-3 py-3 text-white/40 text-center">Sem horas lançadas.</td></tr>
+                <tr><td colSpan={7} className="border border-white/10 px-3 py-3 text-white/40 text-center">Sem horas lançadas.</td></tr>
               ) : custos.map((c) => (
                 <tr key={c.cargo} className="text-white">
                   <td className="border border-white/10 px-3 py-2">{c.cargo}</td>
@@ -374,12 +384,13 @@ export function AlocarHhView({ osNumero, selected, outrosCustos = [] }: { osNume
                   <td className="border border-white/10 px-3 py-2 text-right">{money(c.custoHN)}</td>
                   <td className="border border-white/10 px-3 py-2 text-right">{money(c.custoHE05)}</td>
                   <td className="border border-white/10 px-3 py-2 text-right">{money(c.custoHE10)}</td>
+                  <td className="border border-white/10 px-3 py-2 text-right">{money(c.custoHE02)}</td>
                   <td className="border border-white/10 px-3 py-2 text-right font-black text-emerald-300">{money(c.total)}</td>
                 </tr>
               ))}
               {custos.length > 0 && (
                 <tr className="bg-white/5 text-white font-black">
-                  <td colSpan={5} className="border border-white/10 px-3 py-2 uppercase text-right">Total de mão de obra (H.H)</td>
+                  <td colSpan={6} className="border border-white/10 px-3 py-2 uppercase text-right">Total de mão de obra (H.H)</td>
                   <td className="border border-white/10 px-3 py-2 text-right text-emerald-300 text-sm">{money(totalHH)}</td>
                 </tr>
               )}

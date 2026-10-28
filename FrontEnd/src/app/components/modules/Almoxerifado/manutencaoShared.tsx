@@ -52,21 +52,24 @@ const normalizeKeyLocal = (value: string): string =>
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '');
 
-// Mesmas 7 tabelas que a categoria "Equipamentos" agrupa em EstoqueView.tsx — mantido aqui como
+// Mesmas 11 tabelas que a categoria "Equipamentos" agrupa em EstoqueView.tsx — mantido aqui como
 // fonte única pra não duplicar a lista e desalinhar. NÃO é a lista de elegibilidade pra
 // manutenção (ver MANUTENCAO_TABLE_NAMES abaixo) — é só o agrupamento de categoria/tipo.
-export const EQUIPAMENTOS_TABLE_NAMES = ['EQUIPAMENTOS ELETRICOS', 'EXTENSÃO-CABOS', 'BOMBA HIDROJATO', 'INSTRUMENTOS', 'FERRAMENTAS', 'TALHAS', 'ESLINGAS'];
+// "EPI/EPC" é a mesma tabela que já existia como categoria própria no topo do menu — só mudou
+// de lugar (agora é um subtipo de Equipamentos), sem alterar sua estrutura (C.A., Possui
+// Manutenção etc.) nem seus dados. "CIVIL", "EXTINTORES" e "MANGUEIRAS" são subtipos novos,
+// com a mesma estrutura de FERRAMENTAS (CIVIL) e EXTENSÃO-CABOS (EXTINTORES/MANGUEIRAS).
+export const EQUIPAMENTOS_TABLE_NAMES = ['EQUIPAMENTOS ELETRICOS', 'EXTENSÃO-CABOS', 'EXTINTORES', 'MANGUEIRAS', 'BOMBA HIDROJATO', 'INSTRUMENTOS', 'FERRAMENTAS', 'TALHAS', 'ESLINGAS', 'CIVIL', 'EPI/EPC'];
 
 // Tabelas cujos itens podem entrar em manutenção: TODAS as categorias do Almoxarifado —
-// Equipamentos, Materiais, Alugados (Equipamentos e Gases), Caixa Metálica / Skid, Andaimes e
-// EPI/EPC. Qualquer item de qualquer tabela segue o mesmo fluxo (EntradaManutencaoModal,
-// manutencaoHistorico, bloqueio de alocação/romaneio enquanto em manutenção).
+// Equipamentos (inclui EPI/EPC e CIVIL), Materiais, Alugados (Equipamentos e Gases), Caixa
+// Metálica / Skid e Andaimes. Qualquer item de qualquer tabela segue o mesmo fluxo
+// (EntradaManutencaoModal, manutencaoHistorico, bloqueio de alocação/romaneio enquanto em manutenção).
 export const MANUTENCAO_TABLE_NAMES = [
   ...EQUIPAMENTOS_TABLE_NAMES,
   'Materiais',
   'Caixa Metálica / Skid',
   'Andaimes',
-  'EPI/EPC',
   'Alugados - Equipamentos',
   'Alugados - Gases',
 ];

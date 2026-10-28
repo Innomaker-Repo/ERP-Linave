@@ -8,8 +8,6 @@ import { toast } from 'sonner';
 import { confirmDialog } from '../../ui/feedback';
 import { criarOrdemServico, atualizarOrdemServico, atualizarStatusOs, deleteOrdemServico, getNegocioPorId } from '../../../../services/comercialService';
 import { mapNegocioToObra } from '../../../../services/obrasMapper';
-import { uploadDocumento, excluirDocumento } from '../../../../services/documentosService';
-import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
 import { getLogoUrlForEmpresa } from '../../../utils/company';
 import { formatDateBR } from '../../../utils/formatDate';
 import { boldOS } from '../../../utils/osHighlight';
@@ -727,6 +725,15 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
   };
 
   const handleSaveRascunhoOS = () => {
+    // Rascunho só existe ANTES de a OS ser enviada para produção — uma OS que já foi enviada
+    // (editandoOsBackendId != null) já é um registro real no backend; "salvá-la como rascunho"
+    // gravaria um SEGUNDO item local com o MESMO id (ordemServicoNumero) só que com status
+    // rebaixado para 'rascunho'/'pendente', sem nunca persistir essa mudança no backend —
+    // dois registros conflitantes com o mesmo id até o próximo F5. O botão já fica escondido
+    // nesse caso (ver JSX abaixo); esta checagem é só a rede de segurança.
+    if (editandoOsBackendId != null) {
+      return toast.error('Esta OS já foi enviada para produção — não é possível salvá-la como rascunho.');
+    }
     if (!formData.obraId) return toast.error('Selecione uma obra para salvar o rascunho.');
     const semRascunhoAnterior = listaOS.filter((item) => !(item.obraId === formData.obraId && item.statusOs === 'rascunho'));
     const rascunho: OsFormData = {
@@ -1072,54 +1079,6 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
 
   // Anexa (ou substitui) a assinatura de aprovação da OS — persistida na tabela Documento,
   // vinculada ao id (SQL) da OS. Slot único: remove a anterior antes de subir a nova.
-  const handleUploadAssinaturaAprovacaoOS = async (osId: string, files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    const arquivo = Array.from(files)[0];
-    const isPdf = arquivo.type === 'application/pdf' || arquivo.name.toLowerCase().endsWith('.pdf');
-    const isImagem = arquivo.type === 'image/png' || arquivo.type === 'image/jpeg' || /\.(png|jpe?g)$/i.test(arquivo.name);
-    if (!isPdf && !isImagem) {
-      toast.error('A assinatura da OS deve ser PDF, PNG ou JPG.');
-      return;
-    }
-    const osItem = listaOS.find((item) => item.id === osId);
-    const osBackendId = (osItem as any)?.backendId;
-    if (osBackendId == null) {
-      toast.error('OS sem identificador no banco — não foi possível anexar a assinatura.');
-      return;
-    }
-    try {
-      const anterior = (osItem as any)?.documentoAssinaturaAprovacao;
-      if (anterior?.backendId) {
-        try { await excluirDocumento(anterior.backendId); } catch { /* segue mesmo se falhar */ }
-      }
-      const documentoAssinaturaAprovacao = await uploadDocumento(arquivo, {
-        vinculoTipo: 'os',
-        vinculoId: osBackendId,
-        categoria: 'os_assinatura',
-      });
-      await atualizarStatusOSPorId(osId, { documentoAssinaturaAprovacao });
-      toast.success('Assinatura da OS anexada e salva no banco.');
-    } catch (error) {
-      toast.error('Não foi possível anexar a assinatura da OS.');
-    }
-  };
-
-  const handleRemoverAssinaturaAprovacaoOS = async (osId: string) => {
-    const osItem = listaOS.find((item) => item.id === osId);
-    const atual = (osItem as any)?.documentoAssinaturaAprovacao;
-    if (!atual) return;
-    if (!(await confirmDialog({ message: 'Remover a assinatura de aprovação anexada?', danger: true, confirmText: 'Remover' }))) return;
-    try {
-      if (atual.backendId) {
-        try { await excluirDocumento(atual.backendId); } catch { /* segue mesmo se falhar */ }
-      }
-      await atualizarStatusOSPorId(osId, { documentoAssinaturaAprovacao: null });
-      toast.success('Assinatura removida.');
-    } catch (error) {
-      toast.error('Não foi possível remover a assinatura.');
-    }
-  };
-
   const handleAprovarOS = (osId: string) => {
     atualizarStatusOSPorId(osId, { statusAprovacao: 'aprovada', dataAprovacao: new Date().toISOString().split('T')[0] });
     toast.success('OS aprovada com sucesso.');
@@ -1131,22 +1090,6 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
   const handleEnviarOSParaProducao = (osId: string) => {
     atualizarStatusOSPorId(osId, { statusEnvio: 'enviada' });
     toast.success('OS enviada para produção com sucesso!');
-  };
-
-  const handleVerAssinaturaOS = (doc: any) => {
-    const href = getDocumentHref(doc);
-    if (!href) {
-      toast.error('Documento indisponível para visualização.');
-      return;
-    }
-    window.open(href, '_blank', 'noopener,noreferrer');
-  };
-
-  const handleDownloadAssinaturaOS = (doc: any) => {
-    downloadDocument(doc, {
-      fallbackName: 'assinatura-os',
-      onInvalid: () => toast.error('Documento indisponível para download.'),
-    });
   };
 
   const handleDownloadOSFromList = (osParam: OsFormData) => {
@@ -2173,12 +2116,14 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
                 >
                   <Zap size={18} /> {editandoOsBackendId != null ? 'Salvar Alterações' : 'Enviar para Produção'}
                 </button>
-                <button
-                  onClick={handleSaveRascunhoOS}
-                  className="px-8 bg-amber-500/20 border border-amber-500/40 text-amber-300 py-3 rounded-lg font-black uppercase text-sm hover:bg-amber-500/30 transition flex items-center gap-2"
-                >
-                  <FileText size={16} /> Salvar Rascunho
-                </button>
+                {editandoOsBackendId == null && (
+                  <button
+                    onClick={handleSaveRascunhoOS}
+                    className="px-8 bg-amber-500/20 border border-amber-500/40 text-amber-300 py-3 rounded-lg font-black uppercase text-sm hover:bg-amber-500/30 transition flex items-center gap-2"
+                  >
+                    <FileText size={16} /> Salvar Rascunho
+                  </button>
+                )}
                 <button
                   onClick={() => { setShowFormNovaOS(false); setEditandoOsBackendId(null); setDiasPrevistos(0); }}
                   className="px-8 bg-white/5 text-white py-3 rounded-lg font-black uppercase text-sm hover:bg-white/10 transition"
@@ -2234,61 +2179,19 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
               <div className="bg-gradient-to-r from-purple-500/10 to-violet-500/10 rounded-2xl p-6 border border-purple-500/30 space-y-4">
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <h3 className="text-purple-300 font-black text-lg">APROVAÇÃO DA OS</h3>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className={`px-2 py-1 rounded-full text-[10px] font-black uppercase border ${selectedOS.statusAprovacao === 'aprovada' ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' : 'bg-amber-500/20 border-amber-500/40 text-amber-300'}`}>
-                      {selectedOS.statusAprovacao === 'aprovada' ? 'OS Aprovada' : 'OS Pendente'}
-                    </span>
-                    <span className={`px-2 py-1 rounded-full text-[10px] font-black uppercase border ${(selectedOS.documentoAssinaturaAprovacao?.conteudo || selectedOS.documentoAssinaturaAprovacao?.url) ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300' : 'bg-red-500/20 border-red-500/40 text-red-300'}`}>
-                      {(selectedOS.documentoAssinaturaAprovacao?.conteudo || selectedOS.documentoAssinaturaAprovacao?.url) ? 'Assinatura Anexada' : 'Sem Assinatura'}
-                    </span>
-                  </div>
+                  <span className={`px-2 py-1 rounded-full text-[10px] font-black uppercase border ${selectedOS.statusAprovacao === 'aprovada' ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' : 'bg-amber-500/20 border-amber-500/40 text-amber-300'}`}>
+                    {selectedOS.statusAprovacao === 'aprovada' ? 'OS Aprovada' : 'OS Pendente'}
+                  </span>
                 </div>
 
-                <div>
-                  <p className="text-white/50 text-xs mb-2">Anexar assinatura de aprovação (PDF, PNG ou JPG)</p>
-                  <input
-                    type="file"
-                    accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
-                    onChange={(e) => {
-                      handleUploadAssinaturaAprovacaoOS(selectedOS.id, e.target.files);
-                      e.currentTarget.value = '';
-                    }}
-                    className="w-full text-xs text-white/70 file:mr-2 file:rounded-md file:border-0 file:bg-cyan-500 file:px-3 file:py-1.5 file:text-xs file:font-black file:uppercase file:text-[#0b1220] hover:file:bg-cyan-400"
-                  />
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  {(selectedOS.documentoAssinaturaAprovacao?.conteudo || selectedOS.documentoAssinaturaAprovacao?.url) && (
-                    <>
-                      <button
-                        onClick={() => handleVerAssinaturaOS(selectedOS.documentoAssinaturaAprovacao)}
-                        className="px-3 py-1.5 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/40 text-blue-300 text-[11px] font-black uppercase transition"
-                      >
-                        <Eye size={13} className="inline mr-1" /> Ver Assinatura
-                      </button>
-                      <button
-                        onClick={() => handleDownloadAssinaturaOS(selectedOS.documentoAssinaturaAprovacao)}
-                        className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-[11px] font-black uppercase transition"
-                      >
-                        <Download size={13} className="inline mr-1" /> Download
-                      </button>
-                      <button
-                        onClick={() => handleRemoverAssinaturaAprovacaoOS(selectedOS.id)}
-                        className="px-3 py-1.5 rounded-lg bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300 text-[11px] font-black uppercase transition"
-                      >
-                        <X size={13} className="inline mr-1" /> Remover
-                      </button>
-                    </>
-                  )}
-                  {selectedOS.statusAprovacao !== 'aprovada' && (
-                    <button
-                      onClick={() => handleAprovarOS(selectedOS.id)}
-                      className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-[11px] font-black uppercase transition"
-                    >
-                      <Check size={13} className="inline mr-1" /> Aprovar OS
-                    </button>
-                  )}
-                </div>
+                {selectedOS.statusAprovacao !== 'aprovada' && (
+                  <button
+                    onClick={() => handleAprovarOS(selectedOS.id)}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-[11px] font-black uppercase transition"
+                  >
+                    <Check size={13} className="inline mr-1" /> Aprovar OS
+                  </button>
+                )}
               </div>
 
               <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-3">

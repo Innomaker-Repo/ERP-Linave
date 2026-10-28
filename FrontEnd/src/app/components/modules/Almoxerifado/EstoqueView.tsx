@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Anchor, Cable, CheckCircle2, ChevronDown, ChevronUp, ClipboardList, Container, Download, Gauge, Hammer, HardHat, Layers3, Link2, MapPin, Microscope, Package, Plus, Search, Table2, Trash2, Wrench, X, Zap } from 'lucide-react';
+import { Anchor, Cable, CheckCircle2, ChevronDown, ChevronUp, ClipboardList, Container, Download, Droplets, Flame, Gauge, Hammer, HardHat, Layers3, Link2, MapPin, Microscope, Package, Plus, Search, Table2, Trash2, Wrench, X, Zap } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { Badge } from '../../../modules/shared/ui/badge';
@@ -219,12 +219,18 @@ const getTableIconConfig = (tableName: string): { Icon: LucideIcon; badgeClass: 
       return { Icon: Zap, badgeClass: 'bg-amber-500/15 ring-amber-500/20', iconClass: 'text-amber-300' };
     case 'extensaocabos':
       return { Icon: Cable, badgeClass: 'bg-cyan-500/15 ring-cyan-500/20', iconClass: 'text-cyan-300' };
+    case 'extintores':
+      return { Icon: Flame, badgeClass: 'bg-red-500/15 ring-red-500/20', iconClass: 'text-red-300' };
+    case 'mangueiras':
+      return { Icon: Droplets, badgeClass: 'bg-sky-500/15 ring-sky-500/20', iconClass: 'text-sky-300' };
     case 'bombahidrojato':
       return { Icon: Gauge, badgeClass: 'bg-blue-500/15 ring-blue-500/20', iconClass: 'text-blue-300' };
     case 'instrumentos':
       return { Icon: Microscope, badgeClass: 'bg-violet-500/15 ring-violet-500/20', iconClass: 'text-violet-300' };
     case 'ferramentas':
       return { Icon: Hammer, badgeClass: 'bg-orange-500/15 ring-orange-500/20', iconClass: 'text-orange-300' };
+    case 'civil':
+      return { Icon: Wrench, badgeClass: 'bg-stone-500/15 ring-stone-500/20', iconClass: 'text-stone-300' };
     case 'talhas':
       return { Icon: Anchor, badgeClass: 'bg-emerald-500/15 ring-emerald-500/20', iconClass: 'text-emerald-300' };
     case 'eslingas':
@@ -244,6 +250,41 @@ const getTableIconConfig = (tableName: string): { Icon: LucideIcon; badgeClass: 
 // Os mesmos 3 valores valem para TODAS as tabelas/telas de Suprimentos.
 const STATUS_OPTIONS = ['Disponível', 'Alocado', 'Em manutenção'];
 const STATUS_DEFAULT = 'Disponível';
+
+// Subitens padrão de um Andaime — o usuário escolhe quais entram e a quantidade de cada um
+// ao cadastrar/editar qualquer item da categoria "Andaimes" (campo obrigatório, ver coluna
+// 'subitens' na definição da tabela). Mesma lista usada para semear os itens avulsos da
+// categoria (cada um rastreável também como estoque próprio).
+const ANDAIME_SUBITENS_PADRAO = [
+  'Pranchão de Alumínio', 'Pranchão de Madeira', 'Tubos Galvanizados', 'Braçadeira Fixa',
+  'Braçadeira Giratória', 'Braçadeira Perfil', 'Luva', 'Placa de Base', 'Arco de Escada',
+  'Escada', 'Proteção de Abraçadeira', 'Rodapé',
+];
+
+type AndaimeSubitem = { nome: string; qtd: number };
+
+// Lê o JSON salvo no campo 'subitens' — tolerante a vazio/corrompido (nunca quebra o form).
+const parseSubitens = (raw: string | undefined): AndaimeSubitem[] => {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item: any) => ({ nome: String(item?.nome || ''), qtd: Number(item?.qtd) || 0 }))
+      .filter((item) => item.nome && item.qtd > 0);
+  } catch {
+    return [];
+  }
+};
+
+// Serializa a lista de subitens pro campo 'subitens' — vazio quando nenhum subitem tem
+// quantidade > 0, o que faz o campo contar como "não preenchido" na checagem de campos
+// obrigatórios do handleSaveRegister (é isso que torna o subitem obrigatório, sem precisar
+// de uma validação à parte só pra esta tabela).
+const buildSubitensJson = (lista: AndaimeSubitem[]): string => {
+  const comQtd = lista.filter((item) => item.qtd > 0);
+  return comQtd.length > 0 ? JSON.stringify(comQtd) : '';
+};
 
 // Sentinel do filtro "Todos os tipos" no campo Tipo (categoria Equipamentos) — mostra os
 // 6 subtipos de equipamento combinados numa única lista, com colunas comuns a todos eles.
@@ -392,6 +433,30 @@ const STOCK_TABLES: StockTable[] = [
     ], false
   ),
   makeTable(
+    'EXTINTORES',
+    [
+      { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
+      { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'peso', label: 'Peso', align: 'center' }, { key: 'patrimonio', label: 'Patrimônio' }, { key: 'dataEntradaPlanilha', label: 'Data(ENTRADA NA PLANILHA)', align: 'center' },
+      { key: 'metros', label: 'METROS', align: 'center' }, { key: 'bitola', label: '(BITOLA)', align: 'center' }, { key: 'tag', label: 'TAG' },
+      { key: 'marca', label: 'Marca' }, { key: 'dataCalibracaoAfericao', label: 'Data da Calibração/Aferição', align: 'center' }, { key: 'validadeCalibracaoAfericao', label: 'Validade da Calibração/Aferição', align: 'center' },
+      { key: 'status', label: 'STATUS', align: 'center' }, { key: 'observacao', label: 'Observação' }, { key: 'localizacao', label: 'Local' },
+      { key: 'serviceOS', label: 'Serviço (OS)' }, { key: 'unidade', label: 'Unidade', align: 'center' }
+    ],
+    [], false
+  ),
+  makeTable(
+    'MANGUEIRAS',
+    [
+      { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
+      { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'peso', label: 'Peso', align: 'center' }, { key: 'patrimonio', label: 'Patrimônio' }, { key: 'dataEntradaPlanilha', label: 'Data(ENTRADA NA PLANILHA)', align: 'center' },
+      { key: 'metros', label: 'METROS', align: 'center' }, { key: 'bitola', label: '(BITOLA)', align: 'center' }, { key: 'tag', label: 'TAG' },
+      { key: 'marca', label: 'Marca' }, { key: 'dataCalibracaoAfericao', label: 'Data da Calibração/Aferição', align: 'center' }, { key: 'validadeCalibracaoAfericao', label: 'Validade da Calibração/Aferição', align: 'center' },
+      { key: 'status', label: 'STATUS', align: 'center' }, { key: 'observacao', label: 'Observação' }, { key: 'localizacao', label: 'Local' },
+      { key: 'serviceOS', label: 'Serviço (OS)' }, { key: 'unidade', label: 'Unidade', align: 'center' }
+    ],
+    [], false
+  ),
+  makeTable(
     'BOMBA HIDROJATO',
     [
       { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
@@ -432,6 +497,17 @@ const STOCK_TABLES: StockTable[] = [
       { material: 'Furadeira Industrial 850W', unid: 'un', qtd: '8', patrimonio: 'PAT-FER-001', dataEntradaPlanilha: '2026-04-07', modelo: 'GSB 16 RE', numeroSerial: 'SN-FER-850-001', marca: 'Bosch', status: 'Adequada', observacao: 'Ferramentas A3', unidade: 'un' },
       { material: 'Jogo de Chaves Allen', unid: 'jogo', qtd: '25', patrimonio: 'PAT-FER-002', dataEntradaPlanilha: '2026-04-09', modelo: 'Allen 9 peças', numeroSerial: 'SN-FER-ALLEN-002', marca: 'Vonder', status: 'Não para o uso', observacao: 'Ferramentas B1', unidade: 'jogo' }
     ], false
+  ),
+  makeTable(
+    'CIVIL',
+    [
+      { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
+      { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'peso', label: 'Peso', align: 'center' }, { key: 'patrimonio', label: 'Patrimônio' }, { key: 'dataEntradaPlanilha', label: 'Data(ENTRADA NA PLANILHA)', align: 'center' },
+      { key: 'modelo', label: 'Modelo' }, { key: 'numeroSerial', label: 'N° Serial' }, { key: 'marca', label: 'Marca' },
+      { key: 'status', label: 'STATUS', align: 'center' }, { key: 'observacao', label: 'Observação' }, { key: 'localizacao', label: 'Local' },
+      { key: 'serviceOS', label: 'Serviço (OS)' }, { key: 'unidade', label: 'Unidade', align: 'center' }
+    ],
+    [], false
   ),
   makeTable(
     'TALHAS',
@@ -494,12 +570,35 @@ const STOCK_TABLES: StockTable[] = [
   makeTable(
     'Andaimes',
     [
-      { key: 'material', label: 'Descrição' }, { key: 'unid', label: 'Unid.', align: 'center' },
+      { key: 'material', label: 'Descrição' },
+      // Composição do andaime: JSON (serializado por buildSubitensJson/parseSubitens) com a
+      // lista de subitens + quantidade escolhidos no picker dedicado do formulário — não é
+      // um campo de texto livre, por isso fica fora do grid genérico de campos (ver
+      // renderRegisterField/column.key === 'subitens') e some do painel de detalhes genérico
+      // (tem bloco próprio lá). Por estar na lista de colunas, entra automaticamente na
+      // checagem "preencha todos os campos obrigatórios" do handleSaveRegister — por isso
+      // "todo andaime precisa ter obrigatoriamente a subcategoria" já vem de graça.
+      { key: 'subitens', label: 'Subitens do andaime' },
+      { key: 'unid', label: 'Unid.', align: 'center' },
       { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'peso', label: 'Peso', align: 'center' }, { key: 'patrimonio', label: 'Patrimônio' },
       { key: 'modelo', label: 'Modelo' }, { key: 'marca', label: 'Marca' },
       { key: 'status', label: 'STATUS', align: 'center' }, { key: 'observacao', label: 'Observação' }, { key: 'localizacao', label: 'Local' },
       { key: 'serviceOS', label: 'Serviço (OS)' }, { key: 'unidade', label: 'Unidade', align: 'center' }
-    ], [], false
+    ],
+    [
+      { material: 'Pranchão de Alumínio', unid: 'un', qtd: '0', status: 'Disponível', unidade: 'un' },
+      { material: 'Pranchão de Madeira', unid: 'un', qtd: '0', status: 'Disponível', unidade: 'un' },
+      { material: 'Tubos Galvanizados', unid: 'un', qtd: '0', status: 'Disponível', unidade: 'un' },
+      { material: 'Braçadeira Fixa', unid: 'un', qtd: '0', status: 'Disponível', unidade: 'un' },
+      { material: 'Braçadeira Giratória', unid: 'un', qtd: '0', status: 'Disponível', unidade: 'un' },
+      { material: 'Braçadeira Perfil', unid: 'un', qtd: '0', status: 'Disponível', unidade: 'un' },
+      { material: 'Luva', unid: 'un', qtd: '0', status: 'Disponível', unidade: 'un' },
+      { material: 'Placa de Base', unid: 'un', qtd: '0', status: 'Disponível', unidade: 'un' },
+      { material: 'Arco de Escada', unid: 'un', qtd: '0', status: 'Disponível', unidade: 'un' },
+      { material: 'Escada', unid: 'un', qtd: '0', status: 'Disponível', unidade: 'un' },
+      { material: 'Proteção de Abraçadeira', unid: 'un', qtd: '0', status: 'Disponível', unidade: 'un' },
+      { material: 'Rodapé', unid: 'un', qtd: '0', status: 'Disponível', unidade: 'un' }
+    ], false
   ),
   makeTable(
     'EPI/EPC',
@@ -656,7 +755,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     rows: []
   })));
   
-  const [selectedCategory, setSelectedCategory] = useState<'Todos' | 'Materiais' | 'Equipamentos' | 'Alugados' | 'Caixa Metálica / Skid' | 'Andaimes' | 'EPI/EPC'>('Materiais');
+  const [selectedCategory, setSelectedCategory] = useState<'Todos' | 'Materiais' | 'Equipamentos' | 'Alugados' | 'Caixa Metálica / Skid' | 'Andaimes'>('Materiais');
   const [selectedType, setSelectedType] = useState<string>('');
   const [filtro, setFiltro] = useState<string>(searchQuery || '');
   const [selectedOsFilter, setSelectedOsFilter] = useState<string>('');
@@ -951,12 +1050,11 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     'Equipamentos': EQUIPAMENTOS_TABLE_NAMES,
     'Alugados': ['Gases', 'Equipamentos'],
     'Caixa Metálica / Skid': [],
-    'Andaimes': [],
-    'EPI/EPC': []
+    'Andaimes': []
   };
 
   useEffect(() => {
-    if (!selectedType && (selectedCategory === 'Materiais' || selectedCategory === 'Caixa Metálica / Skid' || selectedCategory === 'Andaimes' || selectedCategory === 'EPI/EPC')) {
+    if (!selectedType && (selectedCategory === 'Materiais' || selectedCategory === 'Caixa Metálica / Skid' || selectedCategory === 'Andaimes')) {
       setSelectedType(selectedCategory);
     } else if (!selectedType && selectedCategory !== 'Materiais' && selectedCategory !== 'Todos') {
       const types = categoryMap[selectedCategory] as string[];
@@ -976,7 +1074,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
 
   useEffect(() => {
     const types = categoryMap[selectedCategory] as string[];
-    if (selectedCategory === 'Materiais' || selectedCategory === 'Caixa Metálica / Skid' || selectedCategory === 'Andaimes' || selectedCategory === 'EPI/EPC') {
+    if (selectedCategory === 'Materiais' || selectedCategory === 'Caixa Metálica / Skid' || selectedCategory === 'Andaimes') {
       setSelectedType(selectedCategory);
     } else if (selectedCategory === 'Todos') {
       setSelectedType('');
@@ -990,7 +1088,6 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     if (selectedCategory === 'Materiais') return tables.filter(t => t.name === 'Materiais');
     if (selectedCategory === 'Caixa Metálica / Skid') return tables.filter(t => t.name === 'Caixa Metálica / Skid');
     if (selectedCategory === 'Andaimes') return tables.filter(t => t.name === 'Andaimes');
-    if (selectedCategory === 'EPI/EPC') return tables.filter(t => t.name === 'EPI/EPC');
     if (selectedCategory === 'Equipamentos') {
       if (selectedType === ALL_TYPES_VALUE) {
         const tipos = categoryMap['Equipamentos'] as string[];
@@ -1114,7 +1211,13 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     const colunasExport = visibleColumns.filter((coluna) => coluna.key !== '__select__' && coluna.key !== 'actions');
     const cabecalho = colunasExport.map((coluna) => coluna.label || coluna.key);
     const linhas = visibleRows.map((row) =>
-      colunasExport.map((coluna) => (coluna.key === '__tipo__' ? row.tableName : valorDaCelula(row.values, coluna.key)))
+      colunasExport.map((coluna) => {
+        if (coluna.key === '__tipo__') return row.tableName;
+        if (coluna.key === 'subitens') {
+          return parseSubitens(row.values.subitens).map((item) => `${item.nome} (${item.qtd})`).join(', ');
+        }
+        return valorDaCelula(row.values, coluna.key);
+      })
     );
 
     const planilha = XLSX.utils.aoa_to_sheet([cabecalho, ...linhas]);
@@ -1506,8 +1609,6 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       tableToUse = tables.find(t => t.name === 'Caixa Metálica / Skid');
     } else if (selectedCategory === 'Andaimes') {
       tableToUse = tables.find(t => t.name === 'Andaimes');
-    } else if (selectedCategory === 'EPI/EPC') {
-      tableToUse = tables.find(t => t.name === 'EPI/EPC');
     } else if (selectedCategory === 'Equipamentos') {
       // "Todos os tipos" não é uma tabela de verdade — um novo item sempre precisa
       // pertencer a um subtipo específico, então cai no primeiro da categoria.
@@ -2353,11 +2454,18 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
         </div>
       );
     }
+    if (column.key === 'subitens') {
+      const subitens = parseSubitens(row.values.subitens);
+      if (subitens.length === 0) return <span className="text-white/30">—</span>;
+      const resumo = subitens.map((item) => `${item.nome} (${item.qtd})`).join(', ');
+      return <span className="text-xs text-white/70" title={resumo}>{subitens.length} subitem(ns)</span>;
+    }
     if (column.key === 'actions') {
       const isGasTable = row.tableName === 'Alugados - Gases';
-      // Caixa Metálica/Skid, Andaimes e EPI/EPC entram no mesmo fluxo de alocação por unidade
-      // inteira dos Equipamentos (são itens retornáveis, não consumíveis como Materiais).
-      const isEquipamentosCategory = selectedCategory === 'Equipamentos' || selectedCategory === 'Caixa Metálica / Skid' || selectedCategory === 'Andaimes' || selectedCategory === 'EPI/EPC';
+      // Caixa Metálica/Skid e Andaimes entram no mesmo fluxo de alocação por unidade inteira dos
+      // Equipamentos (são itens retornáveis, não consumíveis como Materiais) — EPI/EPC e CIVIL já
+      // caem em `selectedCategory === 'Equipamentos'` por serem subtipos dela, não precisam de caso à parte.
+      const isEquipamentosCategory = selectedCategory === 'Equipamentos' || selectedCategory === 'Caixa Metálica / Skid' || selectedCategory === 'Andaimes';
       // "Alugados - Equipamentos" (equipamento de terceiro alugado) é retornável do mesmo jeito
       // — precisa do ciclo completo Alocar/Desalocar, não só do botão de Desalocar. Sem isso não
       // havia NENHUM jeito de alocar esses itens: a linha só mostrava "Desalocar" quando já
@@ -2630,7 +2738,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_minmax(260px,320px)] lg:items-end">
         <div className="space-y-2">
           <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">Categoria</label>
-          <Select value={selectedCategory} onValueChange={(val) => setSelectedCategory(val as 'Todos' | 'Materiais' | 'Equipamentos' | 'Alugados' | 'Caixa Metálica / Skid' | 'Andaimes' | 'EPI/EPC')}>
+          <Select value={selectedCategory} onValueChange={(val) => setSelectedCategory(val as 'Todos' | 'Materiais' | 'Equipamentos' | 'Alugados' | 'Caixa Metálica / Skid' | 'Andaimes')}>
             <SelectTrigger className="relative h-12 w-full rounded-xl border border-white/5 bg-[#0b1220]/80 pl-11 pr-4 text-white shadow-sm transition focus:border-amber-400 focus:ring-1 focus:ring-amber-400 hover:border-white/20">
               <Package size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-amber-400" />
               <SelectValue placeholder="Selecione" className="text-sm font-semibold" />
@@ -2653,9 +2761,6 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
               </SelectItem>
               <SelectItem value="Andaimes" className="cursor-pointer rounded-lg px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
                 Andaimes
-              </SelectItem>
-              <SelectItem value="EPI/EPC" className="cursor-pointer rounded-lg px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
-                EPI/EPC
               </SelectItem>
             </SelectContent>
           </Select>
@@ -2809,8 +2914,6 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
             ? 'Visualizando Caixa Metálica / Skid'
             : selectedCategory === 'Andaimes'
             ? 'Visualizando Andaimes'
-            : selectedCategory === 'EPI/EPC'
-            ? 'Visualizando EPI/EPC'
             : selectedCategory === 'Equipamentos'
             ? `Equipamentos / ${selectedType === ALL_TYPES_VALUE ? 'Todos os tipos' : selectedType}`
             : `Alugados / ${selectedType}`}
@@ -3145,9 +3248,44 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                   </div>
                 )}
 
+                {currentRegisterTable.name === 'Andaimes' && (
+                  <div className="col-span-full mb-8 space-y-4">
+                    <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-5 shadow-sm">
+                      <h4 className="mb-1 text-[11px] font-bold uppercase tracking-wider text-amber-300">
+                        Subitens do andaime <span className="text-amber-200/70 normal-case">(obrigatório escolher ao menos 1)</span>
+                      </h4>
+                      <p className="mb-4 text-[11px] text-white/50">Marque a quantidade de cada subitem que compõe este andaime. Deixe em 0 o que não entra.</p>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                        {ANDAIME_SUBITENS_PADRAO.map((nome) => {
+                          const lista = parseSubitens(registerValues.subitens);
+                          const atual = lista.find((item) => item.nome === nome)?.qtd ?? 0;
+                          return (
+                            <div key={nome} className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-[#0b1220]/80 px-3 py-2.5">
+                              <span className="text-xs font-semibold text-white/80">{nome}</span>
+                              <Input
+                                type="number"
+                                min={0}
+                                value={atual || ''}
+                                placeholder="0"
+                                onChange={(e) => {
+                                  const qtd = Math.max(0, Number(e.target.value) || 0);
+                                  const semEsteItem = lista.filter((item) => item.nome !== nome);
+                                  const novaLista = qtd > 0 ? [...semEsteItem, { nome, qtd }] : semEsteItem;
+                                  handleRegisterChange('subitens', buildSubitensJson(novaLista));
+                                }}
+                                className="h-9 w-20 rounded-lg border border-white/10 bg-[#101f3d] px-2 text-center text-sm text-white outline-none focus:border-amber-400"
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
                   {currentRegisterTable.columns.map((column) => {
-                    if (column.key === 'actions') return null;
+                    if (column.key === 'actions' || column.key === 'subitens') return null;
                     return (
                       <div key={column.key} className={column.key === 'status' ? 'md:col-span-1' : ''}>
                         <label className="ml-1 mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-white/50">
@@ -3781,8 +3919,28 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                 )}
               </div>
 
+              {activeRow.table.name === 'Andaimes' && (
+                <div className="mb-5 rounded-xl border border-amber-500/20 bg-amber-500/5 p-5 shadow-inner">
+                  <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-amber-300/80">Subitens do andaime</p>
+                  {(() => {
+                    const subitens = parseSubitens(activeRow.row.values.subitens);
+                    if (subitens.length === 0) return <p className="text-[13px] text-white/50">Nenhum subitem informado.</p>;
+                    return (
+                      <ul className="space-y-1.5">
+                        {subitens.map((item) => (
+                          <li key={item.nome} className="flex items-center justify-between text-[13px] text-white/85">
+                            <span>{item.nome}</span>
+                            <span className="font-bold text-amber-300">{item.qtd}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    );
+                  })()}
+                </div>
+              )}
+
               <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-                {activeRow.table.columns.filter(col => col.key !== 'actions').map((column) => (
+                {activeRow.table.columns.filter(col => col.key !== 'actions' && col.key !== 'subitens').map((column) => (
                   <div key={column.key} className="rounded-xl border border-white/5 bg-[#0b1220]/40 p-5 shadow-inner">
                     <p className="text-[10px] font-bold uppercase tracking-widest text-white/40">{column.label}</p>
                     <p className={`mt-2.5 whitespace-pre-wrap text-[13px] font-medium leading-relaxed ${column.align === 'center' ? 'text-center' : ''} ${column.align === 'right' ? 'text-right' : ''} ${isNegativeStatus(activeRow.row.tableName, activeRow.row.values.status || '') ? 'text-red-300' : 'text-white/90'}`}>
