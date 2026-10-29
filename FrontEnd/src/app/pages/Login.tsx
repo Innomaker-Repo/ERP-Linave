@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ShieldCheck, LogIn, Lock, ArrowLeft, ChevronRight, User } from 'lucide-react';
+import { ShieldCheck, LogIn, Lock, ArrowLeft, ChevronRight, User, Eye, EyeOff } from 'lucide-react';
 import { login } from '../../services/authService';
 
 const inputBaseClasses =
@@ -11,6 +11,7 @@ export function LoginPage({ onLoginSuccess }: { onLoginSuccess: (user: any) => v
   const [step, setStep] = useState<'inicial' | 'entrar'>('inicial');
   const [identifier, setIdentifier] = useState('');
   const [senha, setSenha] = useState('');
+  const [mostrarSenha, setMostrarSenha] = useState(false);
   const [loading, setLoading] = useState(false);
   const [erro, setErro] = useState('');
   const [tentativas, setTentativas] = useState(0);
@@ -175,13 +176,23 @@ export function LoginPage({ onLoginSuccess }: { onLoginSuccess: (user: any) => v
                       size={18}
                     />
                     <input
-                      type="password"
+                      type={mostrarSenha ? 'text' : 'password'}
                       placeholder="Senha"
-                      className={inputBaseClasses}
+                      className={inputBaseClasses + ' pr-12'}
                       value={senha}
                       onChange={(e) => setSenha(e.target.value)}
                       onKeyDown={handleKeyDown}
+                      autoComplete="current-password"
                     />
+                    <button
+                      type="button"
+                      onClick={() => setMostrarSenha((v) => !v)}
+                      className="absolute right-4 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 transition-colors"
+                      aria-label={mostrarSenha ? 'Ocultar senha' : 'Mostrar senha'}
+                      title={mostrarSenha ? 'Ocultar senha' : 'Mostrar senha'}
+                    >
+                      {mostrarSenha ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
                   </div>
                   <button
                     onClick={handleLogin}

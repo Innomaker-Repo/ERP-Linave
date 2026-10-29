@@ -2399,47 +2399,27 @@ class LevantamentoPropertiesTests(TestCase):
 
 
 # =============================================================================
-# SETUP_ADMIN — SEM SENHA FIXA NO CÓDIGO
+# SETUP_ADMIN — SENHA PADRÃO
 # =============================================================================
 
 class SetupAdminTests(TestCase):
-    """A senha do admin nunca é fixa: vem de DJANGO_ADMIN_PASSWORD ou é gerada. E um admin
-    que ainda usa a senha antiga publicada no repositório ('Admin@linave') tem ela trocada
-    até no `--if-missing` (o modo que roda a cada deploy)."""
+    """Sem flag, cria/redefine o admin com a senha padrão; `--if-missing` (o modo que roda a
+    cada deploy) só cria, nunca mexe num admin existente."""
 
-    def _rodar(self, *args, env=None):
-        import os
+    def _rodar(self, *args):
         from io import StringIO
-        from unittest import mock
         from django.core.management import call_command
-        saida = StringIO()
-        with mock.patch.dict(os.environ, env or {}, clear=False):
-            if env is None:
-                os.environ.pop('DJANGO_ADMIN_PASSWORD', None)
-            call_command('setup_admin', *args, stdout=saida)
-        return saida.getvalue()
+        call_command('setup_admin', *args, stdout=StringIO())
 
-    def test_cria_admin_com_senha_do_ambiente(self):
-        self._rodar('--if-missing', env={'DJANGO_ADMIN_PASSWORD': 'Ambiente@Forte1'})
-        admin = User.objects.get(cpf='admin')
-        self.assertTrue(admin.check_password('Ambiente@Forte1'))
-        self.assertFalse(admin.check_password('Admin@linave'))
+    def test_cria_admin_com_senha_padrao(self):
+        self._rodar('--if-missing')
+        self.assertTrue(User.objects.get(cpf='admin').check_password('Admin@linave'))
 
-    def test_sem_variavel_gera_senha_aleatoria_valida(self):
-        saida = self._rodar('--if-missing')
-        admin = User.objects.get(cpf='admin')
-        self.assertFalse(admin.check_password('Admin@linave'))
-        senha = saida.split('Senha gerada: ')[1].split()[0]
-        self.assertTrue(admin.check_password(senha))
-        SenhaSeguraValidator().validate(senha)
-
-    def test_if_missing_troca_senha_padrao_antiga(self):
-        User.objects.create_user(cpf='admin', password='Admin@linave', nome='Administrador',
+    def test_sem_flag_redefine_senha_padrao(self):
+        User.objects.create_user(cpf='admin', password='Minha@Senha9', nome='Administrador',
                                  email='admin@linave.com.br', role='admin')
-        saida = self._rodar('--if-missing')
-        admin = User.objects.get(cpf='admin')
-        self.assertFalse(admin.check_password('Admin@linave'))
-        self.assertIn('ATENÇÃO', saida)
+        self._rodar()
+        self.assertTrue(User.objects.get(cpf='admin').check_password('Admin@linave'))
 
     def test_if_missing_nao_mexe_em_admin_com_senha_propria(self):
         User.objects.create_user(cpf='admin', password='Minha@Senha9', nome='Administrador',

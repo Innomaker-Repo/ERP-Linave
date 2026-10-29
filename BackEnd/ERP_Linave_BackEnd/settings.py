@@ -59,6 +59,9 @@ REST_FRAMEWORK = {
 # todos pelo mesmo IP, por isso não é baixo demais.
 LOGIN_THROTTLE_RATE = os.environ.get('LOGIN_THROTTLE_RATE', '20/min')
 
+# Nos testes o limite acima é afrouxado (ver ComercialApp/test_runner.py).
+TEST_RUNNER = 'ComercialApp.test_runner.ComercialTestRunner'
+
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(hours=8),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=30),
