@@ -5,7 +5,7 @@
  * =======================================================================================*/
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Building2, Landmark, CalendarRange, ArrowRight, SlidersHorizontal, X, FileText } from 'lucide-react';
-import { Select } from './finUi';
+import { Select, mesmaEmpresa } from './finUi';
 import { useFin } from './useFin';
 import { days, todayStr, bancoLabel } from './finData';
 import { formatNumeroOsDisplay } from '../../../../services/ordensServico';
@@ -73,7 +73,7 @@ export function FinFiltersProvider({ view = '', children }: { view?: string; chi
 
   const match = (rec: any): boolean => {
     const empresa = rec?.empresa;
-    if (filters.empresa !== 'Todas' && empresa && empresa !== 'Ambas' && empresa !== filters.empresa) return false;
+    if (filters.empresa !== 'Todas' && empresa && empresa !== 'Ambas' && !mesmaEmpresa(empresa, filters.empresa)) return false;
     if (filters.banco !== 'Todos') {
       const b = rec?.banco || rec?.bancoRecebimento;
       if (b && b !== filters.banco) return false; // só exclui registros que têm banco

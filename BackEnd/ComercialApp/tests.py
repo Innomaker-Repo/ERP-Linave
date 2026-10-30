@@ -4,7 +4,7 @@ Cobre: regras de negócio, validators, serializers, models e API (REST endpoints
 """
 
 from decimal import Decimal
-from django.test import TestCase
+from django.test import TestCase, TransactionTestCase
 from django.core.exceptions import ValidationError
 from django.urls import reverse
 from rest_framework.test import APITestCase, APIClient
@@ -2684,8 +2684,12 @@ class AtualizarStatusOsValidacaoTests(APITestCase):
         self.assertIsNotNone(self.os.data_aprovacao)
 
 
-class WebSocketAuthTests(TestCase):
-    """Token do WebSocket vai no Sec-WebSocket-Protocol (['erp-jwt', token]), não na URL."""
+class WebSocketAuthTests(TransactionTestCase):
+    """Token do WebSocket vai no Sec-WebSocket-Protocol (['erp-jwt', token]), não na URL.
+
+    TransactionTestCase (não TestCase): o consumer consulta o banco via database_sync_to_async,
+    o que quebrava a transação que o TestCase mantém aberta em volta de cada teste — o teste
+    seguinte da classe falhava com TransactionManagementError."""
 
     def _conectar(self, path='/ws/workspace/', subprotocols=None):
         from asgiref.sync import async_to_sync

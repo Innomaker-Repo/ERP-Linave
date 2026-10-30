@@ -85,11 +85,36 @@ export const StatusTag = ({ status }: { status: string }) => (
 // "Servinave" — por isso identifica por conteúdo (case-insensitive) e sempre mostra a forma
 // curta na etiqueta, em vez do nome cru, que ficava comprido e sem cor (caía no tom neutro).
 export const CompanyTag = ({ empresa }: { empresa: string }) => {
-  const nome = String(empresa || '').toLowerCase();
-  if (nome.includes('linave')) return <Pill tone="linave">Linave</Pill>;
-  if (nome.includes('servinave')) return <Pill tone="servinave">Servinave</Pill>;
+  const chave = chaveEmpresa(empresa);
+  if (chave === 'linave') return <Pill tone="linave">Linave</Pill>;
+  if (chave === 'servinave') return <Pill tone="servinave">Servinave</Pill>;
   return <Pill tone="neutral">{empresa}</Pill>;
 };
+
+// Qual empresa um nome indica, pela mesma regra da CompanyTag: registros antigos guardam
+// "Servinave" e o cadastro tem "Servinave Serviços Marítimos" — são a mesma empresa.
+export const chaveEmpresa = (nome?: string | null): string => {
+  const n = String(nome || '').trim().toLowerCase();
+  if (n.includes('servinave')) return 'servinave';
+  if (n.includes('linave')) return 'linave';
+  return n;
+};
+
+export const mesmaEmpresa = (a?: string | null, b?: string | null) => chaveEmpresa(a) === chaveEmpresa(b);
+
+// Valor para o <select> de empresa de um registro existente: o nome cadastrado que
+// corresponde ao gravado. Sem isto, um nome que não batia exatamente com uma opção fazia o
+// select exibir a PRIMEIRA empresa da lista (a lista mostrava Linave e o formulário, Servinave).
+export const empresaDaLista = (valor: string | null | undefined, empresas: string[]): string => {
+  if (!valor) return empresas[0] || 'Linave';
+  if (empresas.includes(valor)) return valor;
+  return empresas.find((emp) => mesmaEmpresa(emp, valor)) || valor;
+};
+
+// Opções do <select> de empresa: as cadastradas e, se o valor atual não for nenhuma delas
+// (empresa desativada/renomeada sem correspondente), ele também — para não exibir outra.
+export const opcoesEmpresa = (empresas: string[], atual?: string): string[] =>
+  atual && !empresas.includes(atual) ? [...empresas, atual] : empresas;
 
 export const TypeTag = ({ type }: { type: string }) => (
   <Pill tone={type === 'parent' ? 'mother' : type === 'child' ? 'child' : 'neutral'}>

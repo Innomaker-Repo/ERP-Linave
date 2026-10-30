@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Send, CheckCircle2, Plus, Repeat, X } from 'lucide-react';
-import { FinCard, Toolbar, Field, Input, MoneyInput, Select, Textarea, FileInput, AutocompleteInput, Btn, boldOS } from '../finUi';
+import { FinCard, Toolbar, Field, Input, MoneyInput, Select, Textarea, FileInput, AutocompleteInput, Btn, boldOS, empresaDaLista, opcoesEmpresa } from '../finUi';
 import {
   todayStr, genFinId, num, money, FORMAS_PAGAMENTO, TIPOS_REEMBOLSO, PERIODICIDADES_FATURADO,
   calcularValoresParcelas, gerarParcelasFaturado, proximoPeriodoFaturado, vencimentoNoMesFaturado,
@@ -163,7 +163,7 @@ export function SolicitacaoView() {
     setAnexosExistentes(Array.isArray(sol.anexos) ? sol.anexos : []);
     setAnexos([]);
     setForm({
-      empresa: sol.empresa || empresas[0] || 'Linave',
+      empresa: empresaDaLista(sol.empresa, empresas),
       solicitante: sol.solicitante || '',
       tipo: sol.tipoPagamento || 'Material',
       vinculoValor: sol.vinculoValor || '',
@@ -405,7 +405,7 @@ export function SolicitacaoView() {
         <form className="grid grid-cols-12 gap-4" onSubmit={enviar}>
           <Field label={req('Empresa')} span={3}>
             <Select value={form.empresa} onChange={(e) => set('empresa', e.target.value)}>
-              {empresas.map((emp) => <option key={emp}>{emp}</option>)}
+              {opcoesEmpresa(empresas, form.empresa).map((emp) => <option key={emp}>{emp}</option>)}
             </Select>
           </Field>
           <Field label={req('Solicitante')} span={3}>

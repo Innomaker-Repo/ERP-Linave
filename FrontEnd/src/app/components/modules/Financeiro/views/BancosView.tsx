@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Plus, Pencil, X, Save } from 'lucide-react';
 import { toast } from 'sonner';
-import { FinCard, Toolbar, Field, Input, Select, Btn, DataTable, Th, Td, CompanyTag, EmptyRow, DeleteBtn } from '../finUi';
+import { FinCard, Toolbar, Field, Input, Select, Btn, DataTable, Th, Td, CompanyTag, EmptyRow, DeleteBtn, opcoesEmpresa } from '../finUi';
 import { genFinId, bancoLabel } from '../finData';
 import { useFin } from '../useFin';
 
@@ -84,8 +84,10 @@ export function BancosView() {
         <form className="grid grid-cols-12 gap-4" onSubmit={add}>
           <Field label="Banco" span={6}><Input value={form.nome} onChange={(e) => set('nome', e.target.value)} placeholder="Nome do banco" /></Field>
           <Field label="Empresa" span={3}>
+            {/* Banco mantém o nome de empresa gravado (entra no rótulo "Banco - Empresa" que as
+                contas referenciam); só garante que ele apareça como opção em vez de outra empresa. */}
             <Select value={form.empresa} onChange={(e) => set('empresa', e.target.value)}>
-              {empresas.map((emp) => <option key={emp}>{emp}</option>)}
+              {opcoesEmpresa(empresas, form.empresa === 'Ambas' ? undefined : form.empresa).map((emp) => <option key={emp}>{emp}</option>)}
               <option>Ambas</option>
             </Select>
           </Field>

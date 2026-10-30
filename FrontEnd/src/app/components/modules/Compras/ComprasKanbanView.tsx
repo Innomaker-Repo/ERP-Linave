@@ -45,6 +45,10 @@ type QuoteSupplierDraft = {
 type QuoteRowDraft = {
   itemId: string;
   itemLabel: string;
+  // Quantidade/unidade da solicitação: o fornecedor cota o valor unitário e o total
+  // (`valor`) é sempre unitário × qtd — ver calculateBudgetDetails.
+  qtd: number;
+  un: string;
   // Natureza vem do ITEM (escolhida na solicitação), não do fornecedor.
   naturezaFornecimento: 'ITEM' | 'SERVICO';
   fornecedores: QuoteSupplierDraft[];
@@ -116,13 +120,19 @@ const normalizarNatureza = (natureza: any): 'ITEM' | 'SERVICO' =>
 const naturezaFornecedor = (s: any): 'ITEM' | 'SERVICO' =>
   (s?.naturezaFornecimento === 'ITEM' || s?.tipo === 'Itens' || s?.tipo === 'Empresas') ? 'ITEM' : 'SERVICO';
 
+// Quantidade usada no cálculo do total: sem quantidade válida na solicitação, conta como 1.
+const qtdDoItem = (qtd: unknown) => (Number(qtd) > 0 ? Number(qtd) : 1);
+
 const buildDraftRows = (request: RequisicaoCompra): QuoteRowDraft[] =>
   request.itens.map((item) => {
     const existing = (request.budgetDetails || []).find((detail) => detail.itemId === item.id);
+    const qtd = qtdDoItem(item.qtd);
 
     return {
       itemId: item.id,
       itemLabel: item.descricao || item.nome,
+      qtd,
+      un: item.un || '',
       naturezaFornecimento: normalizarNatureza(item.naturezaFornecimento),
       jaEmEstoque: Boolean(existing?.jaEmEstoque),
       fornecedores: ensureMinimumSuppliers(
@@ -131,7 +141,10 @@ const buildDraftRows = (request: RequisicaoCompra): QuoteRowDraft[] =>
             id: `${item.id}-${index}`,
             fornecedor: supplier.fornecedor,
             valor: supplier.valor ? String(supplier.valor) : '',
-            valorUnitario: supplier.valorUnitario ? String(supplier.valorUnitario) : '',
+            // Cotações antigas só com o total: deriva o unitário (total ÷ qtd).
+            valorUnitario: supplier.valorUnitario
+              ? String(supplier.valorUnitario)
+              : supplier.valor ? String(Number((supplier.valor / qtd).toFixed(4))) : '',
             ipiPercentual: supplier.ipiPercentual ? String(supplier.ipiPercentual) : '',
             icmsPercentual: supplier.icmsPercentual ? String(supplier.icmsPercentual) : '',
             prazoEntrega: supplier.prazoEntrega,
@@ -147,6 +160,10 @@ const parseCurrencyInput = (value: string) => {
   const numberValue = Number(normalized);
   return Number.isFinite(numberValue) ? numberValue : 0;
 };
+
+// Total cotado pelo fornecedor: valor unitário × quantidade da solicitação.
+const totalDoFornecedor = (supplier: QuoteSupplierDraft, row: QuoteRowDraft) =>
+  Math.round(parseCurrencyInput(supplier.valorUnitario) * row.qtd * 100) / 100;
 
 const calculateSelectedBudgetValue = (details: QuoteItem[]) => {
   if (details.length === 0) return null;
@@ -164,7 +181,7 @@ const calculateBudgetDetails = (
   const details: QuoteItem[] = rows.map((row) => {
     const fornecedores: QuoteFornecedor[] = row.fornecedores.map((supplier) => ({
       fornecedor: supplier.fornecedor.trim(),
-      valor: parseCurrencyInput(supplier.valor),
+      valor: totalDoFornecedor(supplier, row),
       valorUnitario: parseCurrencyInput(supplier.valorUnitario),
       ipiPercentual: parseCurrencyInput(supplier.ipiPercentual),
       icmsPercentual: parseCurrencyInput(supplier.icmsPercentual),
@@ -372,8 +389,8 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
 
       if (!row.jaEmEstoque) {
         for (const supplier of row.fornecedores) {
-          if (!supplier.fornecedor || !supplier.valor || !supplier.prazoEntrega || !supplier.condicaoPagamento) {
-            return toast.error('Preencha fornecedor, valor, prazo de entrega e condição de pagamento em cada fornecedor do item.');
+          if (!supplier.fornecedor || !(parseCurrencyInput(supplier.valorUnitario) > 0) || !supplier.prazoEntrega || !supplier.condicaoPagamento) {
+            return toast.error('Preencha fornecedor, valor unitário, prazo de entrega e condição de pagamento em cada fornecedor do item.');
           }
         }
       }
@@ -1077,9 +1094,9 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
                                     min="0"
                                     step="0.01"
                                     className="w-full rounded-xl border border-white/10 bg-[#0b1220] p-3 text-white text-sm outline-none focus:border-emerald-500"
-                                    placeholder="Valor"
-                                    value={supplier.valor}
-                                    onChange={(event) => updateQuoteSupplier(activeRequest.id, row.itemId, supplier.id, 'valor', event.target.value)}
+                                    placeholder="Valor unitário"
+                                    value={supplier.valorUnitario}
+                                    onChange={(event) => updateQuoteSupplier(activeRequest.id, row.itemId, supplier.id, 'valorUnitario', event.target.value)}
                                     disabled={row.jaEmEstoque}
                                   />
                                   <input
@@ -1104,26 +1121,25 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
                                     <p className="text-white/45 text-xs mt-1">{supplier.prazoEntrega || 'Sem prazo'}</p>
                                   </div>
                                   <div>
-                                    <p className="text-white font-semibold">{supplier.valor ? formatCurrency(parseCurrencyInput(supplier.valor)) : '-'}</p>
+                                    <p className="text-white font-semibold">{supplier.valorUnitario ? formatCurrency(totalDoFornecedor(supplier, row)) : '-'}</p>
                                     <p className="text-white/45 text-xs mt-1">{supplier.condicaoPagamento || 'Sem condição'}</p>
                                   </div>
                                 </>
                               )}
                             </div>
 
-                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                            <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
                               {quoteModal.mode === 'edit' ? (
                                 <>
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    className="w-full rounded-xl border border-white/10 bg-[#0b1220] p-3 text-white text-sm outline-none focus:border-emerald-500"
-                                    placeholder="Valor unitário"
-                                    value={supplier.valorUnitario}
-                                    onChange={(event) => updateQuoteSupplier(activeRequest.id, row.itemId, supplier.id, 'valorUnitario', event.target.value)}
-                                    disabled={row.jaEmEstoque}
-                                  />
+                                  {/* Quantidade vem da solicitação (não se edita aqui) e o total é calculado. */}
+                                  <div className="rounded-xl border border-white/5 bg-[#0b1220]/50 px-3 py-2">
+                                    <p className="text-white/35 text-[10px] uppercase tracking-[0.2em] font-black">Quantidade</p>
+                                    <p className="text-white text-sm mt-0.5">{row.qtd}{row.un ? ` ${row.un}` : ''}</p>
+                                  </div>
+                                  <div className="rounded-xl border border-white/5 bg-[#0b1220]/50 px-3 py-2">
+                                    <p className="text-white/35 text-[10px] uppercase tracking-[0.2em] font-black">Total</p>
+                                    <p className="text-emerald-300 text-sm font-bold mt-0.5">{supplier.valorUnitario ? formatCurrency(totalDoFornecedor(supplier, row)) : '-'}</p>
+                                  </div>
                                   <input
                                     type="number"
                                     min="0"
@@ -1150,6 +1166,10 @@ export function ComprasKanbanView({ searchQuery }: { searchQuery: string }) {
                                   <div>
                                     <p className="text-white/35 text-[10px] uppercase tracking-[0.2em] font-black">Valor unitário</p>
                                     <p className="text-white text-sm mt-1">{supplier.valorUnitario ? formatCurrency(parseCurrencyInput(supplier.valorUnitario)) : '-'}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-white/35 text-[10px] uppercase tracking-[0.2em] font-black">Quantidade</p>
+                                    <p className="text-white text-sm mt-1">{row.qtd}{row.un ? ` ${row.un}` : ''}</p>
                                   </div>
                                   <div>
                                     <p className="text-white/35 text-[10px] uppercase tracking-[0.2em] font-black">IPI</p>

@@ -4,6 +4,7 @@ import { baixarPlanilha } from '../../../../utils/planilhaExcel';
 import {
   FinCard, Toolbar, DataTable, Th, Td, Btn, StatusTag, CompanyTag, TypeTag, Pill, EmptyRow,
   FinModal, Field, Input, MoneyInput, Select, Textarea, Kpi, DeleteBtn, labelCls, boldOS, FileInput,
+  empresaDaLista, opcoesEmpresa,
 } from '../finUi';
 import {
   br, money, num, todayStr, genFinId, days, FORMAS_PAGAMENTO, TIPOS_REEMBOLSO,
@@ -143,7 +144,7 @@ export function ContasPagarView() {
   const abrirNovo = () => { setForm(formVazio()); setAnexosExistentes([]); setNovosAnexos([]); setEditId(null); };
   const abrirEdicao = (p: FinRecord) => {
     setForm({
-      empresa: String(p.empresa || empresas[0] || 'Linave'),
+      empresa: empresaDaLista(p.empresa, empresas),
       vinculoTipo: (p.vinculoTipo as any) || 'OS',
       vinculoValor: p.vinculoValor || '',
       fornecedor: p.fornecedor || '',
@@ -306,7 +307,7 @@ export function ContasPagarView() {
   const abrirEdicaoFixa = (r: FinRecord) => {
     setFixa({
       descricao: r.descricao || '', categoria: r.categoria || 'Luz',
-      empresa: String(r.empresa || empresas[0] || 'Linave'), fornecedor: r.fornecedor || '',
+      empresa: empresaDaLista(r.empresa, empresas), fornecedor: r.fornecedor || '',
       natureza: r.natureza || '', valor: String(r.valor || ''),
       periodicidade: r.periodicidade || 'mensal', diaVencimento: String(r.diaVencimento || '10'),
       inicio: r.inicio || todayStr, fim: r.fim || '', forma: r.forma || '', banco: r.banco || '',
@@ -637,7 +638,7 @@ export function ContasPagarView() {
         <FinModal wide title={editId ? `Editar conta ${editId}` : 'Adicionar Conta a Pagar'} hint="Conta simples. Use Parcelar para gerar mãe e filhas." onClose={() => setEditId(undefined)}>
           <form className="grid grid-cols-12 gap-4" onSubmit={salvarConta}>
             <Field label="Empresa" span={3}>
-              <Select value={form.empresa} onChange={(e) => setF('empresa', e.target.value)}>{empresas.map((emp) => <option key={emp}>{emp}</option>)}</Select>
+              <Select value={form.empresa} onChange={(e) => setF('empresa', e.target.value)}>{opcoesEmpresa(empresas, form.empresa).map((emp) => <option key={emp}>{emp}</option>)}</Select>
             </Field>
             <Field label={boldOS('OS')} span={3}>
               <Select value={form.vinculoValor} onChange={(e) => setF('vinculoValor', e.target.value)}>
@@ -1050,7 +1051,7 @@ export function ContasPagarView() {
             </Field>
             <Field label="Empresa" span={3}>
               <Select value={fixa.empresa} onChange={(e) => setFixaF('empresa', e.target.value)}>
-                {empresas.map((emp) => <option key={emp}>{emp}</option>)}
+                {opcoesEmpresa(empresas, fixa.empresa).map((emp) => <option key={emp}>{emp}</option>)}
               </Select>
             </Field>
 
