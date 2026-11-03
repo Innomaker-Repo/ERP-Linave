@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Anchor, Cable, CheckCircle2, ChevronDown, ChevronUp, ClipboardList, Container, Download, Droplets, Flame, Gauge, Hammer, HardHat, Layers3, Link2, MapPin, Microscope, Package, Plus, Search, Table2, Trash2, Wrench, X, Zap } from 'lucide-react';
+import { Anchor, Cable, CheckCircle2, ChevronDown, ChevronUp, ClipboardList, Container, Cpu, Download, Droplets, Flame, Gauge, Hammer, HardHat, Layers3, Link2, MapPin, Microscope, Package, Plus, Search, Table2, Trash2, Wrench, X, Zap } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { baixarPlanilha } from '../../../utils/planilhaExcel';
 import { Badge } from '../../../modules/shared/ui/badge';
@@ -231,6 +231,8 @@ const getTableIconConfig = (tableName: string): { Icon: LucideIcon; badgeClass: 
       return { Icon: Hammer, badgeClass: 'bg-orange-500/15 ring-orange-500/20', iconClass: 'text-orange-300' };
     case 'civil':
       return { Icon: Wrench, badgeClass: 'bg-stone-500/15 ring-stone-500/20', iconClass: 'text-stone-300' };
+    case 'tieletronicos':
+      return { Icon: Cpu, badgeClass: 'bg-indigo-500/15 ring-indigo-500/20', iconClass: 'text-indigo-300' };
     case 'talhas':
       return { Icon: Anchor, badgeClass: 'bg-emerald-500/15 ring-emerald-500/20', iconClass: 'text-emerald-300' };
     case 'eslingas':
@@ -497,6 +499,17 @@ const STOCK_TABLES: StockTable[] = [
     [], false
   ),
   makeTable(
+    'TI-ELETRÔNICOS',
+    [
+      { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
+      { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'peso', label: 'Peso', align: 'center' }, { key: 'patrimonio', label: 'Patrimônio' }, { key: 'dataEntradaPlanilha', label: 'Data(ENTRADA NA PLANILHA)', align: 'center' },
+      { key: 'modelo', label: 'Modelo' }, { key: 'numeroSerial', label: 'N° Serial' }, { key: 'marca', label: 'Marca' },
+      { key: 'status', label: 'STATUS', align: 'center' }, { key: 'observacao', label: 'Observação' }, { key: 'localizacao', label: 'Local' },
+      { key: 'serviceOS', label: 'Serviço (OS)' }, { key: 'unidade', label: 'Unidade', align: 'center' }
+    ],
+    [], false
+  ),
+  makeTable(
     'TALHAS',
     [
       { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
@@ -641,6 +654,24 @@ const reconcileTableColumns = (table: StockTable): StockColumn[] => {
   const canonicalKeys = new Set(canonical.map((column) => column.key));
   const extras = persisted.filter((column) => !canonicalKeys.has(column.key));
   return [...canonical, ...extras];
+};
+
+// Tabelas renomeadas no código depois de já terem sido salvas: o nome identifica a tabela
+// (e cada linha guarda o seu em `tableName`), então a cópia salva com o nome antigo é
+// renomeada ao carregar — senão sobraria como uma tabela solta, fora da sua categoria.
+const TABELAS_RENOMEADAS: Record<string, string> = {
+  'TI-ELETRÔNICO': 'TI-ELETRÔNICOS',
+  'TI-ELETRONICOS': 'TI-ELETRÔNICOS',
+};
+
+const renomearTabelaAntiga = (table: StockTable): StockTable => {
+  const novoNome = TABELAS_RENOMEADAS[table.name];
+  if (!novoNome) return table;
+  return {
+    ...table,
+    name: novoNome,
+    rows: Array.isArray(table.rows) ? table.rows.map((row) => ({ ...row, tableName: novoNome })) : [],
+  };
 };
 
 const getCommonColumns = (tables: StockTable[]) => {
@@ -874,7 +905,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
 
     if (almoxerifado && typeof almoxerifado === 'object') {
       if (Array.isArray(almoxerifado.tables)) {
-        const persistidas = almoxerifado.tables.map((table: StockTable) => ({
+        const persistidas = almoxerifado.tables.map(renomearTabelaAntiga).map((table: StockTable) => ({
           ...table,
           // Reconcilia com as colunas canônicas para incorporar colunas novas (ex.: "peso")
           // em dados persistidos antes da mudança, sem perder linhas/colunas customizadas.

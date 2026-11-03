@@ -1114,6 +1114,68 @@ def financeiro_solicitacao_criar(request):
     return Response({'message': 'Solicitação enviada.', 'financeiro': dados}, status=status.HTTP_201_CREATED)
 
 
+# Campos que o reenvio nunca aceita do cliente: identidade, autoria e decisão da gerência.
+_SOLICITACAO_CAMPOS_PROTEGIDOS = (
+    'id', 'tipo', 'status', 'aprovadoPor', 'reprovadoPor', 'motivoReprovacao',
+    'solicitanteCpf', 'solicitanteEmail', 'createdAt',
+)
+
+
+@api_view(['POST'])
+def financeiro_solicitacao_reenviar(request, rid):
+    """Corrige e reenvia UMA solicitação de pagamento (normalmente reprovada) — update direto
+    no registro, como `financeiro_solicitacao_decidir`.
+
+    Aberta a qualquer usuário autenticado pelo mesmo motivo de `financeiro_solicitacao_criar`:
+    a tela de Solicitação é liberada a todo colaborador, mas o replace-all de financeiro_data
+    exige permissão do módulo — antes o reenvio ia por lá e quem só cria solicitações levava
+    403 ("Não foi possível salvar no Financeiro"). Só o autor (ou gerência/equipe financeira)
+    reenvia; a solicitação volta para "Aguardando aprovação" sem os dados da reprovação.
+
+    POST /comercial/financeiro/solicitacao/<rid>/reenviar/   body: campos corrigidos do FinRecord
+    """
+    from .financeiro_sync import _build_instance, read_all, SPECS
+    from .models import SolicitacaoPagamento
+
+    patch = request.data if isinstance(request.data, dict) else {}
+
+    with transaction.atomic():
+        try:
+            sol = SolicitacaoPagamento.objects.select_for_update().get(record_id=rid)
+        except SolicitacaoPagamento.DoesNotExist:
+            return Response({'error': 'Solicitação não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+
+        atual = dict(sol.extra) if isinstance(sol.extra, dict) else {}
+        if not (_solicitacao_do_usuario(atual, request.user) or escreve_em_tudo(request.user)
+                or _equipe_financeira(request.user)):
+            return Response(
+                {'error': 'Você só pode reenviar as suas próprias solicitações de pagamento.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if (atual.get('status') or sol.status) == 'Aprovado':
+            return Response(
+                {'error': 'Esta solicitação já foi aprovada e virou conta a pagar — não dá mais para reenviá-la.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        record = {**atual, **{k: v for k, v in patch.items() if k not in _SOLICITACAO_CAMPOS_PROTEGIDOS}}
+        record.update({'id': rid, 'tipo': 'solicitacao', 'status': 'Aguardando aprovação',
+                       'motivoReprovacao': '', 'reprovadoPor': ''})
+
+        novo = _build_instance('solicitacao', record)
+        for campo in SPECS['solicitacao']['cols']:
+            setattr(sol, campo, getattr(novo, campo))
+        sol.extra = record
+        sol.save()
+
+    _registrar_log(request, 'atualizacao', 'Financeiro', f'Solicitação de pagamento {rid} corrigida e reenviada.')
+    dispatch_collection_changed('financeiro')
+    dados = read_all()
+    if _sem_permissao_financeira(request.user):
+        dados = _financeiro_restringir_para_leitor_sem_acesso(dados, request.user)
+    return Response({'message': 'Solicitação reenviada.', 'financeiro': dados}, status=status.HTTP_200_OK)
+
+
 def _gen_fin_id(prefix):
     """Mesmo formato do `genFinId` do frontend (finData.ts): PREFIXO-<timestamp em base36,
     maiúsculo>. Mantém os ids gerados aqui visualmente idênticos aos gerados no cliente."""

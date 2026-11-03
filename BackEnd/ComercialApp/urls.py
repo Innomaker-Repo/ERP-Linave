@@ -7,7 +7,8 @@ from .views import (
     criar_orcamento, renomear_empresa_prestadora, renomear_cliente, renomear_fornecedor,
     ordens_servico_por_cliente, ordens_servico_por_negocio, atualizar_status_os,
     atualizar_status_medicao,
-    financeiro_data, financeiro_solicitacao_criar, financeiro_solicitacao_decidir, compras_data, almoxarifado_data,
+    financeiro_data, financeiro_solicitacao_criar, financeiro_solicitacao_decidir, financeiro_solicitacao_reenviar,
+    compras_data, almoxarifado_data,
     configuracoes_data, logs_atividade, sessao_media_cookie, sessao_logout,
 )
 from .media_auth import media_auth
@@ -34,6 +35,9 @@ urlpatterns = [
 
     # Aprovar/reprovar UMA solicitação (update direto + lock, sem replace-all — ver docstring)
     path('financeiro/solicitacao/<str:rid>/decidir/', financeiro_solicitacao_decidir, name='financeiro-solicitacao-decidir'),
+
+    # Corrigir e reenviar UMA solicitação (o autor, mesmo sem permissão do módulo Financeiro)
+    path('financeiro/solicitacao/<str:rid>/reenviar/', financeiro_solicitacao_reenviar, name='financeiro-solicitacao-reenviar'),
 
     # Estado de compras (requisições do kanban + histórico; GET lê, POST substitui)
     path('compras/', compras_data, name='compras-data'),

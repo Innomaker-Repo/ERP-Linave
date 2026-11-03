@@ -42,6 +42,7 @@ export const DEPARTAMENTOS_PAGAMENTO = [
   'SMS',
   'Logística',
   'Operacional',
+  'TI',
 ];
 
 // Tipo de reembolso / adiantamento (usado em Solicitação e Contas a Pagar).

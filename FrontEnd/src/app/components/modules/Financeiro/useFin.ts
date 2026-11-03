@@ -209,11 +209,19 @@ export function useFin() {
 
   // Reenvia uma solicitação reprovada: o próprio solicitante corrige os dados e ela volta
   // para a fila de aprovação, como se fosse enviada agora — sem precisar criar um registro novo
-  // (mantém o mesmo id e o anexo já enviado, a menos que troque).
-  const reenviarSolicitacao = async (id: string, patch: Partial<FinRecord>): Promise<boolean> =>
-    updateRecords((r) => (r.id === id
-      ? { ...r, ...patch, status: 'Aguardando aprovação', motivoReprovacao: '', reprovadoPor: '' }
-      : r));
+  // (mantém o mesmo id e o anexo já enviado, a menos que troque). Vai pelo endpoint próprio de
+  // reenvio, não pelo replace-all: este exige permissão do módulo Financeiro, que quem só
+  // cria solicitações não tem (o reenvio falhava com "Não foi possível salvar no Financeiro").
+  const reenviarSolicitacao = async (id: string, patch: Partial<FinRecord>): Promise<boolean> => {
+    try {
+      await ctx.reenviarSolicitacaoFinanceiro(id, patch);
+      return true;
+    } catch (error) {
+      const mensagem = (error as any)?.response?.data?.error;
+      toast.error(typeof mensagem === 'string' ? mensagem : 'Não foi possível reenviar a solicitação. Tente novamente.');
+      return false;
+    }
+  };
 
   // Rótulo do recebível gerado pela nota/recibo. Sigla por natureza (serviço × locação) e
   // empresa prestadora — ver siglaTipoNfe em finData.ts. O número é opcional na emissão (nem

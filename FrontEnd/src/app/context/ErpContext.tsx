@@ -3,7 +3,7 @@ import { getClientes, createCliente, updateCliente, deleteCliente as deleteClien
 import { mapNegociosToObras, mapOrdensToOs } from '../../services/obrasMapper';
 import { pularNumerosReservados } from '../../services/numeroSequencial';
 import { getFornecedores, createFornecedor, updateFornecedor, deleteFornecedor as deleteFornecedorApi } from '../../services/fornecedoresService';
-import { getFinanceiro, syncFinanceiro, criarSolicitacaoPagamento, decidirSolicitacaoPagamento } from '../../services/financeiroService';
+import { getFinanceiro, syncFinanceiro, criarSolicitacaoPagamento, decidirSolicitacaoPagamento, reenviarSolicitacaoPagamento } from '../../services/financeiroService';
 import { getCompras, syncCompras, syncComprasHistorico } from '../../services/comprasService';
 import { getAlmoxarifado, syncAlmoxarifado } from '../../services/almoxarifadoService';
 import { getConfiguracoes, syncConfig, syncListas } from '../../services/configuracoesService';
@@ -977,6 +977,7 @@ interface ErpContextData {
   saveEntity: (collection: string, data: any) => Promise<void>;
   criarSolicitacaoFinanceiro: (record: any) => Promise<void>;
   decidirSolicitacaoFinanceiro: (id: string, acao: 'aprovar' | 'reprovar', motivo?: string) => Promise<void>;
+  reenviarSolicitacaoFinanceiro: (id: string, dados: any) => Promise<void>;
   saveListas: (novasListas: any) => Promise<void>;
   saveConfig: (novaConfig: any) => Promise<void>;
   saveCliente: (cliente: any) => Promise<any>;
@@ -1433,6 +1434,15 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  // Corrige e reenvia uma solicitação via endpoint próprio (não replace-all) — ver
+  // financeiroService.ts:reenviarSolicitacaoPagamento.
+  const reenviarSolicitacaoFinanceiro = async (id: string, dados: any): Promise<void> => {
+    const lista = await reenviarSolicitacaoPagamento(id, dados);
+    if (lista.length) {
+      setData((prevData: any) => ({ ...prevData, financeiro: lista }));
+    }
+  };
+
   const saveListas = async (l: any): Promise<void> => saveEntity('listas', l);
   const saveConfig = async (c: any): Promise<void> => saveEntity('config', { ...(data.config || {}), ...c });
 
@@ -1448,7 +1458,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
 
  
   return (
-    <ErpContext.Provider value={{ userSession, setUserSession, loading, loginComGoogle, loginDireto, logout, saveEntity, criarSolicitacaoFinanceiro, decidirSolicitacaoFinanceiro, saveListas, saveConfig, saveCliente, deleteCliente, saveFornecedor, deleteFornecedor, refreshMedicoes, refreshWorkspace, manualRefreshTick, uploadFileToDrive, pendingEditSolicitacaoId, setPendingEditSolicitacaoId, ...data }}>
+    <ErpContext.Provider value={{ userSession, setUserSession, loading, loginComGoogle, loginDireto, logout, saveEntity, criarSolicitacaoFinanceiro, decidirSolicitacaoFinanceiro, reenviarSolicitacaoFinanceiro, saveListas, saveConfig, saveCliente, deleteCliente, saveFornecedor, deleteFornecedor, refreshMedicoes, refreshWorkspace, manualRefreshTick, uploadFileToDrive, pendingEditSolicitacaoId, setPendingEditSolicitacaoId, ...data }}>
       {children}
     </ErpContext.Provider>
   );

@@ -1696,6 +1696,77 @@ class FinanceiroSolicitacaoCriarTests(APITestCase):
         self.assertEqual(SolicitacaoPagamento.objects.get(record_id='SP-REENVIO').status, 'Aguardando aprovação')
 
 
+class FinanceiroSolicitacaoReenviarTests(APITestCase):
+    """POST /comercial/financeiro/solicitacao/<id>/reenviar/ — o autor corrige e reenvia a
+    própria solicitação reprovada mesmo SEM permissão do módulo Financeiro (pelo replace-all
+    ele levava 403 e a tela dizia "Não foi possível salvar no Financeiro")."""
+
+    def _logar(self, cpf, senha='Admin@teste1'):
+        resp = obter_token(self.client, cpf, senha)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {resp.data["access"]}')
+
+    def _criar_reprovada(self, cpf='user-reenv'):
+        from .models import SolicitacaoPagamento
+        criar_usuario(cpf)
+        self._logar(cpf)
+        self.client.post(f'{BASE}/financeiro/solicitacao/', {
+            'id': 'SP-RE1', 'valor': 10, 'anexos': ['/media/antigo.pdf'], 'descricao': 'original',
+        }, format='json')
+        sol = SolicitacaoPagamento.objects.get(record_id='SP-RE1')
+        sol.status = 'Reprovado'
+        sol.extra = {**sol.extra, 'status': 'Reprovado', 'motivoReprovacao': 'falta nota', 'reprovadoPor': 'Gerente'}
+        sol.save()
+        return sol
+
+    def _reenviar(self, dados):
+        return self.client.post(f'{BASE}/financeiro/solicitacao/SP-RE1/reenviar/', dados, format='json')
+
+    def test_autor_sem_permissoes_reenvia_com_anexo_novo(self):
+        from .models import SolicitacaoPagamento
+        self._criar_reprovada()
+        resp = self._reenviar({'valor': 20, 'anexos': ['/media/novo.pdf'], 'descricao': 'corrigida'})
+        self.assertEqual(resp.status_code, 200)
+        sol = SolicitacaoPagamento.objects.get(record_id='SP-RE1')
+        self.assertEqual(sol.status, 'Aguardando aprovação')
+        self.assertEqual(sol.anexos, ['/media/novo.pdf'])
+        self.assertEqual(sol.valor, 20)
+        self.assertEqual(sol.extra['descricao'], 'corrigida')
+        self.assertEqual(sol.extra['motivoReprovacao'], '')
+        self.assertEqual(sol.extra['reprovadoPor'], '')
+
+    def test_nao_aceita_status_nem_autoria_do_cliente(self):
+        from .models import SolicitacaoPagamento
+        self._criar_reprovada()
+        resp = self._reenviar({'status': 'Aprovado', 'aprovadoPor': 'Eu', 'solicitanteCpf': 'outro'})
+        self.assertEqual(resp.status_code, 200)
+        sol = SolicitacaoPagamento.objects.get(record_id='SP-RE1')
+        self.assertEqual(sol.status, 'Aguardando aprovação')
+        self.assertNotIn('aprovadoPor', sol.extra)
+        self.assertEqual(sol.extra['solicitanteCpf'], 'user-reenv')
+
+    def test_outro_usuario_nao_reenvia(self):
+        self._criar_reprovada()
+        # E-mail próprio: o dono também é reconhecido pelo e-mail, e criar_usuario usa um fixo.
+        User.objects.create_user(cpf='intruso', password='Admin@teste1', nome='Intruso',
+                                 email='intruso@test.com', role='usuario', permissoes={})
+        self._logar('intruso')
+        self.assertEqual(self._reenviar({'valor': 1}).status_code, 403)
+
+    def test_solicitacao_aprovada_nao_e_reenviada(self):
+        from .models import SolicitacaoPagamento
+        sol = self._criar_reprovada()
+        sol.status = 'Aprovado'
+        sol.extra = {**sol.extra, 'status': 'Aprovado'}
+        sol.save()
+        self.assertEqual(self._reenviar({'valor': 1}).status_code, 409)
+
+    def test_inexistente_retorna_404(self):
+        criar_usuario('user-reenv')
+        self._logar('user-reenv')
+        resp = self.client.post(f'{BASE}/financeiro/solicitacao/SP-NAO-EXISTE/reenviar/', {}, format='json')
+        self.assertEqual(resp.status_code, 404)
+
+
 # =============================================================================
 # 20. CONFIGURAÇÕES — SINGLETON
 # =============================================================================

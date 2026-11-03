@@ -52,3 +52,13 @@ export const decidirSolicitacaoPagamento = async (
   const response = await api.post(`financeiro/solicitacao/${encodeURIComponent(id)}/decidir/`, { acao, motivo });
   return Array.isArray(response.data?.financeiro) ? response.data.financeiro : [];
 };
+
+/**
+ * Corrige e reenvia UMA solicitação (volta para "Aguardando aprovação") — endpoint próprio,
+ * aberto ao autor mesmo sem permissão do módulo Financeiro (o replace-all exige essa
+ * permissão, e quem só cria solicitações levava 403 ao reenviar). Retorna a lista atualizada.
+ */
+export const reenviarSolicitacaoPagamento = async (id: string, dados: any): Promise<any[]> => {
+  const response = await api.post(`financeiro/solicitacao/${encodeURIComponent(id)}/reenviar/`, dados);
+  return Array.isArray(response.data?.financeiro) ? response.data.financeiro : [];
+};

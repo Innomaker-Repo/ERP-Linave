@@ -59,7 +59,7 @@ const normalizeKeyLocal = (value: string): string =>
 // de lugar (agora é um subtipo de Equipamentos), sem alterar sua estrutura (C.A., Possui
 // Manutenção etc.) nem seus dados. "CIVIL", "EXTINTORES" e "MANGUEIRAS" são subtipos novos,
 // com a mesma estrutura de FERRAMENTAS (CIVIL) e EXTENSÃO-CABOS (EXTINTORES/MANGUEIRAS).
-export const EQUIPAMENTOS_TABLE_NAMES = ['EQUIPAMENTOS ELETRICOS', 'EXTENSÃO-CABOS', 'EXTINTORES', 'MANGUEIRAS', 'BOMBA HIDROJATO', 'INSTRUMENTOS', 'FERRAMENTAS', 'TALHAS', 'ESLINGAS', 'CIVIL', 'EPI/EPC'];
+export const EQUIPAMENTOS_TABLE_NAMES = ['EQUIPAMENTOS ELETRICOS', 'EXTENSÃO-CABOS', 'EXTINTORES', 'MANGUEIRAS', 'BOMBA HIDROJATO', 'INSTRUMENTOS', 'FERRAMENTAS', 'TALHAS', 'ESLINGAS', 'CIVIL', 'EPI/EPC', 'TI-ELETRÔNICOS'];
 
 // Tabelas cujos itens podem entrar em manutenção: TODAS as categorias do Almoxarifado —
 // Equipamentos (inclui EPI/EPC e CIVIL), Materiais, Alugados (Equipamentos e Gases), Caixa
