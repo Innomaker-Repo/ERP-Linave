@@ -2186,6 +2186,29 @@ class DocumentoViewSetTests(APITestCase):
         r = self._upload()
         self.assertEqual(r.status_code, 201)
 
+    def test_comprovante_com_nome_longo_e_aceito(self):
+        # Nome real de um comprovante que falhava no modal "Pagar" (Contas a Pagar).
+        nome = 'comprovante.pdf marcos aurelio mar 3522,58 abts 30.10.26.pdf'
+        r = self.client.post(f'{BASE}/documentos/', {
+            'arquivo': self.SimpleUploadedFile(nome, b'%PDF-1.4 teste', content_type='application/pdf'),
+            'vinculo_tipo': 'financeiro', 'vinculo_id': 'CP-MVSGIEB1', 'categoria': 'fin_comprovante',
+        }, format='multipart')
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(r.data['nome_original'], nome)
+
+    def test_nome_muito_longo_e_encurtado_no_caminho_mantendo_extensao(self):
+        from .models import Documento
+        nome = ('relatorio de pagamento ' * 20) + '.pdf'   # ~464 caracteres
+        r = self.client.post(f'{BASE}/documentos/', {
+            'arquivo': self.SimpleUploadedFile(nome, b'%PDF-1.4 teste', content_type='application/pdf'),
+            'vinculo_tipo': 'financeiro', 'vinculo_id': 'CP-X', 'categoria': 'fin_comprovante',
+        }, format='multipart')
+        self.assertEqual(r.status_code, 201, r.content)
+        doc = Documento.objects.get(pk=r.data['id'])
+        self.assertLessEqual(len(doc.arquivo.name), 255)
+        self.assertTrue(doc.arquivo.name.endswith('.pdf'))
+        self.assertEqual(len(doc.nome_original), 255)
+
     def _upload_arquivo(self, nome, conteudo=b'x', content_type='application/octet-stream'):
         return self.client.post(f'{BASE}/documentos/', {
             'arquivo': self.SimpleUploadedFile(nome, conteudo, content_type=content_type),

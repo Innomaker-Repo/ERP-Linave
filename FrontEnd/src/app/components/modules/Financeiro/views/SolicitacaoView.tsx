@@ -7,7 +7,7 @@ import {
   solicitacaoDuplicada, DEPARTAMENTOS_PAGAMENTO, type PeriodicidadeFaturado, type FaturadoParcela,
 } from '../finData';
 import { useFin } from '../useFin';
-import { uploadDocumento } from '../../../../../services/documentosService';
+import { uploadDocumento, motivoFalhaUpload } from '../../../../../services/documentosService';
 import { formatNumeroOsDisplay } from '../../../../../services/ordensServico';
 import { toast } from 'sonner';
 
@@ -321,7 +321,7 @@ export function SolicitacaoView() {
           .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
           .map((r) => r.value.url);
         const falhas = resultados.length - anexosUrls.length;
-        if (falhas > 0) toast.error(`${falhas} anexo(s) não puderam ser enviados.`);
+        if (falhas > 0) toast.error(`${falhas} anexo(s) não puderam ser enviados.${motivoFalhaUpload(resultados)}`);
       }
 
       const dados = {

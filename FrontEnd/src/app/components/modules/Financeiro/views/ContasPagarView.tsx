@@ -14,7 +14,7 @@ import {
 } from '../finData';
 import { useFin, type FinRecord } from '../useFin';
 import { useFinFilters } from '../finFilters';
-import { uploadDocumento, listarDocumentos, excluirDocumento } from '../../../../../services/documentosService';
+import { uploadDocumento, listarDocumentos, excluirDocumento, motivoFalhaUpload } from '../../../../../services/documentosService';
 import { formatNumeroOsDisplay } from '../../../../../services/ordensServico';
 import { confirmDialog, promptDialog } from '../../../ui/feedback';
 import { toast } from 'sonner';
@@ -34,7 +34,7 @@ const nomeDoArquivo = (url: string): string => {
 
 export function ContasPagarView() {
   const {
-    records, financeiro, empresas, oss, departamentos, addRecord, updateRecord, deleteRecord,
+    records, financeiro, empresas, oss, departamentos, addRecord, updateRecord, updateRecords, deleteRecord,
     contarDependentes, parcelarConta, pagarConta,
     sincronizarContasFixas, salvarContaFixa, excluirContaFixa, ocorrenciasFuturasDaFixa,
   } = useFin();
@@ -224,7 +224,7 @@ export function ContasPagarView() {
           .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
           .map((r) => r.value.url);
         const falhas = resultados.length - novasUrls.length;
-        if (falhas > 0) toast.error(`${falhas} documento(s) não puderam ser enviados.`);
+        if (falhas > 0) toast.error(`${falhas} documento(s) não puderam ser enviados.${motivoFalhaUpload(resultados)}`);
         anexos = [...anexosExistentes, ...novasUrls];
       }
 
@@ -432,6 +432,44 @@ export function ContasPagarView() {
     }
   };
 
+  // ---- Modal "Anexar comprovante" de conta JÁ PAGA ----
+  // O comprovante é opcional no pagamento e, se o upload falhar (ou a nota vier depois), a
+  // conta fica paga sem ele — e o botão Pagar some depois de pago. Aqui só se acrescenta o
+  // comprovante, sem refazer o pagamento (data, valor, banco ficam como estão).
+  const [anexandoComprovante, setAnexandoComprovante] = useState<FinRecord | null>(null);
+  const [comprovantesAvulsos, setComprovantesAvulsos] = useState<File[]>([]);
+
+  const abrirAnexarComprovante = (p: FinRecord) => {
+    setAnexandoComprovante(p);
+    setComprovantesAvulsos([]);
+  };
+
+  const salvarComprovantesAvulsos = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const conta = anexandoComprovante;
+    if (!conta || comprovantesAvulsos.length === 0) return;
+    setSalvando(true);
+    try {
+      const resultados = await Promise.allSettled(
+        comprovantesAvulsos.map((file) => uploadDocumento(file, { vinculoTipo: 'financeiro', vinculoId: conta.id, categoria: 'fin_comprovante' })),
+      );
+      const novasUrls = resultados
+        .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
+        .map((r) => r.value.url);
+      const falhas = resultados.length - novasUrls.length;
+      if (falhas > 0) toast.error(`${falhas} comprovante(s) não puderam ser enviados.${motivoFalhaUpload(resultados)}`);
+      if (novasUrls.length === 0) return; // nada subiu: mantém o modal aberto pra tentar de novo
+      const ok = await updateRecords((r) => (r.id === conta.id
+        ? { ...r, comprovantes: [...(Array.isArray(r.comprovantes) ? r.comprovantes : []), ...novasUrls] }
+        : r));
+      if (!ok) return;
+      toast.success('Comprovante anexado.');
+      setAnexandoComprovante(null);
+    } finally {
+      setSalvando(false);
+    }
+  };
+
   // ---- Modal ver documentos (anexos + comprovantes juntos, só consulta) ----
   const [verDocumentos, setVerDocumentos] = useState<FinRecord | null>(null);
 
@@ -466,7 +504,10 @@ export function ContasPagarView() {
           .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
           .map((r) => r.value.url);
         const falhas = resultados.length - novasUrls.length;
-        if (falhas > 0) toast.error(`${falhas} comprovante(s) não puderam ser enviados.`);
+        if (falhas > 0) {
+          toast.error(`${falhas} comprovante(s) não puderam ser enviados.${motivoFalhaUpload(resultados)} `
+            + 'O pagamento é registrado mesmo assim — anexe depois pelo botão "Anexar comprovante" da conta.');
+        }
         comprovantes = [...comprovantesExistentes, ...novasUrls];
       }
       const proxima = await pagarConta(pagando.id, {
@@ -607,6 +648,9 @@ export function ContasPagarView() {
                 )}
                 {p.type === 'single' && p.status !== 'Pago' && p.status !== CP_STATUS.semDoc && <Btn small variant="blue" onClick={() => abrirParcelar(p)}><Split size={12} /> Parcelar</Btn>}
                 {p.type !== 'parent' && p.status !== 'Pago' && <Btn small variant="green" onClick={() => abrirPagamento(p)}><Banknote size={12} /> Pagar</Btn>}
+                {p.type !== 'parent' && p.status === 'Pago' && !((p.comprovantes as string[] | undefined)?.length) && (
+                  <Btn small variant="green" onClick={() => abrirAnexarComprovante(p)}><Paperclip size={12} /> Anexar comprovante</Btn>
+                )}
                 {(((p.anexos as string[] | undefined)?.length || 0) + ((p.comprovantes as string[] | undefined)?.length || 0)) > 0 && (
                   <Btn small variant="secondary" onClick={() => setVerDocumentos(p)}>
                     <Files size={12} /> Documentos ({((p.anexos as string[] | undefined)?.length || 0) + ((p.comprovantes as string[] | undefined)?.length || 0)})
@@ -857,6 +901,30 @@ export function ContasPagarView() {
               <Btn type="button" variant="ghost" onClick={() => setPagando(null)}>Cancelar</Btn>
               <Btn type="submit" variant="green" disabled={salvando || !pay.banco}>
                 <Banknote size={15} /> {salvando ? 'Registrando...' : 'Confirmar pagamento'}
+              </Btn>
+            </div>
+          </form>
+        </FinModal>
+      )}
+
+      {/* MODAL: anexar comprovante a uma conta já paga */}
+      {anexandoComprovante && (
+        <FinModal
+          title={`Anexar comprovante — ${anexandoComprovante.id}`}
+          hint="A conta já está paga: aqui só se anexa o comprovante, o pagamento registrado não muda."
+          onClose={() => setAnexandoComprovante(null)}
+        >
+          <form className="grid grid-cols-12 gap-4" onSubmit={salvarComprovantesAvulsos}>
+            <Field label="Conta" span={6}><Input value={`${anexandoComprovante.fornecedor || ''} • ${money(num(anexandoComprovante.valorPago || anexandoComprovante.valor))}`} disabled /></Field>
+            <Field label="Pago em" span={3}><Input value={anexandoComprovante.dataPagamento ? br(anexandoComprovante.dataPagamento) : '—'} disabled /></Field>
+            <Field label="Banco" span={3}><Input value={anexandoComprovante.banco || '—'} disabled /></Field>
+            <div className="col-span-12">
+              <FileInput label="Comprovante(s) (PDF, imagem...)" value={comprovantesAvulsos} onChange={setComprovantesAvulsos} />
+            </div>
+            <div className="col-span-12 flex justify-end gap-2">
+              <Btn type="button" variant="ghost" onClick={() => setAnexandoComprovante(null)}>Cancelar</Btn>
+              <Btn type="submit" variant="green" disabled={salvando || comprovantesAvulsos.length === 0}>
+                <Paperclip size={15} /> {salvando ? 'Enviando...' : 'Anexar comprovante'}
               </Btn>
             </div>
           </form>

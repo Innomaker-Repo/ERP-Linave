@@ -1773,7 +1773,8 @@ class DocumentoViewSet(LogMixin, viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         arquivo = self.request.data.get('arquivo')
-        nome = getattr(arquivo, 'name', '') or self.request.data.get('nome_original', '')
+        # [:255] = max_length de nome_original (o caminho já é encurtado em documento_upload_path).
+        nome = (getattr(arquivo, 'name', '') or self.request.data.get('nome_original', ''))[:255]
         tamanho = getattr(arquivo, 'size', 0) or 0
         content_type = getattr(arquivo, 'content_type', '') or self.request.data.get('tipo', '')
         instance = serializer.save(nome_original=nome, tamanho=tamanho, tipo=content_type,

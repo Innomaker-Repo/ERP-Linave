@@ -960,11 +960,23 @@ class ConfiguracaoApp(models.Model):
 #                   id de negócio do FinRecord, ex.: 'CP-0001')
 #   - categoria:    "slot"/subtipo do documento dentro do vínculo (ver CATEGORIA_CHOICES)
 
+# Tamanho máximo do nome do arquivo dentro do caminho salvo: 255 (max_length de
+# Documento.arquivo) menos o prefixo "documentos/<vinculo_tipo até 40>/<uuid 32>/" (~85).
+DOCUMENTO_NOME_MAXIMO_NO_CAMINHO = 150
+
+
 def documento_upload_path(instance, filename):
     # Pasta aleatória por arquivo: o nginx serve /media/ sem checar login, então o caminho
     # não pode ser adivinhável a partir do nome do arquivo (ex.: documentos/financeiro/nf.pdf).
+    import os
     import uuid
     tipo = (instance.vinculo_tipo or 'gerais').strip() or 'gerais'
+    # Nome longo é encurtado no caminho (mantendo a extensão) para caber em `arquivo`
+    # (max_length=255) — sem isso o Django recusava o upload com 400 Bad Request. O nome
+    # completo continua em `nome_original`, que é o exibido na tela.
+    raiz, extensao = os.path.splitext(filename)
+    if len(filename) > DOCUMENTO_NOME_MAXIMO_NO_CAMINHO:
+        filename = raiz[:DOCUMENTO_NOME_MAXIMO_NO_CAMINHO - len(extensao)].rstrip(' .') + extensao
     return f'documentos/{tipo}/{uuid.uuid4().hex}/{filename}'
 
 
@@ -985,7 +997,7 @@ class Documento(models.Model):
     ]
 
     id = models.BigAutoField(primary_key=True)
-    arquivo = models.FileField(upload_to=documento_upload_path)
+    arquivo = models.FileField(upload_to=documento_upload_path, max_length=255)
     nome_original = models.CharField(max_length=255, blank=True, default='')
     tipo = models.CharField(max_length=120, blank=True, default='')   # mime-type
     tamanho = models.BigIntegerField(default=0)                       # bytes
