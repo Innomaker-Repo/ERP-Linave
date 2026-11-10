@@ -3,6 +3,7 @@ import { CheckCircle2, Clock3, FilePlus, Paperclip, Pencil, Search, Users, Walle
 import { useErp } from '../../../../context/ErpContext';
 import { useFinNavigate, FIN_SECTIONS } from '../finNav';
 import { matchesSolicitante, money, num, br, type FaturadoParcela } from '../finData';
+import { formatNumeroOsDisplay } from '../../../../../services/ordensServico';
 
 // Documentos anexados na solicitação (NF, boleto, recibo...) precisam continuar acessíveis
 // daqui — este é o único lugar onde o colaborador comum (sem acesso a Aprovações/Contas a
@@ -304,7 +305,7 @@ export function MeusPagamentosView() {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-amber-200">
-                        {r.vinculoValor ? `OS: ${r.vinculoValor}` : 'Sem OS'}
+                        {r.vinculoValor ? `OS: ${formatNumeroOsDisplay(r.vinculoValor)}` : 'Sem OS'}
                       </span>
                       <span className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-widest ${statusTone(r.status || 'Aguardando aprovação')}`}>
                         {r.status || 'Aguardando aprovação'}
@@ -314,6 +315,7 @@ export function MeusPagamentosView() {
                     <p className="text-white/50 text-xs">
                       {isAdmin && <>Solicitante: <span className="text-white/85">{r.solicitante || '—'}</span> • </>}
                       Doc: {r.documento || '—'} • Criado em {br(String(r.createdAt || '').slice(0, 10))}
+                      {r.departamentoPagamento && <> • Departamento: {r.departamentoPagamento}</>}
                     </p>
                     {r.status === 'Reprovado' && (
                       <p className="mt-1 text-rose-300 text-xs">
@@ -364,7 +366,7 @@ export function MeusPagamentosView() {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-emerald-200">
-                        {r.vinculoValor ? `OS: ${r.vinculoValor}` : 'Sem OS'}
+                        {r.vinculoValor ? `OS: ${formatNumeroOsDisplay(r.vinculoValor)}` : 'Sem OS'}
                       </span>
                       <span className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-widest ${pagoTone(r.contaPagar?.status || 'Aberto')}`}>
                         {r.contaPagar?.status === 'Pago' ? 'Pago' : 'Aguardando pagamento'}
@@ -375,6 +377,7 @@ export function MeusPagamentosView() {
                       {isAdmin && <>Solicitante: <span className="text-white/85">{r.solicitante || '—'}</span> • </>}
                       Doc: {r.documento || '—'}
                       {r.contaPagar?.status === 'Pago' && r.contaPagar?.dataPagamento && ` • Pago em ${br(r.contaPagar.dataPagamento)}`}
+                      {(r.contaPagar?.departamentoPagamento || r.departamentoPagamento) && ` • Departamento: ${r.contaPagar?.departamentoPagamento || r.departamentoPagamento}`}
                     </p>
                     <p className="mt-1 text-emerald-300/80 text-xs">Aprovado por: <span className="font-semibold">{r.aprovadoPor || '—'}</span></p>
                     <AnexosDaSolicitacao anexos={r.anexos} />

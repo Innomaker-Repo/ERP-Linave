@@ -48,9 +48,15 @@ class Fornecedor(models.Model):
     documento = models.CharField(max_length=20, null=True, blank=True)  # CNPJ/CPF (não-único: dados legados podem repetir/vazio)
     contato = models.CharField(max_length=255, null=True, blank=True)
     endereco = models.TextField(null=True, blank=True)
+    cep = models.CharField(max_length=10, null=True, blank=True)
+    cidade = models.CharField(max_length=100, null=True, blank=True)
+    uf = models.CharField(max_length=2, null=True, blank=True)
+    banco = models.CharField(max_length=100, null=True, blank=True)
+    agencia = models.CharField(max_length=20, null=True, blank=True)
+    conta = models.CharField(max_length=30, null=True, blank=True)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='Ativo')
     tipo = models.CharField(max_length=20, choices=TIPO_CHOICES, default='Serviços')
-    descricao_estadual = models.CharField(max_length=100, null=True, blank=True)
+    descricao_estadual = models.CharField(max_length=100, null=True, blank=True)  # "Insc. Estadual" no frontend
     natureza_fornecimento = models.CharField(max_length=10, choices=NATUREZA_CHOICES, default='SERVICO')
     criado_por_nome = models.CharField(max_length=150, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -229,6 +235,12 @@ class User(AbstractUser):
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='usuario')
     # Permissões granulares por item do menu (usado apenas para role='usuario')
     permissoes = models.JSONField(default=dict, blank=True)
+
+    # Proteção contra força bruta no login (ver FlexTokenSerializer): conta senhas erradas
+    # seguidas; ao chegar no limite a conta fica bloqueada até um admin desbloquear
+    # (painel de Usuários, ou `manage.py desbloquear_usuario <cpf>`).
+    tentativas_login_falhas = models.PositiveSmallIntegerField(default=0)
+    login_bloqueado = models.BooleanField(default=False)
 
     workspace = models.ForeignKey(
         'Workspace',
@@ -504,7 +516,10 @@ class OrdemServico(models.Model):
     
     # Descrição
     descricao_geral_servico = models.TextField()
-    
+    # Texto livre, somado ao escopo (impresso logo abaixo dele na OS) para informações
+    # específicas desta OS que não constavam na proposta original.
+    escopo_adicional = models.TextField(blank=True, default='')
+
     # Itens a serem incluídos (JSONField com booleanos)
     a_ser_incluido = models.JSONField(default=dict, blank=True)  # ex: {certificado_gas: True, ventilacao: False, ...}
     
@@ -945,9 +960,24 @@ class ConfiguracaoApp(models.Model):
 #                   id de negócio do FinRecord, ex.: 'CP-0001')
 #   - categoria:    "slot"/subtipo do documento dentro do vínculo (ver CATEGORIA_CHOICES)
 
+# Tamanho máximo do nome do arquivo dentro do caminho salvo: 255 (max_length de
+# Documento.arquivo) menos o prefixo "documentos/<vinculo_tipo até 40>/<uuid 32>/" (~85).
+DOCUMENTO_NOME_MAXIMO_NO_CAMINHO = 150
+
+
 def documento_upload_path(instance, filename):
+    # Pasta aleatória por arquivo: o nginx serve /media/ sem checar login, então o caminho
+    # não pode ser adivinhável a partir do nome do arquivo (ex.: documentos/financeiro/nf.pdf).
+    import os
+    import uuid
     tipo = (instance.vinculo_tipo or 'gerais').strip() or 'gerais'
-    return f'documentos/{tipo}/{filename}'
+    # Nome longo é encurtado no caminho (mantendo a extensão) para caber em `arquivo`
+    # (max_length=255) — sem isso o Django recusava o upload com 400 Bad Request. O nome
+    # completo continua em `nome_original`, que é o exibido na tela.
+    raiz, extensao = os.path.splitext(filename)
+    if len(filename) > DOCUMENTO_NOME_MAXIMO_NO_CAMINHO:
+        filename = raiz[:DOCUMENTO_NOME_MAXIMO_NO_CAMINHO - len(extensao)].rstrip(' .') + extensao
+    return f'documentos/{tipo}/{uuid.uuid4().hex}/{filename}'
 
 
 class Documento(models.Model):
@@ -967,13 +997,16 @@ class Documento(models.Model):
     ]
 
     id = models.BigAutoField(primary_key=True)
-    arquivo = models.FileField(upload_to=documento_upload_path)
+    arquivo = models.FileField(upload_to=documento_upload_path, max_length=255)
     nome_original = models.CharField(max_length=255, blank=True, default='')
     tipo = models.CharField(max_length=120, blank=True, default='')   # mime-type
     tamanho = models.BigIntegerField(default=0)                       # bytes
     categoria = models.CharField(max_length=40, choices=CATEGORIA_CHOICES, default='outro')
     vinculo_tipo = models.CharField(max_length=40, blank=True, default='')
     vinculo_id = models.CharField(max_length=120, blank=True, default='')
+    # CPF de quem enviou — base do controle de acesso (DocumentoViewSet). Texto, não FK, para
+    # o documento sobreviver à exclusão do usuário. Vazio em documentos antigos (antes do campo).
+    enviado_por = models.CharField(max_length=14, blank=True, default='', db_index=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -986,6 +1019,24 @@ class Documento(models.Model):
         return f'{self.nome_original or self.arquivo.name} ({self.vinculo_tipo}:{self.vinculo_id})'
 #--------------------- Fim Documentos ------------------
 #--------------------- Fim Configurações ------------------
+
+#--------------------- Bloqueio de login por IP ------------------
+class LoginBloqueioIP(models.Model):
+    """Senhas erradas de UMA origem (IP) para UMA conta — ver auth_backends.py. Ao chegar no
+    limite, só essa origem fica bloqueada para essa conta: quem tenta adivinhar a senha de
+    outra pessoa não consegue, com isso, trancar o dono fora do sistema."""
+    usuario = models.ForeignKey('User', on_delete=models.CASCADE, related_name='bloqueios_ip')
+    ip = models.CharField(max_length=45)  # cabe IPv6
+    falhas = models.PositiveSmallIntegerField(default=0)
+    bloqueado = models.BooleanField(default=False)
+    atualizado_em = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [('usuario', 'ip')]
+
+    def __str__(self):
+        return f'{self.usuario_id} @ {self.ip} ({self.falhas} falha(s){", bloqueado" if self.bloqueado else ""})'
+
 
 #--------------------- Log de Atividades ------------------
 class LogAtividade(models.Model):

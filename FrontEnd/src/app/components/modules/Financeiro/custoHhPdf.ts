@@ -1,15 +1,17 @@
 /* =========================================================================================
  * FINANCEIRO — Documento de custo de mão de obra (H.H) por OS
  * Espelha o "LEVANTAMENTO DE CUSTOS COM MÃO DE OBRA": Item 1 = HN, Item 2 = HE 50% (×1,5),
- * Item 3 = HE 100% (×2), com subtotal de mão de obra. Apenas a parte de H.H (mão de obra).
+ * Item 3 = HE 100% (×2), Item 4 = HE 0,2 adicional noturno (×1,2), com subtotal de mão de
+ * obra. Apenas a parte de H.H (mão de obra) — materiais/terceirizados entram como item 5,
+ * só no documento "completo".
  * =======================================================================================*/
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
 interface CustoCargo {
   cargo: string;
-  hn: number; he05: number; he10: number;
-  rate: number; custoHN: number; custoHE05: number; custoHE10: number; total: number;
+  hn: number; he05: number; he10: number; he02: number;
+  rate: number; custoHN: number; custoHE05: number; custoHE10: number; custoHE02: number; total: number;
 }
 
 interface CustoHhDados {
@@ -103,9 +105,10 @@ export const handleDownloadCustoHhPDF = (dados: CustoHhDados) => {
   const s1 = desenharItem('1 — HORA NORMAL (HN)', 'HN', (c) => c.hn, (c) => c.custoHN);
   const s2 = desenharItem('2 — HORA EXTRA 50% (HE 0,5)', 'HE', (c) => c.he05, (c) => c.custoHE05);
   const s3 = desenharItem('3 — HORA EXTRA 100% (HE 1,0)', 'HE', (c) => c.he10, (c) => c.custoHE10);
+  const s4 = desenharItem('4 — ADICIONAL NOTURNO (HE 0,2)', 'HE', (c) => c.he02, (c) => c.custoHE02);
 
   // ===== Subtotal mão de obra =====
-  const subtotalMO = s1 + s2 + s3;
+  const subtotalMO = s1 + s2 + s3 + s4;
   autoTable(doc, {
     startY: y,
     theme: 'grid',
@@ -125,7 +128,7 @@ export const handleDownloadCustoHhPDF = (dados: CustoHhDados) => {
   if (dados.completo) {
     const subtotalOutros = outros.reduce((s, o) => s + (Number(o.valor) || 0), 0);
     totalGeral = subtotalMO + subtotalOutros;
-    const outrosBody: any[] = [[{ content: '4 — MATERIAIS, TERCEIRIZADOS E OUTROS CUSTOS', colSpan: 3, styles: { fontStyle: 'bold', fillColor: [225, 225, 225] } }]];
+    const outrosBody: any[] = [[{ content: '5 — MATERIAIS, TERCEIRIZADOS E OUTROS CUSTOS', colSpan: 3, styles: { fontStyle: 'bold', fillColor: [225, 225, 225] } }]];
     if (outros.length) outros.forEach((o) => outrosBody.push([o.tipo, o.descricao, brl(o.valor)]));
     else outrosBody.push([{ content: 'Sem outros custos vinculados a esta OS.', colSpan: 3, styles: { textColor: [120, 120, 120] } }]);
     outrosBody.push([{ content: 'Subtotal materiais/terceirizados/outros', colSpan: 2, styles: { fontStyle: 'bold', halign: 'right' } }, { content: brl(subtotalOutros), styles: { fontStyle: 'bold', halign: 'right' } }]);

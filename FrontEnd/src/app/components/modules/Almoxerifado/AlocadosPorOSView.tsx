@@ -4,7 +4,7 @@ import { useErp } from '../../../context/ErpContext';
 import { boldOS } from '../../../utils/osHighlight';
 import { Badge } from '../../../modules/shared/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../modules/shared/ui/select';
-import { getOrdensServico, getOsOptionLabel, getOsOptionValue, getOsStableValue, type OrdemServicoResumo, isOsAlvo } from '../../../../services/ordensServico';
+import { getOrdensServico, formatOsLabel, getOsOptionLabel, getOsOptionValue, getOsStableValue, type OrdemServicoResumo, isOsAlvo } from '../../../../services/ordensServico';
 
 interface AllocationRow {
   id: string;
@@ -54,7 +54,7 @@ interface AlocadosPorOSViewProps {
 }
 
 export function AlocadosPorOSView({ searchQuery }: AlocadosPorOSViewProps) {
-  const { almoxerifado, os } = useErp();
+  const { almoxerifado, os, obras } = useErp();
   const [backendOS, setBackendOS] = useState<OrdemServicoResumo[]>([]);
   const [selectedOs, setSelectedOs] = useState('');
   const [filtro, setFiltro] = useState(searchQuery || '');
@@ -91,7 +91,7 @@ export function AlocadosPorOSView({ searchQuery }: AlocadosPorOSViewProps) {
       merged.push({
         key: value,
         value,
-        label: getOsOptionLabel(entry as OrdemServicoResumo)
+        label: formatOsLabel(entry, obras) || getOsOptionLabel(entry as OrdemServicoResumo)
       });
     });
 

@@ -1,0 +1,21 @@
+# O `COPY . .` do dockerfile copia a pasta inteira para dentro da imagem. Ficam de fora:
+
+# Documentos enviados pelos usuários — em produção vêm do volume media_data, nunca da imagem.
+media/
+# Bancos locais de desenvolvimento.
+*.sqlite3
+# Gerado no container pelo `collectstatic` do docker-compose.
+staticfiles/
+# Segredos e ambientes locais.
+.env
+.env.*
+venv/
+.venv/
+# Lixo de execução/IDE.
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.vscode/
+.idea/
+.git/
+node_modules/

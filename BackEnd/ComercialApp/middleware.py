@@ -1,22 +1,17 @@
 """Middleware utilities for ComercialApp."""
+import logging
+
 from django.utils.deprecation import MiddlewareMixin
+
+logger = logging.getLogger(__name__)
 
 
 class APILoggingMiddleware(MiddlewareMixin):
-    """Simple middleware that logs incoming requests to the console.
+    """Registra método + caminho de cada requisição em nível DEBUG.
 
-    Kept minimal to avoid introducing side effects. Present to satisfy
-    the import referenced in `settings.py`.
+    Só `request.path`, nunca a query string: ela pode carregar dado sensível (antes o
+    token do WebSocket ia em `?token=`) e ia parar no stdout do container via print().
     """
 
     def process_request(self, request):
-        try:
-            method = request.method
-            path = request.get_full_path()
-            print(f"[APILoggingMiddleware] {method} {path}")
-        except Exception:
-            pass
-
-    # process_response not required, but included for clarity
-    def process_response(self, request, response):
-        return response
+        logger.debug('%s %s', request.method, request.path)

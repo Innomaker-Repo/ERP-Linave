@@ -981,6 +981,9 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
 
     try {
       const doc = new jsPDF('p', 'mm', 'a4');
+      // jsPDF não formata números — sem isso, todo valor saía em estilo US (ponto decimal,
+      // sem separador de milhar), em vez do padrão brasileiro (vírgula decimal, ponto de milhar).
+      const fmtBR = (value: number) => Number.isFinite(value) ? value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0,00';
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
       const lineHeight = 5;
@@ -1199,7 +1202,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
         doc.rect(x, y, laborColWidths[3], cellHeight);
         x += laborColWidths[3];
 
-        doc.text(String(item.custoUnitDia ? parseFloat(item.custoUnitDia).toFixed(2) : ''), x + 0.5, y + 2.5);
+        doc.text(String(item.custoUnitDia ? fmtBR(parseFloat(item.custoUnitDia)) : ''), x + 0.5, y + 2.5);
         doc.rect(x, y, laborColWidths[4], cellHeight);
         x += laborColWidths[4];
 
@@ -1208,7 +1211,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
 
         doc.setFont('helvetica', 'bold');
         doc.setTextColor(255, 0, 0);
-        doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
+        doc.text(String(item.valorTotal ? fmtBR(parseFloat(item.valorTotal)) : ''), x + 0.5, y + 2.5);
         doc.setTextColor(0, 0, 0);
         doc.setFont('helvetica', 'normal');
         doc.rect(x, y, laborColWidths[6], cellHeight);
@@ -1228,7 +1231,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       doc.rect(x, y, sumWidths(laborColWidths.slice(0, -1)), cellHeight);
       x += sumWidths(laborColWidths.slice(0, -1));
       doc.setTextColor(255, 0, 0);
-      doc.text(totalMaoDeObra.toFixed(2), x + 0.5, y + 2.5);
+      doc.text(fmtBR(totalMaoDeObra), x + 0.5, y + 2.5);
       doc.setTextColor(0, 0, 0);
       doc.rect(x, y, laborColWidths[6], cellHeight);
       y += cellHeight + 2;
@@ -1288,13 +1291,13 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
           doc.rect(x, y, materialsColWidths[4], cellHeight);
           x += materialsColWidths[4];
 
-          doc.text(String(item.custoUnit ? parseFloat(item.custoUnit).toFixed(2) : ''), x + 0.5, y + 2.5);
+          doc.text(String(item.custoUnit ? fmtBR(parseFloat(item.custoUnit)) : ''), x + 0.5, y + 2.5);
           doc.rect(x, y, materialsColWidths[5], cellHeight);
           x += materialsColWidths[5];
 
           doc.setFont('helvetica', 'bold');
           doc.setTextColor(255, 0, 0);
-          doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
+          doc.text(String(item.valorTotal ? fmtBR(parseFloat(item.valorTotal)) : ''), x + 0.5, y + 2.5);
           doc.setTextColor(0, 0, 0);
           doc.setFont('helvetica', 'normal');
           doc.rect(x, y, materialsColWidths[6], cellHeight);
@@ -1314,7 +1317,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
         doc.rect(x, y, sumWidths(materialsColWidths.slice(0, -1)), cellHeight);
         x += sumWidths(materialsColWidths.slice(0, -1));
         doc.setTextColor(255, 0, 0);
-        doc.text(totalMateriais.toFixed(2), x + 0.5, y + 2.5);
+        doc.text(fmtBR(totalMateriais), x + 0.5, y + 2.5);
         doc.setTextColor(0, 0, 0);
         doc.rect(x, y, materialsColWidths[6], cellHeight);
         y += cellHeight + 2;
@@ -1374,13 +1377,13 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
           doc.rect(x, y, materialsColWidths[4], cellHeight);
           x += materialsColWidths[4];
 
-          doc.text(String(item.custoUnit ? parseFloat(item.custoUnit).toFixed(2) : ''), x + 0.5, y + 2.5);
+          doc.text(String(item.custoUnit ? fmtBR(parseFloat(item.custoUnit)) : ''), x + 0.5, y + 2.5);
           doc.rect(x, y, materialsColWidths[5], cellHeight);
           x += materialsColWidths[5];
 
           doc.setFont('helvetica', 'bold');
           doc.setTextColor(255, 0, 0);
-          doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
+          doc.text(String(item.valorTotal ? fmtBR(parseFloat(item.valorTotal)) : ''), x + 0.5, y + 2.5);
           doc.setTextColor(0, 0, 0);
           doc.setFont('helvetica', 'normal');
           doc.rect(x, y, materialsColWidths[6], cellHeight);
@@ -1400,7 +1403,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
         doc.rect(x, y, sumWidths(materialsColWidths.slice(0, -1)), cellHeight);
         x += sumWidths(materialsColWidths.slice(0, -1));
         doc.setTextColor(255, 0, 0);
-        doc.text(totalTerceiros.toFixed(2), x + 0.5, y + 2.5);
+        doc.text(fmtBR(totalTerceiros), x + 0.5, y + 2.5);
         doc.setTextColor(0, 0, 0);
         doc.rect(x, y, materialsColWidths[6], cellHeight);
         y += cellHeight + 2;
@@ -1456,17 +1459,17 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
           doc.rect(x, y, materialsColWidths[3], cellHeight);
           x += materialsColWidths[3];
 
-          doc.text(String(item.valorIndenizacao ? parseFloat(item.valorIndenizacao).toFixed(2) : ''), x + 0.5, y + 2.5);
+          doc.text(String(item.valorIndenizacao ? fmtBR(parseFloat(item.valorIndenizacao)) : ''), x + 0.5, y + 2.5);
           doc.rect(x, y, materialsColWidths[4], cellHeight);
           x += materialsColWidths[4];
 
-          doc.text(String(item.valorLocacao ? parseFloat(item.valorLocacao).toFixed(2) : ''), x + 0.5, y + 2.5);
+          doc.text(String(item.valorLocacao ? fmtBR(parseFloat(item.valorLocacao)) : ''), x + 0.5, y + 2.5);
           doc.rect(x, y, materialsColWidths[5], cellHeight);
           x += materialsColWidths[5];
 
           doc.setFont('helvetica', 'bold');
           doc.setTextColor(255, 0, 0);
-          doc.text(String(item.valorTotal ? parseFloat(item.valorTotal).toFixed(2) : ''), x + 0.5, y + 2.5);
+          doc.text(String(item.valorTotal ? fmtBR(parseFloat(item.valorTotal)) : ''), x + 0.5, y + 2.5);
           doc.setTextColor(0, 0, 0);
           doc.setFont('helvetica', 'normal');
           doc.rect(x, y, materialsColWidths[6], cellHeight);
@@ -1486,7 +1489,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
         doc.rect(x, y, sumWidths(materialsColWidths.slice(0, -1)), cellHeight);
         x += sumWidths(materialsColWidths.slice(0, -1));
         doc.setTextColor(255, 0, 0);
-        doc.text(subtotalLocacaoBruto.toFixed(2), x + 0.5, y + 2.5);
+        doc.text(fmtBR(subtotalLocacaoBruto), x + 0.5, y + 2.5);
         doc.setTextColor(0, 0, 0);
         doc.rect(x, y, materialsColWidths[6], cellHeight);
         y += cellHeight + 2;
@@ -1507,15 +1510,15 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
 
       // Dados de cálculo
       const calculos = [
-        ['1', 'Valor mão de obra', totalMaoDeObra.toFixed(2)],
-        ['2', 'Valor consumível e material', totalMateriais.toFixed(2)],
-        ['3', 'Valor terceirizados', totalTerceiros.toFixed(2)],
-        ['4', 'Total', base.toFixed(2)],
-        ['5', `O.H (${ohPercent}%)`, valorOH.toFixed(2)],
-        ['6', `Margem (${margemPercent}%)`, valorMargem.toFixed(2)],
-        ['7', 'PV S/ imposto', semImposto.toFixed(2)],
-        ['8', `Imposto S/ NF (${impostosPercent}%)`, valorImposto.toFixed(2)],
-        ['9', 'PV FINAL R$', precoFinal.toFixed(2)]
+        ['1', 'Valor mão de obra', fmtBR(totalMaoDeObra)],
+        ['2', 'Valor consumível e material', fmtBR(totalMateriais)],
+        ['3', 'Valor terceirizados', fmtBR(totalTerceiros)],
+        ['4', 'Total', fmtBR(base)],
+        ['5', `O.H (${ohPercent}%)`, fmtBR(valorOH)],
+        ['6', `Margem (${margemPercent}%)`, fmtBR(valorMargem)],
+        ['7', 'PV S/ imposto', fmtBR(semImposto)],
+        ['8', `Imposto S/ NF (${impostosPercent}%)`, fmtBR(valorImposto)],
+        ['9', 'PV FINAL R$', fmtBR(precoFinal)]
       ];
 
       calculos.forEach((row, idx) => {
@@ -1578,7 +1581,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       doc.rect(x, y, baseColWidth * 5, cellHeight);
       x += baseColWidth * 5;
       doc.setFont('helvetica', 'bold');
-      doc.text(`R$ ${precoPorItem.toFixed(2)}`, x + 0.5, y + 2.5);
+      doc.text(`R$ ${fmtBR(precoPorItem)}`, x + 0.5, y + 2.5);
       doc.rect(x, y, baseColWidth * 5, cellHeight);
       y += cellHeight;
 
@@ -1590,7 +1593,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       doc.rect(x, y, baseColWidth * 5, cellHeight);
       x += baseColWidth * 5;
       doc.setFont('helvetica', 'bold');
-      doc.text(`R$ ${precoFinal.toFixed(2)}`, x + 0.5, y + 2.5);
+      doc.text(`R$ ${fmtBR(precoFinal)}`, x + 0.5, y + 2.5);
       doc.rect(x, y, baseColWidth * 5, cellHeight);
       y += cellHeight;
       }
@@ -1609,9 +1612,9 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
         doc.rect(x, y, baseColWidth * 5, cellHeight);
         y += cellHeight;
       };
-      drawResumoRow('Subtotal Locação (s/ imposto):', `R$ ${subtotalLocacaoBruto.toFixed(2)}`);
-      drawResumoRow(`Impostos Locação (${impostosLocacaoPct}%):`, `R$ ${valorImpostosLocacao.toFixed(2)}`);
-      drawResumoRow('Subtotal Locação (c/ imposto):', `R$ ${subtotalLocacao.toFixed(2)}`);
+      drawResumoRow('Subtotal Locação (s/ imposto):', `R$ ${fmtBR(subtotalLocacaoBruto)}`);
+      drawResumoRow(`Impostos Locação (${impostosLocacaoPct}%):`, `R$ ${fmtBR(valorImpostosLocacao)}`);
+      drawResumoRow('Subtotal Locação (c/ imposto):', `R$ ${fmtBR(subtotalLocacao)}`);
       }
 
       ensureSpace(cellHeight);
@@ -1623,7 +1626,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       x += baseColWidth * 5;
       doc.setFont('helvetica', 'bold');
       doc.setTextColor(255, 0, 0);
-      doc.text(`R$ ${totalGeral.toFixed(2)}`, x + 0.5, y + 2.5);
+      doc.text(`R$ ${fmtBR(totalGeral)}`, x + 0.5, y + 2.5);
       doc.setTextColor(0, 0, 0);
       doc.rect(x, y, baseColWidth * 5, cellHeight);
 
@@ -1986,7 +1989,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                 <td className="px-3 py-2"><input type="text" className={tableInputClass} value={item.unidade} onChange={e => updateAtividadeMacro(item.id, { unidade: e.target.value })} placeholder="un" /></td>
                 <td className="px-3 py-2"><input type="number" min="0" className={tableInputClass} value={item.valorUnitario} onChange={e => updateAtividadeMacro(item.id, { valorUnitario: e.target.value })} placeholder="0,00" /></td>
                 <td className="px-3 py-2"><input type="number" min="0" className={tableInputClass} value={item.dias} onChange={e => updateAtividadeMacro(item.id, { dias: e.target.value })} /></td>
-                <td className="px-3 py-2 text-white font-bold whitespace-nowrap">R$ {macroRowTotal(item).toFixed(2)}</td>
+                <td className="px-3 py-2 text-white font-bold whitespace-nowrap">{formatMoney(macroRowTotal(item))}</td>
                 <td className="px-3 py-2 text-center">
                   <button onClick={() => removeAtividadeMacro(item.id)} className="p-1 hover:bg-red-500/20 rounded transition text-red-400 hover:text-red-300"><Trash2 size={14} /></button>
                 </td>
@@ -1998,7 +2001,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
       <div className="mt-4 pt-4 border-t border-white/10 flex justify-end">
         <div className="bg-[#0b1220] border border-emerald-500/30 rounded-lg px-4 py-2.5">
           <p className="text-white/60 text-[10px] font-black uppercase tracking-widest">Subtotal {titulo}</p>
-          <p className="text-emerald-400 font-black text-lg text-right">R$ {subtotal.toFixed(2)}</p>
+          <p className="text-emerald-400 font-black text-lg text-right">{formatMoney(subtotal)}</p>
         </div>
       </div>
     </div>
@@ -2295,7 +2298,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                           </div>
                           <div className="flex justify-between">
                             <span className="text-white/50">Preço Final:</span>
-                            <span className="text-white font-bold">R$ {precoFinalHistorico.toFixed(2)}</span>
+                            <span className="text-white font-bold">{formatMoney(precoFinalHistorico)}</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-white/50">Criado em:</span>
@@ -2336,7 +2339,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
                                     </div>
                                     <div className="flex items-center gap-2">
                                       <span className={`font-bold ${isAtivo ? 'text-white' : 'text-white/40'}`}>
-                                        R$ {preco.toFixed(2)}
+                                        {formatMoney(preco)}
                                       </span>
                                       <button
                                         onClick={() => handleDownloadOrcamentoPDF(orc, obra)}
@@ -2649,7 +2652,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
             <div className="mt-4 pt-4 border-t border-white/10 flex justify-end">
               <div className="bg-[#0b1220] border border-white/10 rounded-lg px-4 py-2.5">
                 <p className="text-white/60 text-[10px] font-black uppercase tracking-widest">Subtotal Mão de Obra</p>
-                <p className="text-amber-400 font-black text-lg text-right">R$ {totalMaoDeObra.toFixed(2)}</p>
+                <p className="text-amber-400 font-black text-lg text-right">{formatMoney(totalMaoDeObra)}</p>
               </div>
             </div>
           </div>
@@ -2716,7 +2719,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
             <div className="mt-4 pt-4 border-t border-white/10 flex justify-end">
               <div className="bg-[#0b1220] border border-white/10 rounded-lg px-4 py-2.5">
                 <p className="text-white/60 text-[10px] font-black uppercase tracking-widest">Subtotal Consumíveis + Materiais</p>
-                <p className="text-amber-400 font-black text-lg text-right">R$ {totalMateriais.toFixed(2)}</p>
+                <p className="text-amber-400 font-black text-lg text-right">{formatMoney(totalMateriais)}</p>
               </div>
             </div>
           </div>
@@ -2776,7 +2779,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
             <div className="mt-4 pt-4 border-t border-white/10 flex justify-end">
               <div className="bg-[#0b1220] border border-white/10 rounded-lg px-4 py-2.5">
                 <p className="text-white/60 text-[10px] font-black uppercase tracking-widest">Subtotal Serviços Terceirizados</p>
-                <p className="text-amber-400 font-black text-lg text-right">R$ {totalTerceirizados.toFixed(2)}</p>
+                <p className="text-amber-400 font-black text-lg text-right">{formatMoney(totalTerceirizados)}</p>
               </div>
             </div>
           </div>
@@ -2883,35 +2886,35 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
             <div className="grid grid-cols-3 gap-4 mb-6">
               <div className="bg-[#101f3d] rounded-lg p-4 border border-white/5">
                 <p className="text-white/50 text-xs font-bold mb-2">TOTAL MÃO DE OBRA</p>
-                <p className="text-white font-black text-lg">R$ {totalMaoDeObra.toFixed(2)}</p>
+                <p className="text-white font-black text-lg">{formatMoney(totalMaoDeObra)}</p>
               </div>
               <div className="bg-[#101f3d] rounded-lg p-4 border border-white/5">
                 <p className="text-white/50 text-xs font-bold mb-2">TOTAL CONSUMÍVEIS + MATERIAIS</p>
-                <p className="text-white font-black text-lg">R$ {totalMateriais.toFixed(2)}</p>
+                <p className="text-white font-black text-lg">{formatMoney(totalMateriais)}</p>
               </div>
               <div className="bg-[#101f3d] rounded-lg p-4 border border-white/5">
                 <p className="text-white/50 text-xs font-bold mb-2">TOTAL TERCEIRIZADOS</p>
-                <p className="text-white font-black text-lg">R$ {totalTerceirizados.toFixed(2)}</p>
+                <p className="text-white font-black text-lg">{formatMoney(totalTerceirizados)}</p>
               </div>
             </div>
 
             <div className="grid grid-cols-4 gap-4">
               <div className="bg-[#101f3d] rounded-lg p-4 border border-white/5">
                 <p className="text-white/50 text-xs font-bold mb-2">TOTAL BRUTO</p>
-                <p className="text-white font-black text-lg">R$ {totalBruto.toFixed(2)}</p>
+                <p className="text-white font-black text-lg">{formatMoney(totalBruto)}</p>
               </div>
               <div className="bg-[#101f3d] rounded-lg p-4 border border-white/5">
                 <p className="text-white/50 text-xs font-bold mb-2">TOTAL S/ IMPOSTO</p>
-                <p className="text-white font-black text-lg">R$ {totalSemImposto.toFixed(2)}</p>
-                <p className="text-white/40 text-[10px] mt-1">Margem: R$ {margemValor.toFixed(2)} + O.H: R$ {ohValor.toFixed(2)}</p>
+                <p className="text-white font-black text-lg">{formatMoney(totalSemImposto)}</p>
+                <p className="text-white/40 text-[10px] mt-1">Margem: {formatMoney(margemValor)} + O.H: {formatMoney(ohValor)}</p>
               </div>
               <div className="bg-[#101f3d] rounded-lg p-4 border border-white/5">
                 <p className="text-white/50 text-xs font-bold mb-2">IMPOSTO ({impostosPercentual}%)</p>
-                <p className="text-white font-black text-lg">R$ {impostoValor.toFixed(2)}</p>
+                <p className="text-white font-black text-lg">{formatMoney(impostoValor)}</p>
               </div>
               <div className="bg-[#101f3d] rounded-lg p-4 border border-amber-500/30 shadow-lg shadow-amber-500/10">
                 <p className="text-amber-400 text-xs font-black mb-2 uppercase">Preço de Venda (Total PV)</p>
-                <p className="text-amber-400 font-black text-2xl">R$ {precoFinal.toFixed(2)}</p>
+                <p className="text-amber-400 font-black text-2xl">{formatMoney(precoFinal)}</p>
               </div>
             </div>
 
@@ -2938,7 +2941,7 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
               <div className="bg-[#101f3d] rounded-lg p-4 border border-white/5 space-y-2.5">
                 <p className={labelClass}>Valor por unidade</p>
                 <div className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-4 py-3 text-white font-black text-lg">
-                  R$ {(Number(orcamentoData.quantidadeItensProduzidos) > 0 ? precoFinal / Number(orcamentoData.quantidadeItensProduzidos) : 0).toFixed(2)}
+                  {formatMoney(Number(orcamentoData.quantidadeItensProduzidos) > 0 ? precoFinal / Number(orcamentoData.quantidadeItensProduzidos) : 0)}
                 </div>
               </div>
             </div>
@@ -3017,15 +3020,15 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
               <div className="flex flex-wrap gap-3">
                 <div className="bg-[#0b1220] border border-white/10 rounded-lg px-4 py-2.5">
                   <p className="text-white/60 text-[10px] font-black uppercase tracking-widest">Subtotal (s/ imposto)</p>
-                  <p className="text-white font-black text-base text-right">R$ {subtotalLocacaoBruto.toFixed(2)}</p>
+                  <p className="text-white font-black text-base text-right">{formatMoney(subtotalLocacaoBruto)}</p>
                 </div>
                 <div className="bg-[#0b1220] border border-white/10 rounded-lg px-4 py-2.5">
                   <p className="text-white/60 text-[10px] font-black uppercase tracking-widest">Impostos Locação ({impostosLocacaoPercentual}%)</p>
-                  <p className="text-white font-black text-base text-right">R$ {valorImpostosLocacao.toFixed(2)}</p>
+                  <p className="text-white font-black text-base text-right">{formatMoney(valorImpostosLocacao)}</p>
                 </div>
                 <div className="bg-[#0b1220] border border-cyan-500/30 rounded-lg px-4 py-2.5">
                   <p className="text-cyan-300/80 text-[10px] font-black uppercase tracking-widest">Subtotal Locação (c/ imposto)</p>
-                  <p className="text-cyan-300 font-black text-lg text-right">R$ {subtotalLocacao.toFixed(2)}</p>
+                  <p className="text-cyan-300 font-black text-lg text-right">{formatMoney(subtotalLocacao)}</p>
                 </div>
               </div>
             </div>
@@ -3041,18 +3044,18 @@ export function OrcamentosView({ searchQuery }: OrcamentosViewProps) {
               {orcTemServico && (
                 <div className="bg-[#101f3d] rounded-lg p-4 border border-amber-500/30">
                   <p className="text-white/50 text-xs font-bold mb-2">SUBTOTAL SERVIÇO (c/ imposto)</p>
-                  <p className="text-amber-400 font-black text-lg">R$ {precoFinal.toFixed(2)}</p>
+                  <p className="text-amber-400 font-black text-lg">{formatMoney(precoFinal)}</p>
                 </div>
               )}
               {orcTemLocacao && (
                 <div className="bg-[#101f3d] rounded-lg p-4 border border-cyan-500/30">
                   <p className="text-white/50 text-xs font-bold mb-2">SUBTOTAL LOCAÇÃO (c/ imposto)</p>
-                  <p className="text-cyan-300 font-black text-lg">R$ {subtotalLocacao.toFixed(2)}</p>
+                  <p className="text-cyan-300 font-black text-lg">{formatMoney(subtotalLocacao)}</p>
                 </div>
               )}
               <div className="bg-[#101f3d] rounded-lg p-4 border border-emerald-500/30 shadow-lg shadow-emerald-500/10">
                 <p className="text-emerald-400 text-xs font-black mb-2 uppercase">Preço de Venda (PV){(orcTemServico && orcTemLocacao) ? ' — Serviço + Locação' : ''}</p>
-                <p className="text-emerald-400 font-black text-2xl">R$ {totalGeral.toFixed(2)}</p>
+                <p className="text-emerald-400 font-black text-2xl">{formatMoney(totalGeral)}</p>
               </div>
             </div>
           </div>

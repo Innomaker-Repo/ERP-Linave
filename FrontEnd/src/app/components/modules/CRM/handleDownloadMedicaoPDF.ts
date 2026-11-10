@@ -118,7 +118,7 @@ export const handleDownloadMedicaoPDF = async (
     const numeroNegocio = obra?.id ? extrairIdProjetoDoNumero(String(obra.id)) || String(obra.id) : '';
     
     const nomeHeader = isLinave ? 'BM- LINAVE Serviços Navais & Offshore' : 'BM- SERVINAVE';
-    const razaoSocialPrestadora = isLinave ? 'W.L.M LINAVE Serviços Navais e Offshore' : 'SERVINAVE';
+    const razaoSocialPrestadora = isLinave ? 'LINAVE Serviços Navais e Offshore' : 'SERVINAVE';
     // CNPJ da PRESTADORA (Linave/Servinave). Linave é fixo; para as demais usamos o CNPJ
     // cadastrado da empresa prestadora (empresaCnpj/cnpjPrestadora). NUNCA o CNPJ do cliente.
     const cnpjPrestadora = isLinave

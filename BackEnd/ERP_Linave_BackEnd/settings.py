@@ -35,6 +35,12 @@ INSTALLED_APPS = [
     "corsheaders",
     "ComercialApp",
     'rest_framework_simplejwt',
+    # Precisa vir antes de qualquer app que o `runserver` padrão sobrescreveria — com
+    # 'channels' instalado, o `manage.py runserver` passa a servir HTTP + WebSocket
+    # juntos (via Daphne por baixo) automaticamente, sem precisar rodar outro processo
+    # em dev. Em produção quem serve `routing.py` é o daphne mesmo, num processo à parte
+    # do gunicorn/WSGI (ver docker-compose.yml).
+    'channels',
 ]
 
 REST_FRAMEWORK = {
@@ -44,7 +50,17 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
+    # Atrás do Traefik o REMOTE_ADDR é o do proxy; com 1 proxy confiável o DRF usa o IP real
+    # do cliente (último do X-Forwarded-For) pra limitar tentativas de login por IP.
+    'NUM_PROXIES': int(os.environ.get('DJANGO_NUM_PROXIES', '1')),
 }
+
+# Tentativas de login por IP (LoginRateThrottle em ComercialApp/views.py). Escritórios saem
+# todos pelo mesmo IP, por isso não é baixo demais.
+LOGIN_THROTTLE_RATE = os.environ.get('LOGIN_THROTTLE_RATE', '20/min')
+
+# Nos testes o limite acima é afrouxado (ver ComercialApp/test_runner.py).
+TEST_RUNNER = 'ComercialApp.test_runner.ComercialTestRunner'
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(hours=8),
@@ -82,7 +98,12 @@ SECURE_BROWSER_XSS_FILTER = True
 
 # Confia nos cabeçalhos de HTTPS que o Traefik vai enviar (Crucial para quando colocar SSL)
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-#SECURE_SSL_REDIRECT = True  # Redireciona tudo de HTTP para HTTPS
+# SECURE_SSL_REDIRECT fica DESLIGADO de propósito: o Traefik já redireciona HTTP -> HTTPS na
+# borda, e o nginx do frontend fala com o Django por HTTP interno (auth_request de /media/) —
+# um redirect ali viraria erro 500 no download de todo anexo.
+
+# HSTS (o Traefik também envia; aqui cobre acesso direto ao Django). Só em produção.
+SECURE_HSTS_SECONDS = 0 if DEBUG else int(os.environ.get('DJANGO_HSTS_SECONDS', '31536000'))
 
 # Em produção (HTTPS via Traefik) o cookie só pode trafegar por HTTPS. Em
 # localhost (DEBUG=True, sem certificado) isso impediria o navegador de
@@ -97,6 +118,9 @@ CORS_ALLOWED_ORIGINS = [origin.strip() for origin in DJANGO_CORS.split(',')]
 
 ROOT_URLCONF = 'ERP_Linave_BackEnd.urls'
 AUTH_USER_MODEL = 'ComercialApp.User'
+# Recusa conta bloqueada por excesso de senhas erradas — vale pra API (/token/) e pro admin
+# do Django. Ver ComercialApp/auth_backends.py.
+AUTHENTICATION_BACKENDS = ['ComercialApp.auth_backends.BloqueioLoginBackend']
 
 TEMPLATES = [
     {
@@ -116,6 +140,35 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'ERP_Linave_BackEnd.wsgi.application'
+ASGI_APPLICATION = 'ERP_Linave_BackEnd.routing.application'
+
+# Tempo real (WebSocket) — ver docs/backlog/tempo-real-websockets.md.
+# Sem REDIS_URL (dev local, um processo só) usa o channel layer em memória: funciona
+# porque só existe um processo pra entrar/sair do grupo. Em produção o gunicorn roda 3
+# workers + o daphne roda num processo à parte — memória não seria compartilhada entre
+# eles, por isso Redis é obrigatório lá (REDIS_URL vem do docker-compose).
+REDIS_URL = os.environ.get('REDIS_URL')
+CHANNEL_LAYERS = {
+    'default': (
+        {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {'hosts': [REDIS_URL]},
+        }
+        if REDIS_URL else
+        {'BACKEND': 'channels.layers.InMemoryChannelLayer'}
+    )
+}
+
+# Cache: contagem do limite de login por IP e dos logins inexistentes. Precisa ser
+# compartilhado entre os 3 workers do gunicorn, então usa o mesmo Redis do tempo real em
+# produção; sem REDIS_URL (dev, um processo) a memória local basta.
+CACHES = {
+    'default': (
+        {'BACKEND': 'django.core.cache.backends.redis.RedisCache', 'LOCATION': REDIS_URL}
+        if REDIS_URL else
+        {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}
+    )
+}
 
 # Usa BigAutoField por padrão em todos os models (elimina os warnings W042).
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'

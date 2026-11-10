@@ -21,8 +21,9 @@ from django.views.generic import TemplateView
 from django.views.static import serve as serve_static
 from django.conf import settings
 from django.conf.urls.static import static
-from rest_framework_simplejwt.views import TokenVerifyView, TokenRefreshView
-from ComercialApp.views import FlexTokenView
+from rest_framework_simplejwt.views import TokenVerifyView
+from ComercialApp.views import FlexTokenView, MediaCookieTokenRefreshView
+from ComercialApp.media_auth import servir_media
 
 
 urlpatterns = [
@@ -30,16 +31,18 @@ urlpatterns = [
     path('', TemplateView.as_view(template_name='index.html'), name='home'),
     path('comercial/', include('ComercialApp.urls')),
     path('token/', FlexTokenView.as_view(), name='token_obtain_pair'),
-    path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('token/refresh/', MediaCookieTokenRefreshView.as_view(), name='token_refresh'),
     path('token/verify/', TokenVerifyView.as_view()),
 
 ]
 
-# Serve os documentos enviados (MEDIA) em desenvolvimento. Em produção isso é feito
-# pelo servidor web (nginx/whitenoise). O frontend acessa via /media/... (mesmo origem,
-# proxiado pelo Vite / túnel ngrok).
+# Serve os documentos enviados (MEDIA) em desenvolvimento — com a mesma checagem de login e
+# de permissão que o nginx faz em produção via auth_request (ver ComercialApp/media_auth.py).
+# O frontend acessa via /media/... (mesma origem, proxiado pelo Vite / túnel ngrok).
 if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    urlpatterns += [
+        re_path(r'^' + settings.MEDIA_URL.lstrip('/') + r'(?P<path>.+)$', servir_media),
+    ]
 
     # Serve o build do Vite (FrontEnd/dist/assets) quando o Django é acessado direto
     # (porta 8000), sem passar pelo proxy do Vite dev server. A rota '' acima já

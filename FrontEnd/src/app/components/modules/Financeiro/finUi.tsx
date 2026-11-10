@@ -2,8 +2,8 @@
  * FINANCEIRO — Primitivos de UI (tema escuro do ERP)
  * Tags, cartões, métricas, campos de formulário e tabela reutilizados pelas views.
  * =======================================================================================*/
-import React, { useEffect, useState } from 'react';
-import { Info, Trash2, Paperclip } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Info, Trash2, Paperclip, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../ui/feedback';
 import { ScrollXTop } from '../../ui/scrollXTop';
@@ -85,11 +85,36 @@ export const StatusTag = ({ status }: { status: string }) => (
 // "Servinave" — por isso identifica por conteúdo (case-insensitive) e sempre mostra a forma
 // curta na etiqueta, em vez do nome cru, que ficava comprido e sem cor (caía no tom neutro).
 export const CompanyTag = ({ empresa }: { empresa: string }) => {
-  const nome = String(empresa || '').toLowerCase();
-  if (nome.includes('linave')) return <Pill tone="linave">Linave</Pill>;
-  if (nome.includes('servinave')) return <Pill tone="servinave">Servinave</Pill>;
+  const chave = chaveEmpresa(empresa);
+  if (chave === 'linave') return <Pill tone="linave">Linave</Pill>;
+  if (chave === 'servinave') return <Pill tone="servinave">Servinave</Pill>;
   return <Pill tone="neutral">{empresa}</Pill>;
 };
+
+// Qual empresa um nome indica, pela mesma regra da CompanyTag: registros antigos guardam
+// "Servinave" e o cadastro tem "Servinave Serviços Marítimos" — são a mesma empresa.
+export const chaveEmpresa = (nome?: string | null): string => {
+  const n = String(nome || '').trim().toLowerCase();
+  if (n.includes('servinave')) return 'servinave';
+  if (n.includes('linave')) return 'linave';
+  return n;
+};
+
+export const mesmaEmpresa = (a?: string | null, b?: string | null) => chaveEmpresa(a) === chaveEmpresa(b);
+
+// Valor para o <select> de empresa de um registro existente: o nome cadastrado que
+// corresponde ao gravado. Sem isto, um nome que não batia exatamente com uma opção fazia o
+// select exibir a PRIMEIRA empresa da lista (a lista mostrava Linave e o formulário, Servinave).
+export const empresaDaLista = (valor: string | null | undefined, empresas: string[]): string => {
+  if (!valor) return empresas[0] || 'Linave';
+  if (empresas.includes(valor)) return valor;
+  return empresas.find((emp) => mesmaEmpresa(emp, valor)) || valor;
+};
+
+// Opções do <select> de empresa: as cadastradas e, se o valor atual não for nenhuma delas
+// (empresa desativada/renomeada sem correspondente), ele também — para não exibir outra.
+export const opcoesEmpresa = (empresas: string[], atual?: string): string[] =>
+  atual && !empresas.includes(atual) ? [...empresas, atual] : empresas;
 
 export const TypeTag = ({ type }: { type: string }) => (
   <Pill tone={type === 'parent' ? 'mother' : type === 'child' ? 'child' : 'neutral'}>
@@ -266,6 +291,71 @@ export function Select({ children, ...rest }: React.SelectHTMLAttributes<HTMLSel
   );
 }
 
+// Ignora acento/caixa na busca — "ferr" bate em "Ferragens" e em "Ferragens" acentuada do
+// mesmo jeito, sem o usuário precisar digitar igual ao cadastro.
+const normalizeBusca = (v: string): string =>
+  String(v || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+
+// Campo de texto com busca: digita livre (não trava em nenhuma opção, então aceita um
+// fornecedor que ainda não está cadastrado) e, por baixo, filtra `options` conforme o texto
+// pra sugerir os já cadastrados — clicar numa sugestão preenche o campo com ela. Dropdown
+// próprio (em vez de <datalist> nativo) porque o datalist do navegador não combina com o
+// tema escuro do app e o comportamento varia entre navegadores.
+export function AutocompleteInput({
+  value, onChange, options, placeholder, maxSugestoes = 20, inputClassName = '',
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: string[];
+  placeholder?: string;
+  maxSugestoes?: number;
+  inputClassName?: string;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const aoClicarFora = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setAberto(false);
+    };
+    document.addEventListener('mousedown', aoClicarFora);
+    return () => document.removeEventListener('mousedown', aoClicarFora);
+  }, []);
+
+  const termo = normalizeBusca(value);
+  const opcoesUnicas = Array.from(new Set(options.filter(Boolean)));
+  const sugestoes = (termo ? opcoesUnicas.filter((o) => normalizeBusca(o).includes(termo)) : opcoesUnicas)
+    .slice(0, maxSugestoes);
+
+  return (
+    <div ref={containerRef} className="relative">
+      <input
+        value={value}
+        onChange={(e) => { onChange(e.target.value); setAberto(true); }}
+        onFocus={() => setAberto(true)}
+        onKeyDown={(e) => { if (e.key === 'Escape') setAberto(false); }}
+        placeholder={placeholder}
+        autoComplete="off"
+        className={`${inputCls} ${inputClassName}`}
+      />
+      {aberto && sugestoes.length > 0 && (
+        <div className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-xl border border-white/10 bg-[#101f3d] shadow-xl shadow-black/40">
+          {sugestoes.map((o, i) => (
+            <button
+              key={`${o}-${i}`}
+              type="button"
+              onMouseDown={(e) => { e.preventDefault(); onChange(o); setAberto(false); }}
+              className="block w-full truncate px-3.5 py-2 text-left text-sm text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+            >
+              {o}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Input de arquivo que mantém os arquivos brutos (File[]) selecionados. O upload de
 // verdade (para a tabela Documento) é feito por quem usa, no submit, quando já se tem
 // o id do registro para vincular. Aqui só capturamos os arquivos e exibimos os nomes.
@@ -288,9 +378,38 @@ export function FileInput({
       </label>
       {value.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-2">
-          {value.map((f, i) => (
-            <span key={i} className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-bold text-white/70">📄 {f.name}</span>
-          ))}
+          {value.map((f, i) => {
+            // Arquivo ainda não foi enviado (só vira Documento no submit de quem usa este
+            // componente, ver comentário acima) — createObjectURL deixa visualizar o
+            // próprio arquivo local antes de enviar, sem precisar de nenhuma URL de servidor.
+            const url = URL.createObjectURL(f);
+            return (
+              <span key={i} className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 py-1 pl-3 pr-1.5 text-xs font-bold text-white/70">
+                <a
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => setTimeout(() => URL.revokeObjectURL(url), 60000)}
+                  className="hover:text-amber-300 hover:underline"
+                  title="Abrir em nova aba"
+                >
+                  📄 {f.name}
+                </a>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    URL.revokeObjectURL(url);
+                    onChange(value.filter((_, idx) => idx !== i));
+                  }}
+                  className="rounded-full p-0.5 text-white/40 transition-colors hover:bg-red-500/20 hover:text-red-300"
+                  title="Remover anexo"
+                >
+                  <X size={12} />
+                </button>
+              </span>
+            );
+          })}
         </div>
       )}
     </div>

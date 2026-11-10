@@ -135,6 +135,7 @@ export const mapOrdemToOs = (o: any) => {
     dataTerminoPrevisto: o?.data_termino_previsto ?? '',
     supervisorEncarregado: o?.supervisor_encarregado ?? '',
     descricaoGeralServico: o?.descricao_geral_servico ?? '',
+    escopoAdicional: o?.escopo_adicional ?? '',
     aSerIncluido: (o?.a_ser_incluido && typeof o.a_ser_incluido === 'object') ? o.a_ser_incluido : {},
     maoObra: (o?.mao_obra && typeof o.mao_obra === 'object') ? o.mao_obra : {},
     horasTrabalhadasPorServico: Array.isArray(o?.horas_trabalhadas_servico) ? o.horas_trabalhadas_servico : [],

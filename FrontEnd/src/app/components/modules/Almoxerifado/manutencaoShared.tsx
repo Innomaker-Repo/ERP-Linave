@@ -52,15 +52,19 @@ const normalizeKeyLocal = (value: string): string =>
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '');
 
-// Mesmas 7 tabelas que a categoria "Equipamentos" agrupa em EstoqueView.tsx — mantido aqui como
+// Mesmas 11 tabelas que a categoria "Equipamentos" agrupa em EstoqueView.tsx — mantido aqui como
 // fonte única pra não duplicar a lista e desalinhar. NÃO é a lista de elegibilidade pra
 // manutenção (ver MANUTENCAO_TABLE_NAMES abaixo) — é só o agrupamento de categoria/tipo.
-export const EQUIPAMENTOS_TABLE_NAMES = ['EQUIPAMENTOS ELETRICOS', 'EXTENSÃO-CABOS', 'BOMBA HIDROJATO', 'INSTRUMENTOS', 'FERRAMENTAS', 'TALHAS', 'ESLINGAS'];
+// "EPI/EPC" é a mesma tabela que já existia como categoria própria no topo do menu — só mudou
+// de lugar (agora é um subtipo de Equipamentos), sem alterar sua estrutura (C.A., Possui
+// Manutenção etc.) nem seus dados. "CIVIL", "EXTINTORES" e "MANGUEIRAS" são subtipos novos,
+// com a mesma estrutura de FERRAMENTAS (CIVIL) e EXTENSÃO-CABOS (EXTINTORES/MANGUEIRAS).
+export const EQUIPAMENTOS_TABLE_NAMES = ['EQUIPAMENTOS ELETRICOS', 'EXTENSÃO-CABOS', 'EXTINTORES', 'MANGUEIRAS', 'BOMBA HIDROJATO', 'INSTRUMENTOS', 'FERRAMENTAS', 'TALHAS', 'ESLINGAS', 'CIVIL', 'EPI/EPC', 'TI-ELETRÔNICOS'];
 
 // Tabelas cujos itens podem entrar em manutenção: TODAS as categorias do Almoxarifado —
-// Equipamentos, Materiais, Alugados (Equipamentos e Gases) e Caixa Metálica / Skid. Qualquer
-// item de qualquer tabela segue o mesmo fluxo (EntradaManutencaoModal, manutencaoHistorico,
-// bloqueio de alocação/romaneio enquanto em manutenção).
+// Equipamentos (inclui EPI/EPC e CIVIL), Materiais, Alugados (Equipamentos e Gases), Caixa
+// Metálica / Skid e Andaimes. Qualquer item de qualquer tabela segue o mesmo fluxo
+// (EntradaManutencaoModal, manutencaoHistorico, bloqueio de alocação/romaneio enquanto em manutenção).
 export const MANUTENCAO_TABLE_NAMES = [
   ...EQUIPAMENTOS_TABLE_NAMES,
   'Materiais',
@@ -70,10 +74,17 @@ export const MANUTENCAO_TABLE_NAMES = [
   'Alugados - Gases',
 ];
 
-// Item só pode entrar em manutenção se a tabela dele estiver em MANUTENCAO_TABLE_NAMES — não
-// depende mais de um flag por item.
-export const itemPossuiManutencao = (row: ManutencaoRow): boolean =>
-  MANUTENCAO_TABLE_NAMES.includes(row.tableName);
+// Item só pode entrar em manutenção se a tabela dele estiver em MANUTENCAO_TABLE_NAMES. Para
+// tabelas com a coluna "possuiManutencao" (hoje só EPI/EPC — nem todo EPI tem manutenção, ex.:
+// luva descartável), o flag por item manda: só "Sim" habilita. Tabelas sem essa coluna mantêm
+// o comportamento antigo (elegível só por estar na lista, sem flag por item).
+export const itemPossuiManutencao = (row: ManutencaoRow): boolean => {
+  if (!MANUTENCAO_TABLE_NAMES.includes(row.tableName)) return false;
+  if (row.values && 'possuiManutencao' in row.values) {
+    return normalizeKeyLocal(row.values.possuiManutencao || '') === 'sim';
+  }
+  return true;
+};
 
 // Mesma regra usada em EstoqueView (isNegativeStatus): qualquer status contendo "manut".
 export const itemEstaEmManutencao = (row: ManutencaoRow): boolean =>
@@ -86,7 +97,7 @@ export const nomeDoItemManutencao = (row: ManutencaoRow): string =>
   row.values?.fornecedor || row.values?.descricao || row.id;
 
 export const patrimonioDoItem = (row: ManutencaoRow): string =>
-  row.values?.patrimonio || row.values?.numeroSerial || row.values?.tag || '';
+  row.values?.patrimonio || row.values?.numeroSerial || row.values?.tag || row.values?.ca || '';
 
 export const gerarIdManutencao = (): string =>
   `MAN-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -146,7 +157,15 @@ export function fecharSaidaManutencao(
   };
 }
 
-const hoje = () => new Date().toISOString().slice(0, 10);
+// NÃO usar toISOString() aqui: ele converte pra UTC, então no fim do dia (horário do Brasil,
+// UTC-3) a data virava "amanhã". Monta a partir dos componentes locais do Date.
+const hoje = () => {
+  const d = new Date();
+  const ano = d.getFullYear();
+  const mes = String(d.getMonth() + 1).padStart(2, '0');
+  const dia = String(d.getDate()).padStart(2, '0');
+  return `${ano}-${mes}-${dia}`;
+};
 
 const fieldCls = 'w-full rounded-xl border border-white/10 bg-[#0b1220]/80 px-4 py-2.5 text-sm text-white outline-none shadow-sm transition placeholder:text-white/30 focus:border-amber-400 focus:ring-1 focus:ring-amber-400';
 const labelCls = 'mb-1.5 block text-[10px] font-black uppercase tracking-widest text-white/50';
@@ -279,8 +298,16 @@ export function EntradaManutencaoModal({ row, categoriaLabel, numeroManutencao, 
               className="block w-full text-xs text-white/70 file:mr-3 file:rounded-lg file:border-0 file:bg-amber-500/20 file:px-3 file:py-2 file:text-[11px] file:font-bold file:uppercase file:text-amber-200"
             />
             {previewUrl && (
-              <div className="mt-3 overflow-hidden rounded-lg border border-white/10">
+              <div className="relative mt-3 overflow-hidden rounded-lg border border-white/10">
                 <img src={previewUrl} alt="Prévia da foto de entrada" className="h-32 w-full object-cover" />
+                <button
+                  type="button"
+                  onClick={() => escolherFoto(null)}
+                  className="absolute right-2 top-2 rounded-full bg-black/70 p-1 text-white/80 transition hover:bg-black/90 hover:text-white"
+                  title="Remover foto"
+                >
+                  <X size={14} />
+                </button>
               </div>
             )}
           </div>
@@ -431,8 +458,16 @@ export function SaidaManutencaoModal({ itemLabel, onClose, onConfirm, uploadVinc
               className="block w-full text-xs text-white/70 file:mr-3 file:rounded-lg file:border-0 file:bg-emerald-500/20 file:px-3 file:py-2 file:text-[11px] file:font-bold file:uppercase file:text-emerald-200"
             />
             {previewUrl && (
-              <div className="mt-3 overflow-hidden rounded-lg border border-white/10">
+              <div className="relative mt-3 overflow-hidden rounded-lg border border-white/10">
                 <img src={previewUrl} alt="Prévia da foto de saída" className="h-32 w-full object-cover" />
+                <button
+                  type="button"
+                  onClick={() => escolherFoto(null)}
+                  className="absolute right-2 top-2 rounded-full bg-black/70 p-1 text-white/80 transition hover:bg-black/90 hover:text-white"
+                  title="Remover foto"
+                >
+                  <X size={14} />
+                </button>
               </div>
             )}
           </div>

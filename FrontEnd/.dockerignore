@@ -1,0 +1,15 @@
+# O `COPY . .` do dockerfile copia a pasta inteira por cima do que o `npm install` do
+# container acabou de instalar. Ficam de fora:
+
+# Dependências da máquina local (no Windows têm binários nativos de outra plataforma —
+# esbuild/rollup — e quebrariam o `npm run build` no Linux do container).
+node_modules/
+# Build local; o container gera o próprio.
+dist/
+# Segredos e ambientes locais.
+.env
+.env.*
+# Lixo de IDE/git.
+.vscode/
+.idea/
+.git/

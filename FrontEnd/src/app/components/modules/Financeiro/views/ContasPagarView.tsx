@@ -1,19 +1,21 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, Download, Save, Banknote, Split, Paperclip, CalendarClock, Repeat, AlertTriangle, Power, Files, RefreshCw, Trash2 } from 'lucide-react';
-import * as XLSX from 'xlsx';
+import { baixarPlanilha } from '../../../../utils/planilhaExcel';
 import {
   FinCard, Toolbar, DataTable, Th, Td, Btn, StatusTag, CompanyTag, TypeTag, Pill, EmptyRow,
   FinModal, Field, Input, MoneyInput, Select, Textarea, Kpi, DeleteBtn, labelCls, boldOS, FileInput,
+  empresaDaLista, opcoesEmpresa,
 } from '../finUi';
 import {
   br, money, num, todayStr, genFinId, days, FORMAS_PAGAMENTO, TIPOS_REEMBOLSO,
   NATUREZAS_CONTA_PAGAR, CP_STATUS, documentoDuplicado, bancoLabel, FORMA_DISPENSA_COMPROVANTE,
   PERIODICIDADES, CATEGORIAS_CONTA_FIXA, avisosContasFixas, contaVencida, contaPaga,
-  diasAteVencimento, type AvisoContaFixa,
+  diasAteVencimento, DEPARTAMENTOS_PAGAMENTO, type AvisoContaFixa,
 } from '../finData';
 import { useFin, type FinRecord } from '../useFin';
 import { useFinFilters } from '../finFilters';
-import { uploadDocumento, listarDocumentos, excluirDocumento } from '../../../../../services/documentosService';
+import { uploadDocumento, listarDocumentos, excluirDocumento, motivoFalhaUpload } from '../../../../../services/documentosService';
+import { formatNumeroOsDisplay } from '../../../../../services/ordensServico';
 import { confirmDialog, promptDialog } from '../../../ui/feedback';
 import { toast } from 'sonner';
 
@@ -32,7 +34,7 @@ const nomeDoArquivo = (url: string): string => {
 
 export function ContasPagarView() {
   const {
-    records, financeiro, empresas, oss, departamentos, addRecord, updateRecord, deleteRecord,
+    records, financeiro, empresas, oss, departamentos, addRecord, updateRecord, updateRecords, deleteRecord,
     contarDependentes, parcelarConta, pagarConta,
     sincronizarContasFixas, salvarContaFixa, excluirContaFixa, ocorrenciasFuturasDaFixa,
   } = useFin();
@@ -142,7 +144,7 @@ export function ContasPagarView() {
   const abrirNovo = () => { setForm(formVazio()); setAnexosExistentes([]); setNovosAnexos([]); setEditId(null); };
   const abrirEdicao = (p: FinRecord) => {
     setForm({
-      empresa: String(p.empresa || empresas[0] || 'Linave'),
+      empresa: empresaDaLista(p.empresa, empresas),
       vinculoTipo: (p.vinculoTipo as any) || 'OS',
       vinculoValor: p.vinculoValor || '',
       fornecedor: p.fornecedor || '',
@@ -222,7 +224,7 @@ export function ContasPagarView() {
           .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
           .map((r) => r.value.url);
         const falhas = resultados.length - novasUrls.length;
-        if (falhas > 0) toast.error(`${falhas} documento(s) não puderam ser enviados.`);
+        if (falhas > 0) toast.error(`${falhas} documento(s) não puderam ser enviados.${motivoFalhaUpload(resultados)}`);
         anexos = [...anexosExistentes, ...novasUrls];
       }
 
@@ -289,7 +291,7 @@ export function ContasPagarView() {
   // ---- Modal contas fixas (regras de recorrência) ----
   const fixaVazia = () => ({
     descricao: '', categoria: 'Luz', empresa: empresas[0] || 'Linave', fornecedor: '',
-    natureza: 'Despesas Administrativa', valor: '', periodicidade: 'mensal' as string,
+    natureza: '', valor: '', periodicidade: 'mensal' as string,
     diaVencimento: '10', inicio: todayStr, fim: '', forma: '', banco: '',
     antecedenciaAviso: '5', departamento: '', obs: '',
   });
@@ -305,8 +307,8 @@ export function ContasPagarView() {
   const abrirEdicaoFixa = (r: FinRecord) => {
     setFixa({
       descricao: r.descricao || '', categoria: r.categoria || 'Luz',
-      empresa: String(r.empresa || empresas[0] || 'Linave'), fornecedor: r.fornecedor || '',
-      natureza: r.natureza || 'Despesas Administrativa', valor: String(r.valor || ''),
+      empresa: empresaDaLista(r.empresa, empresas), fornecedor: r.fornecedor || '',
+      natureza: r.natureza || '', valor: String(r.valor || ''),
       periodicidade: r.periodicidade || 'mensal', diaVencimento: String(r.diaVencimento || '10'),
       inicio: r.inicio || todayStr, fim: r.fim || '', forma: r.forma || '', banco: r.banco || '',
       antecedenciaAviso: String(r.antecedenciaAviso ?? 5), departamento: r.departamento || '', obs: r.obs || '',
@@ -358,7 +360,7 @@ export function ContasPagarView() {
 
   // ---- Modal pagar ----
   const [pagando, setPagando] = useState<FinRecord | null>(null);
-  const [pay, setPay] = useState({ dataPagamento: todayStr, valorPago: '', banco: '', houveJuros: 'Não', jurosPago: '', motivoJuros: '' });
+  const [pay, setPay] = useState({ dataPagamento: todayStr, valorPago: '', banco: '', houveJuros: 'Não', jurosPago: '', motivoJuros: '', departamentoPagamento: '', vinculoValor: '' });
   const setPayF = (k: string, v: string) => setPay((p) => ({ ...p, [k]: v }));
   // Comprovantes já salvos na conta (de um pagamento parcial/correção anterior) + arquivos
   // novos ainda não enviados — mesmo padrão de anexosExistentes/novosAnexos acima: o upload
@@ -368,7 +370,7 @@ export function ContasPagarView() {
 
   const abrirPagamento = (p: FinRecord) => {
     setPagando(p);
-    setPay({ dataPagamento: todayStr, valorPago: String(p.valorPago || p.valor || ''), banco: p.banco || '', houveJuros: 'Não', jurosPago: '', motivoJuros: '' });
+    setPay({ dataPagamento: todayStr, valorPago: String(p.valorPago || p.valor || ''), banco: p.banco || '', houveJuros: 'Não', jurosPago: '', motivoJuros: '', departamentoPagamento: p.departamentoPagamento || '', vinculoValor: p.vinculoValor || '' });
     setComprovantesExistentes(Array.isArray(p.comprovantes) ? p.comprovantes : []);
     setNovosComprovantes([]);
   };
@@ -430,26 +432,61 @@ export function ContasPagarView() {
     }
   };
 
+  // ---- Modal "Anexar comprovante" de conta JÁ PAGA ----
+  // O comprovante é opcional no pagamento e, se o upload falhar (ou a nota vier depois), a
+  // conta fica paga sem ele — e o botão Pagar some depois de pago. Aqui só se acrescenta o
+  // comprovante, sem refazer o pagamento (data, valor, banco ficam como estão).
+  const [anexandoComprovante, setAnexandoComprovante] = useState<FinRecord | null>(null);
+  const [comprovantesAvulsos, setComprovantesAvulsos] = useState<File[]>([]);
+
+  const abrirAnexarComprovante = (p: FinRecord) => {
+    setAnexandoComprovante(p);
+    setComprovantesAvulsos([]);
+  };
+
+  const salvarComprovantesAvulsos = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const conta = anexandoComprovante;
+    if (!conta || comprovantesAvulsos.length === 0) return;
+    setSalvando(true);
+    try {
+      const resultados = await Promise.allSettled(
+        comprovantesAvulsos.map((file) => uploadDocumento(file, { vinculoTipo: 'financeiro', vinculoId: conta.id, categoria: 'fin_comprovante' })),
+      );
+      const novasUrls = resultados
+        .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
+        .map((r) => r.value.url);
+      const falhas = resultados.length - novasUrls.length;
+      if (falhas > 0) toast.error(`${falhas} comprovante(s) não puderam ser enviados.${motivoFalhaUpload(resultados)}`);
+      if (novasUrls.length === 0) return; // nada subiu: mantém o modal aberto pra tentar de novo
+      const ok = await updateRecords((r) => (r.id === conta.id
+        ? { ...r, comprovantes: [...(Array.isArray(r.comprovantes) ? r.comprovantes : []), ...novasUrls] }
+        : r));
+      if (!ok) return;
+      toast.success('Comprovante anexado.');
+      setAnexandoComprovante(null);
+    } finally {
+      setSalvando(false);
+    }
+  };
+
   // ---- Modal ver documentos (anexos + comprovantes juntos, só consulta) ----
   const [verDocumentos, setVerDocumentos] = useState<FinRecord | null>(null);
 
   const exportarExcel = () => {
-    const head = ['Tipo', 'ID', 'Parcela', 'Empresa', 'Vínculo', 'Natureza', 'Fornecedor', 'Documento', 'Valor', 'Vencimento', 'Banco', 'Status', 'Pago em', 'Valor pago', 'Juros', 'Comprovantes'];
+    const head = ['Tipo', 'ID', 'Parcela', 'Empresa', 'Vínculo', 'Natureza', 'Fornecedor', 'Documento', 'Valor', 'Vencimento', 'Banco', 'Status', 'Pago em', 'Departamento', 'Valor pago', 'Juros', 'Comprovantes'];
     const linhas = rows.map((p) => [
-      p.type || 'single', p.id, p.parcela || '-', p.empresa, `${p.vinculoTipo}: ${p.vinculoValor || ''}`, p.natureza || '',
+      p.type || 'single', p.id, p.parcela || '-', p.empresa, `${p.vinculoTipo}: ${p.vinculoTipo === 'OS' ? formatNumeroOsDisplay(p.vinculoValor) : (p.vinculoValor || '')}`, p.natureza || '',
       p.fornecedor, p.documento || '', num(p.valor), p.vencimento, p.banco || '', p.status || 'Aberto',
-      p.dataPagamento || '', num(p.valorPago), num(p.jurosPago), (p.comprovantes || []).join('|'),
+      p.dataPagamento || '', p.departamentoPagamento || '', num(p.valorPago), num(p.jurosPago), (p.comprovantes || []).join('|'),
     ]);
     // Resumo (totais) na última linha da planilha.
     const totValor = rows.reduce((s, p) => s + num(p.valor), 0);
     const totPago = rows.reduce((s, p) => s + num(p.valorPago), 0);
     const totJuros = rows.reduce((s, p) => s + num(p.jurosPago), 0);
-    linhas.push(['TOTAL', '', '', '', '', '', '', '', totValor, '', '', '', '', totPago, totJuros, '']);
+    linhas.push(['TOTAL', '', '', '', '', '', '', '', totValor, '', '', '', '', '', totPago, totJuros, '']);
 
-    const planilha = XLSX.utils.aoa_to_sheet([head, ...linhas]);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, planilha, 'Contas a Pagar');
-    XLSX.writeFile(workbook, 'contas_a_pagar.xlsx');
+    void baixarPlanilha('contas_a_pagar.xlsx', 'Contas a Pagar', [head, ...linhas]);
   };
 
   const confirmarPagamento = async (e: React.FormEvent) => {
@@ -467,7 +504,10 @@ export function ContasPagarView() {
           .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
           .map((r) => r.value.url);
         const falhas = resultados.length - novasUrls.length;
-        if (falhas > 0) toast.error(`${falhas} comprovante(s) não puderam ser enviados.`);
+        if (falhas > 0) {
+          toast.error(`${falhas} comprovante(s) não puderam ser enviados.${motivoFalhaUpload(resultados)} `
+            + 'O pagamento é registrado mesmo assim — anexe depois pelo botão "Anexar comprovante" da conta.');
+        }
         comprovantes = [...comprovantesExistentes, ...novasUrls];
       }
       const proxima = await pagarConta(pagando.id, {
@@ -478,6 +518,9 @@ export function ContasPagarView() {
         jurosPago: houveJuros ? num(pay.jurosPago) : 0,
         motivoJuros: houveJuros ? pay.motivoJuros : '',
         comprovantes,
+        departamentoPagamento: pay.departamentoPagamento,
+        vinculoTipo: 'OS',
+        vinculoValor: pay.vinculoValor,
       });
       // Conta fixa: o pagamento encadeia a próxima competência. Avisar deixa explícito
       // que a conta "voltou" na lista de propósito, e para quando.
@@ -523,16 +566,16 @@ export function ContasPagarView() {
         </>}
       />
       <DataTable
-        minWidth={1650}
+        minWidth={1750}
         head={<>
           <Th>Tipo</Th><Th>Parcela</Th><Th>Empresa</Th><Th>Vínculo</Th><Th>Natureza</Th>
           <Th>Fornecedor</Th><Th>Doc</Th><Th>Valor</Th><Th>Vencimento</Th><Th>Banco</Th>
-          <Th>Status</Th><Th>Pago em</Th><Th>Juros</Th><Th>Comprov.</Th><Th>Ação</Th>
+          <Th>Status</Th><Th>Pago em</Th><Th>Departamento</Th><Th>Juros</Th><Th>Comprov.</Th><Th>Ação</Th>
         </>}
       >
         {rows.length === 0 ? (
           <EmptyRow
-            cols={15}
+            cols={16}
             text={
               origemFiltro === 'Fixas'
                 ? 'Nenhuma conta fixa no período (cadastre uma regra em "Contas fixas")'
@@ -566,7 +609,7 @@ export function ContasPagarView() {
             </Td>
             <Td>{p.parcela || '-'}</Td>
             <Td><CompanyTag empresa={String(p.empresa)} /></Td>
-            <Td className="text-white/60">{boldOS(p.vinculoTipo)}: {p.vinculoValor || '-'}</Td>
+            <Td className="text-white/60">{boldOS(p.vinculoTipo)}: {p.vinculoValor ? (p.vinculoTipo === 'OS' ? formatNumeroOsDisplay(p.vinculoValor) : p.vinculoValor) : '-'}</Td>
             <Td className="text-white/60">{p.natureza || '—'}</Td>
             <Td className="text-white">{p.fornecedor}</Td>
             <Td>{p.documento || '-'}</Td>
@@ -575,6 +618,7 @@ export function ContasPagarView() {
             <Td className="text-white/60">{p.banco || '—'}</Td>
             <Td><StatusTag status={vencida ? 'Vencido' : (p.status || 'Aberto')} /></Td>
             <Td>{p.dataPagamento ? br(p.dataPagamento) : '-'}</Td>
+            <Td className="text-white/60">{p.departamentoPagamento || '—'}</Td>
             <Td>{p.jurosPago ? money(num(p.jurosPago)) : '-'}</Td>
             <Td>
               {(p.comprovantes || []).length ? (
@@ -604,6 +648,9 @@ export function ContasPagarView() {
                 )}
                 {p.type === 'single' && p.status !== 'Pago' && p.status !== CP_STATUS.semDoc && <Btn small variant="blue" onClick={() => abrirParcelar(p)}><Split size={12} /> Parcelar</Btn>}
                 {p.type !== 'parent' && p.status !== 'Pago' && <Btn small variant="green" onClick={() => abrirPagamento(p)}><Banknote size={12} /> Pagar</Btn>}
+                {p.type !== 'parent' && p.status === 'Pago' && !((p.comprovantes as string[] | undefined)?.length) && (
+                  <Btn small variant="green" onClick={() => abrirAnexarComprovante(p)}><Paperclip size={12} /> Anexar comprovante</Btn>
+                )}
                 {(((p.anexos as string[] | undefined)?.length || 0) + ((p.comprovantes as string[] | undefined)?.length || 0)) > 0 && (
                   <Btn small variant="secondary" onClick={() => setVerDocumentos(p)}>
                     <Files size={12} /> Documentos ({((p.anexos as string[] | undefined)?.length || 0) + ((p.comprovantes as string[] | undefined)?.length || 0)})
@@ -635,12 +682,12 @@ export function ContasPagarView() {
         <FinModal wide title={editId ? `Editar conta ${editId}` : 'Adicionar Conta a Pagar'} hint="Conta simples. Use Parcelar para gerar mãe e filhas." onClose={() => setEditId(undefined)}>
           <form className="grid grid-cols-12 gap-4" onSubmit={salvarConta}>
             <Field label="Empresa" span={3}>
-              <Select value={form.empresa} onChange={(e) => setF('empresa', e.target.value)}>{empresas.map((emp) => <option key={emp}>{emp}</option>)}</Select>
+              <Select value={form.empresa} onChange={(e) => setF('empresa', e.target.value)}>{opcoesEmpresa(empresas, form.empresa).map((emp) => <option key={emp}>{emp}</option>)}</Select>
             </Field>
             <Field label={boldOS('OS')} span={3}>
               <Select value={form.vinculoValor} onChange={(e) => setF('vinculoValor', e.target.value)}>
                 <option value="">{oss.length ? 'Selecione...' : 'Nenhuma OS'}</option>
-                {oss.map((o, i) => <option key={`${o.numero}-${i}`} value={o.numero}>{o.numero} - {o.cliente}</option>)}
+                {oss.map((o, i) => <option key={`${o.numero}-${i}`} value={o.numero}>{formatNumeroOsDisplay(o.numero)} - {o.cliente}</option>)}
               </Select>
             </Field>
             <Field label="Tipo (reembolso/adiantamento)" span={3}>
@@ -775,7 +822,13 @@ export function ContasPagarView() {
           onClose={() => setPagando(null)}
         >
           <form className="grid grid-cols-12 gap-4" onSubmit={confirmarPagamento}>
-            <Field label="Conta" span={6}><Input value={`${pagando.fornecedor || ''} • ${money(num(pagando.valor))}`} disabled /></Field>
+            <Field label="Conta" span={3}><Input value={`${pagando.fornecedor || ''} • ${money(num(pagando.valor))}`} disabled /></Field>
+            <Field label={boldOS('OS vinculada')} span={3}>
+              <Select value={pay.vinculoValor} onChange={(e) => setPayF('vinculoValor', e.target.value)}>
+                <option value="">{oss.length ? 'Sem OS' : 'Nenhuma OS no ERP'}</option>
+                {oss.map((o, i) => <option key={`${o.numero}-${i}`} value={o.numero}>{formatNumeroOsDisplay(o.numero)} - {o.cliente}</option>)}
+              </Select>
+            </Field>
             <Field label="Quando paguei?" span={3}><Input type="date" value={pay.dataPagamento} onChange={(e) => setPayF('dataPagamento', e.target.value)} /></Field>
             <Field label="Valor pago" span={3}><MoneyInput value={pay.valorPago} onChange={(v) => setPayF('valorPago', v)} /></Field>
 
@@ -783,6 +836,12 @@ export function ContasPagarView() {
               <Select {...bancoSelectProps(pay.banco, (nome) => setPayF('banco', nome))}>
                 <option value="">{bancos.length ? 'Selecione...' : 'Cadastre um banco na aba Bancos'}</option>
                 {bancos.map((b) => <option key={b.id} value={b.id}>{bancoLabel(b)}</option>)}
+              </Select>
+            </Field>
+            <Field label="Departamento" span={6}>
+              <Select value={pay.departamentoPagamento} onChange={(e) => setPayF('departamentoPagamento', e.target.value)}>
+                <option value="">Selecione...</option>
+                {DEPARTAMENTOS_PAGAMENTO.map((d) => <option key={d} value={d}>{d}</option>)}
               </Select>
             </Field>
             <Field label="Houve juros?" span={6}>
@@ -848,11 +907,35 @@ export function ContasPagarView() {
         </FinModal>
       )}
 
+      {/* MODAL: anexar comprovante a uma conta já paga */}
+      {anexandoComprovante && (
+        <FinModal
+          title={`Anexar comprovante — ${anexandoComprovante.id}`}
+          hint="A conta já está paga: aqui só se anexa o comprovante, o pagamento registrado não muda."
+          onClose={() => setAnexandoComprovante(null)}
+        >
+          <form className="grid grid-cols-12 gap-4" onSubmit={salvarComprovantesAvulsos}>
+            <Field label="Conta" span={6}><Input value={`${anexandoComprovante.fornecedor || ''} • ${money(num(anexandoComprovante.valorPago || anexandoComprovante.valor))}`} disabled /></Field>
+            <Field label="Pago em" span={3}><Input value={anexandoComprovante.dataPagamento ? br(anexandoComprovante.dataPagamento) : '—'} disabled /></Field>
+            <Field label="Banco" span={3}><Input value={anexandoComprovante.banco || '—'} disabled /></Field>
+            <div className="col-span-12">
+              <FileInput label="Comprovante(s) (PDF, imagem...)" value={comprovantesAvulsos} onChange={setComprovantesAvulsos} />
+            </div>
+            <div className="col-span-12 flex justify-end gap-2">
+              <Btn type="button" variant="ghost" onClick={() => setAnexandoComprovante(null)}>Cancelar</Btn>
+              <Btn type="submit" variant="green" disabled={salvando || comprovantesAvulsos.length === 0}>
+                <Paperclip size={15} /> {salvando ? 'Enviando...' : 'Anexar comprovante'}
+              </Btn>
+            </div>
+          </form>
+        </FinModal>
+      )}
+
       {/* MODAL: ver documentos (anexos + comprovantes) — só consulta, sem edição */}
       {verDocumentos && (
         <FinModal
           title={`Documentos — ${verDocumentos.id}`}
-          hint={`${verDocumentos.fornecedor || 'Fornecedor não informado'} · ${money(num(verDocumentos.valor))}`}
+          hint={`${verDocumentos.fornecedor || 'Fornecedor não informado'} · ${money(num(verDocumentos.valor))}${verDocumentos.departamentoPagamento ? ` · ${verDocumentos.departamentoPagamento}` : ''}`}
           onClose={() => setVerDocumentos(null)}
         >
           <div className="space-y-5">
@@ -1036,7 +1119,7 @@ export function ContasPagarView() {
             </Field>
             <Field label="Empresa" span={3}>
               <Select value={fixa.empresa} onChange={(e) => setFixaF('empresa', e.target.value)}>
-                {empresas.map((emp) => <option key={emp}>{emp}</option>)}
+                {opcoesEmpresa(empresas, fixa.empresa).map((emp) => <option key={emp}>{emp}</option>)}
               </Select>
             </Field>
 
@@ -1045,6 +1128,7 @@ export function ContasPagarView() {
             </Field>
             <Field label="Natureza" span={3}>
               <Select value={fixa.natureza} onChange={(e) => setFixaF('natureza', e.target.value)}>
+                <option value="">Selecione...</option>
                 {NATUREZAS_CONTA_PAGAR.map((n) => <option key={n}>{n}</option>)}
               </Select>
             </Field>

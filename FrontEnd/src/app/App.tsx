@@ -1,4 +1,4 @@
-import React, { useState, useEffect  } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { CadastroCompletoView } from './components/modules/Configuracoes/CadastroCompletoView';
@@ -6,14 +6,21 @@ import { useErp } from './context/ErpContext';
 import { LoginPage } from './pages/Login';
 import { HomePage } from './pages/Home';
 
-// Importação dos Módulos de Abas
-import { GestaoModule } from './modules/Gestao';
-import { ProducaoModule } from './modules/Producao';
-import { ComercialModule } from './modules/Comercial';
-import { FinanceiroModule } from './modules/Financeiro';
-import { ComprasModule } from './modules/Compras';
-import { AlmoxerifadoModule } from './modules/Almoxerifado';
-import { ConfiguracoesModule } from './modules/Configuracoes';
+// Módulos de Abas carregados sob demanda: cada um vira um arquivo JS separado, baixado só
+// quando a aba é aberta (antes tudo ia num pacote único de ~4 MB no primeiro acesso).
+const GestaoModule = lazy(() => import('./modules/Gestao').then((m) => ({ default: m.GestaoModule })));
+const ProducaoModule = lazy(() => import('./modules/Producao').then((m) => ({ default: m.ProducaoModule })));
+const ComercialModule = lazy(() => import('./modules/Comercial').then((m) => ({ default: m.ComercialModule })));
+const FinanceiroModule = lazy(() => import('./modules/Financeiro').then((m) => ({ default: m.FinanceiroModule })));
+const ComprasModule = lazy(() => import('./modules/Compras').then((m) => ({ default: m.ComprasModule })));
+const AlmoxerifadoModule = lazy(() => import('./modules/Almoxerifado').then((m) => ({ default: m.AlmoxerifadoModule })));
+const ConfiguracoesModule = lazy(() => import('./modules/Configuracoes').then((m) => ({ default: m.ConfiguracoesModule })));
+
+const CarregandoModulo = () => (
+  <div className="flex items-center justify-center py-24">
+    <div className="w-10 h-10 border-4 border-amber-500 border-t-transparent rounded-full animate-spin" />
+  </div>
+);
 
 // Função auxiliar para mapear qual aba cada item pertence
 function getAbaForSection(section: string): { aba: string; item: string } {
@@ -148,6 +155,7 @@ export default function App() {
         <Header activeSection={activeSection} searchQuery={searchQuery} setSearchQuery={setSearchQuery} onToggleSidebar={() => setSidebarOpen(o => !o)} onNavigate={setActiveSection} />
         
         <section className="flex-1 animate-in fade-in slide-in-from-bottom-2 duration-500 relative p-6">
+          <Suspense fallback={<CarregandoModulo />}>
           {(() => {
             // Home é a tela inicial de todos os usuários — fora dos módulos por aba.
             if (activeSection === 'home') {
@@ -182,6 +190,7 @@ export default function App() {
                 return <GestaoModule activeItem="dashboard" searchQuery={searchQuery} />;
             }
           })()}
+          </Suspense>
         </section>
       </main>
     </div>

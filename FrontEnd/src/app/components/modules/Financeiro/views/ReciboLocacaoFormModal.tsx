@@ -38,7 +38,7 @@ const PRESETS: Record<'Linave' | 'Servinave', any> = {
     formaPagamento: 'Depósito em C/C',
   },
   Linave: {
-    emitenteNome: 'W.L.M LINAVE Serviços Navais e Offshore',
+    emitenteNome: 'LINAVE Serviços Navais e Offshore',
     emitenteEndereco: '',
     emitenteCep: '',
     emitenteCidadeUf: '',

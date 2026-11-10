@@ -94,6 +94,23 @@ export async function uploadDocumento(file: File, params: UploadParams): Promise
   return mapDocApiToFront(data as DocumentoApi);
 }
 
+/**
+ * Motivo legível da primeira falha de upload num `Promise.allSettled` de uploadDocumento —
+ * para o aviso dizer POR QUE o arquivo não subiu (tipo/tamanho/sessão), não só quantos
+ * falharam. Vazio quando nada falhou.
+ */
+export function motivoFalhaUpload(resultados: PromiseSettledResult<unknown>[]): string {
+  const falha = resultados.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+  if (!falha) return '';
+  const resposta = (falha.reason as any)?.response;
+  const dados = resposta?.data;
+  const doCampo = Array.isArray(dados?.arquivo) ? dados.arquivo[0] : '';
+  const texto = doCampo || dados?.detail || dados?.error;
+  if (typeof texto === 'string' && texto) return ` Motivo: ${texto}`;
+  if (resposta?.status === 413) return ' Motivo: arquivo grande demais.';
+  return resposta?.status ? ` (erro ${resposta.status})` : ' Verifique sua conexão.';
+}
+
 export async function listarDocumentos(params: {
   vinculoTipo?: string;
   vinculoId?: string | number;

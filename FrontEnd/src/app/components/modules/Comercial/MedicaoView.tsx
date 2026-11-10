@@ -92,7 +92,7 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
 
   // OS já fechadas (bloqueadas) — listadas na seção de fechamento; some das demais telas.
   const osFechadas = useMemo(
-    () => (Array.isArray(os) ? os : []).filter((o: any) => o?.fechada && !o?.usoInterno),
+    () => (Array.isArray(os) ? os : []).filter((o: any) => o?.fechada),
     [os],
   );
 
@@ -575,7 +575,12 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
     }
   };
 
-  // Solicitar NFe: cria a solicitação (nfeReq) que aparece na aba NFe do Financeiro.
+  // Solicitar NFe: cria a solicitação (nfeReq) que aparece na aba NFe do Financeiro. Quando a
+  // medição é mista (serviço + locação), a mesma ação já cria também o Recibo de Locação da
+  // parte de locação — não depende mais de um segundo clique em "Solicitar Recibo de Locação"
+  // (esse botão continua existindo no histórico, como reforço manual pra reenviar um dos dois
+  // separadamente se precisar). As duas gravações saem na MESMA transação (comFinanceiroAtual),
+  // pra numeração do recibo e checagem de duplicidade saírem corretas mesmo nascendo juntos.
   const handleSolicitarNfe = async () => {
     if (!nfePopup || !nfeForm) return;
     setSolicitandoNfe(true);
@@ -612,8 +617,19 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
           medicaoNumero: nfePopup.numeroMedicao,
           createdAt: new Date().toISOString(),
         };
-        await saveEntity('financeiro', [nfeReq, ...fin]);
-        return 'criada' as const;
+
+        const jaTemRecibo = fin.some(
+          (r: any) => r?.tipo === 'reciboLocacao' && String(r?.medicaoId || '') === String(nfePopup.id),
+        );
+        const osDaMedicao = (Array.isArray(os) ? os : []).find(
+          (o: any) => String(o.backendId) === String(nfePopup.ordemServicoBackendId),
+        );
+        const recibo = (!jaTemRecibo && medTemLocacao(nfePopup))
+          ? construirReciboDeMedicao(fin, nfePopup, clientes, osDaMedicao?.clienteId)
+          : null;
+
+        await saveEntity('financeiro', [nfeReq, ...(recibo ? [recibo] : []), ...fin]);
+        return recibo ? ('criada-com-recibo' as const) : ('criada' as const);
       });
 
       if (resultado === 'duplicada') {
@@ -624,7 +640,11 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
       }
       if (!resultado) return; // comFinanceiroAtual já avisou o usuário do erro
 
-      toast.success('Solicitação de NFe enviada ao Financeiro (aba NFe).');
+      toast.success(
+        resultado === 'criada-com-recibo'
+          ? 'Solicitação de NFe e de Recibo de Locação enviadas ao Financeiro (aba NFe).'
+          : 'Solicitação de NFe enviada ao Financeiro (aba NFe).'
+      );
       setNfePopup(null);
       setNfeForm(null);
     } finally {
@@ -1017,7 +1037,17 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
                     <input type="file" multiple className="hidden" onChange={(e) => handleUploadNfe(e.target.files, 'cliente')} />
                   </label>
                   {(nfeForm.docsCliente || []).map((d: any, i: number) => (
-                    <p key={d.id || i} className="text-emerald-300/80 text-[11px] truncate mt-1">✓ {d.nome}</p>
+                    <span key={d.id || i} className="mt-1 flex items-center gap-1.5 text-[11px]">
+                      <a href={d.url} target="_blank" rel="noopener noreferrer" className="truncate text-emerald-300/80 hover:text-emerald-200 hover:underline">✓ {d.nome}</a>
+                      <button
+                        type="button"
+                        onClick={() => setNfeForm((f: any) => ({ ...f, docsCliente: (f?.docsCliente || []).filter((x: any) => x !== d) }))}
+                        className="shrink-0 rounded-full p-0.5 text-white/40 transition-colors hover:bg-red-500/20 hover:text-red-300"
+                        title="Remover anexo"
+                      >
+                        <X size={11} />
+                      </button>
+                    </span>
                   ))}
                 </NfeField>
                 <NfeField label="NF já emitida (opcional)">
@@ -1026,7 +1056,17 @@ export function MedicaoView({ searchQuery = '' }: { searchQuery?: string }) {
                     <input type="file" multiple className="hidden" onChange={(e) => handleUploadNfe(e.target.files, 'nf')} />
                   </label>
                   {(nfeForm.docsNf || []).map((d: any, i: number) => (
-                    <p key={d.id || i} className="text-amber-300/80 text-[11px] truncate mt-1">✓ {d.nome}</p>
+                    <span key={d.id || i} className="mt-1 flex items-center gap-1.5 text-[11px]">
+                      <a href={d.url} target="_blank" rel="noopener noreferrer" className="truncate text-amber-300/80 hover:text-amber-200 hover:underline">✓ {d.nome}</a>
+                      <button
+                        type="button"
+                        onClick={() => setNfeForm((f: any) => ({ ...f, docsNf: (f?.docsNf || []).filter((x: any) => x !== d) }))}
+                        className="shrink-0 rounded-full p-0.5 text-white/40 transition-colors hover:bg-red-500/20 hover:text-red-300"
+                        title="Remover anexo"
+                      >
+                        <X size={11} />
+                      </button>
+                    </span>
                   ))}
                 </NfeField>
               </div>

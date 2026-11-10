@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Users, Plus, Pencil, Trash2, X, Check, Shield, ShieldOff, Loader2,
-  ChevronDown, ChevronRight, UserCog,
+  ChevronDown, ChevronRight, UserCog, Lock, LockOpen,
 } from 'lucide-react';
 import { useErp } from '../../../context/ErpContext';
 import { fetchUsuarios, createUsuario, updateUsuario, deleteUsuario } from '../../../../services/authService';
@@ -89,6 +89,9 @@ interface Usuario {
   is_active: boolean;
   role: RoleKey;
   permissoes: Record<string, boolean>;
+  // Bloqueado por excesso de senhas erradas no login — só admin desbloqueia.
+  login_bloqueado?: boolean;
+  tentativas_login_falhas?: number;
 }
 
 interface FormState {
@@ -315,6 +318,17 @@ export function UsuariosView() {
     }
   };
 
+  const handleDesbloquear = async (u: Usuario) => {
+    if (!(await confirmDialog({ message: `Desbloquear o acesso de "${u.nome}" (${u.cpf})?`, confirmText: 'Desbloquear' }))) return;
+    try {
+      const atualizado = await updateUsuario(u.cpf, { login_bloqueado: false });
+      setUsuarios((prev) => prev.map((x) => (x.cpf === u.cpf ? atualizado : x)));
+      toast.success(`Acesso de ${u.nome} desbloqueado.`);
+    } catch {
+      toast.error('Erro ao desbloquear usuário.');
+    }
+  };
+
   const inputCls = "w-full bg-[#0b1220] border border-white/10 p-3 rounded-xl text-white text-sm outline-none focus:border-amber-500 transition-all placeholder:text-white/20";
   const labelCls = "block text-white/50 text-[10px] font-bold uppercase tracking-widest mb-1.5";
 
@@ -381,6 +395,11 @@ export function UsuariosView() {
                   <tr key={u.cpf} className="hover:bg-white/3 transition-colors">
                     <td className="p-4">
                       <p className="text-white font-bold text-sm">{u.nome}</p>
+                      {u.login_bloqueado && (
+                        <span className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest bg-red-500/15 text-red-400 border border-red-500/30">
+                          <Lock size={10} /> Bloqueado
+                        </span>
+                      )}
                     </td>
                     <td className="p-4 text-white/50 text-xs font-mono">{u.cpf}</td>
                     <td className="p-4 text-white/50 text-xs">{u.cargo || '—'}</td>
@@ -392,6 +411,15 @@ export function UsuariosView() {
                     </td>
                     <td className="p-4 text-center">
                       <div className="flex items-center justify-center gap-2">
+                        {u.login_bloqueado && (
+                          <button
+                            onClick={() => handleDesbloquear(u)}
+                            className="p-2 rounded-lg bg-red-500/10 hover:bg-emerald-500/20 text-red-400 hover:text-emerald-400 transition-all"
+                            title="Desbloquear acesso"
+                          >
+                            <LockOpen size={14} />
+                          </button>
+                        )}
                         <button
                           onClick={() => abrirEditar(u)}
                           className="p-2 rounded-lg bg-white/5 hover:bg-amber-500/20 text-white/40 hover:text-amber-400 transition-all"

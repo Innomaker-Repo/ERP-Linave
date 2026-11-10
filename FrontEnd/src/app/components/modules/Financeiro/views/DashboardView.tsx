@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { FinCard, Metric, boldOS } from '../finUi';
+import { FinCard, Metric, boldOS, mesmaEmpresa } from '../finUi';
 import { money, isOld, num, type Empresa } from '../finData';
 import { useFin } from '../useFin';
 import { useFinFilters } from '../finFilters';
@@ -38,9 +38,9 @@ export function DashboardView() {
   }, [pagar, receber]);
 
   const empresaResumo = (empresa: Empresa) => {
-    const aPagar = pagar.filter((p) => p.empresa === empresa && p.status !== 'Pago').reduce((s, p) => s + num(p.valor), 0);
-    const aReceber = receber.filter((r) => r.empresa === empresa && !r.recebido).reduce((s, r) => s + num(r.valorLiquido ?? r.valor), 0);
-    const previsao = ossF.filter((o) => o.empresa === empresa && !['Finalizada', 'Cancelada'].includes(o.status)).reduce((s, o) => s + o.valor, 0);
+    const aPagar = pagar.filter((p) => mesmaEmpresa(p.empresa, empresa) && p.status !== 'Pago').reduce((s, p) => s + num(p.valor), 0);
+    const aReceber = receber.filter((r) => mesmaEmpresa(r.empresa, empresa) && !r.recebido).reduce((s, r) => s + num(r.valorLiquido ?? r.valor), 0);
+    const previsao = ossF.filter((o) => mesmaEmpresa(o.empresa, empresa) && !['Finalizada', 'Cancelada'].includes(o.status)).reduce((s, o) => s + o.valor, 0);
     const max = Math.max(aPagar, aReceber, previsao, 1);
     return { aPagar, aReceber, previsao, max };
   };

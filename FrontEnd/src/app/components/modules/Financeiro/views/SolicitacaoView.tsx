@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { Send, CheckCircle2, Plus, Repeat, X } from 'lucide-react';
-import { FinCard, Toolbar, Field, Input, MoneyInput, Select, Textarea, FileInput, Btn, boldOS } from '../finUi';
+import { FinCard, Toolbar, Field, Input, MoneyInput, Select, Textarea, FileInput, AutocompleteInput, Btn, boldOS, empresaDaLista, opcoesEmpresa } from '../finUi';
 import {
   todayStr, genFinId, num, money, FORMAS_PAGAMENTO, TIPOS_REEMBOLSO, PERIODICIDADES_FATURADO,
   calcularValoresParcelas, gerarParcelasFaturado, proximoPeriodoFaturado, vencimentoNoMesFaturado,
-  solicitacaoDuplicada, type PeriodicidadeFaturado, type FaturadoParcela,
+  solicitacaoDuplicada, DEPARTAMENTOS_PAGAMENTO, type PeriodicidadeFaturado, type FaturadoParcela,
 } from '../finData';
 import { useFin } from '../useFin';
-import { uploadDocumento } from '../../../../../services/documentosService';
+import { uploadDocumento, motivoFalhaUpload } from '../../../../../services/documentosService';
+import { formatNumeroOsDisplay } from '../../../../../services/ordensServico';
 import { toast } from 'sonner';
 
 const fornecedorNome = (f: any) =>
@@ -25,6 +26,7 @@ const formVazio = (empresaPadrao: string, nomeSolicitante: string) => ({
   solicitante: nomeSolicitante,
   tipo: 'Material',
   vinculoValor: '',
+  departamentoPagamento: '',
   fornecedor: '',
   documento: '',
   valor: '',
@@ -161,10 +163,11 @@ export function SolicitacaoView() {
     setAnexosExistentes(Array.isArray(sol.anexos) ? sol.anexos : []);
     setAnexos([]);
     setForm({
-      empresa: sol.empresa || empresas[0] || 'Linave',
+      empresa: empresaDaLista(sol.empresa, empresas),
       solicitante: sol.solicitante || '',
       tipo: sol.tipoPagamento || 'Material',
       vinculoValor: sol.vinculoValor || '',
+      departamentoPagamento: sol.departamentoPagamento || '',
       fornecedor: sol.fornecedor || '',
       documento: sol.documento || '',
       valor: String(sol.valor ?? ''),
@@ -318,7 +321,7 @@ export function SolicitacaoView() {
           .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
           .map((r) => r.value.url);
         const falhas = resultados.length - anexosUrls.length;
-        if (falhas > 0) toast.error(`${falhas} anexo(s) não puderam ser enviados.`);
+        if (falhas > 0) toast.error(`${falhas} anexo(s) não puderam ser enviados.${motivoFalhaUpload(resultados)}`);
       }
 
       const dados = {
@@ -332,6 +335,7 @@ export function SolicitacaoView() {
         // tem que ficar em branco também — do contrário a solicitação aparecia vinculada
         // a uma OS que ninguém escolheu (a primeira da lista, sempre a mesma).
         vinculoValor: form.vinculoValor,
+        departamentoPagamento: form.departamentoPagamento,
         fornecedor: form.fornecedor,
         documento: documentoParaChecagem,
         // Faturado: valor = total da NF, vencimento = vencimento da 1ª parcela (a mais
@@ -401,7 +405,7 @@ export function SolicitacaoView() {
         <form className="grid grid-cols-12 gap-4" onSubmit={enviar}>
           <Field label={req('Empresa')} span={3}>
             <Select value={form.empresa} onChange={(e) => set('empresa', e.target.value)}>
-              {empresas.map((emp) => <option key={emp}>{emp}</option>)}
+              {opcoesEmpresa(empresas, form.empresa).map((emp) => <option key={emp}>{emp}</option>)}
             </Select>
           </Field>
           <Field label={req('Solicitante')} span={3}>
@@ -418,19 +422,22 @@ export function SolicitacaoView() {
           <Field label={boldOS('OS emitida')} span={3}>
             <Select value={form.vinculoValor} onChange={(e) => set('vinculoValor', e.target.value)}>
               <option value="">{oss.length ? 'Selecione...' : 'Nenhuma OS no ERP'}</option>
-              {oss.map((o, i) => <option key={`${o.numero}-${i}`} value={o.numero}>{o.numero} - {o.cliente}</option>)}
+              {oss.map((o, i) => <option key={`${o.numero}-${i}`} value={o.numero}>{formatNumeroOsDisplay(o.numero)} - {o.cliente}</option>)}
+            </Select>
+          </Field>
+          <Field label="Departamento" span={3}>
+            <Select value={form.departamentoPagamento} onChange={(e) => set('departamentoPagamento', e.target.value)}>
+              <option value="">Selecione...</option>
+              {DEPARTAMENTOS_PAGAMENTO.map((d) => <option key={d}>{d}</option>)}
             </Select>
           </Field>
           <Field label={req('Fornecedor / beneficiário')} span={6}>
-            <Input
-              list="fin-fornecedores"
+            <AutocompleteInput
               value={form.fornecedor}
-              onChange={(e) => set('fornecedor', e.target.value)}
+              onChange={(v) => set('fornecedor', v)}
+              options={fornecedores.map(fornecedorNome)}
               placeholder="Fornecedor / beneficiário"
             />
-            <datalist id="fin-fornecedores">
-              {fornecedores.map((f, i) => <option key={i} value={fornecedorNome(f)} />)}
-            </datalist>
           </Field>
           {form.forma !== 'Parcelado' && (
             <Field label={req('Documento')} span={3}>

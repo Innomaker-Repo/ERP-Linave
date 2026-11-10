@@ -23,16 +23,15 @@ export const handleDownloadPedidoCompraPDF = (pedido: PedidoCompraResumo) => {
   y += 9;
 
   doc.setFontSize(10);
+  // Sem dados do fornecedor (nome/CNPJ/prazo/condição de pagamento) — esse detalhamento agora
+  // vive só na Ordem de Compra (Excel) gerada em Compras, pra não duplicar a mesma informação
+  // em dois documentos diferentes.
   const infoLines: Array<[string, string]> = [
-    ['Fornecedor', pedido.fornecedor || '-'],
-    ['CNPJ', pedido.fornecedorCnpj || '-'],
     ['Solicitação de origem', pedido.solicitacaoId || '-'],
     ['OS / Centro de Custo', formatNumeroOsDisplay(pedido.centroCusto) || '-'],
     ['Data', pedido.data ? new Date(pedido.data).toLocaleDateString('pt-BR') : new Date().toLocaleDateString('pt-BR')],
     ['Solicitante', pedido.solicitante || '-'],
     ['Departamento', pedido.departamento || '-'],
-    ['Prazo de entrega', pedido.prazoEntrega || '-'],
-    ['Condição de pagamento', pedido.condicaoPagamento || '-'],
   ];
 
   infoLines.forEach(([label, value]) => {

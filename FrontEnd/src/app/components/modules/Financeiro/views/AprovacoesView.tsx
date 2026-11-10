@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Search, X } from 'lucide-react';
 import { FinCard, Toolbar, DataTable, Th, Td, Btn, StatusTag, CompanyTag, Pill, EmptyRow, FinModal, Field, Textarea, Kpi, DeleteBtn } from '../finUi';
 import { br, money, num } from '../finData';
+import { formatNumeroOsDisplay } from '../../../../../services/ordensServico';
 import { useFin, type FinRecord } from '../useFin';
 import { useFinFilters } from '../finFilters';
 import { promptDialog } from '../../../ui/feedback';
@@ -133,13 +134,13 @@ export function AprovacoesView() {
       <DataTable
         minWidth={1100}
         head={<>
-          <Th>Empresa</Th><Th>Solicitante</Th><Th>Vínculo</Th>
+          <Th>Empresa</Th><Th>Solicitante</Th><Th>Vínculo</Th><Th>Departamento</Th>
           <Th>Fornecedor</Th><Th>Valor</Th><Th>Vencimento</Th><Th>Status</Th><Th>Aprovado/Reprovado por</Th><Th>Ação</Th>
         </>}
       >
         {rows.length === 0 ? (
           <EmptyRow
-            cols={9}
+            cols={10}
             text={
               buscaFornecedor
                 ? `Nenhuma solicitação encontrada para "${buscaFornecedor}"`
@@ -152,7 +153,8 @@ export function AprovacoesView() {
           <tr key={r.id} className="transition-colors hover:bg-white/5">
             <Td><CompanyTag empresa={String(r.empresa)} /></Td>
             <Td className="text-white">{r.solicitante}</Td>
-            <Td className="text-white/60">{r.vinculoTipo}: {r.vinculoValor || '—'}</Td>
+            <Td className="text-white/60">{r.vinculoTipo}: {r.vinculoValor ? (r.vinculoTipo === 'OS' ? formatNumeroOsDisplay(r.vinculoValor) : r.vinculoValor) : '—'}</Td>
+            <Td className="text-white/60">{r.departamentoPagamento || '—'}</Td>
             <Td className="text-white">{r.fornecedor}</Td>
             <Td className="font-bold text-white">{money(num(r.valor))}</Td>
             <Td>{br(r.vencimento)}</Td>
@@ -202,7 +204,8 @@ export function AprovacoesView() {
           </div>
 
           <div className="mt-4 space-y-2 rounded-2xl border border-white/5 bg-[#0b1220] p-4 text-sm">
-            <p><span className="text-white/40">Vínculo:</span> <span className="text-white/85">{detalhe.vinculoTipo}: {detalhe.vinculoValor || '—'}</span></p>
+            <p><span className="text-white/40">Vínculo:</span> <span className="text-white/85">{detalhe.vinculoTipo}: {detalhe.vinculoValor ? (detalhe.vinculoTipo === 'OS' ? formatNumeroOsDisplay(detalhe.vinculoValor) : detalhe.vinculoValor) : '—'}</span></p>
+            <p><span className="text-white/40">Departamento:</span> <span className="text-white/85">{detalhe.departamentoPagamento || '—'}</span></p>
             <p><span className="text-white/40">Fornecedor / beneficiário:</span> <span className="text-white/85">{detalhe.fornecedor || '—'}</span></p>
             <p><span className="text-white/40">Documento:</span> <span className="text-white/85">{detalhe.documento || '—'}</span></p>
             <p><span className="text-white/40">Forma solicitada:</span> <span className="text-white/85">{detalhe.forma || '—'}</span></p>

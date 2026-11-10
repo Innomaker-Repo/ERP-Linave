@@ -28,6 +28,23 @@ export const FORMAS_PAGAMENTO = [
 // anexar (ver modal "Pagar" em ContasPagarView.tsx, que dispensa esse campo pra essa forma).
 export const FORMA_DISPENSA_COMPROVANTE = 'Débito automático';
 
+// Departamento responsável/solicitante do pagamento — escolhido no momento de pagar uma
+// conta (modal "Pagar" em ContasPagarView.tsx) e gravado no registro, pra ficar visível em
+// qualquer lugar que consulte aquele pagamento depois (tabela, "Documentos", Histórico).
+// Lista fixa (diferente de `departamentos`, a lista editável usada como vínculo de OS vs.
+// Departamento em Contas Fixas/Solicitação — ver useFin.ts).
+export const DEPARTAMENTOS_PAGAMENTO = [
+  'RH',
+  'Financeiro',
+  'Compras',
+  'Suprimentos',
+  'Comercial',
+  'SMS',
+  'Logística',
+  'Operacional',
+  'TI',
+];
+
 // Tipo de reembolso / adiantamento (usado em Solicitação e Contas a Pagar).
 export const TIPOS_REEMBOLSO = [
   'Reembolso',
@@ -42,15 +59,17 @@ export const TIPOS_REEMBOLSO = [
   'Outro',
 ];
 
-// Natureza da despesa (classificação contábil) — dropdown em Contas a Pagar.
+// Natureza fiscal do item comprado — dropdown em Contas a Pagar (cadastro/edição da conta,
+// Contas Fixas e coluna "Natureza" da tabela).
 export const NATUREZAS_CONTA_PAGAR = [
-  'Custo Direto',
-  'Custo Indireto',
-  'Despesas Administrativa',
-  'Despesas Financeira',
-  'Impostos e Taxas',
-  'Investimentos',
-  'Folha de Pagamento',
+  'Revenda',
+  'Uso E Consumo',
+  'Matéria-Prima',
+  'Imobilizado',
+  'Material De Serviços',
+  'Retorno',
+  'Devoluções',
+  'Outros',
 ];
 
 export const days = (d: string, n: number) => {
@@ -442,9 +461,22 @@ export const mapOsToFinanceiro = (os: any, obra?: any): OS => {
     os?.cliente_detalhes?.razao_social ?? os?.cliente_detalhes?.razaoSocial ?? os?.cliente ?? os?.projeto ?? '—',
   );
   const cc = String(os?.cc ?? '');
-  const empresa = os?.empresa_prestadora || os?.empresaPrestadora
-    ? empresaFromCC(undefined, String(os.empresa_prestadora ?? os.empresaPrestadora).toLowerCase().includes('servi') ? 'Servinave' : 'Linave')
-    : empresaFromCC(cc || numero);
+  // O prefixo do NÚMERO da OS (VTS/SN = Servinave, LN = Linave) é quem confiavelmente
+  // carrega a empresa — é definido uma vez, na criação, e nunca mais recalculado. `cc`
+  // é só um código de centro de custo livre (ex.: "CC-OPS-014"), sem relação nenhuma com
+  // esse prefixo — por isso `numero` tem que vir ANTES de `cc` aqui; usar `cc || numero`
+  // fazia OS de Servinave caírem no fallback Linave sempre que o cc não começasse com
+  // "VTS"/"SN" (quase sempre, já que cc raramente carrega esse prefixo).
+  // `empresa_prestadora` do negócio também pode ser editado depois (tela "Editar
+  // Negócio") sem regenerar o número já emitido — só serve de fallback pros números sem
+  // prefixo reconhecível (ex.: "1000"/"2000" de USO INTERNO). `mapOrdemToOs` (obrasMapper.ts)
+  // não bota esse campo na própria OS, então `os.empresa_prestadora` é sempre vazio na
+  // prática — o `obra` vinculado (já recebido aqui como parâmetro) é quem de fato carrega
+  // `empresaPrestadora` (obrasMapper.ts:55). Sem isso, toda OS sem prefixo reconhecível
+  // (as duas de uso interno) caía sempre em "Linave", mesmo a 2000 (Servinave).
+  const bruto = os?.empresa_prestadora || os?.empresaPrestadora || obra?.empresaPrestadora || obra?.empresa_prestadora;
+  const empresaPorTexto = bruto ? (String(bruto).toLowerCase().includes('servi') ? 'Servinave' : 'Linave') : 'Linave';
+  const empresa = empresaFromCC(numero || cc, empresaPorTexto);
   return {
     numero: numero || '—',
     empresa,

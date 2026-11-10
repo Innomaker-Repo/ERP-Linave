@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Anchor, Cable, CheckCircle2, ChevronDown, ChevronUp, ClipboardList, Container, Download, Gauge, Hammer, Layers3, Link2, MapPin, Microscope, Package, Plus, Search, Table2, Trash2, Wrench, X, Zap } from 'lucide-react';
+import { Anchor, Cable, CheckCircle2, ChevronDown, ChevronUp, ClipboardList, Container, Cpu, Download, Droplets, Flame, Gauge, Hammer, HardHat, Layers3, Link2, MapPin, Microscope, Package, Plus, Search, Table2, Trash2, Wrench, X, Zap } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import * as XLSX from 'xlsx';
+import { baixarPlanilha } from '../../../utils/planilhaExcel';
 import { Badge } from '../../../modules/shared/ui/badge';
 import { Input } from '../../../modules/shared/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../modules/shared/ui/select';
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '../../../modules/shared/ui/select';
 import { useErp } from '../../../context/ErpContext';
 import { boldOS } from '../../../utils/osHighlight';
 import { getOrdensServico, getOsOptionLabel, getOsOptionValue, getOsStableValue, type OrdemServicoResumo, isOsAprovada, formatOsLabel } from '../../../../services/ordensServico';
@@ -17,6 +17,8 @@ import {
   EntradaManutencaoModal, EQUIPAMENTOS_TABLE_NAMES, MANUTENCAO_TABLE_NAMES, criarEntradaManutencao, gerarIdManutencao, itemEstaEmManutencao, itemPossuiManutencao,
   type ManutencaoHistoricoItem,
 } from './manutencaoShared';
+import { comAlmoxarifadoAtual } from '../../../../services/almoxarifadoSeguro';
+import { getLogoUrlForEmpresa } from '../../../utils/company';
 
 interface StockColumn {
   key: string;
@@ -217,12 +219,20 @@ const getTableIconConfig = (tableName: string): { Icon: LucideIcon; badgeClass: 
       return { Icon: Zap, badgeClass: 'bg-amber-500/15 ring-amber-500/20', iconClass: 'text-amber-300' };
     case 'extensaocabos':
       return { Icon: Cable, badgeClass: 'bg-cyan-500/15 ring-cyan-500/20', iconClass: 'text-cyan-300' };
+    case 'extintores':
+      return { Icon: Flame, badgeClass: 'bg-red-500/15 ring-red-500/20', iconClass: 'text-red-300' };
+    case 'mangueiras':
+      return { Icon: Droplets, badgeClass: 'bg-sky-500/15 ring-sky-500/20', iconClass: 'text-sky-300' };
     case 'bombahidrojato':
       return { Icon: Gauge, badgeClass: 'bg-blue-500/15 ring-blue-500/20', iconClass: 'text-blue-300' };
     case 'instrumentos':
       return { Icon: Microscope, badgeClass: 'bg-violet-500/15 ring-violet-500/20', iconClass: 'text-violet-300' };
     case 'ferramentas':
       return { Icon: Hammer, badgeClass: 'bg-orange-500/15 ring-orange-500/20', iconClass: 'text-orange-300' };
+    case 'civil':
+      return { Icon: Wrench, badgeClass: 'bg-stone-500/15 ring-stone-500/20', iconClass: 'text-stone-300' };
+    case 'tieletronicos':
+      return { Icon: Cpu, badgeClass: 'bg-indigo-500/15 ring-indigo-500/20', iconClass: 'text-indigo-300' };
     case 'talhas':
       return { Icon: Anchor, badgeClass: 'bg-emerald-500/15 ring-emerald-500/20', iconClass: 'text-emerald-300' };
     case 'eslingas':
@@ -231,6 +241,8 @@ const getTableIconConfig = (tableName: string): { Icon: LucideIcon; badgeClass: 
       return { Icon: ClipboardList, badgeClass: 'bg-pink-500/15 ring-pink-500/20', iconClass: 'text-pink-300' };
     case 'caixametalicaskid':
       return { Icon: Container, badgeClass: 'bg-slate-500/15 ring-slate-500/20', iconClass: 'text-slate-300' };
+    case 'epiepc':
+      return { Icon: HardHat, badgeClass: 'bg-yellow-500/15 ring-yellow-500/20', iconClass: 'text-yellow-300' };
     default:
       return { Icon: Table2, badgeClass: 'bg-cyan-500/15 ring-cyan-500/20', iconClass: 'text-cyan-300' };
   }
@@ -240,6 +252,28 @@ const getTableIconConfig = (tableName: string): { Icon: LucideIcon; badgeClass: 
 // Os mesmos 3 valores valem para TODAS as tabelas/telas de Suprimentos.
 const STATUS_OPTIONS = ['Disponível', 'Alocado', 'Em manutenção'];
 const STATUS_DEFAULT = 'Disponível';
+
+// Tipos (subtipos) da categoria "Andaimes" — opções do campo Tipo do filtro e do campo
+// obrigatório 'subtipo' no cadastro. Ficam todos na mesma tabela "Andaimes" (o filtro
+// separa por linha), não em tabelas próprias como os subtipos de Equipamentos.
+const ANDAIME_TIPOS = [
+  'Pranchão de Alumínio', 'Pranchão de Madeira', 'Tubos Galvanizados', 'Braçadeira Fixa',
+  'Braçadeira Giratória', 'Braçadeira Perfil', 'Luva', 'Placa de Base', 'Arco de Escada',
+  'Escada', 'Proteção de Abraçadeira', 'Rodapé',
+];
+
+// Opções "Andaimes / <tipo>" no select "Tipo do item" do cadastro: valor = prefixo + tipo.
+const ANDAIME_OPCAO_PREFIXO = 'Andaimes::';
+
+// Converte itens de andaime do formato antigo (composição em 'subitens', sem tipo): descarta
+// 'subitens' e, se a descrição é exatamente um dos tipos (caso dos itens semeados),
+// classifica por ela; senão fica sem tipo até alguém editar (aparece só em "Todos os tipos").
+const normalizarItemAndaime = (values: Record<string, string>): Record<string, string> => {
+  const { subitens: _formatoAntigo, ...resto } = values;
+  if (resto.subtipo) return resto;
+  const tipo = ANDAIME_TIPOS.find((t) => normalizeKey(t) === normalizeKey(resto.material || ''));
+  return tipo ? { ...resto, subtipo: tipo } : resto;
+};
 
 // Sentinel do filtro "Todos os tipos" no campo Tipo (categoria Equipamentos) — mostra os
 // 6 subtipos de equipamento combinados numa única lista, com colunas comuns a todos eles.
@@ -388,6 +422,30 @@ const STOCK_TABLES: StockTable[] = [
     ], false
   ),
   makeTable(
+    'EXTINTORES',
+    [
+      { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
+      { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'peso', label: 'Peso', align: 'center' }, { key: 'patrimonio', label: 'Patrimônio' }, { key: 'dataEntradaPlanilha', label: 'Data(ENTRADA NA PLANILHA)', align: 'center' },
+      { key: 'metros', label: 'METROS', align: 'center' }, { key: 'bitola', label: '(BITOLA)', align: 'center' }, { key: 'tag', label: 'TAG' },
+      { key: 'marca', label: 'Marca' }, { key: 'dataCalibracaoAfericao', label: 'Data da Calibração/Aferição', align: 'center' }, { key: 'validadeCalibracaoAfericao', label: 'Validade da Calibração/Aferição', align: 'center' },
+      { key: 'status', label: 'STATUS', align: 'center' }, { key: 'observacao', label: 'Observação' }, { key: 'localizacao', label: 'Local' },
+      { key: 'serviceOS', label: 'Serviço (OS)' }, { key: 'unidade', label: 'Unidade', align: 'center' }
+    ],
+    [], false
+  ),
+  makeTable(
+    'MANGUEIRAS',
+    [
+      { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
+      { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'peso', label: 'Peso', align: 'center' }, { key: 'patrimonio', label: 'Patrimônio' }, { key: 'dataEntradaPlanilha', label: 'Data(ENTRADA NA PLANILHA)', align: 'center' },
+      { key: 'metros', label: 'METROS', align: 'center' }, { key: 'bitola', label: '(BITOLA)', align: 'center' }, { key: 'tag', label: 'TAG' },
+      { key: 'marca', label: 'Marca' }, { key: 'dataCalibracaoAfericao', label: 'Data da Calibração/Aferição', align: 'center' }, { key: 'validadeCalibracaoAfericao', label: 'Validade da Calibração/Aferição', align: 'center' },
+      { key: 'status', label: 'STATUS', align: 'center' }, { key: 'observacao', label: 'Observação' }, { key: 'localizacao', label: 'Local' },
+      { key: 'serviceOS', label: 'Serviço (OS)' }, { key: 'unidade', label: 'Unidade', align: 'center' }
+    ],
+    [], false
+  ),
+  makeTable(
     'BOMBA HIDROJATO',
     [
       { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
@@ -428,6 +486,28 @@ const STOCK_TABLES: StockTable[] = [
       { material: 'Furadeira Industrial 850W', unid: 'un', qtd: '8', patrimonio: 'PAT-FER-001', dataEntradaPlanilha: '2026-04-07', modelo: 'GSB 16 RE', numeroSerial: 'SN-FER-850-001', marca: 'Bosch', status: 'Adequada', observacao: 'Ferramentas A3', unidade: 'un' },
       { material: 'Jogo de Chaves Allen', unid: 'jogo', qtd: '25', patrimonio: 'PAT-FER-002', dataEntradaPlanilha: '2026-04-09', modelo: 'Allen 9 peças', numeroSerial: 'SN-FER-ALLEN-002', marca: 'Vonder', status: 'Não para o uso', observacao: 'Ferramentas B1', unidade: 'jogo' }
     ], false
+  ),
+  makeTable(
+    'CIVIL',
+    [
+      { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
+      { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'peso', label: 'Peso', align: 'center' }, { key: 'patrimonio', label: 'Patrimônio' }, { key: 'dataEntradaPlanilha', label: 'Data(ENTRADA NA PLANILHA)', align: 'center' },
+      { key: 'modelo', label: 'Modelo' }, { key: 'numeroSerial', label: 'N° Serial' }, { key: 'marca', label: 'Marca' },
+      { key: 'status', label: 'STATUS', align: 'center' }, { key: 'observacao', label: 'Observação' }, { key: 'localizacao', label: 'Local' },
+      { key: 'serviceOS', label: 'Serviço (OS)' }, { key: 'unidade', label: 'Unidade', align: 'center' }
+    ],
+    [], false
+  ),
+  makeTable(
+    'TI-ELETRÔNICOS',
+    [
+      { key: 'material', label: 'Material' }, { key: 'unid', label: 'Unid.', align: 'center' },
+      { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'peso', label: 'Peso', align: 'center' }, { key: 'patrimonio', label: 'Patrimônio' }, { key: 'dataEntradaPlanilha', label: 'Data(ENTRADA NA PLANILHA)', align: 'center' },
+      { key: 'modelo', label: 'Modelo' }, { key: 'numeroSerial', label: 'N° Serial' }, { key: 'marca', label: 'Marca' },
+      { key: 'status', label: 'STATUS', align: 'center' }, { key: 'observacao', label: 'Observação' }, { key: 'localizacao', label: 'Local' },
+      { key: 'serviceOS', label: 'Serviço (OS)' }, { key: 'unidade', label: 'Unidade', align: 'center' }
+    ],
+    [], false
   ),
   makeTable(
     'TALHAS',
@@ -490,10 +570,28 @@ const STOCK_TABLES: StockTable[] = [
   makeTable(
     'Andaimes',
     [
-      { key: 'material', label: 'Descrição' }, { key: 'unid', label: 'Unid.', align: 'center' },
+      // Tipo do andaime (um de ANDAIME_TIPOS, escolhido num select — ver renderRegisterField).
+      // Por estar na lista de colunas, entra na checagem de campos obrigatórios do
+      // handleSaveRegister: todo andaime precisa ter tipo.
+      { key: 'subtipo', label: 'Tipo' },
+      { key: 'material', label: 'Descrição' },
+      { key: 'unid', label: 'Unid.', align: 'center' },
       { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'peso', label: 'Peso', align: 'center' }, { key: 'patrimonio', label: 'Patrimônio' },
       { key: 'modelo', label: 'Modelo' }, { key: 'marca', label: 'Marca' },
       { key: 'status', label: 'STATUS', align: 'center' }, { key: 'observacao', label: 'Observação' }, { key: 'localizacao', label: 'Local' },
+      { key: 'serviceOS', label: 'Serviço (OS)' }, { key: 'unidade', label: 'Unidade', align: 'center' }
+    ],
+    ANDAIME_TIPOS.map((tipo) => ({ subtipo: tipo, material: tipo, unid: 'un', qtd: '0', status: 'Disponível', unidade: 'un' })),
+    false
+  ),
+  makeTable(
+    'EPI/EPC',
+    [
+      { key: 'material', label: 'Descrição' }, { key: 'unid', label: 'Unid.', align: 'center' },
+      { key: 'qtd', label: 'Qtd.', align: 'center' }, { key: 'peso', label: 'Peso', align: 'center' }, { key: 'ca', label: 'C.A.' },
+      { key: 'modelo', label: 'Modelo' }, { key: 'marca', label: 'Marca' },
+      { key: 'status', label: 'STATUS', align: 'center' }, { key: 'possuiManutencao', label: 'Possui Manutenção', align: 'center' },
+      { key: 'observacao', label: 'Observação' }, { key: 'localizacao', label: 'Local' },
       { key: 'serviceOS', label: 'Serviço (OS)' }, { key: 'unidade', label: 'Unidade', align: 'center' }
     ], [], false
   ),
@@ -530,8 +628,10 @@ const CANONICAL_COLUMNS_BY_TABLE = new Map<string, StockColumn[]>(
 const reconcileTableColumns = (table: StockTable): StockColumn[] => {
   // "item" saiu de vez da grade (era só o id automático do registro, já exibido em
   // nenhum lugar útil) — filtrado aqui mesmo pra tabelas JÁ PERSISTIDAS com essa coluna
-  // antiga também pararem de mostrá-la, não só as novas.
-  const persisted = (Array.isArray(table.columns) ? table.columns : []).filter((column) => column.key !== 'item');
+  // antiga também pararem de mostrá-la, não só as novas. Mesmo caso de "subitens" (Andaimes),
+  // substituída pelo campo Tipo ('subtipo').
+  const persisted = (Array.isArray(table.columns) ? table.columns : [])
+    .filter((column) => column.key !== 'item' && column.key !== 'subitens');
   if (normalizeKey(table.name) === 'alugadosgases') {
     // Colunas de tipo de gás são dinâmicas (o usuário pode cadastrar novos tipos em tempo
     // de uso) — por isso a tabela de gases não usa o merge genérico abaixo (que reordenaria
@@ -554,6 +654,24 @@ const reconcileTableColumns = (table: StockTable): StockColumn[] => {
   const canonicalKeys = new Set(canonical.map((column) => column.key));
   const extras = persisted.filter((column) => !canonicalKeys.has(column.key));
   return [...canonical, ...extras];
+};
+
+// Tabelas renomeadas no código depois de já terem sido salvas: o nome identifica a tabela
+// (e cada linha guarda o seu em `tableName`), então a cópia salva com o nome antigo é
+// renomeada ao carregar — senão sobraria como uma tabela solta, fora da sua categoria.
+const TABELAS_RENOMEADAS: Record<string, string> = {
+  'TI-ELETRÔNICO': 'TI-ELETRÔNICOS',
+  'TI-ELETRONICOS': 'TI-ELETRÔNICOS',
+};
+
+const renomearTabelaAntiga = (table: StockTable): StockTable => {
+  const novoNome = TABELAS_RENOMEADAS[table.name];
+  if (!novoNome) return table;
+  return {
+    ...table,
+    name: novoNome,
+    rows: Array.isArray(table.rows) ? table.rows.map((row) => ({ ...row, tableName: novoNome })) : [],
+  };
 };
 
 const getCommonColumns = (tables: StockTable[]) => {
@@ -588,6 +706,11 @@ const createRegisterValues = (table?: StockTable, baseValues: Record<string, str
       return;
     }
 
+    if (column.key === 'possuiManutencao') {
+      values[column.key] = previous || 'Não';
+      return;
+    }
+
     if (table?.name === 'Alugados - Gases') {
       if (column.key.startsWith('gas') && previous === '') {
         values[column.key] = '0';
@@ -606,7 +729,7 @@ const createRegisterValues = (table?: StockTable, baseValues: Record<string, str
 };
 
 export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
-  const { os, obras, almoxerifado, saveEntity, loading } = useErp();
+  const { os, obras, almoxerifado, saveEntity, loading, manualRefreshTick } = useErp();
 
   // Rótulo EXIBIDO da OS: "<número> — <embarcação>" (padrão do ERP). Só para a interface —
   // `getOsOptionLabel` continua sendo a identidade usada para casar/gravar valores, então
@@ -621,6 +744,12 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   // que acabou de ler (ou, numa corrida em que o contexto ainda não tinha entregue os dados
   // reais, uma cópia incompleta), o que já causou perda de dados real no Almoxarifado.
   const skipNextAutoSave = useRef(false);
+  // Último `manualRefreshTick` (ErpContext) já processado — quando o valor muda, é porque o
+  // usuário clicou "Atualizar" no Header, e é o único caso em que vale a pena substituir
+  // `tables`/etc. já hidratados pela cópia fresca do servidor (ver efeito de hidratação
+  // abaixo). Fora isso, essa tela nunca se resincroniza sozinha depois da primeira carga —
+  // de propósito, pra não apagar um cadastro em andamento.
+  const ultimoRefreshTickProcessado = useRef(manualRefreshTick);
   const [ordensServicoBackend, setOrdensServicoBackend] = useState<OrdemServicoResumo[]>([]);
   const [publicSearch, setPublicSearch] = useState<string>(searchQuery || '');
 
@@ -759,17 +888,33 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
   }, [isEquipAllocateModalOpen, availableOS, os]);
 
   useEffect(() => {
-    if (loading || hasHydratedPersistedState.current) return;
+    // Refresh manual (botão "Atualizar" do Header) é a ÚNICA exceção à trava de "só hidrata
+    // uma vez": o usuário pediu explicitamente, então aceita a cópia do servidor por cima do
+    // que esta tela já tinha. Com o formulário de cadastro aberto, melhor não — substituir
+    // `tables` por baixo de um cadastro em andamento pode descasar `registerValues` da linha
+    // sendo editada, então nesse caso só avisa e deixa pra próxima vez.
+    const pediuRefreshManual = manualRefreshTick !== ultimoRefreshTickProcessado.current;
+    if (pediuRefreshManual && isRegisterOpen) {
+      toast.error('Feche o formulário de cadastro antes de atualizar os dados desta tela.');
+      ultimoRefreshTickProcessado.current = manualRefreshTick;
+      return;
+    }
+
+    if (loading || (hasHydratedPersistedState.current && !pediuRefreshManual)) return;
+    ultimoRefreshTickProcessado.current = manualRefreshTick;
 
     if (almoxerifado && typeof almoxerifado === 'object') {
       if (Array.isArray(almoxerifado.tables)) {
-        const persistidas = almoxerifado.tables.map((table: StockTable) => ({
+        const persistidas = almoxerifado.tables.map(renomearTabelaAntiga).map((table: StockTable) => ({
           ...table,
           // Reconcilia com as colunas canônicas para incorporar colunas novas (ex.: "peso")
           // em dados persistidos antes da mudança, sem perder linhas/colunas customizadas.
           columns: reconcileTableColumns(table),
           rows: Array.isArray(table.rows)
-            ? table.rows.map((row) => ({ ...row, values: normalizeRowValues(row.values) }))
+            ? table.rows.map((row) => {
+                const values = normalizeRowValues(row.values);
+                return { ...row, values: table.name === 'Andaimes' ? normalizarItemAndaime(values) : values };
+              })
             : []
         }));
         // Categoria/subtipo NOVO no código (ex.: "Eslingas", "Caixa Metálica / Skid") que a
@@ -818,7 +963,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     }
 
     hasHydratedPersistedState.current = true;
-  }, [loading, almoxerifado]);
+  }, [loading, almoxerifado, manualRefreshTick, isRegisterOpen]);
 
   useEffect(() => {
     if (!hasHydratedPersistedState.current) return;
@@ -828,7 +973,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     // PRÓPRIO save (já vimos até 3 POSTs, um deles com estado incompleto). Espera a poeira baixar
     // e salva só o estado já assentado, nunca um instantâneo no meio do caminho.
     const timeoutId = window.setTimeout(() => {
-      void saveEntity('almoxerifado', {
+      saveEntity('almoxerifado', {
         version: 2,
         tables,
         gasTypes,
@@ -839,6 +984,9 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
         manutencaoHistorico,
         selectedForRomaneio: Array.from(selectedForRomaneio),
         imagensPorItem
+      }).catch((error: unknown) => {
+        console.error('Erro ao salvar Almoxarifado automaticamente:', error);
+        toast.error('Não foi possível salvar as últimas alterações do Estoque. Verifique sua conexão e tente novamente.');
       });
     }, 400);
     return () => window.clearTimeout(timeoutId);
@@ -909,11 +1057,13 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     'Equipamentos': EQUIPAMENTOS_TABLE_NAMES,
     'Alugados': ['Gases', 'Equipamentos'],
     'Caixa Metálica / Skid': [],
-    'Andaimes': []
+    'Andaimes': ANDAIME_TIPOS
   };
 
   useEffect(() => {
-    if (!selectedType && (selectedCategory === 'Materiais' || selectedCategory === 'Caixa Metálica / Skid' || selectedCategory === 'Andaimes')) {
+    if (!selectedType && selectedCategory === 'Andaimes') {
+      setSelectedType(ALL_TYPES_VALUE);
+    } else if (!selectedType && (selectedCategory === 'Materiais' || selectedCategory === 'Caixa Metálica / Skid')) {
       setSelectedType(selectedCategory);
     } else if (!selectedType && selectedCategory !== 'Materiais' && selectedCategory !== 'Todos') {
       const types = categoryMap[selectedCategory] as string[];
@@ -933,7 +1083,9 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
 
   useEffect(() => {
     const types = categoryMap[selectedCategory] as string[];
-    if (selectedCategory === 'Materiais' || selectedCategory === 'Caixa Metálica / Skid' || selectedCategory === 'Andaimes') {
+    if (selectedCategory === 'Andaimes') {
+      setSelectedType(ALL_TYPES_VALUE);
+    } else if (selectedCategory === 'Materiais' || selectedCategory === 'Caixa Metálica / Skid') {
       setSelectedType(selectedCategory);
     } else if (selectedCategory === 'Todos') {
       setSelectedType('');
@@ -980,6 +1132,13 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
         name: 'Todos os tipos',
         columns: EQUIPAMENTOS_TODOS_TIPOS_COLUMNS,
         rows: visibleTables.flatMap((table) => table.rows),
+      };
+    }
+    // Andaimes com um tipo escolhido: mesma tabela, só as linhas daquele tipo.
+    if (selectedCategory === 'Andaimes' && selectedType !== ALL_TYPES_VALUE && visibleTables[0]) {
+      return {
+        ...visibleTables[0],
+        rows: visibleTables[0].rows.filter((row) => row.values.subtipo === selectedType),
       };
     }
     return visibleTables[0] || { name: 'Vazio', columns: [], rows: [] };
@@ -1029,7 +1188,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
 
       const matchesQuery = !query || (() => {
       const matchesColumns = visibleColumns.some((column) => valorDaCelula(row.values, column.key).toLowerCase().includes(query));
-      return matchesColumns || row.searchText.includes(query);
+      return matchesColumns || (row.searchText || '').includes(query);
       })();
 
       const matchesStatusFilter = !selectedStatusFilter || normalizeStatus(row.values.status) === selectedStatusFilter;
@@ -1070,15 +1229,15 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     const colunasExport = visibleColumns.filter((coluna) => coluna.key !== '__select__' && coluna.key !== 'actions');
     const cabecalho = colunasExport.map((coluna) => coluna.label || coluna.key);
     const linhas = visibleRows.map((row) =>
-      colunasExport.map((coluna) => (coluna.key === '__tipo__' ? row.tableName : valorDaCelula(row.values, coluna.key)))
+      colunasExport.map((coluna) => {
+        if (coluna.key === '__tipo__') return row.tableName;
+        return valorDaCelula(row.values, coluna.key);
+      })
     );
 
-    const planilha = XLSX.utils.aoa_to_sheet([cabecalho, ...linhas]);
-    const workbook = XLSX.utils.book_new();
-    const nomeAba = (selectedCategory === 'Equipamentos' && selectedType === ALL_TYPES_VALUE ? 'Todos os tipos' : (selectedType || selectedCategory))
+    const nomeAba = (selectedCategory === 'Andaimes' && selectedType === ALL_TYPES_VALUE ? 'Andaimes' : selectedCategory === 'Equipamentos' && selectedType === ALL_TYPES_VALUE ? 'Todos os tipos' : (selectedType || selectedCategory))
       .replace(/[:\\/?*[\]]/g, '-')
       .slice(0, 31) || 'Estoque';
-    XLSX.utils.book_append_sheet(workbook, planilha, nomeAba);
 
     const identificadorArquivo = selectedCategory === 'Todos'
       ? 'todas-as-categorias'
@@ -1086,20 +1245,33 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       ? (selectedType === ALL_TYPES_VALUE ? 'todos-os-tipos' : selectedType)
       : selectedCategory === 'Alugados'
       ? `alugados-${selectedType}`
+      : selectedCategory === 'Andaimes' && selectedType !== ALL_TYPES_VALUE
+      ? `andaimes-${selectedType}`
       : selectedCategory;
     const nomeArquivo = `estoque-${identificadorArquivo}`
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/(^-|-$)/g, '');
 
-    XLSX.writeFile(workbook, `${nomeArquivo}.xlsx`);
+    void baixarPlanilha(`${nomeArquivo}.xlsx`, nomeAba, [cabecalho, ...linhas]);
     toast.success(`Planilha gerada com ${visibleRows.length} item(ns).`);
   };
+
+  // Modo "public" (Consulta ao Estoque) é só leitura, então lê direto do estoque do contexto
+  // em vez da cópia local `tables` — essa tela não escreve nada, então não precisa (nem deve)
+  // herdar a trava de "hidrata uma vez só" que a tela de cadastro usa pra não se auto-sobrepor.
+  // Lendo do contexto, a Consulta acompanha o que o ErpContext já busca sozinho a cada 45s/foco
+  // de aba, sem precisar de F5 pra ver o que outra pessoa cadastrou enquanto a tela já estava
+  // aberta (antes, `tables` local congelava no que a tela tinha ao abrir e nunca mais mudava).
+  const publicSourceTables: StockTable[] = useMemo(() => {
+    if (mode !== 'public') return tables;
+    return Array.isArray(almoxerifado?.tables) ? almoxerifado.tables : [];
+  }, [mode, tables, almoxerifado]);
 
   const publicRows = useMemo(() => {
     const query = publicSearch.toLowerCase().trim();
 
-    return tables.flatMap((table) => table.rows.filter((row) => {
+    return publicSourceTables.flatMap((table) => (table.rows || []).filter((row) => {
       if (!query) return true;
 
       const searchableName = [
@@ -1114,7 +1286,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
 
       return searchableName.includes(query);
     }).map((row) => ({ ...row, tableName: table.name })));
-  }, [publicSearch, tables]);
+  }, [publicSearch, publicSourceTables]);
 
   const currentRegisterTable = useMemo(
     () => tables.find((table) => table.name === registerTableName) || tables[0],
@@ -1342,7 +1514,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     setBaixaTargetRow(null);
   };
 
-  const handleConfirmBaixa = () => {
+  const handleConfirmBaixa = async () => {
     if (!baixaTargetRow) return;
 
     const itemName = baixaTargetRow.values.material || baixaTargetRow.values.fornecedor || baixaTargetRow.values.equipamento || baixaTargetRow.values.item || 'item';
@@ -1364,33 +1536,55 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     const osLabel = selectedOs ? getOsOptionLabel(selectedOs as any) : osId;
     const osLocal = selectedOs ? getOsLocalExecution(selectedOs) : '';
 
-    setBaixasHistorico((prev) => [
-      {
-        id: `baixa-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        dataBaixa,
-        tableName: baixaTargetRow.tableName,
-        itemLabel: itemName,
-        statusAnterior: baixaTargetRow.values.status || '',
-        motivo,
-        osId,
-        osLabel,
-        localizacao: baixaTargetRow.values.localizacao || osLocal || '',
-        serviceOS: osLabel,
-        snapshot: { ...baixaTargetRow.values }
-      },
-      ...prev
-    ]);
+    const novaBaixa = {
+      id: `baixa-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      dataBaixa,
+      tableName: baixaTargetRow.tableName,
+      itemLabel: itemName,
+      statusAnterior: baixaTargetRow.values.status || '',
+      motivo,
+      osId,
+      osLabel,
+      localizacao: baixaTargetRow.values.localizacao || osLocal || '',
+      serviceOS: osLabel,
+      snapshot: { ...baixaTargetRow.values }
+    };
 
-    setTables((previous) => previous.map((table) => {
-      if (table.name !== baixaTargetRow.tableName) return table;
-      return {
-        ...table,
-        rows: table.rows.filter((currentRow) => currentRow.id !== baixaTargetRow.id)
-      };
-    }));
+    // Mesmo motivo de `handleSaveRegister`: dar baixa REMOVE uma linha, então é a operação mais
+    // exposta à trava anti-encolhimento do backend se a cópia local de `tables` estiver
+    // desatualizada (ver comentário detalhado em handleSaveRegister). Busca o estado atual do
+    // servidor e aplica a remoção em cima dele, não da cópia local.
+    const resultado = await comAlmoxarifadoAtual(async (base) => {
+      const baseTables = Array.isArray(base.tables) ? base.tables : [];
+      const baseAllocations = Array.isArray(base.allocations) ? base.allocations : [];
+      const baseBaixasHistorico = Array.isArray(base.baixasHistorico) ? base.baixasHistorico : [];
+
+      const nextTables = baseTables.map((table: any) => {
+        if (table.name !== baixaTargetRow.tableName) return table;
+        return { ...table, rows: table.rows.filter((row: StockRow) => row.id !== baixaTargetRow.id) };
+      });
+      const nextAllocations = baixaTargetRow.tableName === 'Alugados - Gases'
+        ? baseAllocations.filter((allocation: GasAllocation) => allocation.supplierRowId !== baixaTargetRow.id)
+        : baseAllocations;
+      const nextBaixasHistorico = [novaBaixa, ...baseBaixasHistorico];
+
+      await saveEntity('almoxerifado', {
+        ...base,
+        tables: nextTables,
+        allocations: nextAllocations,
+        baixasHistorico: nextBaixasHistorico,
+      });
+      return { nextTables, nextAllocations, nextBaixasHistorico };
+    });
+
+    if (!resultado) return;
+
+    skipNextAutoSave.current = true;
+    setTables(resultado.nextTables);
+    setAllocations(resultado.nextAllocations);
+    setBaixasHistorico(resultado.nextBaixasHistorico);
 
     if (baixaTargetRow.tableName === 'Alugados - Gases') {
-      setAllocations((previous) => previous.filter((allocation) => allocation.supplierRowId !== baixaTargetRow.id));
       setExpandedGasRows((previous) => {
         const next = new Set(previous);
         next.delete(baixaTargetRow.id);
@@ -1443,9 +1637,13 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     }
     
     if (!tableToUse) tableToUse = tables[0];
-    
+
+    // Andaimes filtrado por um tipo: o cadastro já abre com esse tipo escolhido.
+    const valoresIniciais: Record<string, string> = selectedCategory === 'Andaimes' && selectedType !== ALL_TYPES_VALUE
+      ? { subtipo: selectedType }
+      : {};
     setRegisterTableName(tableToUse.name);
-    setRegisterValues(createRegisterValues(tableToUse));
+    setRegisterValues(createRegisterValues(tableToUse, valoresIniciais));
     setIsRegisterOpen(true);
   };
 
@@ -1489,14 +1687,15 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     return 'material';
   };
 
-  const handleSaveRegister = () => {
+  const handleSaveRegister = async () => {
     const table = tables.find((item) => item.name === registerTableName);
     if (!table) return;
     const wasEditing = Boolean(editingRowTarget && editingRowTarget.tableName === table.name);
 
     const missingRequiredFields = table.columns
       .filter((column) => column.key !== 'actions' && column.key !== 'item' && column.key !== 'peso')
-      .filter((column) => column.key !== 'serviceOS' || wasEditing)
+      // Serviço (OS) é sempre opcional: o item pode ou não estar vinculado a uma OS.
+      .filter((column) => column.key !== 'serviceOS')
       .filter((column) => !cleanValue(registerValues[column.key]));
 
     if (missingRequiredFields.length > 0) {
@@ -1517,28 +1716,57 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       return;
     }
 
-    payload.item = payload.item || generateItemId(table.name, table.rows.length);
+    // Busca o almoxerifado direto do backend em vez de montar a escrita em cima de `tables` do
+    // componente — mesmo motivo de `comAlmoxarifadoAtual` em ManutencaoView.tsx/
+    // almoxarifadoSeguro.ts: o contexto reidrata `almoxerifado` sozinho a cada 45s/foco de aba,
+    // mas essa tela usa estado local espelhado + auto-save (debounce de 400ms), então uma
+    // hidratação concorrente que o componente já ignorou (ver `hasHydratedPersistedState`) deixa
+    // `tables` divergente do servidor. Cadastrar em cima dessa cópia desatualizada tinha dois
+    // efeitos: (1) `generateItemId`/`makeRow` geravam o MESMO id pra duas pessoas cadastrando
+    // quase ao mesmo tempo na mesma categoria (o índice vem de `table.rows.length`, que cada
+    // cópia local via diferente), colidindo/sobrescrevendo uma linha em vez de criar duas; e (2)
+    // salvar o objeto inteiro com menos linhas do que o servidor já tinha (porque a cópia local
+    // não tinha o que outra pessoa cadastrou enquanto isso) esbarrava na trava anti-encolhimento
+    // do backend (`ALMOXARIFADO_QUEDA_FRACAO_MAXIMA` em views.py) e a operação era recusada —
+    // mais provável justamente nas categorias recém-criadas, por terem poucas linhas (qualquer
+    // cadastro concorrente já passa da metade) e serem cadastradas em rajada por várias pessoas
+    // logo que a categoria aparece.
+    const resultado = await comAlmoxarifadoAtual(async (base) => {
+      const baseTables = Array.isArray(base.tables) ? base.tables : [];
+      const baseTableIndex = baseTables.findIndex((item: any) => item.name === table.name);
+      const baseRows = baseTableIndex >= 0 ? (baseTables[baseTableIndex].rows || []) : [];
 
-    const existingRowIndex = editingRowTarget && editingRowTarget.tableName === table.name
-      ? table.rows.findIndex((row) => row.id === editingRowTarget.rowId)
-      : -1;
-    const rowIndex = existingRowIndex >= 0 ? existingRowIndex : table.rows.length;
-    const nextRow = makeRow(payload, table.name, rowIndex, editingRowTarget?.rowId);
+      const existingRowIndex = wasEditing
+        ? baseRows.findIndex((row: StockRow) => row.id === editingRowTarget!.rowId)
+        : -1;
+      const rowIndex = existingRowIndex >= 0 ? existingRowIndex : baseRows.length;
+      const nextRow = makeRow(payload, table.name, rowIndex, editingRowTarget?.rowId);
 
-    setTables((previous) =>
-      previous.map((item) => (
-        item.name === table.name
-          ? editingRowTarget && editingRowTarget.tableName === table.name
-            ? { ...item, rows: item.rows.map((row) => (row.id === editingRowTarget.rowId ? nextRow : row)) }
-            : { ...item, rows: [nextRow, ...item.rows] }
-          : item
-      ))
-    );
+      const nextRows = existingRowIndex >= 0
+        ? baseRows.map((row: StockRow) => (row.id === editingRowTarget!.rowId ? nextRow : row))
+        : [nextRow, ...baseRows];
+
+      const nextTable = { ...table, rows: nextRows };
+      const nextTables = baseTableIndex >= 0
+        ? baseTables.map((item: any, idx: number) => (idx === baseTableIndex ? nextTable : item))
+        : [...baseTables, nextTable];
+
+      await saveEntity('almoxerifado', { ...base, tables: nextTables });
+      return { nextTables, nextRow };
+    });
+
+    if (!resultado) return;
+
+    // Evita que o auto-save (disparado pelo `setTables` abaixo) regrave por cima com uma cópia
+    // que, no instante do debounce, já pode estar de novo desatualizada em relação ao que
+    // acabou de ser salvo — o resultado já é o que está no servidor.
+    skipNextAutoSave.current = true;
+    setTables(resultado.nextTables);
 
     setFiltro('');
     setIsRegisterOpen(false);
     setEditingRowTarget(null);
-    setActiveRowTarget(wasEditing ? { tableName: table.name, rowId: nextRow.id } : null);
+    setActiveRowTarget(wasEditing ? { tableName: table.name, rowId: resultado.nextRow.id } : null);
   };
 
   // Trocar o Status pra "Em manutenção" no formulário de edição abre o modal guiado (foto +
@@ -1580,19 +1808,35 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       }),
       id: numeroManutencao,
     };
-    setManutencaoHistorico((previous) => [entrada, ...previous]);
 
-    setTables((previous) => previous.map((table) => {
-      if (table.name !== row.tableName) return table;
-      return {
-        ...table,
-        rows: table.rows.map((r) => {
-          if (r.id !== row.id) return r;
-          const nextValues = { ...r.values, status: 'Em manutenção' };
-          return { ...r, values: nextValues, searchText: Object.values(nextValues).join(' ').toLowerCase() };
-        }),
-      };
-    }));
+    // Mesmo motivo de handleSaveRegister/handleConfirmBaixa: busca o estado atual do servidor
+    // em vez de gravar em cima da cópia local de `tables`, que pode estar desatualizada.
+    const resultado = await comAlmoxarifadoAtual(async (base) => {
+      const baseTables = Array.isArray(base.tables) ? base.tables : [];
+      const baseManutencaoHistorico: ManutencaoHistoricoItem[] = Array.isArray(base.manutencaoHistorico) ? base.manutencaoHistorico : [];
+
+      const nextTables = baseTables.map((table: any) => {
+        if (table.name !== row.tableName) return table;
+        return {
+          ...table,
+          rows: table.rows.map((r: StockRow) => {
+            if (r.id !== row.id) return r;
+            const nextValues = { ...r.values, status: 'Em manutenção' };
+            return { ...r, values: nextValues, searchText: Object.values(nextValues).join(' ').toLowerCase() };
+          }),
+        };
+      });
+      const nextManutencaoHistorico = [entrada, ...baseManutencaoHistorico];
+
+      await saveEntity('almoxerifado', { ...base, tables: nextTables, manutencaoHistorico: nextManutencaoHistorico });
+      return { nextTables, nextManutencaoHistorico };
+    });
+
+    if (!resultado) return;
+
+    skipNextAutoSave.current = true;
+    setTables(resultado.nextTables);
+    setManutencaoHistorico(resultado.nextManutencaoHistorico);
 
     setManutencaoEntradaAlvo(null);
     // Fecha o formulário de edição junto — evita misturar essa mudança de status (já
@@ -1705,13 +1949,29 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     const confirmRemoval = await confirmDialog({ message: 'Deseja desalocar este item?', danger: true, confirmText: 'Desalocar' });
     if (!confirmRemoval) return;
 
-    setTables((prevTables) =>
-      prevTables.map((table) => {
-        if (table.name !== row.tableName) return table;
+    const novoEvento: AllocationHistoricoItem = {
+      id: `desal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      action: 'desalocar',
+      kind: row.tableName === 'Alugados - Equipamentos' ? 'equipamentos' : row.tableName === 'Materiais' ? 'materiais' : 'outros',
+      dataEvento: new Date().toISOString(),
+      osId: row.values.serviceOS || '',
+      osLabel: row.values.serviceOS || '',
+      itemLabel: row.values.material || row.values.equipamento || row.values.modelo || row.values.item || 'Item',
+      tableName: row.tableName,
+      local: row.values.localizacao || ''
+    };
 
+    // Mesmo motivo das demais ações: busca o estado atual do servidor antes de gravar, em vez
+    // de partir da cópia local de `tables`.
+    const resultado = await comAlmoxarifadoAtual(async (base) => {
+      const baseTables = Array.isArray(base.tables) ? base.tables : [];
+      const baseAlocacoesHistorico = Array.isArray(base.alocacoesHistorico) ? base.alocacoesHistorico : [];
+
+      const nextTables = baseTables.map((table: any) => {
+        if (table.name !== row.tableName) return table;
         return {
           ...table,
-          rows: table.rows.map((currentRow) => {
+          rows: table.rows.map((currentRow: StockRow) => {
             if (currentRow.id !== row.id) return currentRow;
 
             const nextValues = { ...currentRow.values };
@@ -1721,32 +1981,24 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
               nextValues.status = getDefaultStatusForTable(currentRow.tableName);
             }
 
-            return {
-              ...currentRow,
-              values: nextValues,
-            };
+            return { ...currentRow, values: nextValues };
           })
         };
-      })
-    );
+      });
+      const nextAlocacoesHistorico = [novoEvento, ...baseAlocacoesHistorico];
 
-    setAlocacoesHistorico((prev) => [
-      {
-        id: `desal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        action: 'desalocar',
-        kind: row.tableName === 'Alugados - Equipamentos' ? 'equipamentos' : row.tableName === 'Materiais' ? 'materiais' : 'outros',
-        dataEvento: new Date().toISOString(),
-        osId: row.values.serviceOS || '',
-        osLabel: row.values.serviceOS || '',
-        itemLabel: row.values.material || row.values.equipamento || row.values.modelo || row.values.item || 'Item',
-        tableName: row.tableName,
-        local: row.values.localizacao || ''
-      },
-      ...prev
-    ]);
+      await saveEntity('almoxerifado', { ...base, tables: nextTables, alocacoesHistorico: nextAlocacoesHistorico });
+      return { nextTables, nextAlocacoesHistorico };
+    });
+
+    if (!resultado) return;
+
+    skipNextAutoSave.current = true;
+    setTables(resultado.nextTables);
+    setAlocacoesHistorico(resultado.nextAlocacoesHistorico);
   };
 
-  const handleSaveEquipAllocation = () => {
+  const handleSaveEquipAllocation = async () => {
     if (!equipAllocateForm.local || !equipAllocateForm.osId) {
       toast.error('Por favor, preencha o local e selecione a OS.');
       return;
@@ -1755,45 +2007,53 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     const { osLabel, osLocal } = resolveSelectedOsData(equipAllocateForm.osId);
     const effectiveLocal = osLocal || equipAllocateForm.local;
 
-    setTables((prevTables) =>
-      prevTables.map((table) => {
-        if (table.name === equipAllocateForm.tableName) {
-          return {
-            ...table,
-            rows: table.rows.map((row) => {
-              if (row.id === equipAllocateForm.rowId) {
-                return {
-                  ...row,
-                  values: {
-                    ...row.values,
-                    status: 'Alocado',
-                    localizacao: effectiveLocal,
-                    serviceOS: equipAllocateForm.osId
-                  }
-                };
-              }
-              return row;
-            })
-          };
-        }
-        return table;
-      })
-    );
+    const novoEvento: AllocationHistoricoItem = {
+      id: `aloc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      action: 'alocar',
+      kind: equipAllocateForm.tableName === 'Alugados - Equipamentos' ? 'equipamentos' : equipAllocateForm.tableName === 'Materiais' ? 'materiais' : 'outros',
+      dataEvento: new Date().toISOString(),
+      osId: equipAllocateForm.osId,
+      osLabel,
+      itemLabel: equipAllocateForm.equipName,
+      tableName: equipAllocateForm.tableName,
+      local: effectiveLocal
+    };
 
-    setAlocacoesHistorico((prev) => [
-      {
-        id: `aloc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        action: 'alocar',
-        kind: equipAllocateForm.tableName === 'Alugados - Equipamentos' ? 'equipamentos' : equipAllocateForm.tableName === 'Materiais' ? 'materiais' : 'outros',
-        dataEvento: new Date().toISOString(),
-        osId: equipAllocateForm.osId,
-        osLabel,
-        itemLabel: equipAllocateForm.equipName,
-        tableName: equipAllocateForm.tableName,
-        local: effectiveLocal
-      },
-      ...prev
-    ]);
+    // Mesmo motivo das demais ações: busca o estado atual do servidor antes de gravar, em vez
+    // de partir da cópia local de `tables`.
+    const resultado = await comAlmoxarifadoAtual(async (base) => {
+      const baseTables = Array.isArray(base.tables) ? base.tables : [];
+      const baseAlocacoesHistorico = Array.isArray(base.alocacoesHistorico) ? base.alocacoesHistorico : [];
+
+      const nextTables = baseTables.map((table: any) => {
+        if (table.name !== equipAllocateForm.tableName) return table;
+        return {
+          ...table,
+          rows: table.rows.map((row: StockRow) => {
+            if (row.id !== equipAllocateForm.rowId) return row;
+            return {
+              ...row,
+              values: {
+                ...row.values,
+                status: 'Alocado',
+                localizacao: effectiveLocal,
+                serviceOS: equipAllocateForm.osId
+              }
+            };
+          })
+        };
+      });
+      const nextAlocacoesHistorico = [novoEvento, ...baseAlocacoesHistorico];
+
+      await saveEntity('almoxerifado', { ...base, tables: nextTables, alocacoesHistorico: nextAlocacoesHistorico });
+      return { nextTables, nextAlocacoesHistorico };
+    });
+
+    if (!resultado) return;
+
+    skipNextAutoSave.current = true;
+    setTables(resultado.nextTables);
+    setAlocacoesHistorico(resultado.nextAlocacoesHistorico);
 
     setIsEquipAllocateModalOpen(false);
     setEquipAllocateForm({ rowId: '', tableName: '', equipName: '', local: '', osId: '' });
@@ -1865,7 +2125,9 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     const effectiveOsLocal = osLocal || '';
 
     // Valida as quantidades de TODOS os itens quantificáveis (com coluna de quantidade)
-    // antes de aplicar qualquer mudança: obrigatória e nunca acima do estoque.
+    // antes de aplicar qualquer mudança: obrigatória e nunca acima do estoque. Validação rápida
+    // em cima do que a tela já tem — a validação que realmente decide roda de novo lá embaixo,
+    // em cima do estoque fresco do servidor.
     for (const { tableName, row } of selectedRows) {
       if (getRomaneioItemKind(tableName) === 'gas') continue;
       const estoque = estoqueDaLinha(row);
@@ -1884,79 +2146,135 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     }
 
     const timestamp = new Date().toISOString();
+    const selectedKeys = Array.from(selectedForRomaneio);
 
-    // Define o tratamento de cada item conforme seu tipo:
-    // - material -> baixa (deduz a quantidade escolhida);
-    // - gás      -> deduz as quantidades atuais por tipo (saem do estoque, retornam por quantidade);
-    // - demais   -> alocação do item inteiro.
-    const romaneioItems = selectedRows.map(({ tableName, row }) => {
-      const kind = getRomaneioItemKind(tableName);
-      const key = keyForRow(tableName, row.id);
+    // Mesmo motivo de `handleSaveRegister`/`handleConfirmBaixa`: o romaneio pode CONSUMIR
+    // totalmente um material (linha sai da tabela) e mexe em 3 históricos de uma vez
+    // (alocacoesHistorico/baixasHistorico/romaneiosHistorico) — a operação em lote mais exposta
+    // de todo o Almoxarifado à trava anti-encolhimento do backend se partir da cópia local.
+    // Por isso todo o cálculo (inclusive a revalidação de estoque) roda em cima do `base`
+    // buscado na hora, não da `selectedRows` de cima (que só serve pra validação rápida/feedback
+    // imediato de UI).
+    const resultado = await comAlmoxarifadoAtual(async (base) => {
+      const baseTables = Array.isArray(base.tables) ? base.tables : [];
 
-      if (kind === 'material') {
-        const estoque = parseEstoqueQty(row.values.quantidade);
-        const baixaQty = Math.min(estoque, Math.max(0, parseEstoqueQty(romaneioQuantities[key] ?? '')));
-        const restante = Math.max(0, estoque - baixaQty);
+      const baseSelectedRows: { tableName: string; row: StockRow }[] = [];
+      for (const key of selectedKeys) {
+        const [tableName, rowId] = key.split('::');
+        const table = baseTables.find((t: any) => t.name === tableName);
+        const row = table?.rows.find((r: StockRow) => r.id === rowId);
+        if (table && row) baseSelectedRows.push({ tableName: table.name, row });
+      }
+
+      if (baseSelectedRows.length === 0) {
+        toast.error('Os itens selecionados não existem mais no estoque atual. Recarregue a página e tente de novo.');
+        return false;
+      }
+
+      for (const { tableName, row } of baseSelectedRows) {
+        if (getRomaneioItemKind(tableName) === 'gas') continue;
+        const estoque = estoqueDaLinha(row);
+        if (estoque <= 0) continue;
+        const key = keyForRow(tableName, row.id);
+        const qty = parseEstoqueQty(romaneioQuantities[key] ?? '');
+        const nome = row.values.material || row.values.equipamento || row.values.item || row.id;
+        if (qty > estoque) {
+          toast.error(`O estoque de "${nome}" mudou (alguém mais atualizou o Almoxarifado). Recarregue a página e confira as quantidades.`);
+          return false;
+        }
+      }
+
+      // Define o tratamento de cada item conforme seu tipo:
+      // - material -> baixa (deduz a quantidade escolhida);
+      // - gás      -> deduz as quantidades atuais por tipo (saem do estoque, retornam por quantidade);
+      // - demais   -> alocação do item inteiro.
+      const romaneioItems = baseSelectedRows.map(({ tableName, row }) => {
+        const kind = getRomaneioItemKind(tableName);
+        const key = keyForRow(tableName, row.id);
+
+        if (kind === 'material') {
+          const estoque = parseEstoqueQty(row.values.quantidade);
+          const baixaQty = Math.min(estoque, Math.max(0, parseEstoqueQty(romaneioQuantities[key] ?? '')));
+          const restante = Math.max(0, estoque - baixaQty);
+          const nextValues = {
+            ...row.values,
+            quantidade: String(restante),
+            serviceOS: effectiveOsLabel,
+            localizacao: effectiveOsLocal || row.values.localizacao,
+          };
+          return {
+            tableName,
+            rowId: row.id,
+            mode: 'baixa' as const,
+            kind,
+            itemLabel: row.values.material || row.values.item || row.id,
+            quantidade: String(baixaQty),
+            removed: restante <= 0,
+            snapshotBefore: { ...row.values },
+            snapshotAfter: nextValues,
+          };
+        }
+
+        if (kind === 'gas') {
+          // Registra a quantidade atual de cada gás (sai do estoque) e zera na linha.
+          const gasQuantities: Record<string, number> = {};
+          const nextValues = { ...row.values };
+          getGasKeys(row.values).forEach((gasKey) => {
+            const atual = parseEstoqueQty(row.values[gasKey]);
+            if (atual > 0) gasQuantities[gasKey] = atual;
+            nextValues[gasKey] = '0';
+          });
+          nextValues.total = '0';
+          const totalSaida = Object.values(gasQuantities).reduce((soma, valor) => soma + valor, 0);
+          return {
+            tableName,
+            rowId: row.id,
+            mode: 'alocacao' as const,
+            kind,
+            itemLabel: row.values.fornecedor || row.values.item || row.id,
+            quantidade: String(totalSaida),
+            gasQuantities,
+            removed: false,
+            snapshotBefore: { ...row.values },
+            snapshotAfter: nextValues,
+          };
+        }
+
+        // Equipamento/alugado: se houver coluna de quantidade, deduz a quantidade ESCOLHIDA
+        // (alocação parcial, limitada ao estoque); senão, aloca o item inteiro (1 unidade).
+        const estoqueEquip = estoqueDaLinha(row);
+        const itemLabelEquip = row.values.material || row.values.equipamento || row.values.fornecedor || row.values.item || row.id;
+
+        if (estoqueEquip > 0) {
+          const saida = Math.min(estoqueEquip, Math.max(0, parseEstoqueQty(romaneioQuantities[key] ?? '')));
+          const restante = Math.max(0, estoqueEquip - saida);
+          const fieldKey = (row.values.quantidade ?? '') !== '' ? 'quantidade' : 'qtd';
+          const nextValues = {
+            ...row.values,
+            [fieldKey]: String(restante),
+            // Só marca a linha inteira como alocada à OS quando esgota o estoque disponível.
+            serviceOS: restante <= 0 ? effectiveOsLabel : row.values.serviceOS,
+            localizacao: restante <= 0 ? (effectiveOsLocal || row.values.localizacao) : row.values.localizacao,
+            status: restante <= 0 ? 'Alocado' : row.values.status,
+          };
+          return {
+            tableName,
+            rowId: row.id,
+            mode: 'alocacao' as const,
+            kind,
+            itemLabel: itemLabelEquip,
+            quantidade: String(saida),
+            removed: false,
+            snapshotBefore: { ...row.values },
+            snapshotAfter: nextValues,
+          };
+        }
+
         const nextValues = {
           ...row.values,
-          quantidade: String(restante),
           serviceOS: effectiveOsLabel,
           localizacao: effectiveOsLocal || row.values.localizacao,
-        };
-        return {
-          tableName,
-          rowId: row.id,
-          mode: 'baixa' as const,
-          kind,
-          itemLabel: row.values.material || row.values.item || row.id,
-          quantidade: String(baixaQty),
-          removed: restante <= 0,
-          snapshotBefore: { ...row.values },
-          snapshotAfter: nextValues,
-        };
-      }
-
-      if (kind === 'gas') {
-        // Registra a quantidade atual de cada gás (sai do estoque) e zera na linha.
-        const gasQuantities: Record<string, number> = {};
-        const nextValues = { ...row.values };
-        getGasKeys(row.values).forEach((gasKey) => {
-          const atual = parseEstoqueQty(row.values[gasKey]);
-          if (atual > 0) gasQuantities[gasKey] = atual;
-          nextValues[gasKey] = '0';
-        });
-        nextValues.total = '0';
-        const totalSaida = Object.values(gasQuantities).reduce((soma, valor) => soma + valor, 0);
-        return {
-          tableName,
-          rowId: row.id,
-          mode: 'alocacao' as const,
-          kind,
-          itemLabel: row.values.fornecedor || row.values.item || row.id,
-          quantidade: String(totalSaida),
-          gasQuantities,
-          removed: false,
-          snapshotBefore: { ...row.values },
-          snapshotAfter: nextValues,
-        };
-      }
-
-      // Equipamento/alugado: se houver coluna de quantidade, deduz a quantidade ESCOLHIDA
-      // (alocação parcial, limitada ao estoque); senão, aloca o item inteiro (1 unidade).
-      const estoqueEquip = estoqueDaLinha(row);
-      const itemLabelEquip = row.values.material || row.values.equipamento || row.values.fornecedor || row.values.item || row.id;
-
-      if (estoqueEquip > 0) {
-        const saida = Math.min(estoqueEquip, Math.max(0, parseEstoqueQty(romaneioQuantities[key] ?? '')));
-        const restante = Math.max(0, estoqueEquip - saida);
-        const fieldKey = (row.values.quantidade ?? '') !== '' ? 'quantidade' : 'qtd';
-        const nextValues = {
-          ...row.values,
-          [fieldKey]: String(restante),
-          // Só marca a linha inteira como alocada à OS quando esgota o estoque disponível.
-          serviceOS: restante <= 0 ? effectiveOsLabel : row.values.serviceOS,
-          localizacao: restante <= 0 ? (effectiveOsLocal || row.values.localizacao) : row.values.localizacao,
-          status: restante <= 0 ? 'Alocado' : row.values.status,
+          status: 'Alocado',
         };
         return {
           tableName,
@@ -1964,118 +2282,121 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
           mode: 'alocacao' as const,
           kind,
           itemLabel: itemLabelEquip,
-          quantidade: String(saida),
+          quantidade: '1',
           removed: false,
           snapshotBefore: { ...row.values },
           snapshotAfter: nextValues,
         };
-      }
+      });
 
-      const nextValues = {
-        ...row.values,
-        serviceOS: effectiveOsLabel,
-        localizacao: effectiveOsLocal || row.values.localizacao,
-        status: 'Alocado',
-      };
-      return {
-        tableName,
-        rowId: row.id,
-        mode: 'alocacao' as const,
-        kind,
-        itemLabel: itemLabelEquip,
-        quantidade: '1',
-        removed: false,
-        snapshotBefore: { ...row.values },
-        snapshotAfter: nextValues,
-      };
-    });
+      const byKey = new Map(romaneioItems.map((item) => [keyForRow(item.tableName, item.rowId), item]));
 
-    const byKey = new Map(romaneioItems.map((item) => [keyForRow(item.tableName, item.rowId), item]));
+      // Aplica no estoque: materiais totalmente consumidos saem da tabela;
+      // os demais (baixa parcial ou alocação) têm os valores atualizados.
+      const nextTables = baseTables.map((table: any) => ({
+        ...table,
+        rows: table.rows.flatMap((row: StockRow) => {
+          const item = byKey.get(keyForRow(table.name, row.id));
+          if (!item) return [row];
+          if (item.removed) return [];
+          return [{
+            ...row,
+            values: item.snapshotAfter,
+            searchText: Object.values(item.snapshotAfter).join(' ').toLowerCase(),
+          }];
+        })
+      }));
 
-    // Aplica no estoque: materiais totalmente consumidos saem da tabela;
-    // os demais (baixa parcial ou alocação) têm os valores atualizados.
-    setTables((prev) => prev.map((table) => ({
-      ...table,
-      rows: table.rows.flatMap((row) => {
-        const item = byKey.get(keyForRow(table.name, row.id));
-        if (!item) return [row];
-        if (item.removed) return [];
-        return [{
-          ...row,
-          values: item.snapshotAfter,
-          searchText: Object.values(item.snapshotAfter).join(' ').toLowerCase(),
-        }];
-      })
-    })));
-
-    const novosEventos = romaneioItems.map((item) => ({
-      id: `aloc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      action: (item.mode === 'baixa' ? 'baixa' : 'alocar') as AllocationHistoricoItem['action'],
-      kind: (item.kind === 'gas'
-        ? 'gases'
-        : item.tableName === 'Alugados - Equipamentos'
-          ? 'equipamentos'
-          : item.tableName === 'Materiais'
-            ? 'materiais'
-            : 'outros') as AllocationHistoricoItem['kind'],
-      dataEvento: timestamp,
-      osId: romaneioOsId,
-      osLabel: effectiveOsLabel,
-      itemLabel: item.itemLabel,
-      tableName: item.tableName,
-      quantity: (item.mode === 'baixa' || item.kind === 'gas') ? (Number(item.quantidade) || undefined) : undefined,
-      local: effectiveOsLocal || item.snapshotBefore.localizacao || '',
-    }));
-
-    setAlocacoesHistorico((prev) => [...novosEventos, ...prev]);
-
-    // Histórico de baixa registra apenas os materiais consumidos.
-    const baixaItems = romaneioItems.filter((item) => item.mode === 'baixa');
-    if (baixaItems.length > 0) {
-      setBaixasHistorico((prev) => [
-        ...baixaItems.map((item) => ({
-          id: `baixa-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          dataBaixa: timestamp,
-          tableName: item.tableName,
-          itemLabel: `${item.itemLabel} (x${item.quantidade})`,
-          statusAnterior: item.snapshotBefore.status || '',
-          osId: romaneioOsId,
-          osLabel: effectiveOsLabel,
-          localizacao: effectiveOsLocal || item.snapshotBefore.localizacao || '',
-          serviceOS: effectiveOsLabel,
-          snapshot: { ...item.snapshotBefore },
-        })),
-        ...prev
-      ]);
-    }
-
-    // Romaneio só é considerado de "baixa" (sem devolução) quando todos os itens são materiais.
-    const romaneioModeResolvido = romaneioItems.every((item) => item.mode === 'baixa') ? 'baixa' : 'alocacao';
-
-    const osCliente = cleanValue(
-      (selectedOs as any)?.cliente_detalhes?.razao_social
-      || (selectedOs as any)?.cliente_detalhes?.razaoSocial
-      || (selectedOs as any)?.cliente
-      || ''
-    );
-
-    setRomaneiosHistorico((prev) => [
-      {
-        id: `rom-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        createdAt: timestamp,
-        mode: romaneioModeResolvido,
+      const novosEventos = romaneioItems.map((item) => ({
+        id: `aloc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        action: (item.mode === 'baixa' ? 'baixa' : 'alocar') as AllocationHistoricoItem['action'],
+        kind: (item.kind === 'gas'
+          ? 'gases'
+          : item.tableName === 'Alugados - Equipamentos'
+            ? 'equipamentos'
+            : item.tableName === 'Materiais'
+              ? 'materiais'
+              : 'outros') as AllocationHistoricoItem['kind'],
+        dataEvento: timestamp,
         osId: romaneioOsId,
         osLabel: effectiveOsLabel,
-        osLocal: effectiveOsLocal,
-        osCliente,
-        items: romaneioItems.map(({ removed, ...rest }) => rest),
-      },
-      ...prev
-    ]);
+        itemLabel: item.itemLabel,
+        tableName: item.tableName,
+        quantity: (item.mode === 'baixa' || item.kind === 'gas') ? (Number(item.quantidade) || undefined) : undefined,
+        local: effectiveOsLocal || item.snapshotBefore.localizacao || '',
+      }));
+
+      const baseAlocacoesHistorico = Array.isArray(base.alocacoesHistorico) ? base.alocacoesHistorico : [];
+      const nextAlocacoesHistorico = [...novosEventos, ...baseAlocacoesHistorico];
+
+      // Histórico de baixa registra apenas os materiais consumidos.
+      const baixaItems = romaneioItems.filter((item) => item.mode === 'baixa');
+      const baseBaixasHistorico = Array.isArray(base.baixasHistorico) ? base.baixasHistorico : [];
+      const nextBaixasHistorico = baixaItems.length > 0
+        ? [
+          ...baixaItems.map((item) => ({
+            id: `baixa-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            dataBaixa: timestamp,
+            tableName: item.tableName,
+            itemLabel: `${item.itemLabel} (x${item.quantidade})`,
+            statusAnterior: item.snapshotBefore.status || '',
+            osId: romaneioOsId,
+            osLabel: effectiveOsLabel,
+            localizacao: effectiveOsLocal || item.snapshotBefore.localizacao || '',
+            serviceOS: effectiveOsLabel,
+            snapshot: { ...item.snapshotBefore },
+          })),
+          ...baseBaixasHistorico
+        ]
+        : baseBaixasHistorico;
+
+      // Romaneio só é considerado de "baixa" (sem devolução) quando todos os itens são materiais.
+      const romaneioModeResolvido = romaneioItems.every((item) => item.mode === 'baixa') ? 'baixa' : 'alocacao';
+
+      const osCliente = cleanValue(
+        (selectedOs as any)?.cliente_detalhes?.razao_social
+        || (selectedOs as any)?.cliente_detalhes?.razaoSocial
+        || (selectedOs as any)?.cliente
+        || ''
+      );
+
+      const baseRomaneiosHistorico = Array.isArray(base.romaneiosHistorico) ? base.romaneiosHistorico : [];
+      const nextRomaneiosHistorico = [
+        {
+          id: `rom-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          createdAt: timestamp,
+          mode: romaneioModeResolvido,
+          osId: romaneioOsId,
+          osLabel: effectiveOsLabel,
+          osLocal: effectiveOsLocal,
+          osCliente,
+          items: romaneioItems.map(({ removed, ...rest }) => rest),
+        },
+        ...baseRomaneiosHistorico
+      ];
+
+      await saveEntity('almoxerifado', {
+        ...base,
+        tables: nextTables,
+        alocacoesHistorico: nextAlocacoesHistorico,
+        baixasHistorico: nextBaixasHistorico,
+        romaneiosHistorico: nextRomaneiosHistorico,
+      });
+
+      return { nextTables, nextAlocacoesHistorico, nextBaixasHistorico, nextRomaneiosHistorico, romaneioItems, baseSelectedRows, osCliente };
+    });
+
+    if (!resultado) return;
+
+    skipNextAutoSave.current = true;
+    setTables(resultado.nextTables);
+    setAlocacoesHistorico(resultado.nextAlocacoesHistorico);
+    setBaixasHistorico(resultado.nextBaixasHistorico);
+    setRomaneiosHistorico(resultado.nextRomaneiosHistorico);
 
     // Peso (kg) por item do romaneio = peso unitário (da linha) × quantidade que saiu.
-    const rowByKeyPeso = new Map(selectedRows.map(({ tableName, row }) => [keyForRow(tableName, row.id), row]));
-    const itemsPdf = romaneioItems.map((item) => {
+    const rowByKeyPeso = new Map(resultado.baseSelectedRows.map(({ tableName, row }) => [keyForRow(tableName, row.id), row]));
+    const itemsPdf = resultado.romaneioItems.map((item) => {
       const rowOrigem = rowByKeyPeso.get(keyForRow(item.tableName, item.rowId));
       const pesoUnit = parseEstoqueQty(rowOrigem?.values.peso);
       const pesoLinha = pesoUnit > 0 ? pesoUnit * (Number(item.quantidade) || 0) : 0;
@@ -2084,9 +2405,21 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     const pesoTotalRomaneio = itemsPdf.reduce((soma, it) => soma + (Number(it.peso) || 0), 0);
 
     try {
-      const logoBase64 = await loadRomaneioLogoBase64();
+      // Logo do romaneio: segue a empresa da OS (prefixo VTS/SN = Servinave, LN = Linave — mesma
+      // convenção usada em todo o resto do ERP). O logoBase64 era buscado sem argumento nenhum
+      // antes (sempre o logo da Linave), então o romaneio de uma OS da Servinave sempre saía com
+      // o logo errado. Sem prefixo reconhecível (ex.: as duas OS de uso interno), cai pro
+      // empresaPrestadora do negócio vinculado.
+      const numeroOsUpper = String(romaneioOsId || '').trim().toUpperCase();
+      const obraDaOs = (Array.isArray(obras) ? obras : []).find((o: any) => o?.id === (selectedOs as any)?.obraId);
+      const empresaDoRomaneio = numeroOsUpper.startsWith('VTS') || numeroOsUpper.startsWith('SN')
+        ? 'Servinave'
+        : numeroOsUpper.startsWith('LN')
+          ? 'Linave'
+          : (obraDaOs?.empresaPrestadora || (selectedOs as any)?.negocio_detalhes?.empresa_prestadora || (selectedOs as any)?.empresa_prestadora || 'Linave');
+      const logoBase64 = await loadRomaneioLogoBase64(getLogoUrlForEmpresa(empresaDoRomaneio));
       const doc = gerarRomaneioPdf({
-        cliente: osCliente,
+        cliente: resultado.osCliente,
         osLabel: effectiveOsLabel,
         enderecoEntrega: effectiveOsLocal,
         dataEmissao: timestamp,
@@ -2097,8 +2430,8 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       doc.save(`romaneio-${effectiveOsLabel || romaneioOsId}.pdf`);
     } catch (e) {
       console.error('Erro ao gerar pdf do romaneio', e);
-      // A baixa do estoque já foi gravada acima (setRomaneiosHistorico) mesmo se o PDF falhar
-      // — sem o toast, o usuário achava que também tinha saído o documento, sem nenhum aviso.
+      // A baixa do estoque já foi gravada acima (saveEntity) mesmo se o PDF falhar — sem o
+      // toast, o usuário achava que também tinha saído o documento, sem nenhum aviso.
       toast.error('Romaneio registrado, mas não foi possível gerar o PDF. Baixe de novo pelo Histórico de Romaneio.');
     }
 
@@ -2141,8 +2474,9 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
     }
     if (column.key === 'actions') {
       const isGasTable = row.tableName === 'Alugados - Gases';
-      // Caixa Metálica/Skid e Andaimes entram no mesmo fluxo de alocação por unidade inteira
-      // dos Equipamentos (são itens retornáveis, não consumíveis como Materiais).
+      // Caixa Metálica/Skid e Andaimes entram no mesmo fluxo de alocação por unidade inteira dos
+      // Equipamentos (são itens retornáveis, não consumíveis como Materiais) — EPI/EPC e CIVIL já
+      // caem em `selectedCategory === 'Equipamentos'` por serem subtipos dela, não precisam de caso à parte.
       const isEquipamentosCategory = selectedCategory === 'Equipamentos' || selectedCategory === 'Caixa Metálica / Skid' || selectedCategory === 'Andaimes';
       // "Alugados - Equipamentos" (equipamento de terceiro alugado) é retornável do mesmo jeito
       // — precisa do ciclo completo Alocar/Desalocar, não só do botão de Desalocar. Sem isso não
@@ -2319,6 +2653,23 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       );
     }
 
+    if (column.key === 'subtipo' && table.name === 'Andaimes') {
+      return (
+        <Select value={value} onValueChange={(nextValue) => handleRegisterChange(column.key, nextValue)}>
+          <SelectTrigger className={`${baseClass} h-12 justify-between`}>
+            <SelectValue placeholder="Selecione o tipo" />
+          </SelectTrigger>
+          <SelectContent className="border border-white/10 bg-[#0b1220] text-white shadow-2xl">
+            {ANDAIME_TIPOS.map((tipo) => (
+              <SelectItem key={tipo} value={tipo} className="cursor-pointer rounded-lg px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
+                {tipo}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      );
+    }
+
     if (column.key === 'serviceOS') {
       return (
         <Select value={value} onValueChange={(nextValue) => handleRegisterChange(column.key, nextValue)}>
@@ -2341,6 +2692,23 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                 </SelectItem>
               ))
             )}
+          </SelectContent>
+        </Select>
+      );
+    }
+
+    if (column.key === 'possuiManutencao') {
+      return (
+        <Select value={value} onValueChange={(nextValue) => handleRegisterChange(column.key, nextValue)}>
+          <SelectTrigger className={`${baseClass} h-12 justify-between`}>
+            <SelectValue placeholder="Selecione" />
+          </SelectTrigger>
+          <SelectContent className="border border-white/10 bg-[#0b1220] text-white shadow-2xl">
+            {['Sim', 'Não'].map((option) => (
+              <SelectItem key={option} value={option} className="cursor-pointer rounded-lg px-3 py-2 text-sm text-white/80 focus:bg-white/10 focus:text-white">
+                {option}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       );
@@ -2429,14 +2797,14 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
 
         <div className="space-y-2">
           <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">Tipo</label>
-          {(selectedCategory === 'Equipamentos' || selectedCategory === 'Alugados') ? (
+          {(selectedCategory === 'Equipamentos' || selectedCategory === 'Alugados' || selectedCategory === 'Andaimes') ? (
             <Select value={selectedType} onValueChange={setSelectedType}>
               <SelectTrigger className="relative h-12 w-full rounded-xl border border-white/5 bg-[#0b1220]/80 pl-11 pr-4 text-white shadow-sm transition focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 hover:border-white/20">
                 <Layers3 size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-cyan-400" />
                 <SelectValue placeholder="Selecione" className="text-sm font-semibold" />
               </SelectTrigger>
               <SelectContent className="border border-white/10 bg-[#0b1220]/95 text-white shadow-2xl backdrop-blur">
-                {selectedCategory === 'Equipamentos' && (
+                {(selectedCategory === 'Equipamentos' || selectedCategory === 'Andaimes') && (
                   <SelectItem value={ALL_TYPES_VALUE} className="cursor-pointer rounded-lg px-3 py-2 text-sm font-bold text-cyan-300 focus:bg-white/10 focus:text-cyan-200">
                     Todos os tipos
                   </SelectItem>
@@ -2574,7 +2942,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
             : selectedCategory === 'Caixa Metálica / Skid'
             ? 'Visualizando Caixa Metálica / Skid'
             : selectedCategory === 'Andaimes'
-            ? 'Visualizando Andaimes'
+            ? `Andaimes / ${selectedType === ALL_TYPES_VALUE ? 'Todos os tipos' : selectedType}`
             : selectedCategory === 'Equipamentos'
             ? `Equipamentos / ${selectedType === ALL_TYPES_VALUE ? 'Todos os tipos' : selectedType}`
             : `Alugados / ${selectedType}`}
@@ -2794,7 +3162,20 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
               <div className="grid grid-cols-1 gap-6 xl:grid-cols-[340px_1fr]">
                 <div className="space-y-2">
                   <label className="ml-1 block text-[11px] font-bold uppercase tracking-wider text-white/50">Tipo do item</label>
-                  <Select value={registerTableName} onValueChange={setRegisterTableName} disabled={Boolean(editingRowTarget)}>
+                  <Select
+                    value={registerTableName === 'Andaimes' && registerValues.subtipo
+                      ? `${ANDAIME_OPCAO_PREFIXO}${registerValues.subtipo}`
+                      : registerTableName}
+                    onValueChange={(valor) => {
+                      if (valor.startsWith(ANDAIME_OPCAO_PREFIXO)) {
+                        setRegisterTableName('Andaimes');
+                        handleRegisterChange('subtipo', valor.slice(ANDAIME_OPCAO_PREFIXO.length));
+                        return;
+                      }
+                      setRegisterTableName(valor);
+                    }}
+                    disabled={Boolean(editingRowTarget)}
+                  >
                     <SelectTrigger className="h-16 rounded-xl border border-white/5 bg-[#0b1220]/80 px-4 text-white shadow-sm transition hover:border-emerald-400/40 focus:ring-1 focus:ring-emerald-400">
                       <div className="flex min-w-0 items-center gap-3 text-left w-full">
                         <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ring-1 shadow-inner ${registerTableIcon.badgeClass}`}>
@@ -2811,21 +3192,56 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                       </p>
                     )}
                     <SelectContent className="border border-white/10 bg-[#0b1220]/95 p-2 text-white shadow-2xl backdrop-blur">
-                      {tables.map((table) => (
-                        <SelectItem key={table.name} value={table.name} className="cursor-pointer rounded-lg px-3 py-3 text-sm text-white/80 focus:bg-white/10 focus:text-white">
-                          {(() => {
-                            const tableIcon = getTableIconConfig(table.name);
-                            return (
-                              <div className="flex items-center gap-3">
-                                <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ring-1 ${tableIcon.badgeClass}`}>
-                                  <tableIcon.Icon size={14} className={tableIcon.iconClass} />
+                      {tables.map((table) => {
+                        // Subtipos de Equipamentos agrupados sob um título "Equipamentos" (não
+                        // selecionável — Equipamentos é categoria, não tabela), no lugar do
+                        // primeiro deles, como "Equipamentos / <subtipo>".
+                        if (EQUIPAMENTOS_TABLE_NAMES.includes(table.name)) {
+                          const primeiroEquipamento = tables.find((t) => EQUIPAMENTOS_TABLE_NAMES.includes(t.name));
+                          if (table !== primeiroEquipamento) return null;
+                          const subtipos = tables
+                            .filter((t) => EQUIPAMENTOS_TABLE_NAMES.includes(t.name))
+                            .sort((a, b) => EQUIPAMENTOS_TABLE_NAMES.indexOf(a.name) - EQUIPAMENTOS_TABLE_NAMES.indexOf(b.name));
+                          return (
+                            <SelectGroup key="__equipamentos__">
+                              <SelectLabel className="flex items-center gap-3 px-3 py-3 text-sm font-semibold text-white/80">
+                                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-cyan-500/15 ring-1 ring-cyan-500/20">
+                                  <Layers3 size={14} className="text-cyan-300" />
                                 </div>
-                                <span className="min-w-0 flex-1 truncate font-semibold">{table.name}</span>
-                              </div>
-                            );
-                          })()}
-                        </SelectItem>
-                      ))}
+                                Equipamentos
+                              </SelectLabel>
+                              {subtipos.map((subtipo) => (
+                                <SelectItem key={subtipo.name} value={subtipo.name} className="cursor-pointer rounded-lg py-2 pl-14 pr-3 text-sm text-white/70 focus:bg-white/10 focus:text-white">
+                                  Equipamentos / {subtipo.name}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
+                          );
+                        }
+                        return (
+                        <React.Fragment key={table.name}>
+                          <SelectItem value={table.name} className="cursor-pointer rounded-lg px-3 py-3 text-sm text-white/80 focus:bg-white/10 focus:text-white">
+                            {(() => {
+                              const tableIcon = getTableIconConfig(table.name);
+                              return (
+                                <div className="flex items-center gap-3">
+                                  <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ring-1 ${tableIcon.badgeClass}`}>
+                                    <tableIcon.Icon size={14} className={tableIcon.iconClass} />
+                                  </div>
+                                  <span className="min-w-0 flex-1 truncate font-semibold">{table.name}</span>
+                                </div>
+                              );
+                            })()}
+                          </SelectItem>
+                          {/* Tipos de andaime logo abaixo de "Andaimes": escolher um já define o campo Tipo. */}
+                          {table.name === 'Andaimes' && ANDAIME_TIPOS.map((tipo) => (
+                            <SelectItem key={tipo} value={`${ANDAIME_OPCAO_PREFIXO}${tipo}`} className="cursor-pointer rounded-lg py-2 pl-14 pr-3 text-sm text-white/70 focus:bg-white/10 focus:text-white">
+                              Andaimes / {tipo}
+                            </SelectItem>
+                          ))}
+                        </React.Fragment>
+                        );
+                      })}
                     </SelectContent>
                   </Select>
                 </div>
@@ -2912,10 +3328,6 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                 <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
                   {currentRegisterTable.columns.map((column) => {
                     if (column.key === 'actions') return null;
-                    // "Serviço (OS)" some do CADASTRO de item novo (vincular a uma OS é o
-                    // que a aba "Alocados" já faz, com o fluxo próprio de Alocar) — continua
-                    // disponível ao editar um item já existente, se precisar corrigir depois.
-                    if (column.key === 'serviceOS' && !editingRowTarget) return null;
                     return (
                       <div key={column.key} className={column.key === 'status' ? 'md:col-span-1' : ''}>
                         <label className="ml-1 mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-white/50">
@@ -3315,7 +3727,10 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                                   min={1}
                                   max={estoque || undefined}
                                   value={qtdBaixa}
-                                  placeholder={String(estoque || '')}
+                                  // Dica "0" (não o estoque disponível): deixado em branco, é
+                                  // exatamente 0 que sai no romaneio (romaneioQtyForRow acima) —
+                                  // mostrar o estoque aqui sugeria, errado, que ele sairia inteiro.
+                                  placeholder="0"
                                   onChange={(e) => setRomaneioQuantities((prev) => ({ ...prev, [key]: e.target.value }))}
                                   className="h-9 w-20 rounded-lg border border-white/10 bg-[#0b1220]/80 px-2 text-center text-sm text-white placeholder:text-white/30 focus:border-amber-500/40 focus:outline-none"
                                 />

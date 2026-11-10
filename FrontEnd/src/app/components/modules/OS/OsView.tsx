@@ -1,15 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useErp, getPrefixoEmpresa, gerarIdProjetoDeNegocio } from '../../../context/ErpContext';
 import { formatNumeroOsDisplay } from '../../../../services/ordensServico';
-import { Plus, X, Check, Clock, Zap, Download, Eye, FileText, Pencil } from 'lucide-react';
+import { Plus, X, Check, Clock, Zap, Download, Eye, FileText, Pencil, Send } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../ui/feedback';
 import { criarOrdemServico, atualizarOrdemServico, atualizarStatusOs, deleteOrdemServico, getNegocioPorId } from '../../../../services/comercialService';
 import { mapNegocioToObra } from '../../../../services/obrasMapper';
-import { uploadDocumento, excluirDocumento } from '../../../../services/documentosService';
-import { downloadDocument, getDocumentHref } from '../../../utils/documentDownload';
 import { getLogoUrlForEmpresa } from '../../../utils/company';
 import { formatDateBR } from '../../../utils/formatDate';
 import { boldOS } from '../../../utils/osHighlight';
@@ -272,6 +270,9 @@ interface OsFormData {
   ordemServicoNumero: string;
   supervisorEncarregado: string;
   descricaoGeralServico: string;
+  // Texto livre, impresso logo abaixo do escopo no documento — para informações específicas
+  // desta OS que não constavam na proposta original.
+  escopoAdicional: string;
   aSerIncluido: {
     extras?: Array<{ id: string; label: string }>; // itens "a incluir" customizáveis
     certificadoGas: boolean;
@@ -423,6 +424,7 @@ const criarInitialOsData = (): OsFormData => ({
   ordemServicoNumero: '',
   supervisorEncarregado: '',
   descricaoGeralServico: '',
+  escopoAdicional: '',
   aSerIncluido: {
     ...A_SER_INCLUIDO_DEFAULT
   },
@@ -689,7 +691,8 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
 
   const gerarDescricaoConsolidada = (obra: any, resumoOrcamento: any, resumoProposta: any) => {
     const servicosNegocio = (Array.isArray(obra?.servicos) ? obra.servicos : [])
-      .map((servico: any, index: number) => `${index + 1}. ${servico.tipo || 'Serviço'}${servico.descricao ? ` - ${servico.descricao}` : ''}`)
+      // `obra.servicos` vem cru do backend (snake_case) — mesmo fallback da linha 585.
+      .map((servico: any, index: number) => `${index + 1}. ${servico.tipo_servico || servico.tipo || 'Serviço'}${servico.descricao ? ` - ${servico.descricao}` : ''}`)
       .join('\n');
 
     const servicosOrcamento = (Array.isArray(resumoOrcamento?.dadosServicos) ? resumoOrcamento.dadosServicos : [])
@@ -719,6 +722,15 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
   };
 
   const handleSaveRascunhoOS = () => {
+    // Rascunho só existe ANTES de a OS ser enviada para produção — uma OS que já foi enviada
+    // (editandoOsBackendId != null) já é um registro real no backend; "salvá-la como rascunho"
+    // gravaria um SEGUNDO item local com o MESMO id (ordemServicoNumero) só que com status
+    // rebaixado para 'rascunho'/'pendente', sem nunca persistir essa mudança no backend —
+    // dois registros conflitantes com o mesmo id até o próximo F5. O botão já fica escondido
+    // nesse caso (ver JSX abaixo); esta checagem é só a rede de segurança.
+    if (editandoOsBackendId != null) {
+      return toast.error('Esta OS já foi enviada para produção — não é possível salvá-la como rascunho.');
+    }
     if (!formData.obraId) return toast.error('Selecione uma obra para salvar o rascunho.');
     const semRascunhoAnterior = listaOS.filter((item) => !(item.obraId === formData.obraId && item.statusOs === 'rascunho'));
     const rascunho: OsFormData = {
@@ -766,8 +778,11 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
         dataSolicitacao: obra.dataSolicitacao || obra.dataCadastro || '',
         servicos: (Array.isArray(obra.servicos) ? obra.servicos : []).map((servico: any, index: number) => ({
           ordem: index + 1,
-          tipo: servico.tipo || '',
-          localExecucao: servico.localExecucao || '',
+          // `obra.servicos` vem cru do backend (mapNegocioToObra passa o array direto, sem
+          // trocar snake_case por camelCase) — por isso o fallback pros dois nomes, mesmo
+          // padrão já usado na linha 585 deste arquivo.
+          tipo: servico.tipo_servico || servico.tipo || '',
+          localExecucao: servico.local_execucao || servico.localExecucao || '',
           porto: servico.porto || '',
           descricao: servico.descricao || '',
           observacoes: servico.observacoes || ''
@@ -785,6 +800,25 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
     // entra como H/H customizável, então nada do que foi orçado fica de fora da OS.
     const maoObraSeed = gerarSeedMaoObraDoOrcamento(resumoConsolidado.orcamento.maoDeObra);
 
+    // "Local" da OS = local de EXECUÇÃO do serviço (onde o trabalho acontece — porto, estaleiro,
+    // embarcação etc.), não o endereço cadastral do cliente. Antes caía em `clienteCtx?.endereco`,
+    // e como esse campo não tem input na tela (só é preenchido aqui), toda OS saía com o
+    // endereço do cliente impresso como "Local", mesmo quando o serviço era em outro lugar.
+    const localExecucaoOS = resumoConsolidado.negocio.servicos
+      .map((servico: { localExecucao: string }) => servico.localExecucao)
+      .find((valor: string) => String(valor || '').trim()) || '';
+
+    // "Descrição Geral do Serviço" nasce IGUAL ao escopo da proposta (mesmo texto que sai no
+    // PDF da proposta, via formatarEscopoBasicoParaTexto) — não mais uma lista própria recomposta
+    // a partir de negócio/orçamento. Sem proposta (ou proposta sem escopo preenchido), cai no
+    // resumo antigo, que ainda consegue juntar algo útil a partir do negócio/orçamento.
+    const escopoDaProposta = resumoConsolidado.proposta.escopoBasicoServicos?.length
+      ? resumoConsolidado.proposta.escopoBasicoServicos
+      : resumoConsolidado.proposta.escopoA;
+    const descricaoGeralSeed = escopoDaProposta
+      ? formatarEscopoBasicoParaTexto(escopoDaProposta)
+      : gerarDescricaoConsolidada(obra, resumoConsolidado.orcamento, resumoConsolidado.proposta);
+
     setFormData((prev) => ({
       ...prev,
       obraId: obra.id,
@@ -792,11 +826,12 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
       negocioBackendId: obra.negocioBackendId || null,
       cliente: nomeCliente,
       projeto: obra.nome || '',
-      local: clienteCtx?.endereco || '',
+      local: localExecucaoOS,
       dataInicioPrevisto: '',
       dataTerminoPrevisto: '',
       ordemServicoNumero,
-      descricaoGeralServico: gerarDescricaoConsolidada(obra, resumoConsolidado.orcamento, resumoConsolidado.proposta),
+      descricaoGeralServico: descricaoGeralSeed,
+      escopoAdicional: '',
       horasTrabalhadasPorServico: (Array.isArray(obra.servicos) ? obra.servicos : []).map((servico: any, index: number) => ({
         id: `hora-servico-${Date.now()}-${index}`,
         servico: servico.tipo || servico.descricao || `Serviço ${index + 1}`,
@@ -858,6 +893,7 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
       ordemServicoNumero: String(osItem?.ordemServicoNumero || osItem?.id || ''),
       supervisorEncarregado: osItem?.supervisorEncarregado || '',
       descricaoGeralServico: osItem?.descricaoGeralServico || '',
+      escopoAdicional: osItem?.escopoAdicional || '',
       aSerIncluido: { ...base.aSerIncluido, ...(osItem?.aSerIncluido || {}) },
       maoObra: { ...base.maoObra, ...(osItem?.maoObra || {}) },
       horasTrabalhadasPorServico: Array.isArray(osItem?.horasTrabalhadasPorServico) ? osItem.horasTrabalhadasPorServico : [],
@@ -961,6 +997,7 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
           data_termino_previsto: dataTerminoPrevisto,
           supervisor_encarregado: formData.supervisorEncarregado || '',
           descricao_geral_servico: formData.descricaoGeralServico || '',
+          escopo_adicional: formData.escopoAdicional || '',
           a_ser_incluido: formData.aSerIncluido,
           mao_obra: formData.maoObra,
           horas_trabalhadas_servico: horasTrabalhadasPorServico.map(({ servico, hora }) => ({ servico, hora })),
@@ -1039,57 +1076,17 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
 
   // Anexa (ou substitui) a assinatura de aprovação da OS — persistida na tabela Documento,
   // vinculada ao id (SQL) da OS. Slot único: remove a anterior antes de subir a nova.
-  const handleUploadAssinaturaAprovacaoOS = async (osId: string, files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    const arquivo = Array.from(files)[0];
-    const isPdf = arquivo.type === 'application/pdf' || arquivo.name.toLowerCase().endsWith('.pdf');
-    const isImagem = arquivo.type === 'image/png' || arquivo.type === 'image/jpeg' || /\.(png|jpe?g)$/i.test(arquivo.name);
-    if (!isPdf && !isImagem) {
-      toast.error('A assinatura da OS deve ser PDF, PNG ou JPG.');
-      return;
-    }
-    const osItem = listaOS.find((item) => item.id === osId);
-    const osBackendId = (osItem as any)?.backendId;
-    if (osBackendId == null) {
-      toast.error('OS sem identificador no banco — não foi possível anexar a assinatura.');
-      return;
-    }
-    try {
-      const anterior = (osItem as any)?.documentoAssinaturaAprovacao;
-      if (anterior?.backendId) {
-        try { await excluirDocumento(anterior.backendId); } catch { /* segue mesmo se falhar */ }
-      }
-      const documentoAssinaturaAprovacao = await uploadDocumento(arquivo, {
-        vinculoTipo: 'os',
-        vinculoId: osBackendId,
-        categoria: 'os_assinatura',
-      });
-      await atualizarStatusOSPorId(osId, { documentoAssinaturaAprovacao });
-      toast.success('Assinatura da OS anexada e salva no banco.');
-    } catch (error) {
-      toast.error('Não foi possível anexar a assinatura da OS.');
-    }
-  };
-
   const handleAprovarOS = (osId: string) => {
     atualizarStatusOSPorId(osId, { statusAprovacao: 'aprovada', dataAprovacao: new Date().toISOString().split('T')[0] });
     toast.success('OS aprovada com sucesso.');
   };
 
-  const handleVerAssinaturaOS = (doc: any) => {
-    const href = getDocumentHref(doc);
-    if (!href) {
-      toast.error('Documento indisponível para visualização.');
-      return;
-    }
-    window.open(href, '_blank', 'noopener,noreferrer');
-  };
-
-  const handleDownloadAssinaturaOS = (doc: any) => {
-    downloadDocument(doc, {
-      fallbackName: 'assinatura-os',
-      onInvalid: () => toast.error('Documento indisponível para download.'),
-    });
+  // Mesma ação do botão "Enviar OS" em Negócios (CRM) → Detalhes do Negócio
+  // (handleEnviarOS/atualizarOSPorId lá), só que redundante aqui direto na lista de Fazer OS —
+  // pra não depender de abrir o card no Kanban do CRM pra achar o botão.
+  const handleEnviarOSParaProducao = (osId: string) => {
+    atualizarStatusOSPorId(osId, { statusEnvio: 'enviada' });
+    toast.success('OS enviada para produção com sucesso!');
   };
 
   const handleDownloadOSFromList = (osParam: OsFormData) => {
@@ -1280,13 +1277,27 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
       
       const bodyY = y;
       
-      // ESCOPO (coluna esquerda) em formato de TABELA com grade, igual à proposta.
+      // ESCOPO (coluna esquerda): prioriza a "Descrição Geral do Serviço" salva na OS — é o
+      // campo editável na tela "Fazer OS" (nasce igual ao escopo da proposta, mas o usuário
+      // pode alterar). Antes esta coluna SEMPRE redesenhava a tabela da proposta "ao vivo",
+      // então qualquer edição feita no campo nunca aparecia no documento. Só cai na tabela da
+      // proposta (ou no texto puro) quando a OS ainda não tem nada preenchido nesse campo —
+      // ex.: OS antiga, criada antes deste campo existir.
+      const descricaoEditada = String(osPrincipal?.descricaoGeralServico || '').trim();
       const escopoBlocos = Array.isArray(ultimaProposta?.escopoBasicoServicos) ? ultimaProposta.escopoBasicoServicos : [];
       const leftPad = margin + 2;
       const leftTableMarginRight = pageWidth - margin - leftW + 2;
       let cursorEsq = bodyY + 4;
 
-      if (escopoBlocos.length > 0) {
+      if (descricaoEditada) {
+        doc.setFont('Helvetica', 'normal');
+        doc.setFontSize(8);
+        cursorEsq = bodyY + 5;
+        doc.splitTextToSize(descricaoEditada, leftW - 4).forEach((l: string) => {
+          doc.text(l, leftPad, cursorEsq);
+          cursorEsq += 4;
+        });
+      } else if (escopoBlocos.length > 0) {
         escopoBlocos.forEach((bloco: any, idx: number) => {
           doc.setFont('Helvetica', 'bold');
           doc.setFontSize(8);
@@ -1323,6 +1334,23 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
         cursorEsq = bodyY + 5;
         doc.splitTextToSize(descTexto, leftW - 4).forEach((l: string) => {
           doc.text(l, margin + 2, cursorEsq);
+          cursorEsq += 4;
+        });
+      }
+
+      // "Adicionar no Escopo": informações extras desta OS específica, impressas logo abaixo
+      // do escopo acima (seja ele a descrição editada, a tabela da proposta ou o texto puro).
+      const escopoAdicionalTexto = String(osPrincipal?.escopoAdicional || '').trim();
+      if (escopoAdicionalTexto) {
+        cursorEsq += 2;
+        doc.setFont('Helvetica', 'bold');
+        doc.setFontSize(7.5);
+        doc.text('INFORMAÇÕES ADICIONAIS DO ESCOPO', leftPad, cursorEsq);
+        cursorEsq += 3.5;
+        doc.setFont('Helvetica', 'normal');
+        doc.setFontSize(8);
+        doc.splitTextToSize(escopoAdicionalTexto, leftW - 4).forEach((l: string) => {
+          doc.text(l, leftPad, cursorEsq);
           cursorEsq += 4;
         });
       }
@@ -1544,6 +1572,14 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
                           <Check size={14} /> Aprovar
                         </button>
                       )}
+                      {osExistente.statusAprovacao === 'aprovada' && osExistente.statusEnvio !== 'enviada' && (
+                        <button
+                          onClick={() => handleEnviarOSParaProducao(osExistente.id)}
+                          className="px-4 py-2 bg-green-500/20 border border-green-500/40 text-green-300 rounded-lg font-black text-xs hover:bg-green-500/30 transition flex items-center gap-2"
+                        >
+                          <Send size={14} /> Enviar para Produção
+                        </button>
+                      )}
                       <button
                         onClick={() => handleEditarOS(osExistente)}
                         className="px-4 py-2 bg-amber-500/20 border border-amber-500/40 text-amber-300 rounded-lg font-black text-xs hover:bg-amber-500/30 transition flex items-center gap-2"
@@ -1738,10 +1774,22 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
 
                 <div className="space-y-1.5">
                   <label className={labelClass}>Descrição Geral do Serviço</label>
+                  <p className="text-white/40 text-[10px]">Nasce igual ao escopo da proposta. Editável aqui — o texto final (com suas alterações) é o que sai no documento da OS.</p>
                   <textarea
                     className={`${inputClass} h-28 resize-none`}
                     value={formData.descricaoGeralServico}
                     onChange={(e) => setFormData({ ...formData, descricaoGeralServico: e.target.value })}
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className={labelClass}>Adicionar no Escopo</label>
+                  <p className="text-white/40 text-[10px]">Informações específicas desta OS que não estavam na proposta — entram impressas logo abaixo do escopo no documento.</p>
+                  <textarea
+                    className={`${inputClass} h-20 resize-none`}
+                    value={formData.escopoAdicional}
+                    onChange={(e) => setFormData({ ...formData, escopoAdicional: e.target.value })}
+                    placeholder="Ex.: observações adicionais combinadas para esta OS específica..."
                   />
                 </div>
 
@@ -2065,12 +2113,14 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
                 >
                   <Zap size={18} /> {editandoOsBackendId != null ? 'Salvar Alterações' : 'Enviar para Produção'}
                 </button>
-                <button
-                  onClick={handleSaveRascunhoOS}
-                  className="px-8 bg-amber-500/20 border border-amber-500/40 text-amber-300 py-3 rounded-lg font-black uppercase text-sm hover:bg-amber-500/30 transition flex items-center gap-2"
-                >
-                  <FileText size={16} /> Salvar Rascunho
-                </button>
+                {editandoOsBackendId == null && (
+                  <button
+                    onClick={handleSaveRascunhoOS}
+                    className="px-8 bg-amber-500/20 border border-amber-500/40 text-amber-300 py-3 rounded-lg font-black uppercase text-sm hover:bg-amber-500/30 transition flex items-center gap-2"
+                  >
+                    <FileText size={16} /> Salvar Rascunho
+                  </button>
+                )}
                 <button
                   onClick={() => { setShowFormNovaOS(false); setEditandoOsBackendId(null); setDiasPrevistos(0); }}
                   className="px-8 bg-white/5 text-white py-3 rounded-lg font-black uppercase text-sm hover:bg-white/10 transition"
@@ -2126,61 +2176,32 @@ export function OsView({ searchQuery, autoAbrirObraId, onAutoAbrirConsumido }: O
               <div className="bg-gradient-to-r from-purple-500/10 to-violet-500/10 rounded-2xl p-6 border border-purple-500/30 space-y-4">
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <h3 className="text-purple-300 font-black text-lg">APROVAÇÃO DA OS</h3>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className={`px-2 py-1 rounded-full text-[10px] font-black uppercase border ${selectedOS.statusAprovacao === 'aprovada' ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' : 'bg-amber-500/20 border-amber-500/40 text-amber-300'}`}>
-                      {selectedOS.statusAprovacao === 'aprovada' ? 'OS Aprovada' : 'OS Pendente'}
-                    </span>
-                    <span className={`px-2 py-1 rounded-full text-[10px] font-black uppercase border ${(selectedOS.documentoAssinaturaAprovacao?.conteudo || selectedOS.documentoAssinaturaAprovacao?.url) ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300' : 'bg-red-500/20 border-red-500/40 text-red-300'}`}>
-                      {(selectedOS.documentoAssinaturaAprovacao?.conteudo || selectedOS.documentoAssinaturaAprovacao?.url) ? 'Assinatura Anexada' : 'Sem Assinatura'}
-                    </span>
-                  </div>
+                  <span className={`px-2 py-1 rounded-full text-[10px] font-black uppercase border ${selectedOS.statusAprovacao === 'aprovada' ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' : 'bg-amber-500/20 border-amber-500/40 text-amber-300'}`}>
+                    {selectedOS.statusAprovacao === 'aprovada' ? 'OS Aprovada' : 'OS Pendente'}
+                  </span>
                 </div>
 
-                <div>
-                  <p className="text-white/50 text-xs mb-2">Anexar assinatura de aprovação (PDF, PNG ou JPG)</p>
-                  <input
-                    type="file"
-                    accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
-                    onChange={(e) => {
-                      handleUploadAssinaturaAprovacaoOS(selectedOS.id, e.target.files);
-                      e.currentTarget.value = '';
-                    }}
-                    className="w-full text-xs text-white/70 file:mr-2 file:rounded-md file:border-0 file:bg-cyan-500 file:px-3 file:py-1.5 file:text-xs file:font-black file:uppercase file:text-[#0b1220] hover:file:bg-cyan-400"
-                  />
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  {(selectedOS.documentoAssinaturaAprovacao?.conteudo || selectedOS.documentoAssinaturaAprovacao?.url) && (
-                    <>
-                      <button
-                        onClick={() => handleVerAssinaturaOS(selectedOS.documentoAssinaturaAprovacao)}
-                        className="px-3 py-1.5 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/40 text-blue-300 text-[11px] font-black uppercase transition"
-                      >
-                        <Eye size={13} className="inline mr-1" /> Ver Assinatura
-                      </button>
-                      <button
-                        onClick={() => handleDownloadAssinaturaOS(selectedOS.documentoAssinaturaAprovacao)}
-                        className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-[11px] font-black uppercase transition"
-                      >
-                        <Download size={13} className="inline mr-1" /> Download
-                      </button>
-                    </>
-                  )}
-                  {selectedOS.statusAprovacao !== 'aprovada' && (
-                    <button
-                      onClick={() => handleAprovarOS(selectedOS.id)}
-                      className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-[11px] font-black uppercase transition"
-                    >
-                      <Check size={13} className="inline mr-1" /> Aprovar OS
-                    </button>
-                  )}
-                </div>
+                {selectedOS.statusAprovacao !== 'aprovada' && (
+                  <button
+                    onClick={() => handleAprovarOS(selectedOS.id)}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-[11px] font-black uppercase transition"
+                  >
+                    <Check size={13} className="inline mr-1" /> Aprovar OS
+                  </button>
+                )}
               </div>
 
               <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-3">
                 <h3 className="text-white font-black text-lg">DESCRIÇÃO GERAL DO SERVIÇO</h3>
                 <p className="text-white/85 text-base whitespace-pre-wrap leading-relaxed">{selectedOS.descricaoGeralServico || 'Sem descrição.'}</p>
               </div>
+
+              {selectedOS.escopoAdicional && (
+                <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-3">
+                  <h3 className="text-white font-black text-lg">ADICIONAR NO ESCOPO</h3>
+                  <p className="text-white/85 text-base whitespace-pre-wrap leading-relaxed">{selectedOS.escopoAdicional}</p>
+                </div>
+              )}
 
               <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-4">
                 <h3 className="text-white font-black text-lg">A SER INCLUÍDO</h3>

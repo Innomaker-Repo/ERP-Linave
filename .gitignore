@@ -19,8 +19,8 @@ SECRET.md
 BackEnd/media/
 
 # Docker / Traefik
-docker-compose.yml
-traefik/
+#docker-compose.yml
+#traefik/
 
 #vscode
 .vscode

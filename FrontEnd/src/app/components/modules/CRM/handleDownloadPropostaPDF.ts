@@ -98,7 +98,7 @@ export const handleDownloadPropostaPDF = (
     // rodapé (ver drawBottomLogo).
     const footerReserve = isLinave ? 32 : 26;
     const linaveFooterLines = [
-      'W.L.M Linave Serviços Navais e Offshore',
+      'Linave Serviços Navais e Offshore',
       'Rua Visconde de Itaboraí, 24 - Centro - Niterói - RJ',
       'CEP 24.030-091',
       '+55 (21) 99129-3251 / 3629-1439',

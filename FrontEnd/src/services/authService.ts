@@ -97,6 +97,30 @@ export async function login(identifier: string, password: string): Promise<UserS
   return session;
 }
 
+// Anexos (/media/) são liberados por um cookie HttpOnly que o backend grava no login e a
+// cada /token/refresh/ (ver BackEnd/ComercialApp/media_auth.py). Sessões abertas antes desse
+// cookie existir (ou com ele vencido) o regravam a partir do access token atual.
+export async function renovarCookieMidia(): Promise<void> {
+  const { access } = getStoredTokens();
+  if (!access) return;
+  try {
+    await authAxios.post('/comercial/sessao/media-cookie/', null, {
+      headers: { Authorization: `Bearer ${access}` },
+    });
+  } catch {
+    // Sem cookie os anexos dão 401, mas o resto do sistema segue funcionando.
+  }
+}
+
+// Apaga o cookie de anexos no logout — senão o arquivo continuaria baixável até ele vencer.
+export async function encerrarCookieMidia(): Promise<void> {
+  try {
+    await authAxios.post('/comercial/sessao/logout/');
+  } catch {
+    // Melhor esforço: o cookie vence sozinho junto com o access token.
+  }
+}
+
 export async function refreshAccessToken(): Promise<string | null> {
   const { refresh } = getStoredTokens();
   if (!refresh) return null;

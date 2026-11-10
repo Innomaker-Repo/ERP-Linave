@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useErp } from '../../../context/ErpContext';
-import { comFinanceiroAtual } from '../../../../services/financeiroSeguro';
+import { renomearFornecedorCascata } from '../../../../services/fornecedoresService';
 import { Factory, Plus, Save, X, Edit2, Trash2, Phone, MapPin } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -9,13 +9,19 @@ const FORNECEDOR_VAZIO = {
   cnpj: '',
   contato: '',
   endereco: '',
+  cep: '',
+  cidade: '',
+  uf: '',
+  banco: '',
+  agencia: '',
+  conta: '',
   status: 'Ativo',
   tipo: 'Serviços',
   descricaoEstadual: '',
 };
 
 export function FornecedoresView({ searchQuery }: { searchQuery: string }) {
-  const { fornecedores, saveFornecedor, userSession, financeiro, saveEntity } = useErp() as any;
+  const { fornecedores, saveFornecedor, userSession, financeiro } = useErp() as any;
   const [showForm, setShowForm] = useState(false);
   const [selectedFornecedor, setSelectedFornecedor] = useState<any | null>(null);
   const [fornecedor, setFornecedor] = useState<any>(FORNECEDOR_VAZIO);
@@ -31,6 +37,12 @@ export function FornecedoresView({ searchQuery }: { searchQuery: string }) {
       cnpj: f.cnpj || '',
       contato: f.contato || '',
       endereco: f.endereco || '',
+      cep: f.cep || '',
+      cidade: f.cidade || '',
+      uf: f.uf || '',
+      banco: f.banco || '',
+      agencia: f.agencia || '',
+      conta: f.conta || '',
       status: f.status || 'Ativo',
       tipo: f.tipo || 'Serviços',
       descricaoEstadual: f.descricaoEstadual || '',
@@ -86,7 +98,7 @@ export function FornecedoresView({ searchQuery }: { searchQuery: string }) {
     if (!fornecedor.endereco.trim()) return 'Endereço é obrigatório.';
     if (!fornecedor.status.trim()) return 'Status é obrigatório.';
     if (!fornecedor.tipo.trim()) return 'Tipo é obrigatório.';
-    if ((fornecedor.tipo === 'Itens' || fornecedor.tipo === 'Empresas') && !fornecedor.descricaoEstadual.trim()) return 'Descrição estadual é obrigatória para fornecedores de itens.';
+    if ((fornecedor.tipo === 'Itens' || fornecedor.tipo === 'Empresas') && !fornecedor.descricaoEstadual.trim()) return 'Insc. Estadual é obrigatória para fornecedores de itens.';
     return null;
   };
 
@@ -110,18 +122,14 @@ export function FornecedoresView({ searchQuery }: { searchQuery: string }) {
 
       // Fornecedor não é referenciado por FK em nenhum outro cadastro (diferente de
       // Empresa/Cliente) — só aparece como texto copiado nas Solicitações de Pagamento e
-      // Contas a Pagar do Financeiro. Propaga a renomeação pra lá.
+      // Contas a Pagar do Financeiro. A cascata roda no backend: quem só tem acesso a
+      // Compras não enxerga esses registros completos, então não daria pra fazê-la daqui.
       const novaRazaoSocial = (novoRegistro.razaoSocial || '').trim();
       if (editandoId != null && razaoSocialOriginal && novaRazaoSocial && razaoSocialOriginal !== novaRazaoSocial) {
-        await comFinanceiroAtual(async (base) => {
-          const temNoFinanceiro = base.some((r: any) => r.fornecedor === razaoSocialOriginal);
-          if (!temNoFinanceiro) return;
-          const financeiroAtualizado = base.map((r: any) =>
-            r.fornecedor === razaoSocialOriginal ? { ...r, fornecedor: novaRazaoSocial } : r
-          );
-          await saveEntity('financeiro', financeiroAtualizado);
+        const { registros_atualizados } = await renomearFornecedorCascata(razaoSocialOriginal, novaRazaoSocial);
+        if (registros_atualizados > 0) {
           toast.info('Fornecedor renomeado — solicitações e contas a pagar já criadas foram atualizadas.');
-        });
+        }
       }
 
       fecharForm();
@@ -156,15 +164,26 @@ export function FornecedoresView({ searchQuery }: { searchQuery: string }) {
             {cnpjInvalido && <p className="text-red-400 text-[10px] font-bold uppercase tracking-widest ml-1">CNPJ inválido — confira os dígitos</p>}
           </div>
           <input placeholder="Contato (Tel/Email) *" value={fornecedor.contato} className="bg-[#0b1220] p-4 rounded-xl text-white text-sm border border-white/10 focus:border-amber-500 outline-none" onChange={e => setFornecedor({...fornecedor, contato: e.target.value})} />
-          <input placeholder="Endereço *" value={fornecedor.endereco} className="bg-[#0b1220] p-4 rounded-xl text-white text-sm border border-white/10 focus:border-amber-500 outline-none" onChange={e => setFornecedor({...fornecedor, endereco: e.target.value})} />
+          <input placeholder="Insc. Estadual" value={fornecedor.descricaoEstadual} className="bg-[#0b1220] p-4 rounded-xl text-white text-sm border border-white/10 focus:border-amber-500 outline-none" onChange={e => setFornecedor({...fornecedor, descricaoEstadual: e.target.value})} />
+          <input placeholder="Endereço *" value={fornecedor.endereco} className="col-span-2 bg-[#0b1220] p-4 rounded-xl text-white text-sm border border-white/10 focus:border-amber-500 outline-none" onChange={e => setFornecedor({...fornecedor, endereco: e.target.value})} />
+
+          <div className="col-span-2 grid grid-cols-3 gap-4">
+            <input placeholder="CEP" value={fornecedor.cep} className="bg-[#0b1220] p-4 rounded-xl text-white text-sm border border-white/10 focus:border-amber-500 outline-none" onChange={e => setFornecedor({...fornecedor, cep: e.target.value})} />
+            <input placeholder="Cidade" value={fornecedor.cidade} className="bg-[#0b1220] p-4 rounded-xl text-white text-sm border border-white/10 focus:border-amber-500 outline-none" onChange={e => setFornecedor({...fornecedor, cidade: e.target.value})} />
+            <input placeholder="UF" value={fornecedor.uf} maxLength={2} className="bg-[#0b1220] p-4 rounded-xl text-white text-sm border border-white/10 focus:border-amber-500 outline-none uppercase" onChange={e => setFornecedor({...fornecedor, uf: e.target.value.toUpperCase()})} />
+          </div>
+
+          <div className="col-span-2 grid grid-cols-3 gap-4">
+            <input placeholder="Banco" value={fornecedor.banco} className="bg-[#0b1220] p-4 rounded-xl text-white text-sm border border-white/10 focus:border-amber-500 outline-none" onChange={e => setFornecedor({...fornecedor, banco: e.target.value})} />
+            <input placeholder="Agência" value={fornecedor.agencia} className="bg-[#0b1220] p-4 rounded-xl text-white text-sm border border-white/10 focus:border-amber-500 outline-none" onChange={e => setFornecedor({...fornecedor, agencia: e.target.value})} />
+            <input placeholder="Conta" value={fornecedor.conta} className="bg-[#0b1220] p-4 rounded-xl text-white text-sm border border-white/10 focus:border-amber-500 outline-none" onChange={e => setFornecedor({...fornecedor, conta: e.target.value})} />
+          </div>
+
           <select value={fornecedor.tipo} onChange={e => setFornecedor({...fornecedor, tipo: e.target.value})} className="bg-[#0b1220] p-4 rounded-xl text-white text-sm border border-white/10 focus:border-amber-500 outline-none">
             <option value="Serviços">Serviços</option>
             <option value="Itens">Itens</option>
           </select>
-          {(fornecedor.tipo === 'Itens' || fornecedor.tipo === 'Empresas') && (
-            <input placeholder="Descrição estadual" value={fornecedor.descricaoEstadual} className="bg-[#0b1220] p-4 rounded-xl text-white text-sm border border-white/10 focus:border-amber-500 outline-none" onChange={e => setFornecedor({...fornecedor, descricaoEstadual: e.target.value})} />
-          )}
-          <select value={fornecedor.status} onChange={e => setFornecedor({...fornecedor, status: e.target.value})} className="col-span-2 bg-[#0b1220] p-4 rounded-xl text-white text-sm border border-white/10 focus:border-amber-500 outline-none">
+          <select value={fornecedor.status} onChange={e => setFornecedor({...fornecedor, status: e.target.value})} className="bg-[#0b1220] p-4 rounded-xl text-white text-sm border border-white/10 focus:border-amber-500 outline-none">
             <option>Ativo</option>
             <option>Inativo</option>
           </select>
@@ -216,15 +235,21 @@ export function FornecedoresView({ searchQuery }: { searchQuery: string }) {
                 <p className="text-white/40 text-xs uppercase">CNPJ</p>
                 <p className="font-semibold">{selectedFornecedor.cnpj}</p>
 
+                <p className="text-white/40 text-xs uppercase mt-3">Insc. Estadual</p>
+                <p className="font-semibold">{selectedFornecedor.descricaoEstadual || '-'}</p>
+
                 <p className="text-white/40 text-xs uppercase mt-3">Contato</p>
                 <p className="font-semibold">{selectedFornecedor.contato}</p>
 
                 <p className="text-white/40 text-xs uppercase mt-3">Endereço</p>
                 <p className="font-semibold">{selectedFornecedor.endereco}</p>
+
+                <p className="text-white/40 text-xs uppercase mt-3">CEP / Cidade / UF</p>
+                <p className="font-semibold">{[selectedFornecedor.cep, selectedFornecedor.cidade, selectedFornecedor.uf].filter(Boolean).join(' / ') || '-'}</p>
               </div>
               <div className="space-y-2">
-                <p className="text-white/40 text-xs uppercase">Descrição estadual</p>
-                <p className="font-semibold">{selectedFornecedor.descricaoEstadual || '-'}</p>
+                <p className="text-white/40 text-xs uppercase">Banco / Ag. / Conta</p>
+                <p className="font-semibold">{[selectedFornecedor.banco, selectedFornecedor.agencia, selectedFornecedor.conta].filter(Boolean).join(' / ') || '-'}</p>
 
                 <p className="text-white/40 text-xs uppercase mt-3">Natureza do fornecimento</p>
                 <p className="font-semibold">{naturezaFornecimento === 'ITEM' ? 'ITEM' : 'SERVIÇO'}</p>
