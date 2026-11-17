@@ -27,7 +27,6 @@ from .permissions import (
     IsAdmin, permissao_modulo, eh_admin, escreve_em_tudo, tem_permissao_modulo,
     COMERCIAL, PRODUCAO, FINANCEIRO, COMPRAS_GESTAO, SUPRIMENTOS,
 )
-from .ws_notify import dispatch_collection_changed
 from .auth_backends import (
     LOGIN_MAX_TENTATIVAS, LOGIN_AVISO_A_PARTIR_DE, falhas_da_origem, ip_do_cliente, origem_bloqueada,
 )
@@ -463,8 +462,6 @@ def renomear_fornecedor(request):
 
     _registrar_log(request, 'atualizacao', 'Fornecedores',
                    f'Fornecedor renomeado "{de}" -> "{para}" ({atualizados} registro(s) do Financeiro)')
-    if atualizados:
-        dispatch_collection_changed('financeiro')
     return Response({'registros_atualizados': atualizados})
 
 
@@ -1071,7 +1068,6 @@ def financeiro_data(request):
 
     total = replace_all(payload)
     _registrar_log(request, 'atualizacao', 'Financeiro', f'Registros financeiros sincronizados ({total} itens).')
-    dispatch_collection_changed('financeiro')
     return Response({'message': 'Financeiro sincronizado.', 'total': total, 'financeiro': _visao()}, status=status.HTTP_200_OK)
 
 
@@ -1107,7 +1103,6 @@ def financeiro_solicitacao_criar(request):
     instance = _build_instance('solicitacao', record)
     instance.save()
     _registrar_log(request, 'criacao', 'Financeiro', f'Solicitação de pagamento {rid} criada.')
-    dispatch_collection_changed('financeiro')
     dados = read_all()
     if _sem_permissao_financeira(request.user):
         dados = _financeiro_restringir_para_leitor_sem_acesso(dados, request.user)
@@ -1169,7 +1164,6 @@ def financeiro_solicitacao_reenviar(request, rid):
         sol.save()
 
     _registrar_log(request, 'atualizacao', 'Financeiro', f'Solicitação de pagamento {rid} corrigida e reenviada.')
-    dispatch_collection_changed('financeiro')
     dados = read_all()
     if _sem_permissao_financeira(request.user):
         dados = _financeiro_restringir_para_leitor_sem_acesso(dados, request.user)
@@ -1247,7 +1241,6 @@ def financeiro_solicitacao_decidir(request, rid):
             sol.extra = extra
             sol.save(update_fields=['status', 'extra', 'updated_at'])
             _registrar_log(request, 'atualizacao', 'Financeiro', f'Solicitação {rid} reprovada por {nome_usuario}.')
-            dispatch_collection_changed('financeiro')
             return Response({'message': 'Solicitação reprovada.', 'financeiro': read_all()}, status=status.HTTP_200_OK)
 
         # acao == 'aprovar' — mesma lógica de useFin.ts:approveSolicitacao, portada pro
@@ -1354,7 +1347,6 @@ def financeiro_solicitacao_decidir(request, rid):
         sol.save(update_fields=['status', 'extra', 'updated_at'])
 
     _registrar_log(request, 'atualizacao', 'Financeiro', f'Solicitação {rid} aprovada por {nome_usuario}.')
-    dispatch_collection_changed('financeiro')
     return Response({'message': 'Solicitação aprovada.', 'financeiro': read_all()}, status=status.HTTP_200_OK)
 
 
@@ -1467,7 +1459,6 @@ def compras_data(request):
 
     if partes:
         _registrar_log(request, 'atualizacao', 'Compras', f'Compras atualizadas: {", ".join(partes)}.')
-        dispatch_collection_changed('compras')
     return _resposta()
 
 

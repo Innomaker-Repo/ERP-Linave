@@ -4,7 +4,7 @@ Cobre: regras de negócio, validators, serializers, models e API (REST endpoints
 """
 
 from decimal import Decimal
-from django.test import TestCase, TransactionTestCase
+from django.test import TestCase
 from django.core.exceptions import ValidationError
 from django.urls import reverse
 from rest_framework.test import APITestCase, APIClient
@@ -2706,7 +2706,7 @@ class LoginBloqueioTests(APITestCase):
 
 
 # =============================================================================
-# CORREÇÕES DO DIAGNÓSTICO — 500s, VALIDAÇÃO DE STATUS, TOKEN DO WEBSOCKET
+# CORREÇÕES DO DIAGNÓSTICO — 500s, VALIDAÇÃO DE STATUS
 # =============================================================================
 
 class UsuarioSemSenhaTests(APITestCase):
@@ -2776,63 +2776,6 @@ class AtualizarStatusOsValidacaoTests(APITestCase):
         self.os.refresh_from_db()
         self.assertEqual(self.os.status_os, 'emproducao')
         self.assertIsNotNone(self.os.data_aprovacao)
-
-
-class WebSocketAuthTests(TransactionTestCase):
-    """Token do WebSocket vai no Sec-WebSocket-Protocol (['erp-jwt', token]), não na URL.
-
-    TransactionTestCase (não TestCase): o consumer consulta o banco via database_sync_to_async,
-    o que quebrava a transação que o TestCase mantém aberta em volta de cada teste — o teste
-    seguinte da classe falhava com TransactionManagementError."""
-
-    def _conectar(self, path='/ws/workspace/', subprotocols=None):
-        from asgiref.sync import async_to_sync
-        from channels.testing import WebsocketCommunicator
-        from ERP_Linave_BackEnd.routing import application
-
-        async def _tentar():
-            comunicador = WebsocketCommunicator(application, path, subprotocols=subprotocols)
-            conectado, subprotocolo = await comunicador.connect()
-            await comunicador.disconnect()
-            return conectado, subprotocolo
-        return async_to_sync(_tentar)()
-
-    def _token(self):
-        from rest_framework_simplejwt.tokens import AccessToken
-        return str(AccessToken.for_user(criar_admin('adm-ws')))
-
-    def test_conecta_com_token_no_subprotocolo(self):
-        conectado, subprotocolo = self._conectar(subprotocols=['erp-jwt', self._token()])
-        self.assertTrue(conectado)
-        self.assertEqual(subprotocolo, 'erp-jwt')
-
-    def _fechamento_sem_login(self, path='/ws/workspace/', subprotocols=None):
-        """Sem login válido a conexão é aceita e fechada na hora com 4401 (o navegador
-        precisa do código para saber que deve renovar o token) — sem entrar no grupo."""
-        from asgiref.sync import async_to_sync
-        from channels.layers import get_channel_layer
-        from channels.testing import WebsocketCommunicator
-        from ERP_Linave_BackEnd.routing import application
-
-        async def _tentar():
-            comunicador = WebsocketCommunicator(application, path, subprotocols=subprotocols)
-            await comunicador.connect()
-            saida = await comunicador.receive_output(timeout=1)
-            # Um aviso enviado ao grupo depois disso não pode chegar a essa conexão.
-            await get_channel_layer().group_send('workspace', {'type': 'workspace.notify', 'collection': 'financeiro'})
-            self.assertTrue(await comunicador.receive_nothing(timeout=0.2))
-            await comunicador.disconnect()
-            return saida
-        return async_to_sync(_tentar)()
-
-    def test_token_na_query_string_nao_e_mais_aceito(self):
-        saida = self._fechamento_sem_login(path=f'/ws/workspace/?token={self._token()}')
-        self.assertEqual(saida, {'type': 'websocket.close', 'code': 4401})
-
-    def test_sem_token_ou_token_invalido_fecha_com_4401(self):
-        self.assertEqual(self._fechamento_sem_login(), {'type': 'websocket.close', 'code': 4401})
-        self.assertEqual(self._fechamento_sem_login(subprotocols=['erp-jwt', 'token-falso']),
-                         {'type': 'websocket.close', 'code': 4401})
 
 
 class LoginBloqueioAdminDjangoTests(TestCase):

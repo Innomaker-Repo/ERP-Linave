@@ -4,8 +4,8 @@ networks:
     driver: bridge
 
 # Rotação dos logs de cada container: no máximo 5 arquivos de 10 MB. Sem isto o log
-# cresce sem limite (o daphne grava uma linha por conexão/desconexão o dia todo) até
-# encher o disco — e disco cheio derruba o MySQL.
+# cresce sem limite (o gunicorn e o Traefik gravam uma linha por requisição) até encher
+# o disco — e disco cheio derruba o MySQL.
 x-logging: &logging
   driver: json-file
   options:
@@ -64,30 +64,6 @@ services:
     networks:
       - erp-network
 
-  # Channel layer do tempo real (WebSocket) — ver docs/backlog/tempo-real-websockets.md.
-  # Obrigatório porque backend (gunicorn, 3 workers) e ws (daphne) são processos
-  # separados: sem Redis, o aviso "coleção X mudou" publicado por um worker do backend
-  # nunca chegaria às conexões WebSocket abertas no processo do ws. Rede interna só —
-  # nenhuma porta exposta ao host.
-  redis:
-    image: redis:7-alpine
-    container_name: erp_redis
-    restart: always
-    logging: *logging
-    mem_limit: ${MEM_LIMIT_REDIS:-128m}
-    # Sem gravação em disco: o Redis só guarda dado descartável (quem está conectado no
-    # tempo real, refeito quando os navegadores reconectam; contadores de limite de login
-    # por minuto). Os bloqueios de login ficam no MySQL. Isto evita a cópia do processo a
-    # cada 5 min para salvar (o risco do aviso "Memory overcommit" no log).
-    command: redis-server --save "" --appendonly no
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-    networks:
-      - erp-network
-
   # --- BACKEND: DJANGO ---
   backend:
     build: ./BackEnd  # Compila usando o Dockerfile do seu backend
@@ -101,7 +77,8 @@ services:
       - media_data:/app/media
     #  - ./BackEnd:/app # Volume ativo APENAS para ambiente Dev (Hot Reload)
     command: sh -c "python manage.py collectstatic --noinput &&
-                    python manage.py migrate && 
+                    python manage.py migrate &&
+                    python manage.py createcachetable &&
                     python manage.py setup_admin --if-missing &&
                     gunicorn ERP_Linave_BackEnd.wsgi:application --bind 0.0.0.0:8000 --workers 3 --threads 2"
     environment:
@@ -113,11 +90,8 @@ services:
       - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
       - DJANGO_ALLOWED_HOSTS=${ALLOWED_HOSTS}
       - DJANGO_CORS_ALLOWED_ORIGINS=${DJANGO_CORS_ALLOWED_ORIGINS}
-      - REDIS_URL=redis://redis:6379/0
     depends_on:
         database:
-          condition: service_healthy
-        redis:
           condition: service_healthy
     networks:
       - erp-network
@@ -137,45 +111,6 @@ services:
       # includeSubDomains/preload de propósito (afetaria outros subdomínios da empresa).
       - "traefik.http.middlewares.backend-secure-headers.headers.stsSeconds=31536000"
       - "traefik.http.middlewares.backend-secure-headers.headers.contentSecurityPolicy=default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';"
-
-  # --- WEBSOCKET: DAPHNE (tempo real) ---
-  # Mesma imagem do backend, processo à parte rodando daphne em vez de gunicorn — HTTP
-  # continua 100% no gunicorn/WSGI acima, intocado (ver docs/backlog/tempo-real-websockets.md,
-  # "não trocar a stack HTTP inteira de uma vez"). Só esse processo serve /ws/workspace/.
-  ws:
-    build: ./BackEnd
-    container_name: erp_ws
-    restart: always
-    logging: *logging
-    mem_limit: ${MEM_LIMIT_WS:-512m}
-    command: python -m daphne -b 0.0.0.0 -p 8001 ERP_Linave_BackEnd.asgi:application
-    environment:
-      - DB_HOST=database
-      - DB_NAME=${MYSQL_DATABASE}
-      - DB_USER=${MYSQL_USER}
-      - DB_PASSWORD=${MYSQL_PASSWORD}
-      - DJANGO_DEBUG=${DJANGO_DEBUG}
-      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
-      - DJANGO_ALLOWED_HOSTS=${ALLOWED_HOSTS}
-      - DJANGO_CORS_ALLOWED_ORIGINS=${DJANGO_CORS_ALLOWED_ORIGINS}
-      - REDIS_URL=redis://redis:6379/0
-    depends_on:
-        database:
-          condition: service_healthy
-        redis:
-          condition: service_healthy
-    networks:
-      - erp-network
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.ws.entrypoints=websecure"
-      # PathPrefix(/ws) é mais específico que o Host() sozinho do router do frontend
-      # abaixo — Traefik prioriza a regra mais específica, então isso vence sem precisar
-      # de "priority" explícito (mesmo mecanismo que já separa /comercial do resto pro
-      # backend).
-      - "traefik.http.routers.ws.rule=Host(`${DOMINIO_SISTEMA}`) && PathPrefix(`/ws`)"
-      - "traefik.http.services.ws.loadbalancer.server.port=8001"
-      - "traefik.http.routers.ws.tls.certresolver=meu-resolvedor"
 
   # --- FRONTEND: REACT ---
   frontend:

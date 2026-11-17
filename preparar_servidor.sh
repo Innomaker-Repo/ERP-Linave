@@ -4,10 +4,9 @@
 # Pode rodar de novo sem problema: cada passo verifica se já foi feito.
 #
 # Por quê (quedas de 23/10): o servidor foi desligado à força duas vezes, com indício de
-# falta de memória depois que o tempo real acrescentou os containers ws (daphne) e redis.
+# falta de memória no servidor.
 #   1. swap: folga para picos de memória (build, relatório grande) antes de a máquina travar;
-#   2. vm.swappiness=10: só usa o swap quando a RAM realmente acabar (evita lentidão);
-#   3. vm.overcommit_memory=1: recomendado pelo Redis (aviso "Memory overcommit" no log).
+#   2. vm.swappiness=10: só usa o swap quando a RAM realmente acabar (evita lentidão).
 set -Eeuo pipefail
 
 TAMANHO_SWAP="${1:-2G}"
@@ -36,12 +35,11 @@ else
   grep -q "^${ARQUIVO_SWAP} " /etc/fstab || echo "${ARQUIVO_SWAP} none swap sw 0 0" >> /etc/fstab
 fi
 
-# 2 e 3. Parâmetros do kernel, persistidos em arquivo próprio (não mexe no sysctl.conf).
+# 2. Parâmetro do kernel, persistido em arquivo próprio (não mexe no sysctl.conf).
 echo "== Gravando ${SYSCTL_ERP}"
 cat > "${SYSCTL_ERP}" <<'EOF'
 # ERP Linave — ver preparar_servidor.sh
 vm.swappiness = 10
-vm.overcommit_memory = 1
 EOF
 sysctl -p "${SYSCTL_ERP}"
 

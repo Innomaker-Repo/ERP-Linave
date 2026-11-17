@@ -3,13 +3,17 @@ ASGI config for ERP_LINAVE_BackEnd project.
 
 It exposes the ASGI callable as a module-level variable named ``application``.
 
-HTTP continua servido pelo Django normal (em produção, gunicorn/WSGI — este arquivo só
-importa pra quando o processo ASGI roda, ex.: `daphne` local ou o worker de WebSocket em
-produção). O roteamento real (HTTP + /ws/workspace/) fica em `routing.py`.
+Em produção o HTTP é servido pelo gunicorn via WSGI (wsgi.py); este arquivo fica só como
+ponto de entrada ASGI padrão do Django.
+
+For more information on this file, see
+https://docs.djangoproject.com/en/6.0/howto/deployment/asgi/
 """
 
 import os
 
+from django.core.asgi import get_asgi_application
+
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'ERP_Linave_BackEnd.settings')
 
-from .routing import application  # noqa: E402
+application = get_asgi_application()

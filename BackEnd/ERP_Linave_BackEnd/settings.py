@@ -35,12 +35,6 @@ INSTALLED_APPS = [
     "corsheaders",
     "ComercialApp",
     'rest_framework_simplejwt',
-    # Precisa vir antes de qualquer app que o `runserver` padrão sobrescreveria — com
-    # 'channels' instalado, o `manage.py runserver` passa a servir HTTP + WebSocket
-    # juntos (via Daphne por baixo) automaticamente, sem precisar rodar outro processo
-    # em dev. Em produção quem serve `routing.py` é o daphne mesmo, num processo à parte
-    # do gunicorn/WSGI (ver docker-compose.yml).
-    'channels',
 ]
 
 REST_FRAMEWORK = {
@@ -140,34 +134,17 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'ERP_Linave_BackEnd.wsgi.application'
-ASGI_APPLICATION = 'ERP_Linave_BackEnd.routing.application'
-
-# Tempo real (WebSocket) — ver docs/backlog/tempo-real-websockets.md.
-# Sem REDIS_URL (dev local, um processo só) usa o channel layer em memória: funciona
-# porque só existe um processo pra entrar/sair do grupo. Em produção o gunicorn roda 3
-# workers + o daphne roda num processo à parte — memória não seria compartilhada entre
-# eles, por isso Redis é obrigatório lá (REDIS_URL vem do docker-compose).
-REDIS_URL = os.environ.get('REDIS_URL')
-CHANNEL_LAYERS = {
-    'default': (
-        {
-            'BACKEND': 'channels_redis.core.RedisChannelLayer',
-            'CONFIG': {'hosts': [REDIS_URL]},
-        }
-        if REDIS_URL else
-        {'BACKEND': 'channels.layers.InMemoryChannelLayer'}
-    )
-}
 
 # Cache: contagem do limite de login por IP e dos logins inexistentes. Precisa ser
-# compartilhado entre os 3 workers do gunicorn, então usa o mesmo Redis do tempo real em
-# produção; sem REDIS_URL (dev, um processo) a memória local basta.
+# compartilhado entre os 3 workers do gunicorn (memória local daria um contador por
+# worker), por isso fica numa tabela do próprio MySQL — sem nenhum serviço extra.
+# A tabela é criada por `manage.py createcachetable` (roda no start do backend, ver
+# docker-compose.yml; em dev, rodar uma vez à mão).
 CACHES = {
-    'default': (
-        {'BACKEND': 'django.core.cache.backends.redis.RedisCache', 'LOCATION': REDIS_URL}
-        if REDIS_URL else
-        {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}
-    )
+    'default': {
+        'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
+        'LOCATION': 'django_cache',
+    }
 }
 
 # Usa BigAutoField por padrão em todos os models (elimina os warnings W042).
