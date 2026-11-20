@@ -9,7 +9,6 @@ import { getAlmoxarifado, syncAlmoxarifado } from '../../services/almoxarifadoSe
 import { getConfiguracoes, syncConfig, syncListas } from '../../services/configuracoesService';
 import { getMedicoes } from '../../services/medicoesService';
 import { getStoredSession as getAuthSession, getStoredTokens, storeSession, clearTokens, refreshAccessToken, renovarCookieMidia, encerrarCookieMidia } from '../../services/authService';
-import { connectRealtime } from '../../services/realtime';
 import { toast } from 'sonner';
 
 
@@ -1134,8 +1133,8 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     //    aberta e em foco por muito tempo vendo outro usuário mexer nos mesmos dados;
     //  - sob demanda, pelo botão "Atualizar" do Header (via `refreshWorkspace`, que chama
     //    esta mesma função e também avança `manualRefreshTick` — ver mais acima).
-    // Isso não é tempo real (pra isso precisaria de WebSocket/Channels no backend
-    // avisando o frontend na hora), mas fecha a maior parte do "só atualiza com F5".
+    // Atualização por polling + foco, de propósito: é leve para o servidor (só requisições
+    // HTTP comuns) e cobre o "só atualiza com F5" — ver docs/backlog/tempo-real-websockets.md.
     const refetchSeVisivel = () => {
       if (document.visibilityState === 'visible') void hydrateWorkspace();
     };
@@ -1148,37 +1147,6 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
       window.clearInterval(intervalId);
     };
   }, [userSession?.email, hydrateWorkspace]);
-
-  // Tempo real (WebSocket) — ver docs/backlog/tempo-real-websockets.md. O backend só
-  // avisa QUAL coleção mudou (ComercialApp/ws_notify.py); aqui busca só aquela coleção
-  // de novo, reaproveitando as mesmas funções de fetch do hydrateWorkspace acima (em vez
-  // do Promise.all de tudo). Só financeiro e compras disparam esse aviso por enquanto —
-  // ver o backlog pra por que (bulk_create não dispara post_save do Django nesses dois;
-  // os demais, quando ganharem o mesmo tratamento, só precisam de um case novo aqui.
-  // Não substitui o polling de 45s/foco acima — continua como rede de segurança caso o
-  // socket caia e ainda não tenha reconectado.
-  useEffect(() => {
-    if (!userSession) return;
-
-    const handleCollectionChanged = async (collection: string) => {
-      switch (collection) {
-        case 'financeiro': {
-          const financeiro = await getFinanceiro();
-          setData((prevData: any) => ({ ...prevData, financeiro }));
-          break;
-        }
-        case 'compras': {
-          const { compras, comprasHistorico } = await getCompras();
-          setData((prevData: any) => ({ ...prevData, compras, comprasHistorico }));
-          break;
-        }
-        default:
-          break;
-      }
-    };
-
-    return connectRealtime(handleCollectionChanged);
-  }, [userSession?.email]);
 
   const showTestAlert = (operacao: string) => {
     toast.info(`VERSÃO DE TESTE\n\nOperação "${operacao}" requer conexão com backend.\n\nEsta é uma versão demonstrativa apenas com frontend.`);

@@ -185,6 +185,14 @@ export const handleDownloadPropostaPDF = (
     const headerBottom = drawHeader();
     y = headerBottom;
 
+    // Gancho das tabelas (autoTable): quando a tabela quebra de página sozinha, a página de
+    // continuação precisa de logo/fundo/cabeçalho. Tem que ser `willDrawPage` (ANTES da
+    // tabela) e só a partir da 2ª página dela — com `didDrawPage` o cabeçalho era redesenhado
+    // DEPOIS da tabela, e a arte do rodapé (opaca, ~72 mm) tampava as últimas linhas.
+    const desenharCabecalhoNaContinuacao = (data: { pageNumber: number }) => {
+      if (data.pageNumber > 1) drawHeader();
+    };
+
     const ensureSpace = (neededHeight = 10) => {
       if (y + neededHeight > pageHeight - footerReserve) {
         doc.addPage();
@@ -282,10 +290,7 @@ export const handleDownloadPropostaPDF = (
             margin: { left: margin + 10, right: margin, top: headerBottom, bottom: footerReserve },
             headStyles: { fillColor: [230, 230, 230], textColor: [0, 0, 0], fontStyle: 'bold', fontSize: 9 },
             styles: { fontSize: 9, cellPadding: 2, textColor: [0, 0, 0] },
-            // Sem isso, quando a tabela quebra de página sozinha (autoTable chama addPage
-            // internamente), a(s) página(s) de continuação saíam sem logo/fundo/cabeçalho da
-            // empresa — só a tabela "flutuando" no topo.
-            didDrawPage: () => { drawHeader(); },
+            willDrawPage: desenharCabecalhoNaContinuacao,
           });
           y = (doc as any).lastAutoTable.finalY + 5;
         }
@@ -344,7 +349,7 @@ export const handleDownloadPropostaPDF = (
             headStyles: { fillColor: [230, 230, 230], textColor: [0, 0, 0], fontStyle: 'bold', fontSize: 9 },
             styles: { fontSize: 9, cellPadding: 2, textColor: [0, 0, 0] },
             columnStyles,
-            didDrawPage: () => { drawHeader(); },
+            willDrawPage: desenharCabecalhoNaContinuacao,
           });
           y = (doc as any).lastAutoTable.finalY + 4;
         });

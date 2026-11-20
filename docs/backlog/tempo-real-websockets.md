@@ -1,6 +1,24 @@
 # Backlog: Sincronização em tempo real (WebSockets / Django Channels)
 
-**Status:** IMPLEMENTADO em 2026-10-08 (Financeiro + Compras) e testado ao vivo de ponta
+> **DESCONTINUADO em 2026-11-09 — removido por completo do sistema.**
+>
+> Depois de entrar em produção, a arquitetura com WebSocket (container `ws` com daphne +
+> container `redis` como channel layer) coincidiu com quedas e instabilidade do servidor
+> (incidente de 23/10: dois desligamentos forçados com indício de falta de memória;
+> conexões WS cortadas a cada ~24s). Como a infraestrutura não comporta escalar, o
+> sistema voltou à arquitetura anterior: só HTTP (gunicorn/WSGI), com as telas
+> atualizando pelo polling de 45s + ao voltar o foco na aba + botão "Atualizar".
+>
+> O que saiu: `ComercialApp/consumers.py`, `ws_auth.py`, `ws_notify.py`,
+> `ERP_Linave_BackEnd/routing.py` (e o `asgi.py` voltou ao padrão), os avisos
+> `dispatch_collection_changed` nas views, `channels`/`channels-redis`/`daphne`,
+> `FrontEnd/src/services/realtime.ts`, os serviços `ws` e `redis` do docker-compose.
+> O cache (limite de login por IP), que usava o Redis, passou para `DatabaseCache`
+> (tabela `django_cache` no MySQL, criada por `createcachetable` no start do backend).
+>
+> O texto abaixo fica só como registro histórico, caso a ideia volte com outra infra.
+
+**Status (histórico):** IMPLEMENTADO em 2026-10-08 (Financeiro + Compras) e testado ao vivo de ponta
 a ponta no navegador (escrita via API → tela já aberta atualiza sozinha, sem reload).
 `docker-compose.yml`/Traefik também já preparados para produção — não verificados com
 `docker-compose up` de verdade nesta máquina (sem Docker instalado aqui); conferir no
