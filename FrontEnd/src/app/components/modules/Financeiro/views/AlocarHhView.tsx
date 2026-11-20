@@ -7,9 +7,13 @@
  * HE 0,2 (adicional noturno, +20%) = qtd×valor×1,2.
  * =======================================================================================*/
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, Trash2, Save, Download, Lock, Users, X } from 'lucide-react';
+import { Trash2, Save, Download, Lock, Users, X, Eye, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { money, num, todayStr } from '../finData';
+import {
+  CARGOS_HH, FOLHA_VAZIA, HORAS_ZERO, diasComHorasOcultas, folhaDoRegistro, folhasIguais, mesclarFolha, moverDia,
+  type Folha, type Horas, type Pessoa,
+} from '../alocarHhFolha';
 import { MoneyInput } from '../finUi';
 import { isEmpresaLinave } from '../../../../utils/company';
 import { handleDownloadCustoHhPDF } from '../custoHhPdf';
@@ -35,24 +39,36 @@ const mesLabel = (mes: string) => {
 // Chave de agrupamento do cargo (campo LIVRE): mesma string (ignorando espaços/caixa) soma junto.
 const normCargoKey = (c: string) => String(c || '').trim().replace(/\s+/g, ' ').toLowerCase();
 
-// Sugestões de cargo (o campo é livre — isto é só um datalist de conveniência).
-const CARGOS_HH = [
-  'Supervisor de obra', 'Caldeireiro/encanador', 'Soldador', 'Ajudante de caldeiraria / firewatch',
-  'Eletricista', 'Pintor', 'Maçariqueiro', '1/2 Oficial', 'TST', 'Esmerilhador', 'Mecânico',
-];
+const totaisPessoa = (p: Pessoa, dias: string[]): Horas => {
+  let hn = 0, he05 = 0, he10 = 0, he02 = 0;
+  dias.forEach((dia) => { const h = p.horas[dia]; if (h) { hn += num(h.hn); he05 += num(h.he05); he10 += num(h.he10); he02 += num(h.he02); } });
+  return { hn: round2(hn), he05: round2(he05), he10: round2(he10), he02: round2(he02) };
+};
 
-type Horas = { hn: number; he05: number; he10: number; he02: number };
-type Pessoa = { id: string; nome: string; cargo: string; horas: Record<string, Horas> };
+// Resumo por cargo (campo LIVRE: agrupa por string igual, ignorando espaços/caixa).
+const resumoDaFolha = (pessoas: Pessoa[], dias: string[]) => {
+  const map = new Map<string, { label: string; hn: number; he05: number; he10: number; he02: number }>();
+  pessoas.forEach((p) => {
+    const label = (p.cargo || '').trim() || '(sem cargo)';
+    const key = normCargoKey(label);
+    const t = totaisPessoa(p, dias);
+    const cur = map.get(key) || { label, hn: 0, he05: 0, he10: 0, he02: 0 };
+    map.set(key, { label: cur.label, hn: round2(cur.hn + t.hn), he05: round2(cur.he05 + t.he05), he10: round2(cur.he10 + t.he10), he02: round2(cur.he02 + t.he02) });
+  });
+  return Array.from(map.values()).map((v) => ({ cargo: v.label, hn: v.hn, he05: v.he05, he10: v.he10, he02: v.he02 }));
+};
 
-const normHoras = (h: any): Horas => ({ hn: num(h?.hn), he05: num(h?.he05), he10: num(h?.he10), he02: num(h?.he02) });
-const normPessoa = (p: any): Pessoa => ({
-  id: String(p?.id || `hh-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`),
-  nome: String(p?.nome || ''),
-  cargo: String(p?.cargo || CARGOS_HH[0]),
-  horas: p?.horas && typeof p.horas === 'object'
-    ? Object.fromEntries(Object.entries(p.horas).map(([k, v]) => [k, normHoras(v)]))
-    : {},
+// Custo por cargo (HN×v ; HE1,0×v×2 ; HE0,5×v×1,5 ; HE0,2×v×1,2 — adicional noturno, +20%).
+const custosDoResumo = (resumo: ReturnType<typeof resumoDaFolha>, rates: Record<string, string>) => resumo.map((r) => {
+  const rate = num(rates[r.cargo]);
+  const custoHN = round2(r.hn * rate);
+  const custoHE10 = round2(r.he10 * rate * 2);
+  const custoHE05 = round2(r.he05 * rate * 1.5);
+  const custoHE02 = round2(r.he02 * rate * 1.2);
+  return { ...r, rate, custoHN, custoHE10, custoHE05, custoHE02, total: round2(custoHN + custoHE10 + custoHE05 + custoHE02) };
 });
+
+const totalDaFolha = (f: Folha) => round2(custosDoResumo(resumoDaFolha(f.pessoas, f.dias), f.rates).reduce((s, c) => s + c.total, 0));
 
 export function AlocarHhView({ osNumero, selected, outrosCustos = [] }: { osNumero: string; selected: any; outrosCustos?: Array<{ tipo: string; descricao: string; valor: number }> }) {
   const { financeiro, saveEntity, clientes, config } = useErp() as any;
@@ -69,28 +85,41 @@ export function AlocarHhView({ osNumero, selected, outrosCustos = [] }: { osNume
     () => (Array.isArray(financeiro) ? financeiro : []).find((r: any) => r?.tipo === 'hhAlocacao' && String(r?.os) === String(osNumero)) || null,
     [financeiro, osNumero],
   );
+  // Folha como está salva AGORA no servidor (o contexto recarrega o Financeiro a cada 45s/foco).
+  const folhaServidor = useMemo(() => folhaDoRegistro(registro), [registro]);
 
-  // Carrega o registro salvo ao TROCAR de OS (não a cada mudança de `financeiro`, para não
-  // sobrescrever a edição em andamento logo após salvar).
-  const loadedRef = useRef<string | null>(null);
+  // `base` = versão salva que esta tela carregou por último. Comparar a tela com ela diz se há
+  // edição não salva; comparar o servidor com ela diz se alguém salvou depois que abri.
+  const [base, setBase] = useState<Folha>(FOLHA_VAZIA);
+  const [outraVersaoSalva, setOutraVersaoSalva] = useState(false);
+  const folhaLocal: Folha = useMemo(() => ({ mes, escopo, dias, pessoas, rates }), [mes, escopo, dias, pessoas, rates]);
+  const sujo = !folhasIguais(folhaLocal, base);
+
+  const carregarFolha = (f: Folha) => {
+    setMes(f.mes); setEscopo(f.escopo); setDias(f.dias); setPessoas(f.pessoas); setRates(f.rates);
+    setBase(f);
+    setOutraVersaoSalva(false);
+  };
+
+  // Trocou de OS: carrega a folha salva dela. Mesma OS, mas alguém salvou uma versão nova (ex.:
+  // o RH lançou mais dias enquanto o admin estava com a tela aberta): antes a tela ficava presa
+  // na cópia de quando a OS foi aberta — por isso dias lançados "não apareciam". Sem edição em
+  // andamento, atualiza na hora; com edição, avisa (o salvar já combina as duas, ver mesclarFolha).
+  const osCarregadaRef = useRef<string | null>(null);
   useEffect(() => {
-    if (loadedRef.current === osNumero) return;
-    loadedRef.current = osNumero;
-    const reg = (Array.isArray(financeiro) ? financeiro : []).find((r: any) => r?.tipo === 'hhAlocacao' && String(r?.os) === String(osNumero));
-    if (reg) {
-      const diasReg = Array.isArray(reg.dias) ? reg.dias.map((d: any) => String(d).slice(0, 10)) : [];
-      // mês: do registro; senão deriva do 1º dia ou do início da apuração legada.
-      setMes(String(reg.mes || (diasReg[0] || reg.periodo?.de || '').slice(0, 7) || ''));
-      setEscopo(String(reg.escopo || ''));
-      setDias(diasReg);
-      setPessoas(Array.isArray(reg.pessoas) ? reg.pessoas.map(normPessoa) : []);
-      setRates(reg.rates && typeof reg.rates === 'object'
-        ? Object.fromEntries(Object.entries(reg.rates).map(([k, v]) => [k, String(v ?? '')]))
-        : {});
-    } else {
-      setMes(''); setEscopo(''); setDias([]); setPessoas([]); setRates({});
+    if (osCarregadaRef.current !== osNumero) {
+      osCarregadaRef.current = osNumero;
+      carregarFolha(folhaServidor);
+      return;
     }
-  }, [osNumero, financeiro]);
+    if (folhasIguais(folhaServidor, base)) return;
+    if (!sujo) carregarFolha(folhaServidor);
+    else setOutraVersaoSalva(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [osNumero, folhaServidor]);
+
+  const diasOcultos = useMemo(() => diasComHorasOcultas(folhaLocal), [folhaLocal]);
+  const mostrarDiasOcultos = () => setDias((d) => [...d, ...diasOcultos]);
 
   // ---- edição da folha de ponto ----
   const addPessoa = () => setPessoas((ps) => [...ps, { id: `hh-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, nome: '', cargo: '', horas: {} }]);
@@ -99,77 +128,67 @@ export function AlocarHhView({ osNumero, selected, outrosCustos = [] }: { osNume
   const setHora = (id: string, dia: string, campo: keyof Horas, v: string) =>
     setPessoas((ps) => ps.map((p) => {
       if (p.id !== id) return p;
-      const atual = p.horas[dia] || { hn: 0, he05: 0, he10: 0, he02: 0 };
+      const atual = p.horas[dia] || HORAS_ZERO;
       return { ...p, horas: { ...p.horas, [dia]: { ...atual, [campo]: num(v) } } };
     }));
 
   const addDia = () => setDias((d) => {
     const ultimo = d[d.length - 1];
-    const novo = ultimo ? proximoDia(ultimo) : (mes ? `${mes}-01` : todayStr);
+    let novo = ultimo ? proximoDia(ultimo) : (mes ? `${mes}-01` : todayStr);
+    while (d.includes(novo)) novo = proximoDia(novo); // nunca duas colunas com a mesma data
     return [...d, novo];
   });
-  const setDiaData = (idx: number, v: string) => setDias((d) => d.map((x, i) => (i === idx ? v.slice(0, 10) : x)));
+  // Trocar a data de uma coluna leva as horas junto — antes elas ficavam presas na data antiga
+  // e a coluna nova aparecia vazia (o "dia sem valor"), além de sumirem dos totais.
+  const setDiaData = (idx: number, v: string) => {
+    const novo = v.slice(0, 10);
+    const antigo = dias[idx];
+    if (!novo || novo === antigo) return;
+    if (dias.includes(novo)) { toast.error(`O dia ${dataBr(novo)} já está na folha.`); return; }
+    const movida = moverDia(folhaLocal, antigo, novo);
+    setDias(movida.dias);
+    setPessoas(movida.pessoas);
+  };
   const removeDia = (idx: number) => setDias((d) => d.filter((_, i) => i !== idx));
 
-  const totaisPessoa = (p: Pessoa): Horas => {
-    let hn = 0, he05 = 0, he10 = 0, he02 = 0;
-    dias.forEach((dia) => { const h = p.horas[dia]; if (h) { hn += num(h.hn); he05 += num(h.he05); he10 += num(h.he10); he02 += num(h.he02); } });
-    return { hn: round2(hn), he05: round2(he05), he10: round2(he10), he02: round2(he02) };
-  };
-
-  // ---- resumo por cargo (campo LIVRE: agrupa por string igual, ignorando espaços/caixa) ----
-  const resumo = useMemo(() => {
-    const map = new Map<string, { label: string; hn: number; he05: number; he10: number; he02: number }>();
-    pessoas.forEach((p) => {
-      const label = (p.cargo || '').trim() || '(sem cargo)';
-      const key = normCargoKey(label);
-      const t = totaisPessoa(p);
-      const cur = map.get(key) || { label, hn: 0, he05: 0, he10: 0, he02: 0 };
-      map.set(key, { label: cur.label, hn: round2(cur.hn + t.hn), he05: round2(cur.he05 + t.he05), he10: round2(cur.he10 + t.he10), he02: round2(cur.he02 + t.he02) });
-    });
-    return Array.from(map.values()).map((v) => ({ cargo: v.label, hn: v.hn, he05: v.he05, he10: v.he10, he02: v.he02 }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pessoas, dias]);
-
+  const resumo = useMemo(() => resumoDaFolha(pessoas, dias), [pessoas, dias]);
   const totResumo = useMemo(() => resumo.reduce((s, r) => ({ hn: s.hn + r.hn, he05: s.he05 + r.he05, he10: s.he10 + r.he10, he02: s.he02 + r.he02 }), { hn: 0, he05: 0, he10: 0, he02: 0 }), [resumo]);
-
-  // ---- custo por cargo (HN×v ; HE1,0×v×2 ; HE0,5×v×1,5 ; HE0,2×v×1,2 — adicional noturno, +20%) ----
-  const custos = useMemo(() => resumo.map((r) => {
-    const rate = num(rates[r.cargo]);
-    const custoHN = round2(r.hn * rate);
-    const custoHE10 = round2(r.he10 * rate * 2);
-    const custoHE05 = round2(r.he05 * rate * 1.5);
-    const custoHE02 = round2(r.he02 * rate * 1.2);
-    return { ...r, rate, custoHN, custoHE10, custoHE05, custoHE02, total: round2(custoHN + custoHE10 + custoHE05 + custoHE02) };
-  }), [resumo, rates]);
+  const custos = useMemo(() => custosDoResumo(resumo, rates), [resumo, rates]);
   const totalHH = round2(custos.reduce((s, c) => s + c.total, 0));
 
   // ---- persistência ----
+  // Combina com a versão MAIS NOVA do servidor (buscada na hora por comFinanceiroAtual): só o
+  // que este usuário mudou desde que abriu a folha é aplicado. Antes a folha inteira da tela
+  // sobrescrevia a salva — quem salvava por último apagava o que o outro tinha lançado.
   const salvar = async () => {
     if (fechada) return;
     setSalvando(true);
     try {
-      const rec = {
-        id: registro?.id || `HHA-${Date.now()}`,
-        tipo: 'hhAlocacao' as const,
-        os: osNumero,
-        mes,
-        escopo,
-        dias,
-        pessoas,
-        rates: Object.fromEntries(Object.entries(rates).map(([k, v]) => [k, num(v)])),
-        valor: totalHH,
-        data: new Date().toISOString().slice(0, 10),
-        createdAt: registro?.createdAt || new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      const resultado = await comFinanceiroAtual(async (base) => {
-        const resto = base.filter((r: any) => !(r?.tipo === 'hhAlocacao' && String(r?.os) === String(osNumero)));
+      const resultado = await comFinanceiroAtual(async (financeiroAtual) => {
+        const regAtual = financeiroAtual.find((r: any) => r?.tipo === 'hhAlocacao' && String(r?.os) === String(osNumero)) || null;
+        const mesclada = mesclarFolha(base, folhaLocal, folhaDoRegistro(regAtual));
+        const rec = {
+          id: regAtual?.id || registro?.id || `HHA-${Date.now()}`,
+          tipo: 'hhAlocacao' as const,
+          os: osNumero,
+          mes: mesclada.mes,
+          escopo: mesclada.escopo,
+          dias: mesclada.dias,
+          pessoas: mesclada.pessoas,
+          rates: Object.fromEntries(Object.entries(mesclada.rates).map(([k, v]) => [k, num(v)])),
+          valor: totalDaFolha(mesclada),
+          data: new Date().toISOString().slice(0, 10),
+          createdAt: regAtual?.createdAt || registro?.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        const resto = financeiroAtual.filter((r: any) => !(r?.tipo === 'hhAlocacao' && String(r?.os) === String(osNumero)));
         await saveEntity('financeiro', [rec, ...resto]);
-        return true;
+        return rec;
       });
       if (!resultado) return; // comFinanceiroAtual já avisou o usuário do erro
-      toast.success(`Alocação de H.H salva (${money(totalHH)}).`);
+      // A tela passa a mostrar exatamente o que foi gravado (inclui o que outra pessoa salvou).
+      carregarFolha(folhaDoRegistro(resultado));
+      toast.success(`Alocação de H.H salva (${money(resultado.valor)}).`);
     } finally {
       setSalvando(false);
     }
@@ -227,6 +246,29 @@ export function AlocarHhView({ osNumero, selected, outrosCustos = [] }: { osNume
         </div>
       )}
 
+      {outraVersaoSalva && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-500/30 bg-sky-500/10 px-4 py-3 text-sky-100 text-xs">
+          <span>Outra pessoa salvou alterações nesta folha enquanto você editava. Ao salvar, as suas alterações são combinadas com as dela — nada do que ela lançou se perde.</span>
+          <button onClick={() => carregarFolha(folhaServidor)} className="flex items-center gap-1.5 rounded-lg border border-sky-400/40 bg-sky-500/20 px-3 py-1.5 font-black uppercase tracking-widest hover:bg-sky-500/30">
+            <RefreshCw size={12} /> Descartar minhas edições e ver a versão salva
+          </button>
+        </div>
+      )}
+
+      {diasOcultos.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-amber-100 text-xs">
+          <span>
+            Há horas lançadas em {diasOcultos.length} data(s) que não aparecem na folha: <b>{diasOcultos.map(dataBr).join(', ')}</b>.
+            {' '}Elas estão salvas mas fora dos totais (ex.: a data da coluna foi trocada depois de preenchida).
+          </span>
+          {!fechada && (
+            <button onClick={mostrarDiasOcultos} className="flex items-center gap-1.5 rounded-lg border border-amber-400/40 bg-amber-500/20 px-3 py-1.5 font-black uppercase tracking-widest hover:bg-amber-500/30">
+              <Eye size={12} /> Mostrar esses dias
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Cabeçalho da apuração */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <div className="md:col-span-2">
@@ -277,7 +319,7 @@ export function AlocarHhView({ osNumero, selected, outrosCustos = [] }: { osNume
                 <tr><td colSpan={7 + dias.length} className="border border-white/10 px-3 py-4 text-white/40 text-center">Nenhuma pessoa. Clique em "+ Pessoa" e "+ Dia" para montar a folha.</td></tr>
               )}
               {pessoas.map((p) => {
-                const t = totaisPessoa(p);
+                const t = totaisPessoa(p, dias);
                 return (
                   <tr key={p.id} className="text-white">
                     <td className="border border-white/10 p-1 sticky left-0 bg-[#0b1220]">
