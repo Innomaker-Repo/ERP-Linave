@@ -6,6 +6,7 @@ import { useErp } from '../../../../context/ErpContext';
 import { comFinanceiroAtual } from '../../../../../services/financeiroSeguro';
 import { findObraDaOs, formatNumeroOsDisplay, formatOsLabel, getEmbarcacaoDaOs, getOsNumero } from '../../../../../services/ordensServico';
 import { AlocarHhView } from './AlocarHhView';
+import { folhaDoRegistro, totalDaFolha } from '../alocarHhFolha';
 import { toast } from 'sonner';
 
 const round2 = (n: number) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
@@ -207,7 +208,12 @@ export function CustoPorOsView() {
       .find((r: any) => r?.tipo === 'hhAlocacao' && String(r?.os) === String(osNumero)) || null,
     [financeiro, osNumero],
   );
-  const totalHH = round2(num(registroHH?.valor));
+  // Recalculado da folha (todos os dias): o `valor` salvo em registros antigos só somava os
+  // dias que estavam em `dias`. Registro sem folha (legado) usa o valor gravado.
+  const totalHH = useMemo(
+    () => (Array.isArray(registroHH?.pessoas) ? totalDaFolha(folhaDoRegistro(registroHH)) : round2(num(registroHH?.valor))),
+    [registroHH],
+  );
   const pessoasHH = Array.isArray(registroHH?.pessoas) ? registroHH.pessoas.length : 0;
 
   // ---- Último orçamento da obra (fonte do preço da proposta e da classificação dos itens) ---

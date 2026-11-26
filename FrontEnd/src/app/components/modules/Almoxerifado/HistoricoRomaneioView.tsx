@@ -3,7 +3,7 @@ import { CheckCircle2, ClipboardList, Download, History, Pencil, RotateCcw, Sear
 import { useErp } from '../../../context/ErpContext';
 import { Badge } from '../../../modules/shared/ui/badge';
 import { Input } from '../../../modules/shared/ui/input';
-import { gerarRomaneioPdf, loadRomaneioLogoBase64 } from './romaneioPdf';
+import { gerarRomaneioPdf, loadRomaneioLogoBase64, patrimonioDoItem } from './romaneioPdf';
 import { toast } from 'sonner';
 import {
   EntradaManutencaoModal, criarEntradaManutencao, gerarIdManutencao, itemPossuiManutencao,
@@ -239,7 +239,7 @@ export function HistoricoRomaneioView({ searchQuery }: HistoricoRomaneioViewProp
       const itemsPdf = romaneio.items.map((item) => {
         const pesoUnit = parseFloat(String(item.snapshotBefore?.peso ?? '').replace(',', '.').replace(/[^0-9.]/g, '')) || 0;
         const pesoLinha = pesoUnit > 0 ? pesoUnit * (Number(item.quantidade) || 0) : 0;
-        return { descricao: item.itemLabel, quantidade: item.quantidade || '1', peso: pesoLinha };
+        return { descricao: item.itemLabel, quantidade: item.quantidade || '1', peso: pesoLinha, patrimonio: patrimonioDoItem(item.snapshotBefore) };
       });
       const pesoTotalRomaneio = itemsPdf.reduce((soma, it) => soma + (Number(it.peso) || 0), 0);
       const doc = gerarRomaneioPdf({

@@ -41,11 +41,22 @@ export const temHoras = (h?: Horas) => CAMPOS_HORAS.some((c) => num(h?.[c]) !== 
 const mesmasHoras = (a?: Horas, b?: Horas) => CAMPOS_HORAS.every((c) => num(a?.[c]) === num(b?.[c]));
 const igual = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
+/**
+ * Inclui em `dias` toda data que tem horas. O RH costuma lançar um dia, trocar a data da mesma
+ * coluna e lançar o seguinte: as horas do anterior continuam salvas, mas a data saía de `dias`
+ * e o dia sumia da tela, do resumo e do custo (só contava o último).
+ */
+export const comTodosOsDias = (folha: Folha): Folha => {
+  const dias = new Set(folha.dias.filter(Boolean));
+  folha.pessoas.forEach((p) => Object.entries(p.horas).forEach(([dia, h]) => { if (temHoras(h)) dias.add(dia); }));
+  return { ...folha, dias: Array.from(dias).sort() };
+};
+
 /** Folha (formato da tela) a partir do registro `hhAlocacao` salvo. */
 export const folhaDoRegistro = (reg: any): Folha => {
   if (!reg) return FOLHA_VAZIA;
   const dias = Array.isArray(reg.dias) ? reg.dias.map((d: any) => String(d).slice(0, 10)) : [];
-  return {
+  return comTodosOsDias({
     // mês: do registro; senão deriva do 1º dia ou do início da apuração legada.
     mes: String(reg.mes || (dias[0] || reg.periodo?.de || '').slice(0, 7) || ''),
     escopo: String(reg.escopo || ''),
@@ -54,33 +65,28 @@ export const folhaDoRegistro = (reg: any): Folha => {
     rates: reg.rates && typeof reg.rates === 'object'
       ? Object.fromEntries(Object.entries(reg.rates).map(([k, v]) => [k, String(v ?? '')]))
       : {},
-  };
+  });
 };
 
 export const folhasIguais = (a: Folha, b: Folha) => igual(a, b);
 
 /**
- * Datas que têm horas lançadas mas NÃO estão na lista de dias da folha — horas que existem no
- * registro e não aparecem em lugar nenhum (nem nos totais). Acontecia quando a data de uma
- * coluna já preenchida era trocada: as horas ficavam presas na data antiga.
+ * Troca a data de uma coluna. NUNCA mexe em horas já lançadas: se a coluna tem horas, ela fica
+ * e a data nova entra como outro dia; se está vazia, só muda a data.
  */
-export const diasComHorasOcultas = (folha: Folha): string[] => {
-  const visiveis = new Set(folha.dias);
-  const ocultos = new Set<string>();
-  folha.pessoas.forEach((p) => Object.entries(p.horas).forEach(([dia, h]) => {
-    if (!visiveis.has(dia) && temHoras(h)) ocultos.add(dia);
-  }));
-  return Array.from(ocultos).sort();
+export const trocarDataDaColuna = (folha: Folha, antigo: string, novo: string): Folha => {
+  const preenchida = folha.pessoas.some((p) => temHoras(p.horas[antigo]));
+  const dias = preenchida ? folha.dias : folha.dias.filter((d) => d !== antigo);
+  return comTodosOsDias({ ...folha, dias: [...dias, novo] });
 };
 
-/** Troca a data de uma coluna levando junto as horas de todas as pessoas daquele dia. */
-export const moverDia = (folha: Folha, antigo: string, novo: string): Folha => ({
+/** Remove o dia E as horas dele (senão o dia voltaria, por ter horas). */
+export const removerDia = (folha: Folha, dia: string): Folha => ({
   ...folha,
-  dias: folha.dias.map((d) => (d === antigo ? novo : d)),
+  dias: folha.dias.filter((d) => d !== dia),
   pessoas: folha.pessoas.map((p) => {
-    if (!(antigo in p.horas)) return p;
-    const { [antigo]: horasDoDia, ...resto } = p.horas;
-    return { ...p, horas: { ...resto, [novo]: horasDoDia } };
+    const { [dia]: _removidas, ...horas } = p.horas;
+    return { ...p, horas };
   }),
 });
 
@@ -140,11 +146,53 @@ export const mesclarFolha = (base: Folha, local: Folha, servidor: Folha): Folha 
     else rates[cargo] = local.rates[cargo];
   });
 
-  return {
+  return comTodosOsDias({
     mes: escolher(local.mes, base.mes, servidor.mes),
     escopo: escolher(local.escopo, base.escopo, servidor.escopo),
     dias,
     pessoas,
     rates,
-  };
+  });
 };
+
+// ---- Totais e custo (sempre sobre TODOS os dias da folha) ----
+const round2 = (n: number) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+
+// Chave de agrupamento do cargo (campo LIVRE): mesma string (ignorando espaços/caixa) soma junto.
+const normCargoKey = (c: string) => String(c || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+export const totaisPessoa = (p: Pessoa, dias: string[]): Horas => {
+  let hn = 0, he05 = 0, he10 = 0, he02 = 0;
+  dias.forEach((dia) => { const h = p.horas[dia]; if (h) { hn += num(h.hn); he05 += num(h.he05); he10 += num(h.he10); he02 += num(h.he02); } });
+  return { hn: round2(hn), he05: round2(he05), he10: round2(he10), he02: round2(he02) };
+};
+
+// Resumo por cargo (campo LIVRE: agrupa por string igual, ignorando espaços/caixa).
+export const resumoDaFolha = (pessoas: Pessoa[], dias: string[]) => {
+  const map = new Map<string, { label: string; hn: number; he05: number; he10: number; he02: number }>();
+  pessoas.forEach((p) => {
+    const label = (p.cargo || '').trim() || '(sem cargo)';
+    const key = normCargoKey(label);
+    const t = totaisPessoa(p, dias);
+    const cur = map.get(key) || { label, hn: 0, he05: 0, he10: 0, he02: 0 };
+    map.set(key, { label: cur.label, hn: round2(cur.hn + t.hn), he05: round2(cur.he05 + t.he05), he10: round2(cur.he10 + t.he10), he02: round2(cur.he02 + t.he02) });
+  });
+  return Array.from(map.values()).map((v) => ({ cargo: v.label, hn: v.hn, he05: v.he05, he10: v.he10, he02: v.he02 }));
+};
+
+// Valor/hora do cargo. O resumo junta "SOLDADOR" e "Soldador" sob o rótulo de quem vem primeiro,
+// então o valor gravado com a outra grafia também vale.
+export const taxaDoCargo = (rates: Record<string, string>, cargo: string): string | undefined =>
+  rates[cargo] ?? Object.entries(rates).find(([k]) => normCargoKey(k) === normCargoKey(cargo))?.[1];
+
+// Custo por cargo (HN×v ; HE1,0×v×2 ; HE0,5×v×1,5 ; HE0,2×v×1,2 — adicional noturno, +20%).
+export const custosDoResumo = (resumo: ReturnType<typeof resumoDaFolha>, rates: Record<string, string>) => resumo.map((r) => {
+  const rate = num(taxaDoCargo(rates, r.cargo));
+  const custoHN = round2(r.hn * rate);
+  const custoHE10 = round2(r.he10 * rate * 2);
+  const custoHE05 = round2(r.he05 * rate * 1.5);
+  const custoHE02 = round2(r.he02 * rate * 1.2);
+  return { ...r, rate, custoHN, custoHE10, custoHE05, custoHE02, total: round2(custoHN + custoHE10 + custoHE05 + custoHE02) };
+});
+
+export const totalDaFolha = (f: Folha) => round2(custosDoResumo(resumoDaFolha(f.pessoas, f.dias), f.rates).reduce((s, c) => s + c.total, 0));
