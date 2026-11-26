@@ -9,7 +9,18 @@ export interface RomaneioPdfItem {
   descricao: string;
   quantidade: string | number;
   peso?: string | number; // peso (kg) que sai nessa linha (peso unit × qtd)
+  patrimonio?: string;
 }
+
+// Patrimônio de um item do estoque. Cada tabela guarda num campo diferente: a maioria em
+// `patrimonio`, Bomba Hidrojato em `patrimonioIdentificacao` e Controle de ferramentas em
+// `tagNumeroSeriePatrimonio`. Materiais e alugados não têm (fica em branco).
+export const patrimonioDoItem = (values?: Record<string, any>): string => {
+  const valor = [values?.patrimonio, values?.patrimonioIdentificacao, values?.tagNumeroSeriePatrimonio]
+    .map((v) => String(v ?? '').trim())
+    .find((v) => v && v !== '—' && v !== '-');
+  return valor || '';
+};
 
 export interface RomaneioPdfParams {
   cliente?: string;
@@ -127,12 +138,12 @@ export const gerarRomaneioPdf = (params: RomaneioPdfParams): jsPDF => {
   }, 0);
   const pesoTotalStr = formatPeso(params.pesoTotal ?? pesoTotalCalc);
 
-  // Tabela de itens: ITEM | MATERIAL DESCRIPTION | QTD | PESO (kg)
+  // Tabela de itens: ITEM | MATERIAL DESCRIPTION | PATRIMÔNIO | QTD | PESO (kg)
   autoTable(doc, {
     startY: y,
     margin: { left: margin, right: margin },
     theme: 'grid',
-    head: [['ITEM', 'MATERIAL DESCRIPTION', 'QTD', 'PESO (kg)']],
+    head: [['ITEM', 'MATERIAL DESCRIPTION', 'PATRIMÔNIO', 'QTD', 'PESO (kg)']],
     // O cabeçalho da TABELA já repete sozinho (comportamento padrão do autoTable). Isso aqui
     // só repete o logo/título nas páginas de continuação de um romaneio com muitos itens —
     // sem isso, só a página 1 identificava de qual documento (FLN 026) aquilo é.
@@ -151,11 +162,12 @@ export const gerarRomaneioPdf = (params: RomaneioPdfParams): jsPDF => {
       ...params.items.map((item, index) => [
         String(index + 1),
         item.descricao || '',
+        item.patrimonio || '',
         String(item.quantidade ?? ''),
         formatPeso(item.peso),
       ]),
       [
-        { content: 'PESO TOTAL (kg)', colSpan: 3, styles: { halign: 'right', fontStyle: 'bold' } },
+        { content: 'PESO TOTAL (kg)', colSpan: 4, styles: { halign: 'right', fontStyle: 'bold' } },
         { content: pesoTotalStr || '0', styles: { halign: 'center', fontStyle: 'bold' } },
       ],
     ],
@@ -163,9 +175,10 @@ export const gerarRomaneioPdf = (params: RomaneioPdfParams): jsPDF => {
     headStyles: { fillColor: [217, 217, 217], textColor: [0, 0, 0], fontStyle: 'bold', halign: 'center' },
     columnStyles: {
       0: { cellWidth: 50, halign: 'center' },
-      1: { cellWidth: contentWidth - 50 - 55 - 70 },
-      2: { cellWidth: 55, halign: 'center' },
-      3: { cellWidth: 70, halign: 'center' },
+      1: { cellWidth: contentWidth - 50 - 95 - 55 - 70 },
+      2: { cellWidth: 95, halign: 'center' },
+      3: { cellWidth: 55, halign: 'center' },
+      4: { cellWidth: 70, halign: 'center' },
     },
   });
 

@@ -9,7 +9,7 @@ import { useErp } from '../../../context/ErpContext';
 import { boldOS } from '../../../utils/osHighlight';
 import { getOrdensServico, getOsOptionLabel, getOsOptionValue, getOsStableValue, type OrdemServicoResumo, isOsAprovada, formatOsLabel } from '../../../../services/ordensServico';
 import api from '../../../../services/api';
-import { gerarRomaneioPdf, loadRomaneioLogoBase64 } from './romaneioPdf';
+import { gerarRomaneioPdf, loadRomaneioLogoBase64, patrimonioDoItem } from './romaneioPdf';
 import { uploadDocumento, excluirDocumento } from '../../../../services/documentosService';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../ui/feedback';
@@ -2400,7 +2400,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
       const rowOrigem = rowByKeyPeso.get(keyForRow(item.tableName, item.rowId));
       const pesoUnit = parseEstoqueQty(rowOrigem?.values.peso);
       const pesoLinha = pesoUnit > 0 ? pesoUnit * (Number(item.quantidade) || 0) : 0;
-      return { descricao: item.itemLabel, quantidade: item.quantidade || '1', peso: pesoLinha };
+      return { descricao: item.itemLabel, quantidade: item.quantidade || '1', peso: pesoLinha, patrimonio: patrimonioDoItem(rowOrigem?.values) };
     });
     const pesoTotalRomaneio = itemsPdf.reduce((soma, it) => soma + (Number(it.peso) || 0), 0);
 
@@ -3707,6 +3707,9 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
                               <div className="text-sm font-bold text-white truncate">{row.values.material || row.values.equipamento || row.values.fornecedor || row.values.item}</div>
                               <div className="mt-1 flex items-center gap-2 text-xs text-white/50">
                                 <span className="truncate">{tableName}</span>
+                                {patrimonioDoItem(row.values) && (
+                                  <span className="shrink-0 rounded-md bg-white/5 px-1.5 py-0.5 text-[10px] text-white/60">Patrimônio: {patrimonioDoItem(row.values)}</span>
+                                )}
                                 {kind === 'material' ? (
                                   <span className="shrink-0 rounded-md bg-red-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-red-300">Baixa</span>
                                 ) : kind === 'gas' ? (

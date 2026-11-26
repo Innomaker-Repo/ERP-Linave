@@ -7,11 +7,12 @@
  * HE 0,2 (adicional noturno, +20%) = qtd×valor×1,2.
  * =======================================================================================*/
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Trash2, Save, Download, Lock, Users, X, Eye, RefreshCw } from 'lucide-react';
+import { Trash2, Save, Download, Lock, Users, X, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { money, num, todayStr } from '../finData';
 import {
-  CARGOS_HH, FOLHA_VAZIA, HORAS_ZERO, diasComHorasOcultas, folhaDoRegistro, folhasIguais, mesclarFolha, moverDia,
+  CARGOS_HH, FOLHA_VAZIA, HORAS_ZERO, custosDoResumo, folhaDoRegistro, folhasIguais, mesclarFolha, removerDia,
+  resumoDaFolha, taxaDoCargo, temHoras, totaisPessoa, totalDaFolha, trocarDataDaColuna,
   type Folha, type Horas, type Pessoa,
 } from '../alocarHhFolha';
 import { MoneyInput } from '../finUi';
@@ -19,6 +20,7 @@ import { isEmpresaLinave } from '../../../../utils/company';
 import { handleDownloadCustoHhPDF } from '../custoHhPdf';
 import { useErp } from '../../../../context/ErpContext';
 import { comFinanceiroAtual } from '../../../../../services/financeiroSeguro';
+import { confirmDialog } from '../../../ui/feedback';
 import { ScrollXTop } from '../../../ui/scrollXTop';
 
 const round2 = (n: number) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
@@ -36,40 +38,6 @@ const mesLabel = (mes: string) => {
   const [y, m] = String(mes || '').split('-');
   return m && y ? `${m}/${y}` : '';
 };
-// Chave de agrupamento do cargo (campo LIVRE): mesma string (ignorando espaços/caixa) soma junto.
-const normCargoKey = (c: string) => String(c || '').trim().replace(/\s+/g, ' ').toLowerCase();
-
-const totaisPessoa = (p: Pessoa, dias: string[]): Horas => {
-  let hn = 0, he05 = 0, he10 = 0, he02 = 0;
-  dias.forEach((dia) => { const h = p.horas[dia]; if (h) { hn += num(h.hn); he05 += num(h.he05); he10 += num(h.he10); he02 += num(h.he02); } });
-  return { hn: round2(hn), he05: round2(he05), he10: round2(he10), he02: round2(he02) };
-};
-
-// Resumo por cargo (campo LIVRE: agrupa por string igual, ignorando espaços/caixa).
-const resumoDaFolha = (pessoas: Pessoa[], dias: string[]) => {
-  const map = new Map<string, { label: string; hn: number; he05: number; he10: number; he02: number }>();
-  pessoas.forEach((p) => {
-    const label = (p.cargo || '').trim() || '(sem cargo)';
-    const key = normCargoKey(label);
-    const t = totaisPessoa(p, dias);
-    const cur = map.get(key) || { label, hn: 0, he05: 0, he10: 0, he02: 0 };
-    map.set(key, { label: cur.label, hn: round2(cur.hn + t.hn), he05: round2(cur.he05 + t.he05), he10: round2(cur.he10 + t.he10), he02: round2(cur.he02 + t.he02) });
-  });
-  return Array.from(map.values()).map((v) => ({ cargo: v.label, hn: v.hn, he05: v.he05, he10: v.he10, he02: v.he02 }));
-};
-
-// Custo por cargo (HN×v ; HE1,0×v×2 ; HE0,5×v×1,5 ; HE0,2×v×1,2 — adicional noturno, +20%).
-const custosDoResumo = (resumo: ReturnType<typeof resumoDaFolha>, rates: Record<string, string>) => resumo.map((r) => {
-  const rate = num(rates[r.cargo]);
-  const custoHN = round2(r.hn * rate);
-  const custoHE10 = round2(r.he10 * rate * 2);
-  const custoHE05 = round2(r.he05 * rate * 1.5);
-  const custoHE02 = round2(r.he02 * rate * 1.2);
-  return { ...r, rate, custoHN, custoHE10, custoHE05, custoHE02, total: round2(custoHN + custoHE10 + custoHE05 + custoHE02) };
-});
-
-const totalDaFolha = (f: Folha) => round2(custosDoResumo(resumoDaFolha(f.pessoas, f.dias), f.rates).reduce((s, c) => s + c.total, 0));
-
 export function AlocarHhView({ osNumero, selected, outrosCustos = [] }: { osNumero: string; selected: any; outrosCustos?: Array<{ tipo: string; descricao: string; valor: number }> }) {
   const { financeiro, saveEntity, clientes, config } = useErp() as any;
   const fechada = Boolean(selected?.fechada);
@@ -118,9 +86,6 @@ export function AlocarHhView({ osNumero, selected, outrosCustos = [] }: { osNume
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [osNumero, folhaServidor]);
 
-  const diasOcultos = useMemo(() => diasComHorasOcultas(folhaLocal), [folhaLocal]);
-  const mostrarDiasOcultos = () => setDias((d) => [...d, ...diasOcultos]);
-
   // ---- edição da folha de ponto ----
   const addPessoa = () => setPessoas((ps) => [...ps, { id: `hh-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, nome: '', cargo: '', horas: {} }]);
   const removePessoa = (id: string) => setPessoas((ps) => ps.filter((p) => p.id !== id));
@@ -138,18 +103,29 @@ export function AlocarHhView({ osNumero, selected, outrosCustos = [] }: { osNume
     while (d.includes(novo)) novo = proximoDia(novo); // nunca duas colunas com a mesma data
     return [...d, novo];
   });
-  // Trocar a data de uma coluna leva as horas junto — antes elas ficavam presas na data antiga
-  // e a coluna nova aparecia vazia (o "dia sem valor"), além de sumirem dos totais.
+  const aplicarDias = (f: Folha) => { setDias(f.dias); setPessoas(f.pessoas); };
+  // Coluna com horas nunca é movida nem apagada ao trocar a data: a nova vira outro dia.
   const setDiaData = (idx: number, v: string) => {
     const novo = v.slice(0, 10);
     const antigo = dias[idx];
-    if (!novo || novo === antigo) return;
-    if (dias.includes(novo)) { toast.error(`O dia ${dataBr(novo)} já está na folha.`); return; }
-    const movida = moverDia(folhaLocal, antigo, novo);
-    setDias(movida.dias);
-    setPessoas(movida.pessoas);
+    if (novo === antigo) return true;
+    if (!novo) return false;
+    if (dias.includes(novo)) { toast.error(`O dia ${dataBr(novo)} já está na folha.`); return false; }
+    aplicarDias(trocarDataDaColuna(folhaLocal, antigo, novo));
+    return false; // a coluna é redesenhada pela lista de dias; o campo volta à data dela
   };
-  const removeDia = (idx: number) => setDias((d) => d.filter((_, i) => i !== idx));
+  const removeDia = async (idx: number) => {
+    const dia = dias[idx];
+    if (pessoas.some((p) => temHoras(p.horas[dia]))) {
+      const ok = await confirmDialog({
+        title: 'Remover dia',
+        message: `O dia ${dataBr(dia)} tem horas lançadas. Remover o dia apaga essas horas da folha.`,
+        confirmText: 'Remover', cancelText: 'Cancelar', danger: true,
+      });
+      if (!ok) return;
+    }
+    aplicarDias(removerDia(folhaLocal, dia));
+  };
 
   const resumo = useMemo(() => resumoDaFolha(pessoas, dias), [pessoas, dias]);
   const totResumo = useMemo(() => resumo.reduce((s, r) => ({ hn: s.hn + r.hn, he05: s.he05 + r.he05, he10: s.he10 + r.he10, he02: s.he02 + r.he02 }), { hn: 0, he05: 0, he10: 0, he02: 0 }), [resumo]);
@@ -255,20 +231,6 @@ export function AlocarHhView({ osNumero, selected, outrosCustos = [] }: { osNume
         </div>
       )}
 
-      {diasOcultos.length > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-amber-100 text-xs">
-          <span>
-            Há horas lançadas em {diasOcultos.length} data(s) que não aparecem na folha: <b>{diasOcultos.map(dataBr).join(', ')}</b>.
-            {' '}Elas estão salvas mas fora dos totais (ex.: a data da coluna foi trocada depois de preenchida).
-          </span>
-          {!fechada && (
-            <button onClick={mostrarDiasOcultos} className="flex items-center gap-1.5 rounded-lg border border-amber-400/40 bg-amber-500/20 px-3 py-1.5 font-black uppercase tracking-widest hover:bg-amber-500/30">
-              <Eye size={12} /> Mostrar esses dias
-            </button>
-          )}
-        </div>
-      )}
-
       {/* Cabeçalho da apuração */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <div className="md:col-span-2">
@@ -299,9 +261,9 @@ export function AlocarHhView({ osNumero, selected, outrosCustos = [] }: { osNume
                 <th className="border border-white/10 px-2 py-2 text-left sticky left-0 bg-[#0e1a30] min-w-[150px]">Nome</th>
                 <th className="border border-white/10 px-2 py-2 text-left min-w-[160px]">Cargo</th>
                 {dias.map((d, idx) => (
-                  <th key={idx} className="border border-white/10 px-1 py-1 text-center min-w-[150px]">
+                  <th key={d} className="border border-white/10 px-1 py-1 text-center min-w-[150px]">
                     <div className="flex items-center justify-center gap-1">
-                      <input type="date" value={d} onChange={(e) => setDiaData(idx, e.target.value)} disabled={fechada} className="w-[110px] bg-[#101f3d] border border-white/10 rounded px-1 py-0.5 text-white text-[10px] [color-scheme:dark]" />
+                      <input type="date" defaultValue={d} onBlur={(e) => { if (!setDiaData(idx, e.target.value)) e.target.value = d; }} disabled={fechada} className="w-[110px] bg-[#101f3d] border border-white/10 rounded px-1 py-0.5 text-white text-[10px] [color-scheme:dark]" />
                       {!fechada && <button onClick={() => removeDia(idx)} className="text-red-300 hover:text-red-200" title="Remover dia"><X size={11} /></button>}
                     </div>
                     <div className="mt-1 flex justify-center gap-1 text-[9px] text-white/40 font-bold"><span className="w-14">N</span><span className="w-14">0,5</span><span className="w-14">1,0</span><span className="w-14">0,2</span></div>
@@ -421,7 +383,7 @@ export function AlocarHhView({ osNumero, selected, outrosCustos = [] }: { osNume
                 <tr key={c.cargo} className="text-white">
                   <td className="border border-white/10 px-3 py-2">{c.cargo}</td>
                   <td className="border border-white/10 px-3 py-2 text-center">
-                    <MoneyInput bare className={rateInput} value={rates[c.cargo] ?? ''} onChange={(v) => setRates((r) => ({ ...r, [c.cargo]: v }))} disabled={fechada} />
+                    <MoneyInput bare className={rateInput} value={taxaDoCargo(rates, c.cargo) ?? ''} onChange={(v) => setRates((r) => ({ ...r, [c.cargo]: v }))} disabled={fechada} />
                   </td>
                   <td className="border border-white/10 px-3 py-2 text-right">{money(c.custoHN)}</td>
                   <td className="border border-white/10 px-3 py-2 text-right">{money(c.custoHE05)}</td>

@@ -1598,6 +1598,61 @@ class FinanceiroLeituraRestritaTests(APITestCase):
         self.assertIn('solicitacao', tipos)
 
 
+class FolhaDePontoVisibilidadeTests(APITestCase):
+    """A folha de ponto de H.H (`hhAlocacao`) chega inteira — todos os dias e todas as horas —
+    para todo perfil que lê o Financeiro: admin, gerente, quem tem Custo por OS e até quem só
+    tem Solicitação de Pagamento. E quem lança (RH, com Custo por OS) consegue salvar."""
+
+    FOLHA = {
+        'id': 'HHA-1', 'tipo': 'hhAlocacao', 'os': 'LN-0001/26', 'mes': '2026-11',
+        'dias': ['2026-11-10', '2026-11-11'],
+        'pessoas': [{'id': 'p1', 'nome': 'ALEX', 'cargo': 'COORDENADOR',
+                     'horas': {'2026-11-10': {'hn': 9}, '2026-11-11': {'hn': 5, 'he05': 1}}}],
+        'rates': {'COORDENADOR': 100}, 'valor': 1550,
+    }
+
+    def _logar(self, cpf):
+        resp = obter_token(self.client, cpf, 'Admin@teste1')
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {resp.data["access"]}')
+
+    def _usuario(self, cpf, permissoes):
+        return User.objects.create_user(cpf=cpf, password='Admin@teste1', nome=cpf, email=f'{cpf}@test.com',
+                                        role='usuario', permissoes=permissoes)
+
+    def setUp(self):
+        criar_admin('adm-hh')
+        criar_gerente('ger-hh')
+        self._usuario('rh-hh', {'finCustoOs': True})
+        self._usuario('colab-hh', {'finSolicitacao': True})
+        self._logar('rh-hh')  # o RH (Custo por OS) é quem lança a folha
+        resp = self.client.post(f'{BASE}/financeiro/', [self.FOLHA], format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+
+    def test_todos_os_perfis_veem_a_folha_inteira(self):
+        for cpf in ('adm-hh', 'ger-hh', 'rh-hh', 'colab-hh'):
+            with self.subTest(perfil=cpf):
+                self._logar(cpf)
+                resp = self.client.get(f'{BASE}/financeiro/')
+                self.assertEqual(resp.status_code, 200)
+                folha = next((r for r in resp.data if r.get('tipo') == 'hhAlocacao'), None)
+                self.assertIsNotNone(folha, f'{cpf} não recebeu a folha de ponto')
+                self.assertEqual(folha['dias'], self.FOLHA['dias'])
+                self.assertEqual(folha['pessoas'], self.FOLHA['pessoas'])
+
+    def test_admin_salva_valor_por_cargo_sem_apagar_os_dias_do_rh(self):
+        self._logar('adm-hh')
+        atual = self.client.get(f'{BASE}/financeiro/').data
+        folha = next(r for r in atual if r.get('tipo') == 'hhAlocacao')
+        folha['rates'] = {'COORDENADOR': 120}
+        resp = self.client.post(f'{BASE}/financeiro/', atual, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self._logar('rh-hh')
+        salva = next(r for r in self.client.get(f'{BASE}/financeiro/').data if r.get('tipo') == 'hhAlocacao')
+        self.assertEqual(salva['dias'], self.FOLHA['dias'])
+        self.assertEqual(salva['pessoas'], self.FOLHA['pessoas'])
+        self.assertEqual(salva['rates'], {'COORDENADOR': 120})
+
+
 class FinanceiroSolicitacaoCriarTests(APITestCase):
     """POST /comercial/financeiro/solicitacao/ — append-only, aberto a todo autenticado.
 
