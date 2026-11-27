@@ -1,4 +1,5 @@
 import api from './api';
+import { semIdsDeLinhaRepetidos } from './almoxarifadoSeguro';
 
 /**
  * Serviço do Estoque/Almoxarifado. O estado é um objeto agregado único
@@ -15,7 +16,8 @@ import api from './api';
 export const getAlmoxarifado = async (): Promise<any | null> => {
   try {
     const response = await api.get('almoxarifado/');
-    return response.data && typeof response.data === 'object' ? response.data : null;
+    // Mesmos ids de linha que `comAlmoxarifadoAtual` usa, em todas as telas.
+    return response.data && typeof response.data === 'object' ? semIdsDeLinhaRepetidos(response.data) : null;
   } catch (error) {
     console.error('Erro ao carregar almoxarifado SQL:', error);
     return null;

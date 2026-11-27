@@ -17,7 +17,7 @@ import {
   EntradaManutencaoModal, EQUIPAMENTOS_TABLE_NAMES, MANUTENCAO_TABLE_NAMES, criarEntradaManutencao, gerarIdManutencao, itemEstaEmManutencao, itemPossuiManutencao,
   type ManutencaoHistoricoItem,
 } from './manutencaoShared';
-import { comAlmoxarifadoAtual } from '../../../../services/almoxarifadoSeguro';
+import { comAlmoxarifadoAtual, novoIdDeLinha, semIdsDeLinhaRepetidos } from '../../../../services/almoxarifadoSeguro';
 import { getLogoUrlForEmpresa } from '../../../utils/company';
 
 interface StockColumn {
@@ -905,7 +905,7 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
 
     if (almoxerifado && typeof almoxerifado === 'object') {
       if (Array.isArray(almoxerifado.tables)) {
-        const persistidas = almoxerifado.tables.map(renomearTabelaAntiga).map((table: StockTable) => ({
+        const persistidas = semIdsDeLinhaRepetidos(almoxerifado).tables.map(renomearTabelaAntiga).map((table: StockTable) => ({
           ...table,
           // Reconcilia com as colunas canônicas para incorporar colunas novas (ex.: "peso")
           // em dados persistidos antes da mudança, sem perder linhas/colunas customizadas.
@@ -1740,7 +1740,9 @@ export function EstoqueView({ searchQuery, mode = 'manage' }: StockViewProps) {
         ? baseRows.findIndex((row: StockRow) => row.id === editingRowTarget!.rowId)
         : -1;
       const rowIndex = existingRowIndex >= 0 ? existingRowIndex : baseRows.length;
-      const nextRow = makeRow(payload, table.name, rowIndex, editingRowTarget?.rowId);
+      // Linha nova recebe id único: o antigo "tabela-(nº de linhas + 1)" repetia o id de uma linha
+      // existente sempre que alguma já tinha saído da tabela (ver semIdsDeLinhaRepetidos).
+      const nextRow = makeRow(payload, table.name, rowIndex, editingRowTarget?.rowId || novoIdDeLinha(normalizeKey(table.name)));
 
       const nextRows = existingRowIndex >= 0
         ? baseRows.map((row: StockRow) => (row.id === editingRowTarget!.rowId ? nextRow : row))
